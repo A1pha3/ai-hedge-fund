@@ -35,6 +35,7 @@ from src.screening.offensive.pit_evidence import (
     canonical_fingerprint,
     canonical_flow_fingerprint,
     canonical_price_fingerprint,
+    canonical_price_row_fingerprint,
     validate_price_artifact,
 )
 from src.tools.ashare_board_utils import is_excluded_ticker
@@ -76,6 +77,8 @@ class DailyActionCacheRefreshStats:
     price_insufficient_history: int = 0
     price_missing: int = 0
     price_failed: int = 0
+    # 当日行已存在且值未变, 幂等跳过的重写 (证据照采, 只是不再空转写盘).
+    price_skipped_current: int = 0
     fund_flow_total: int = 0
     fund_flow_saved: int = 0
     fund_flow_empty: int = 0          # 全源返回空 (真异常: 新上市/退市/源故障)
@@ -83,6 +86,8 @@ class DailyActionCacheRefreshStats:
     fund_flow_suspended: int = 0      # 当日停牌
     fund_flow_skipped_fresh: int = 0
     fund_flow_failed: int = 0
+    # 经全市场批量预取命中、免逐票网络拉取的票数 (仅观测用, 计入 fund_flow_saved).
+    fund_flow_prefetched: int = 0
     industry_index_total: int = 0
     industry_index_failed: int = 0
     # 当日涨停股注入 price_cache 的数量 (BTST 目标标的, 常不在候选池内).
@@ -100,6 +105,7 @@ class DailyActionCacheRefreshStats:
         self.price_insufficient_history += other.price_insufficient_history
         self.price_missing += other.price_missing
         self.price_failed += other.price_failed
+        self.price_skipped_current += other.price_skipped_current
         self.fund_flow_total += other.fund_flow_total
         self.fund_flow_saved += other.fund_flow_saved
         self.fund_flow_empty += other.fund_flow_empty
@@ -107,6 +113,7 @@ class DailyActionCacheRefreshStats:
         self.fund_flow_suspended += other.fund_flow_suspended
         self.fund_flow_skipped_fresh += other.fund_flow_skipped_fresh
         self.fund_flow_failed += other.fund_flow_failed
+        self.fund_flow_prefetched += other.fund_flow_prefetched
         self.industry_index_total += other.industry_index_total
         self.industry_index_failed += other.industry_index_failed
         self.limit_up_injected += other.limit_up_injected
@@ -203,6 +210,26 @@ def _trade_date_value(value: object) -> date:
     return pd.to_datetime(_fund_flow_date(value), format="%Y%m%d").date()
 
 
+def _fund_flow_dates(values: pd.Series) -> pd.Series:
+    """向量化版 ``_fund_flow_date`` (整列一次处理, ~1ms/列)。
+
+    逐值 pd.to_datetime 在 1583 行帧上 ~50ms; 全量缓存刷新要处理 ~250 万行
+    (800 票 x 全历史 x 读取/投影/校验多趟), 实测是 --auto 缓存刷新阶段耗时大头。
+    合法输入只有 YYYYMMDD / YYYY-MM-DD(/时间戳) 两种格式, 纯字符串操作即等价;
+    非法值原样保留, 与目标日期比较时自然落空 (不引入新的 fail-closed 行为)。
+    """
+    text = values.astype(str).str.strip().str.split(" ").str[0]
+    return text.str.replace("-", "", regex=False)
+
+
+def _price_dates(values: pd.Series) -> pd.Series:
+    """向量化版 ``_price_date`` (整列一次处理), 原理同 ``_fund_flow_dates``。"""
+    text = values.astype(str).str.strip().str.split(" ").str[0]
+    compact = text.str.replace("-", "", regex=False)
+    dashed = compact.str[:4] + "-" + compact.str[4:6] + "-" + compact.str[6:8]
+    return text.where(text.str.contains("-", regex=False), dashed)
+
+
 def _normalize_daily_batch(payload: object) -> pd.DataFrame:
     """Validate and detach one provider batch before any downstream use."""
 
@@ -214,24 +241,22 @@ def _normalize_daily_batch(payload: object) -> pd.DataFrame:
             "daily batch missing required columns: " + ", ".join(sorted(missing))
         )
     normalized = payload.copy(deep=True)
-    for _, row in normalized.iterrows():
-        ticker = _provider_code6(row["ts_code"])
-        canonical_price_fingerprint(
-            pd.DataFrame(
-                [
-                    {
-                        "date": row["trade_date"],
-                        "open": row["open"],
-                        "high": row["high"],
-                        "low": row["low"],
-                        "close": row["close"],
-                        "pct_change": row["pct_chg"],
-                        "volume": row["vol"],
-                    }
-                ]
-            ),
+    # 逐行 PIT 校验 (返回值丢弃): canonical_price_fingerprint(单行帧) 的等价快路,
+    # 免去 ~5000 次 DataFrame 构造 + iterrows (全市场 batch 实测 ~1.5s → ~0.2s)。
+    for row in normalized.itertuples(index=False):
+        ticker = _provider_code6(row.ts_code)
+        canonical_price_row_fingerprint(
+            {
+                "date": row.trade_date,
+                "open": row.open,
+                "high": row.high,
+                "low": row.low,
+                "close": row.close,
+                "pct_change": row.pct_chg,
+                "volume": row.vol,
+            },
             ticker,
-            row["trade_date"],
+            row.trade_date,
         )
     return normalized
 
@@ -276,7 +301,7 @@ def _extract_limit_up_tickers(
     df = daily_prices_df
     # 仅取请求交易日的行 (过期数据拒绝, 与 refresh_price_cache_from_daily_batch:317 一致)
     if "trade_date" in df.columns:
-        df = df[df["trade_date"].apply(lambda value: _fund_flow_date(value) == requested)]
+        df = df[_fund_flow_dates(df["trade_date"]) == requested]
     # 涨停过滤: 板块自适应阈值 (主板 9.5%, 科创/创业 19.5%, 北交所 29.0%).
     # Bug fix (H5): 旧逻辑用固定 9.5%, 把科创/创业的非涨停大涨 (+9.5~19.4%) 误注入,
     # 浪费 fund_flow API 配额且可能挤占真正的涨停股.
@@ -315,15 +340,52 @@ def _build_price_row(row: pd.Series, trade_date: str) -> dict:
     }
 
 
+def _price_frame_unchanged(combined: pd.DataFrame, old: pd.DataFrame) -> bool:
+    """合并结果与既有缓存完全一致 → True (可安全跳过全量校验 + 原子重写)。
+
+    严格语义: 行数相同 + 同 schema + 值完全相等 (DataFrame.equals, NaN==NaN)。
+    任何差异 → False, 回落到全量校验 + 写盘 (fail-closed 方向, 宁多写不漏写)。
+    """
+    if old is None or len(old) == 0 or len(combined) != len(old):
+        return False
+    if "date" not in old.columns:
+        return False
+    old_normalized = old.copy(deep=False)
+    old_normalized["date"] = _price_dates(old["date"])
+    old_normalized = (
+        old_normalized.drop_duplicates(subset=["date"], keep="last")
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+    # combined 一侧同样归一化: 生产路径已做过, 但直接构造的调用方 (或未来改动)
+    # 可能传入未归一化帧 — _price_dates 产出的 str dtype 与原始 object dtype
+    # 会被 DataFrame.equals 判为不同, 导致幂等跳过永不命中 (空转写盘回归)。
+    combined_normalized = combined.copy(deep=False)
+    combined_normalized["date"] = _price_dates(combined["date"])
+    try:
+        aligned = combined_normalized[list(old_normalized.columns)]
+    except KeyError:
+        return False
+    return bool(aligned.equals(old_normalized))
+
+
 def _write_price_cache_row(
     path: Path,
     row: dict,
     *,
     existing_frame: pd.DataFrame | None = None,
     artifact_sink: Callable[[pd.DataFrame], None] | None = None,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, bool]:
+    """Append-or-replace one daily row. Returns (written_frame, wrote_to_disk).
+
+    幂等快路径: 合并结果与既有缓存一致 (当日行已写入且值未变) 时跳过
+    全量校验 + 原子重写 — 1583 行 x 794 票的全历史重写实测 ~90s/轮,
+    重复运行时这些写盘全是空转。证据经 artifact_sink 照采, 下游指纹不受影响;
+    只有真实变化才走 validate_price_artifact 全量校验 + 写盘 (fail-closed 不变)。
+    existing_frame 只被 concat 读取, 不做原地修改, 调用方无需再先深拷贝。
+    """
     old = (
-        existing_frame.copy(deep=True)
+        existing_frame
         if existing_frame is not None
         else (
             pd.read_csv(path, dtype={"date": str})
@@ -332,14 +394,21 @@ def _write_price_cache_row(
         )
     )
     combined = pd.concat([old, pd.DataFrame([row])], ignore_index=True)
-    combined["date"] = combined["date"].map(_price_date)
+    combined["date"] = _price_dates(combined["date"])
     combined = combined.drop_duplicates(subset=["date"], keep="last")
     combined = combined.sort_values("date").reset_index(drop=True)
+    if _price_frame_unchanged(combined, old):
+        # 跳过写盘: combined 不会再交给 writer, 无下游变异源, 直接作为证据。
+        if artifact_sink is not None:
+            artifact_sink(combined)
+        return combined, False
     validate_price_artifact(combined, path.stem)
     if artifact_sink is not None:
+        # 证据必须是写盘前的隔离副本 — 后续 (writer/其他持有者) 对 combined
+        # 的任何原地修改都不得污染已采集证据 (test_price_evidence_is_copied_*)。
         artifact_sink(combined.copy(deep=True))
     atomic_write_csv(path, combined)
-    return combined.copy(deep=True)
+    return combined, True
 
 
 def _snapshot_records(payload: object, *, include_shadow: bool) -> list[object]:
@@ -541,7 +610,7 @@ def refresh_price_cache_from_daily_batch(
                 else path.exists()
             )
             base_frame = (
-                initial_frames[ticker].copy(deep=True)
+                initial_frames[ticker]
                 if initial_frames is not None and ticker in initial_frames
                 else None
             )
@@ -562,7 +631,7 @@ def refresh_price_cache_from_daily_batch(
                 stats.price_backfilled += 1
             path.parent.mkdir(parents=True, exist_ok=True)
             captured: list[pd.DataFrame] = []
-            _write_price_cache_row(
+            _frame, wrote = _write_price_cache_row(
                 path,
                 _build_price_row(row, trade_date),
                 existing_frame=base_frame,
@@ -571,8 +640,11 @@ def refresh_price_cache_from_daily_batch(
             if not captured:
                 raise RuntimeError("price cache writer did not expose written artifact")
             if evidence_collector is not None:
-                evidence_collector[ticker] = captured[-1].copy(deep=True)
-            stats.price_updated += 1
+                evidence_collector[ticker] = captured[-1]
+            if wrote:
+                stats.price_updated += 1
+            else:
+                stats.price_skipped_current += 1
         except Exception as exc:  # noqa: BLE001 - one bad CSV must not stop the batch
             logger.warning("Failed to refresh price_cache for %s: %s", ticker, exc)
             stats.price_failed += 1
@@ -593,7 +665,7 @@ def _latest_fund_flow_date(cache_dir: Path, ticker: str) -> str | None:
         return None
     if len(df) == 0:
         return None
-    return max(_fund_flow_date(value) for value in df["date"].dropna())
+    return max(_fund_flow_dates(df["date"]))
 
 
 def load_suspension_evidence(
@@ -669,8 +741,14 @@ def refresh_fund_flow_cache(
     initial_frames: Mapping[str, pd.DataFrame] | None = None,
     unreadable_tickers: frozenset[str] | set[str] = frozenset(),
     evidence_collector: dict[str, pd.DataFrame] | None = None,
+    prefetched_frames: Mapping[str, pd.DataFrame] | None = None,
 ) -> DailyActionCacheRefreshStats:
-    """Fetch one trade date of fund-flow data and merge it into per-ticker CSVs."""
+    """Fetch one trade date of fund-flow data and merge it into per-ticker CSVs.
+
+    prefetched_frames: 全市场批量预取结果 {ticker: 当日帧}。命中的票跳过逐票
+    网络拉取与 rate-limit 等待, 直接走 store.save 合并落盘 (同校验同证据);
+    未命中的票回落 fetch_fn 逐票路径, 行为与之前完全一致。
+    """
 
     from src.screening.offensive.data.fund_flow_store import FundFlowStore
 
@@ -702,10 +780,11 @@ def refresh_fund_flow_cache(
                 evidence_collector.pop(ticker, None)
             continue
         try:
+            fetched_via_network = False
             if initial_frames is not None and ticker in initial_frames:
                 initial_frame = initial_frames[ticker]
                 latest = (
-                    max(_fund_flow_date(value) for value in initial_frame["date"])
+                    max(_fund_flow_dates(initial_frame["date"]))
                     if not initial_frame.empty and "date" in initial_frame.columns
                     else None
                 )
@@ -731,7 +810,15 @@ def refresh_fund_flow_cache(
                 logger.debug("[资金流] %s 当日停牌, 跳过 (预期行为)", ticker)
                 continue
 
-            df = fetch_fn(ticker, start_date=trade_date, end_date=trade_date)
+            # 批量预取命中 → 免逐票网络拉取; 未命中 → 原逐票路径
+            prefetched = (
+                prefetched_frames.get(ticker) if prefetched_frames is not None else None
+            )
+            if prefetched is not None:
+                df = prefetched
+            else:
+                df = fetch_fn(ticker, start_date=trade_date, end_date=trade_date)
+                fetched_via_network = True
             if df is None or len(df) == 0:
                 stats.fund_flow_empty += 1
                 stats.fund_flow_empty_tickers.append(ticker)
@@ -757,6 +844,8 @@ def refresh_fund_flow_cache(
             if evidence_collector is not None:
                 evidence_collector[ticker] = captured[-1].copy(deep=True)
             stats.fund_flow_saved += 1
+            if prefetched is not None:
+                stats.fund_flow_prefetched += 1
         except Exception as exc:  # noqa: BLE001 - isolate one ticker failure
             logger.warning("Failed to refresh fund_flow_cache for %s: %s", ticker, exc)
             stats.fund_flow_failed += 1
@@ -764,10 +853,87 @@ def refresh_fund_flow_cache(
             if evidence_collector is not None:
                 evidence_collector.pop(ticker, None)
 
-        if rate_limit_sec > 0 and index < len(queue):
+        # rate-limit 只保护真实网络拉取; 批量预取命中/本地分支无需等待
+        if fetched_via_network and rate_limit_sec > 0 and index < len(queue):
             time.sleep(rate_limit_sec)
 
     return stats
+
+
+def _prefetch_fund_flow_batch(
+    tickers: list[str],
+    trade_date: str,
+    *,
+    resolved_daily_prices: pd.DataFrame,
+    daily_batch_available: bool,
+    per_ticker_fetch_injected: bool,
+    batch_fetch_fn: Callable[[str], Mapping[str, pd.DataFrame]] | None,
+) -> dict[str, pd.DataFrame] | None:
+    """全市场资金流批量预取: 单次 tushare moneyflow(trade_date) 替代逐票串行拉取.
+
+    冷缓存场景逐票路径 ~1.3s/票 (多源重试 + rate-limit), 数百票 >10 分钟;
+    批量一次 API 返回全市场当日资金流, 命中票免网络拉取与 rate-limit 等待。
+
+    返回 None 表示批量不可用 (env 关闭 / 注入了逐票 fetch / 拉取失败 / 无数据),
+    调用方全部回落逐票路径, 行为与无批量完全一致。
+
+    字段口径: 金额列 = tushare moneyflow (main_net_inflow 已与东财逐票值核对一致);
+    close/pct_change = 当日 daily batch (tushare moneyflow 不含价格);
+    main_net_pct 留 NaN — 实测东财 pct 口径 ≠ 净流入/成交额 (000504 2026-07-16:
+    推导 -13.76% vs 东财 -2.83%, 分母疑为流通市值), 且下游 setup 只消费
+    main_net_inflow 金额, store 落盘时按既有惯例补 0.0 (同逐票 tushare 路径)。
+    daily batch 缺价格行的票不预取, 回落逐票。
+    """
+
+    if per_ticker_fetch_injected:
+        return None  # 注入逐票 fetch (测试) 时保持原路径
+    if not _env_enabled("DAILY_ACTION_FUND_FLOW_BATCH", default=True):
+        return None
+    if batch_fetch_fn is None:
+        from src.tools.tushare_fund_flow import fetch_batch_fund_flow_tushare
+
+        batch_fetch_fn = fetch_batch_fund_flow_tushare
+    try:
+        batch_frames = batch_fetch_fn(trade_date)
+    except Exception as exc:  # noqa: BLE001 - 批量失败回落逐票, 不拖垮刷新
+        logger.warning("[cache_refresh] 资金流批量拉取失败, 回落逐票路径: %s", exc)
+        return None
+    if not batch_frames:
+        return None
+
+    # 当日价格行 (close/pct_change) 从已解析的 daily batch 填
+    price_rows: dict[str, tuple[float, float]] = {}
+    if daily_batch_available and not resolved_daily_prices.empty:
+        for row in resolved_daily_prices.itertuples(index=False):
+            if str(row.trade_date) != trade_date:
+                continue
+            record = row._asdict()
+            close = _row_value(record, "close")
+            pct_chg = _row_value(record, "pct_chg")
+            if close is None or pct_chg is None:
+                continue
+            try:
+                code = _provider_code6(row.ts_code)
+            except ValueError:
+                continue
+            price_rows[code] = (close, pct_chg)
+
+    prefetched: dict[str, pd.DataFrame] = {}
+    for ticker in tickers:
+        frame = batch_frames.get(ticker)
+        prices = price_rows.get(ticker)
+        if frame is None or prices is None:
+            continue  # 批量未覆盖 → 回落逐票路径
+        filled = frame.copy()
+        filled["close"], filled["pct_change"] = prices
+        prefetched[ticker] = filled
+    if prefetched:
+        logger.info(
+            "[cache_refresh] 资金流批量预取命中 %d/%d 票",
+            len(prefetched),
+            len(tickers),
+        )
+    return prefetched or None
 
 
 def refresh_industry_index_cache(
@@ -798,19 +964,22 @@ def _daily_batch_evidence_fingerprint(
 ) -> str:
     rows: list[dict[str, str]] = []
     requested = _fund_flow_date(trade_date)
-    for _, row in daily_prices_df.iterrows():
-        row_date = _fund_flow_date(row.get("trade_date", requested))
+    # itertuples + 单行指纹快路: 与 canonical_price_fingerprint(单帧) 逐位等价,
+    # 全市场 batch (~5000 行) 实测 ~1.6s → ~0.4s。
+    for row in daily_prices_df.itertuples(index=False):
+        record = row._asdict()
+        row_date = _fund_flow_date(record.get("trade_date", requested))
         if row_date != requested:
             continue
-        ticker = _code6(row.get("ts_code", ""))
+        ticker = _code6(record.get("ts_code", ""))
         if not _is_code6(ticker):
             continue
-        price_row = _build_price_row(row, trade_date)
+        price_row = _build_price_row(record, trade_date)
         rows.append(
             {
                 "ticker": ticker,
-                "price_fingerprint": canonical_price_fingerprint(
-                    pd.DataFrame([price_row]),
+                "price_fingerprint": canonical_price_row_fingerprint(
+                    price_row,
                     ticker,
                     trade_date,
                 ),
@@ -825,8 +994,9 @@ def _project_pit_frame(frame: pd.DataFrame, trade_date: str) -> pd.DataFrame:
     if "date" not in frame.columns:
         raise ValueError("cache frame must contain date")
     requested = _fund_flow_date(trade_date)
-    normalized_dates = frame["date"].map(_fund_flow_date)
-    return frame[normalized_dates <= requested].copy(deep=True).reset_index(drop=True)
+    normalized_dates = _fund_flow_dates(frame["date"])
+    # 布尔掩码索引本身产出独立副本, 无需再 deep copy
+    return frame[normalized_dates <= requested].reset_index(drop=True)
 
 
 def _read_cache_baseline(
@@ -843,10 +1013,12 @@ def _read_cache_baseline(
         if "date" not in full_frame.columns:
             return full_frame, full_frame.iloc[0:0], False, True
         requested = _fund_flow_date(trade_date)
-        normalized_dates = full_frame["date"].map(_fund_flow_date)
+        normalized_dates = _fund_flow_dates(full_frame["date"])
+        # read_csv 产出本就由本函数独占, 布尔掩码投影也是独立副本 —
+        # 调用方只读/整体替换, 不做原地修改, 历史上每帧 4 份深拷贝纯属浪费。
         pit_frame = _project_pit_frame(full_frame, trade_date)
         return (
-            full_frame.copy(deep=True),
+            full_frame,
             pit_frame,
             bool((normalized_dates == requested).any()),
             False,
@@ -868,7 +1040,7 @@ def _frame_has_current_row(frame: pd.DataFrame, trade_date: str) -> bool:
     if frame.empty or "date" not in frame.columns:
         return False
     requested = _fund_flow_date(trade_date)
-    return any(_fund_flow_date(value) == requested for value in frame["date"])
+    return bool((_fund_flow_dates(frame["date"]) == requested).any())
 
 
 def refresh_daily_action_caches(
@@ -884,6 +1056,7 @@ def refresh_daily_action_caches(
     backfill_price_history_fn: Callable[[str, str, str], pd.DataFrame | None] | None = None,
     industry_index_backfill_fn: Callable[..., dict[str, int]] | None = None,
     fund_flow_fetch_fn: Callable[..., pd.DataFrame] | None = None,
+    fund_flow_batch_fetch_fn: Callable[[str], Mapping[str, pd.DataFrame]] | None = None,
     refresh_industry_index: bool | None = None,
     refresh_fund_flow: bool | None = None,
     fund_flow_rate_limit_sec: float | None = None,
@@ -1004,13 +1177,15 @@ def refresh_daily_action_caches(
         if price_failed:
             price_read_failures.add(ticker)
         else:
-            price_full_frames[ticker] = full_price.copy(deep=True)
-            price_frames[ticker] = captured_price.copy(deep=True)
+            # _read_cache_baseline 返回的帧由本次读取独占 (read_csv + 布尔掩码),
+            # 下游只读或整体替换, 不做原地修改 — 无需逐票再深拷贝。
+            price_full_frames[ticker] = full_price
+            price_frames[ticker] = captured_price
         if flow_failed:
             flow_read_failures.add(ticker)
         else:
-            flow_full_frames[ticker] = full_flow.copy(deep=True)
-            flow_frames[ticker] = captured_flow.copy(deep=True)
+            flow_full_frames[ticker] = full_flow
+            flow_frames[ticker] = captured_flow
     if injected:
         logger.info(
             "[cache_refresh] 涨停注入 %d 只: %s",
@@ -1095,6 +1270,14 @@ def refresh_daily_action_caches(
     fund_flow_stats = DailyActionCacheRefreshStats()
     written_flow_frames: dict[str, pd.DataFrame] = {}
     if refresh_fund_flow and selected_flow_tickers:
+        prefetched_flow_frames = _prefetch_fund_flow_batch(
+            selected_flow_tickers,
+            effective_trade_date,
+            resolved_daily_prices=resolved_daily_prices,
+            daily_batch_available=daily_batch_available,
+            per_ticker_fetch_injected=fund_flow_fetch_fn is not None,
+            batch_fetch_fn=fund_flow_batch_fetch_fn,
+        )
         fund_flow_stats = refresh_fund_flow_cache(
             selected_flow_tickers,
             effective_trade_date,
@@ -1106,6 +1289,7 @@ def refresh_daily_action_caches(
             initial_frames=flow_full_frames,
             unreadable_tickers=flow_read_failures,
             evidence_collector=written_flow_frames,
+            prefetched_frames=prefetched_flow_frames,
         )
     for ticker, frame in written_flow_frames.items():
         flow_frames[ticker] = _project_pit_frame(frame, effective_trade_date)

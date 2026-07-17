@@ -2,10 +2,17 @@
 
 封装 akshare.stock_individual_fund_flow, 标准化列名为英文 snake_case,
 处理 market 映射 (sz/sh/bj), 网络/解析异常时返回空 DataFrame。
+
+熔断器: 东财 WAF 会对批量抓取的源 IP 定点封禁 push2his.eastmoney.com 的
+/api/qt/* (2026-07-17 实测本机 IP 100% 断连, 根路径正常 → 行为封禁, 非故障)。
+封禁期逐票重试纯属浪费 (fallback 1 次/票 + enrich 2 次/票 + 0.5s 退避),
+连续网络失败 _BREAKER_THRESHOLD 次后熔断: 熔断期直接返回空 (零网络调用),
+冷却 _BREAKER_COOLDOWN_SEC 后半开试探, 成功即复位 (封禁解除后自动恢复)。
 """
 from __future__ import annotations
 
 import logging
+import time
 
 import akshare as ak
 import pandas as pd
@@ -15,6 +22,50 @@ logger = logging.getLogger(__name__)
 # 网络/代理错误去重计数器 — 避免批量拉取时每只票都打完整 ProxyError 堆栈。
 # 首次打 WARNING (含原因), 后续同类静默计数, 与 akshare_market_helpers 的模式一致。
 _network_error_counts: dict[str, int] = {}
+
+# ── 熔断器 ────────────────────────────────────────────────────────────────
+_BREAKER_THRESHOLD = 5          # 连续网络失败次数达到即熔断
+_BREAKER_COOLDOWN_SEC = 900.0   # 熔断冷却 (东财封禁通常数小时, 15min 半开试探足够)
+_breaker_failures = 0
+_breaker_opened_at: float | None = None
+
+
+def circuit_breaker_open() -> bool:
+    """熔断中且未到半开窗口 → True (调用方应跳过 akshare 源, 省注定失败的调用)。"""
+    if _breaker_opened_at is None:
+        return False
+    return (time.monotonic() - _breaker_opened_at) < _BREAKER_COOLDOWN_SEC
+
+
+def _record_network_failure() -> None:
+    global _breaker_failures, _breaker_opened_at
+    _breaker_failures += 1
+    if _breaker_opened_at is not None:
+        # 半开试探失败 → 冷却重新计时
+        _breaker_opened_at = time.monotonic()
+        return
+    if _breaker_failures >= _BREAKER_THRESHOLD:
+        _breaker_opened_at = time.monotonic()
+        logger.warning(
+            "akshare 资金流连续 %d 次网络错误, 熔断 %.0fs (期间跳过 akshare 源, 由 tushare/ftshare 兜底)",
+            _BREAKER_THRESHOLD,
+            _BREAKER_COOLDOWN_SEC,
+        )
+
+
+def _record_success() -> None:
+    global _breaker_failures, _breaker_opened_at
+    if _breaker_opened_at is not None:
+        logger.info("akshare 资金流恢复, 熔断复位")
+    _breaker_failures = 0
+    _breaker_opened_at = None
+
+
+def _reset_circuit_breaker() -> None:
+    """测试用: 复位熔断器状态。"""
+    global _breaker_failures, _breaker_opened_at
+    _breaker_failures = 0
+    _breaker_opened_at = None
 
 # 中文列名 → 英文标准化 (akshare stock_individual_fund_flow 实际返回的列)
 _COLUMN_MAP: dict[str, str] = {
@@ -64,6 +115,10 @@ def fetch_individual_fund_flow(ticker: str) -> pd.DataFrame:
         akshare 异常时返回空 DataFrame (列同上)。
     """
     market = _resolve_market(ticker)
+    # 熔断中: 直接返回空, 零网络调用 (东财封禁期逐票重试纯属浪费)
+    if circuit_breaker_open():
+        logger.debug("akshare 资金流熔断中, 跳过 %s", ticker)
+        return pd.DataFrame(columns=list(_COLUMN_MAP.values()))
     try:
         raw = ak.stock_individual_fund_flow(stock=ticker, market=market)
     except Exception as exc:
@@ -71,6 +126,7 @@ def fetch_individual_fund_flow(ticker: str) -> pd.DataFrame:
         exc_name = type(exc).__name__
         is_network = exc_name in ("ProxyError", "ConnectionError", "TimeoutError", "SSLError") or "proxy" in str(exc).lower() or "timeout" in str(exc).lower()
         if is_network:
+            _record_network_failure()
             # 去重: 同类网络错误只打第一次完整信息, 后续静默计数
             _network_error_counts["network"] = _network_error_counts.get("network", 0) + 1
             count = _network_error_counts["network"]
@@ -81,6 +137,9 @@ def fetch_individual_fund_flow(ticker: str) -> pd.DataFrame:
         else:
             logger.warning("akshare 资金流获取失败 %s: %s: %s", ticker, exc_name, exc)
         return pd.DataFrame(columns=list(_COLUMN_MAP.values()))
+
+    # 无异常 = 连接正常 (哪怕数据为空), 熔断器复位
+    _record_success()
 
     if raw is None or len(raw) == 0:
         return pd.DataFrame(columns=list(_COLUMN_MAP.values()))

@@ -297,3 +297,21 @@ def test_enrich_preserves_base_rows_when_supplement_has_extra_dates():
     assert df["close"].tolist() == [10.5]  # 07-14 的 NaN 被补上
     assert df["main_net_pct"].tolist() == [3.5]
     assert df["main_net_inflow"].tolist() == [6_386_000.0]  # 金额列保留 base 原值
+
+
+def test_enrich_skips_akshare_when_circuit_breaker_open():
+    """akshare 熔断中 → enrich 整段跳过 akshare (省 0.5s 退避 + 注定失败的调用), ftshare 照常补全。
+
+    东财封禁期 (2026-07-17 起 push2his 对本机 IP 100% 断连) 每票 enrich 会白调
+    akshare 2 次 + sleep 0.5s, 熔断器跳闸后这里必须零调用。
+    """
+    with patch("src.tools.fund_flow._try_tushare", return_value=_tushare_like_df_with_nan_gaps()), patch(
+        "src.tools.ftshare_api.fetch_individual_fund_flow_ftshare",
+        return_value=_ftshare_like_df(),
+    ), patch("src.tools.fund_flow._try_akshare") as mock_akshare_call, patch(
+        "src.tools.akshare_fund_flow.circuit_breaker_open", return_value=True
+    ):
+        df = fetch_individual_fund_flow("000504", start_date="20260701", end_date="20260716")
+
+    assert df["close"].tolist() == [10.5, 9.8]  # ftshare 照常补全
+    mock_akshare_call.assert_not_called()  # 熔断中 akshare 零调用

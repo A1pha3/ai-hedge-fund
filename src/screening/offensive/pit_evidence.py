@@ -36,6 +36,26 @@ def _canonical_date(value: object) -> str:
         or _is_missing(value)
     ):
         raise PITEvidenceError(f"invalid PIT date: {value!r}")
+    if isinstance(value, str):
+        text = value.strip()
+        # 快速路径: 零填充 ISO 日期 (YYYY-MM-DD) 占输入的绝大多数。
+        # datetime(y, m, d) 构造与 pd.Timestamp 一样拒绝 13 月/45 日等非法值;
+        # year>=1000 时 strftime("%Y-%m-%d") 的输出必然逐位等于零填充输入 — 等价
+        # (year<1000 时 strftime %Y 在部分平台不零填充, 落慢路径保持原行为)。
+        if (
+            len(text) == 10
+            and text[4] == "-"
+            and text[7] == "-"
+            and text[0] != "0"
+            and text[:4].isdigit()
+            and text[5:7].isdigit()
+            and text[8:10].isdigit()
+        ):
+            try:
+                datetime(int(text[:4]), int(text[5:7]), int(text[8:10]))
+            except ValueError as exc:
+                raise PITEvidenceError(f"invalid PIT date: {value!r}") from exc
+            return text
     try:
         if isinstance(value, (date, datetime, pd.Timestamp)):
             parsed = pd.Timestamp(value)
@@ -100,6 +120,30 @@ def _canonical_row(
     return normalized
 
 
+def _canonical_row_values(
+    values: Sequence[object], fields: Sequence[str]
+) -> dict[str, object]:
+    """``_canonical_row`` 的位置参数版: 与 itertuples 行迭代配套, 语义逐位等价。"""
+
+    normalized: dict[str, object] = {}
+    for field, value in zip(fields, values):
+        normalized[field] = (
+            _canonical_date(value) if field == "date" else _canonical_decimal(value)
+        )
+    return normalized
+
+
+def _iter_field_rows(frame: pd.DataFrame, fields: Sequence[str]):
+    """按 fields 列序逐行迭代 (位置 tuple)。
+
+    替代 frame.to_dict(orient="records"): 逐列 box 语义一致 (float64→float,
+    int64→int, datetime64→Timestamp, object 原样), 但 1580 行帧上快 ~3-5 倍。
+    调用方须先确认 fields 全部存在 (missing 检查), 值顺序与 fields 一致。
+    """
+
+    return frame.loc[:, list(fields)].itertuples(index=False, name=None)
+
+
 def _validate_ticker(ticker: object, *, kind: str) -> str:
     if not isinstance(ticker, str) or len(ticker) != 6 or not ticker.isdigit():
         raise PITEvidenceError(f"{kind} evidence ticker must be exactly six digits")
@@ -117,8 +161,8 @@ def validate_price_artifact(frame: pd.DataFrame, ticker: object) -> None:
         raise PITEvidenceError(
             "missing required price columns: " + ", ".join(sorted(missing_columns))
         )
-    for record in frame.to_dict(orient="records"):
-        _canonical_row(record, _PRICE_FIELDS)
+    for values in _iter_field_rows(frame, _PRICE_FIELDS):
+        _canonical_row_values(values, _PRICE_FIELDS)
 
 
 def validate_flow_artifact(frame: pd.DataFrame, ticker: object) -> None:
@@ -134,10 +178,13 @@ def validate_flow_artifact(frame: pd.DataFrame, ticker: object) -> None:
         raise PITEvidenceError(
             "missing required flow columns: " + ", ".join(sorted(missing_columns))
         )
-    for record in frame.to_dict(orient="records"):
-        _canonical_row(record, _FLOW_FIELDS)
-        if "ticker" in record and record["ticker"] != expected_ticker:
-            raise PITEvidenceError("fund-flow artifact ticker identity mismatch")
+    # 逐行 identity 检查的向量化等价: 任何行与期望 ticker 不同 → unique 中必出现
+    if "ticker" in frame.columns and any(
+        value != expected_ticker for value in frame["ticker"].unique()
+    ):
+        raise PITEvidenceError("fund-flow artifact ticker identity mismatch")
+    for values in _iter_field_rows(frame, _FLOW_FIELDS):
+        _canonical_row_values(values, _FLOW_FIELDS)
 
 
 def canonical_fingerprint(
@@ -190,11 +237,32 @@ def canonical_price_fingerprint(
     cutoff = _canonical_date(signal_date)
     rows: list[dict[str, object]] = []
     if not frame.empty:
-        for record in frame.to_dict(orient="records"):
-            row_date = _canonical_date(record["date"])
+        for values in _iter_field_rows(frame, _PRICE_FIELDS):
+            row_date = _canonical_date(values[0])  # "date" 是 _PRICE_FIELDS 首列
             if row_date > cutoff:
                 continue
-            rows.append(_canonical_row(record, _PRICE_FIELDS))
+            rows.append(_canonical_row_values(values, _PRICE_FIELDS))
+    return canonical_fingerprint("price", ticker, rows)
+
+
+def canonical_price_row_fingerprint(
+    row: Mapping[str, object],
+    ticker: str,
+    signal_date: object,
+) -> str:
+    """单行价格证据指纹 — 与 ``canonical_price_fingerprint(单行帧, ...)`` 逐位等价。
+
+    供全市场 daily batch 这类逐行校验/取证场景免去每行一次 DataFrame 构造
+    (~5000 行 x ~150us)。返回值可丢弃 (纯校验用法) 或参与聚合 (证据指纹用法)。
+    """
+
+    _validate_ticker(ticker, kind="price")
+    cutoff = _canonical_date(signal_date)
+    rows: list[dict[str, object]] = []
+    if "date" not in row:
+        raise PITEvidenceError("missing required PIT fields: date")
+    if _canonical_date(row["date"]) <= cutoff:
+        rows.append(_canonical_row(row, _PRICE_FIELDS))
     return canonical_fingerprint("price", ticker, rows)
 
 
@@ -209,6 +277,7 @@ def canonical_flow_fingerprint(
     cutoff = _canonical_date(signal_date)
     if records is None:
         raise PITEvidenceError("fund-flow evidence must not be None")
+    rows: list[dict[str, object]] = []
     if isinstance(records, pd.DataFrame):
         missing_columns = set(_FLOW_FIELDS) - set(records.columns)
         if missing_columns:
@@ -216,11 +285,13 @@ def canonical_flow_fingerprint(
                 "missing required flow columns: "
                 + ", ".join(sorted(missing_columns))
             )
-        source_rows: Sequence[Mapping[str, object]] = records.to_dict(orient="records")
-    else:
-        source_rows = records
-    rows: list[dict[str, object]] = []
-    for record in source_rows:
+        for values in _iter_field_rows(records, _FLOW_FIELDS):
+            row_date = _canonical_date(values[0])  # "date" 是 _FLOW_FIELDS 首列
+            if row_date > cutoff:
+                continue
+            rows.append(_canonical_row_values(values, _FLOW_FIELDS))
+        return canonical_fingerprint("fund_flow", ticker, rows)
+    for record in records:
         if not isinstance(record, Mapping):
             raise PITEvidenceError("fund-flow evidence rows must be mappings")
         if "date" not in record:

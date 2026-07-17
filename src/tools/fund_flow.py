@@ -42,7 +42,9 @@ def _fetch_enrich_supplement(
     只取 _ENRICHABLE_FIELDS 列返回 (金额列由 base 主源负责, 不从这里取)。
 
     ftshare: 已安装时稳定 (market.ft.tech 网关), 提供 eastmoney_stock_flow。
-    akshare: 东财 push2his 域间歇性 ProxyError (实测 ~60%), 重试一次 (→ ~84%)。
+    akshare: 东财 push2his 域间歇性 ProxyError (实测 ~60%), 重试一次 (→ ~84%);
+    2026-07-17 起东财 WAF 封禁期恶化到 ~100%, 由 akshare_fund_flow 熔断器整批跳过
+    (此处同步检查, 省每票 2 次注定失败的调用 + 0.5s 退避)。
     两源都失败时返回空 DataFrame, 调用方按原样保留 base。
     """
     import pandas as pd  # local import, 模块顶部已 import 但显式声明
@@ -59,18 +61,23 @@ def _fetch_enrich_supplement(
     except Exception as exc:  # noqa: BLE001 - ftshare 故障不阻塞, 试 akshare
         logger.debug("[资金流] %s ftshare 补全失败, 试 akshare: %s", ticker, exc)
 
-    # 2) akshare (补 ftshare 缺口; 间歇性 ProxyError, 重试一次)
-    for attempt in (1, 2):
-        try:
-            supp = _try_akshare(ticker, start_date=start_date, end_date=end_date)
-            if supp is not None and len(supp) > 0:
-                supplements.append(supp)
-                break
-        except Exception as exc:  # noqa: BLE001 - akshare 间歇性故障, 再试一次
-            logger.debug("[资金流] %s akshare 补全尝试 %d 失败: %s", ticker, attempt, exc)
-        if attempt == 1:
-            import time
-            time.sleep(0.5)  # 短退避, 缓解 push2his 域瞬时拥塞
+    # 2) akshare (补 ftshare 缺口; 间歇性 ProxyError, 重试一次; 熔断期整段跳过)
+    from src.tools.akshare_fund_flow import circuit_breaker_open
+
+    if circuit_breaker_open():
+        logger.debug("[资金流] %s akshare 熔断中, 跳过补全", ticker)
+    else:
+        for attempt in (1, 2):
+            try:
+                supp = _try_akshare(ticker, start_date=start_date, end_date=end_date)
+                if supp is not None and len(supp) > 0:
+                    supplements.append(supp)
+                    break
+            except Exception as exc:  # noqa: BLE001 - akshare 间歇性故障, 再试一次
+                logger.debug("[资金流] %s akshare 补全尝试 %d 失败: %s", ticker, attempt, exc)
+            if attempt == 1:
+                import time
+                time.sleep(0.5)  # 短退避, 缓解 push2his 域瞬时拥塞
 
     if not supplements:
         return pd.DataFrame()

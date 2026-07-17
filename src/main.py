@@ -1490,10 +1490,13 @@ def _log_cache_refresh_summary(s: dict) -> None:
     px_total = s.get("price_total", 0)
     px_updated = s.get("price_updated", 0)
     px_failed = s.get("price_failed", 0)
-    if px_total > 0 and (px_updated > 0 or px_failed > 0):
+    px_skipped = s.get("price_skipped_current", 0)
+    if px_total > 0 and (px_updated > 0 or px_failed > 0 or px_skipped > 0):
         parts = [f"扫描 {px_total} 只"]
         if px_updated > 0:
             parts.append(f"更新 {px_updated}")
+        if px_skipped > 0:
+            parts.append(f"已最新 {px_skipped}")
         if px_failed > 0:
             parts.append(f"失败 {px_failed}")
         logger.info("[Auto] 缓存刷新 · 价格: %s", " · ".join(parts))

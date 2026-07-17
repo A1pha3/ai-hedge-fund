@@ -46,9 +46,9 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 
 **位置：`data/price_cache/*.csv`**（每股一个文件，6 位代码命名）
 
-- **深度限制：只有 6 个月**（2026-01-12 → 2026-07-08，约 117 行/股）。
-- 这导致 `scripts/setup_research.py` 直接跑会 **n=0**（IS/OOS 切分按 2020-2026，但价格数据只有 2026）。
-- `data/reports/setup_research/phase0_report_20260708.md` 声称的 n=1762 **无法从本地数据复现**——它在别处（更深历史）生成。
+- **深度已补齐**（2026-07-17 实测）：823 票，中位 1579 行，2020-01-02 → 2026-07-17。（07-08 时曾只有 6 个月 ~117 行/股，之后做过历史回填。）
+- `scripts/setup_research.py` 直接跑仍会 **n≈0**：完整 setup 需要资金流条件，而 `fund_flow_cache` 历史仍浅（见下表）——价格深度不再是瓶颈，资金流才是。
+- `data/reports/setup_research/phase0_report_20260708.md` 声称的 n=1762 **无法从本地数据复现**——它在别处（更深资金流历史）生成。
 - ⚠️ **引用 Phase 0 报告的结论前，先与 paper_trading_backtest 真实数据交叉验证。** 曾因盲信 Phase 0（声称 OB E=+3.42%/n=1113）对 OversoldBounce 统一加仓，但真实回测（n=59/E=+0.34%/CI 跨 0）显示无 alpha 可放大 → 有害。
 
 ### 其它历史数据（深度较全）
@@ -93,6 +93,16 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 - **面板按 `plan_eligible`(过全过滤) vs `filtered` 分层**：这是判断「全过滤是否真的挑出 alpha」的样本外依据。样本够大前不要据此改策略参数。
 - ⚠️ **panel 是样本外累积，不是回测**：`data/paper_trading_backtest/` 才是历史回测（192 EXIT）。两者别混。刚上线时 panel 里多数 `realized=False`（前向窗口未到期）属正常。
 
+### --auto 缓存刷新性能（2026-07-17 优化，~408s → ~21s）
+
+`refresh_daily_action_caches` 的耗时曾是 --auto 大头（本地 O(全历史) 重处理，不是网络）。优化点：
+
+- **价格幂等跳写**：当日行已存在且值未变 → 跳过全量校验 + 原子重写（证据照采，指纹不变），计数 `price_skipped_current`；原每轮 ~90s 空转写盘消除。
+- **日期处理向量化**：`_fund_flow_dates`/`_price_dates` 纯字符串整列操作，替代逐值 `pd.to_datetime`（800 票 × 中位 1579 行 × 多趟）。
+- **PIT 指纹快路**（`pit_evidence.py`）：`to_dict(records)` → `itertuples` 行迭代 + 零填充 ISO 日期快速路径；`_normalize_daily_batch` 与 `_daily_batch_evidence_fingerprint` 改用 `canonical_price_row_fingerprint`（免每行 DataFrame 构造）。**逐位等价已验证**：优化前后对全部真实缓存（6042 个指纹，含 daily_batch manifest 指纹）逐位一致。
+- **资金流批量预取**（`DAILY_ACTION_FUND_FLOW_BATCH`，默认开）：stale 票用 `fetch_batch_fund_flow_tushare(trade_date)` 单次 API 全市场拉取替代逐票串行（~1.3s/票），命中票免网络与 rate-limit；close/pct_change 从当日 daily batch 填，main_net_pct 留 NaN（见陷阱 11）。冷缓存实测 68 票 30.6s → 6.4s；首日 ~500 票场景从 >10min 量级降到秒级。批量失败/未覆盖自动回落逐票路径。
+- 复测入口：`/tmp/refresh_probe2.py`（分段计时探针，一次性诊断脚本，不入库）。
+
 ### Daily Action readiness v2 迁移与证据链
 
 - **唯一可信新仓证据路径**：`--auto` 刷新 Daily Action 缓存 → `DailyActionRefreshResult` 冻结结果 → readiness schema v2 manifest → `load_verified_daily_action_snapshot()` 重算 PIT 指纹 → `scan_from_verified_snapshot()` → `DailyActionService.complete_run()` → ledger 写入 `verification_status="verified"`、`snapshot_id`、`setup_consumed_fingerprint`。
@@ -104,7 +114,7 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 ## 已知数据/逻辑陷阱（避坑）
 
 1. **`data/paper_trading/` vs `data/paper_trading_backtest/`**：前者是运行时（0 EXIT），后者是回测（192 EXIT）。查成交数据用后者。
-2. **price_cache 只有 6 个月**：直接跑 `setup_research.py` 会 n=0。`phase0_report` 的数字不可复现。
+2. **price_cache 深度已补齐（2026-07-17 实测：823 票中位 1579 行，2020→2026）**，但 `setup_research.py` 仍 n≈0——瓶颈是 `fund_flow_cache` 历史浅（完整 setup 的资金流条件满足不了）。`phase0_report` 的数字仍不可复现。
 3. **止损默认是披露用的，不执行**：`stop_would_have_triggered` 不进 P&L。回测验证（2026-07-10，81 笔 BTST）显示**所有止损策略在当前牛市样本都会降低 E[r] 和 Sharpe**（均值回归 setup 的波动反而赚钱），故默认不执行。可用 `DAILY_ACTION_EXECUTION_STOP=atr_k2|atr_k3|fixed8` 在熊市/高波动期手动启用真实止损执行（改变 P&L 口径，启用前应跑 `scripts/backtest_exit_strategies.py` 确认当前行情有利）。
 4. **`known_distributions.py` 是硬编码常量**（n=1762 等），无自动刷新，引用前需交叉验证。
 5. **`--daily-action` 扫描空间 = price_cache 文件名集合**：曾因只含候选池"好股票"而漏掉涨停小盘股（已用涨停注入修复，见 `cache_refresh.py`）。
@@ -112,6 +122,9 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 7. **BTST 资金流条件在浅数据下降级**（2026-07-10 修复）：`fund_flow_cache` 普遍浅（<5 天）时，BTST 的「资金流 >20d 均值」条件无法判定 → `degraded=True`，渲染时标 `⚠残缺`。运行时检测口径比回测分布更宽松，operator 须知晓。
 8. **setup-output panel 是样本外累积、不是回测**（2026-07-15 新增）：`data/reports/setup_output_panel.jsonl` 由 `--daily-action` 逐日记录 + `--auto` 回填前向收益生成，用于验证「全过滤挑 alpha」是否成立。别和 `data/paper_trading_backtest/` 的历史回测混淆。样本够大前**不要据此改策略参数**；刚上线多数 `realized=False` 属正常。跨周期裸信号已证明 2026 胜率是顺行情、非周期稳健。
 9. **完整 setup 无法在 2020–2026 重放**（2026-07-15 记录）：历史 fund_flow/industry 数据太浅 + composite 强度排序不可回放。引用「跨周期回测」结论前先确认它用的是裸信号还是全 setup；全 setup 的跨周期数字目前拿不到，只能靠 panel 前向累积。
+10. **东财 push2his 会按源 IP 行为封禁，ProxyError 有误导性**（2026-07-17 定位）：`--auto` 每日对 `push2his.eastmoney.com` 逐票数百次 fflow 请求（含 enrich 补全），东财 WAF 对本机 IP 的 `/api/qt/*` 100% 断连（TLS 正常、请求发出后 empty reply；根路径 404、push2 实时 API 200 → 定点封 API 路径，非网络故障）。报错显示 ProxyError 是因为 requests 走系统代理（Clash），**根因不在代理**。已加熔断器（`src/tools/akshare_fund_flow.py`：连续 5 次网络错误熔断 15 分钟、半开自动复位；enrich 路径同步跳过），熔断期 akshare 源由 tushare/ftshare 兜底。注意：`push2` 的 `fflow/kline/get` 只有当日实时数据，**不能**替代历史接口；分片主机 `N.push2his.*` 同被封。封禁期 ftshare 缺的日子 `close`/`main_net_pct` 补不上属预期代价，解封后（通常数小时~几天）自动恢复。
+11. **东财 `main_net_pct` 口径 ≠ 主力净流入/成交额**（2026-07-17 实测）：000504 2026-07-16 tushare 推导 -13.76%（net_mf/成交额，成交额与 daily amount 吻合）vs 东财缓存 -2.83%（分母疑为流通市值）。且 2026-07-16 批次东财行 pct 与 main_net_inflow **符号大量不一致**（如 000014 inflow=-2164万 却 pct=+26.45），该列数据质量存疑。**下游 setup（BTST/OB）只消费 `main_net_inflow` 金额，不消费 pct**，影响为零；但任何新逻辑引用 pct 前必须重新核对口径。资金流批量预取路径因此 pct 留 NaN（落盘补 0.0，同逐票 tushare 惯例）。
+12. **缓存目录不能放在 symlink 路径下**（2026-07-17 实测）：`atomic_write_csv` 的 `_open_parent` 用 `O_NOFOLLOW` 逐层打开目录组件，macOS 的 `/var`、`/tmp`（→ `/private/*`）会报 `[Errno 20] Not a directory: 'var'`。`tempfile.TemporaryDirectory()` 创建的目录就在其下——测试/bench 里构造缓存目录要用项目内路径或 pytest `tmp_path`（本仓库 basetemp 在工作区内）。生产 `data/` 用相对路径不受影响。
 
 ## 关键文件速查
 
@@ -122,7 +135,8 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 | Setup 定义 | `src/screening/offensive/setups/btst_breakout.py`、`oversold_bounce.py` |
 | Kelly 仓位 | `src/screening/offensive/kelly.py` |
 | Paper tracker | `src/screening/offensive/paper_tracker.py`（成交记录、止损、drawdown） |
-| 缓存刷新 | `src/screening/offensive/cache_refresh.py`（`--auto` → `--daily-action` 桥梁；已排除北交所） |
+| 缓存刷新 | `src/screening/offensive/cache_refresh.py`（`--auto` → `--daily-action` 桥梁；已排除北交所；幂等跳写 + 资金流批量预取，见性能小节） |
+| PIT 证据指纹 | `src/screening/offensive/pit_evidence.py`（canonical 指纹/校验；输出是 ledger 契约，改实现必须做逐位等价验证） |
 | 样本外 logger | `src/screening/offensive/setup_output_log.py`（`--daily-action` 逐日写信号快照） |
 | 样本外 backfill | `scripts/join_setup_outputs_with_returns.py`（`backfill_panel()`；`--auto` 末尾回填前向收益 → panel） |
 | 面板体检（只读） | `scripts/panel_health_check.py`（plan_eligible vs filtered Welch t 检验；`--auto` 末尾打印一行摘要，realized≥30/组≥5 时出结论） |

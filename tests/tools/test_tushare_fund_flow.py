@@ -1,4 +1,8 @@
-"""tushare 资金流 fetcher 单元测试 — token 加载 / ts_code 映射 / 单位归一化。"""
+"""tushare 资金流 fetcher 单元测试 — ts_code 映射 / 单位归一化 / 重试逻辑。
+
+token 加载已收编到 src.tools.tushare_api.get_tushare_token (commit 435cc495),
+其测试见 tests/tools/test_tushare_token.py; 本文件不再重复覆盖。
+"""
 
 from __future__ import annotations
 
@@ -6,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from src.tools.tushare_fund_flow import _to_ts_code, _load_token, fetch_individual_fund_flow_tushare
+from src.tools.tushare_fund_flow import _to_ts_code, fetch_individual_fund_flow_tushare
 
 
 def test_to_ts_code_sh():
@@ -23,24 +27,10 @@ def test_to_ts_code_bj():
     assert _to_ts_code("830879") == "830879.BJ"
 
 
-def test_load_token_from_env(monkeypatch):
-    monkeypatch.setenv("TUSHARE_TOKEN", "test_token_123")
-    # 确保不走 .env 文件
-    monkeypatch.setattr("pathlib.Path.exists", lambda self: False)
-    assert _load_token() == "test_token_123"
-
-
-def test_load_token_missing_returns_empty(monkeypatch):
-    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
-    monkeypatch.setattr("pathlib.Path.exists", lambda self: False)
-    assert _load_token() == ""
-
-
-def test_fetch_returns_empty_when_no_token(monkeypatch):
+def test_fetch_returns_empty_when_no_token():
     """无 token → 返回空, 不调 tushare。"""
-    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
-    monkeypatch.setattr("pathlib.Path.exists", lambda self: False)
-    df = fetch_individual_fund_flow_tushare("300502")
+    with patch("src.tools.tushare_fund_flow.get_tushare_token", return_value=""):
+        df = fetch_individual_fund_flow_tushare("300502")
     assert len(df) == 0
 
 
@@ -62,7 +52,7 @@ def test_fetch_unit_conversion_wan_to_yuan():
             "net_mf_vol": [-1000],
         }
     )
-    with patch("src.tools.tushare_fund_flow._load_token", return_value="fake_token"), patch("tushare.pro_api") as mock_pro:
+    with patch("src.tools.tushare_fund_flow.get_tushare_token", return_value="fake_token"), patch("tushare.pro_api") as mock_pro:
         mock_pro.return_value.moneyflow.return_value = fake_raw
         df = fetch_individual_fund_flow_tushare("300502", start_date="20260701", end_date="20260701")
 
@@ -77,7 +67,7 @@ def test_fetch_unit_conversion_wan_to_yuan():
 
 def test_fetch_handles_tushare_exception():
     """tushare API 抛异常 → 返回空, 不 crash。"""
-    with patch("src.tools.tushare_fund_flow._load_token", return_value="fake_token"), patch("tushare.pro_api", side_effect=RuntimeError("api error")):
+    with patch("src.tools.tushare_fund_flow.get_tushare_token", return_value="fake_token"), patch("tushare.pro_api", side_effect=RuntimeError("api error")):
         df = fetch_individual_fund_flow_tushare("300502")
     assert len(df) == 0
 
@@ -117,7 +107,7 @@ def test_retry_succeeds_after_transient_errors(monkeypatch):
     # 前两次网络错误, 第三次成功
     mock_pro.moneyflow.side_effect = [ConnectionError("timeout"), ConnectionError("reset"), fake_raw]
 
-    with patch("src.tools.tushare_fund_flow._load_token", return_value="fake_token"), patch("tushare.pro_api", return_value=mock_pro):
+    with patch("src.tools.tushare_fund_flow.get_tushare_token", return_value="fake_token"), patch("tushare.pro_api", return_value=mock_pro):
         df = fetch_individual_fund_flow_tushare("300502", start_date="20260701", end_date="20260701")
 
     assert mock_pro.moneyflow.call_count == 3  # 1 初试 + 2 重试
@@ -131,7 +121,7 @@ def test_no_retry_for_non_retryable_error(monkeypatch):
     mock_pro = MagicMock()
     mock_pro.moneyflow.side_effect = ValueError("bad param")
 
-    with patch("src.tools.tushare_fund_flow._load_token", return_value="fake_token"), patch("tushare.pro_api", return_value=mock_pro):
+    with patch("src.tools.tushare_fund_flow.get_tushare_token", return_value="fake_token"), patch("tushare.pro_api", return_value=mock_pro):
         df = fetch_individual_fund_flow_tushare("300502")
 
     assert mock_pro.moneyflow.call_count == 1  # 不可重试 → 只调一次
@@ -146,7 +136,7 @@ def test_retry_exhausted_returns_empty(monkeypatch):
     mock_pro = MagicMock()
     mock_pro.moneyflow.side_effect = ConnectionError("persistent timeout")
 
-    with patch("src.tools.tushare_fund_flow._load_token", return_value="fake_token"), patch("tushare.pro_api", return_value=mock_pro):
+    with patch("src.tools.tushare_fund_flow.get_tushare_token", return_value="fake_token"), patch("tushare.pro_api", return_value=mock_pro):
         df = fetch_individual_fund_flow_tushare("300502")
 
     assert mock_pro.moneyflow.call_count == 3  # 1 初试 + 2 重试
@@ -160,7 +150,7 @@ def test_no_retry_for_permission_error(monkeypatch):
     mock_pro = MagicMock()
     mock_pro.moneyflow.side_effect = RuntimeError("请指定正确的接口名")
 
-    with patch("src.tools.tushare_fund_flow._load_token", return_value="fake_token"), patch("tushare.pro_api", return_value=mock_pro):
+    with patch("src.tools.tushare_fund_flow.get_tushare_token", return_value="fake_token"), patch("tushare.pro_api", return_value=mock_pro):
         df = fetch_individual_fund_flow_tushare("300502")
 
     assert mock_pro.moneyflow.call_count == 1

@@ -1354,3 +1354,371 @@ def test_refresh_daily_action_caches_limit_up_not_double_counted_when_in_cache(t
     # 000002 涨停但已在 existing cache, 不算新注入
     assert stats.limit_up_injected == 0
     assert stats.price_total == 2
+
+
+# ── 幂等跳写 + 向量化日期 (2026-07-17 性能优化) ────────────────────────────
+# 背景: 每次 --auto 对 ~800 票 x 1583 行全历史做读取/逐值日期解析/全量校验/
+# 深拷贝/原子重写, 实测缓存刷新阶段 ~408s, 而真正的新数据只有每票 1 行。
+# 优化: 当日行已存在且值一致 → 跳过校验+重写 (证据照采); 日期处理向量化。
+# fail-closed 不变: 任何真实变化仍走 validate_price_artifact 全量校验 + 写盘。
+
+
+def test_vectorized_date_helpers_match_scalar_versions():
+    """_fund_flow_dates/_price_dates (向量化) 与逐值版在所有合法格式上等价。"""
+    from src.screening.offensive.cache_refresh import (
+        _fund_flow_date,
+        _fund_flow_dates,
+        _price_date,
+        _price_dates,
+    )
+
+    values = pd.Series(
+        ["20260716", "2026-07-16", "2026-07-16 00:00:00", " 20260715 ", "2020-01-02"]
+    )
+    assert list(_fund_flow_dates(values)) == [_fund_flow_date(v) for v in values]
+    assert list(_price_dates(values)) == [_price_date(v) for v in values]
+
+
+def test_price_frame_unchanged_guards():
+    """行数不同 / 缺 date 列 / 值不同 → False (回落全量校验+写盘, fail-closed 方向)。"""
+    from src.screening.offensive.cache_refresh import _price_frame_unchanged
+
+    base = pd.DataFrame(
+        {
+            "date": ["2026-07-10", "2026-07-13"],
+            "close": [10.0, 10.5],
+            "open": [9.9, 10.0],
+            "high": [10.2, 10.6],
+            "low": [9.8, 9.9],
+            "pct_change": [1.0, 1.0],
+            "volume": [1000.0, 1100.0],
+        }
+    )
+    assert _price_frame_unchanged(base, base.copy()) is True
+    assert _price_frame_unchanged(base, base.iloc[:-1]) is False  # 行数不同
+    changed = base.copy()
+    changed.loc[1, "close"] = 11.0
+    assert _price_frame_unchanged(base, changed) is False  # 值不同
+    assert _price_frame_unchanged(base, base.drop(columns=["date"])) is False
+    assert _price_frame_unchanged(base, pd.DataFrame()) is False
+
+
+def test_write_price_cache_row_skips_unchanged_rewrite(tmp_path, monkeypatch):
+    """幂等: 当日行已存在且值一致 → 跳过写盘 (wrote=False), 证据照采且内容一致。"""
+    from src.screening.offensive import cache_refresh as cr
+
+    path = tmp_path / "000001.csv"
+    row = {
+        "date": "2026-07-13",
+        "close": 10.5,
+        "open": 10.0,
+        "high": 10.6,
+        "low": 9.9,
+        "pct_change": 1.0,
+        "volume": 1000.0,
+    }
+    writes: list[Path] = []
+    real_write = cr.atomic_write_csv
+    monkeypatch.setattr(
+        cr, "atomic_write_csv", lambda p, f: (writes.append(p), real_write(p, f))
+    )
+
+    frame1, wrote1 = cr._write_price_cache_row(path, row)
+    assert wrote1 is True
+    assert len(writes) == 1
+
+    sunk: list[pd.DataFrame] = []
+    frame2, wrote2 = cr._write_price_cache_row(path, row, artifact_sink=sunk.append)
+    assert wrote2 is False
+    assert len(writes) == 1  # 没有第二次写盘
+    assert len(sunk) == 1  # 证据照采
+    assert sunk[0].equals(frame1)  # 证据内容与首次写入一致
+
+
+def test_write_price_cache_row_rewrites_when_value_changed(tmp_path, monkeypatch):
+    """值变化 → 正常校验+写盘 (wrote=True)。"""
+    from src.screening.offensive import cache_refresh as cr
+
+    path = tmp_path / "000001.csv"
+    row = {
+        "date": "2026-07-13",
+        "close": 10.5,
+        "open": 10.0,
+        "high": 10.6,
+        "low": 9.9,
+        "pct_change": 1.0,
+        "volume": 1000.0,
+    }
+    writes: list[Path] = []
+    real_write = cr.atomic_write_csv
+    monkeypatch.setattr(
+        cr, "atomic_write_csv", lambda p, f: (writes.append(p), real_write(p, f))
+    )
+
+    cr._write_price_cache_row(path, row)
+    changed = dict(row, close=11.0)
+    frame2, wrote2 = cr._write_price_cache_row(path, changed)
+    assert wrote2 is True
+    assert len(writes) == 2
+    # 磁盘上是新值
+    on_disk = pd.read_csv(path)
+    assert on_disk.iloc[-1]["close"] == 11.0
+
+
+def test_price_refresh_second_run_skips_unchanged_writes(tmp_path):
+    """端到端: 第二轮相同 batch → 全部幂等跳过, 证据指纹与首轮一致。
+
+    这是 --auto 一天跑多次时的主路径: 缓存已最新时不应再空转写盘,
+    但 readiness 证据 (fingerprint) 必须照常产出且逐轮稳定。
+    """
+    from datetime import date
+
+    from src.screening.offensive import cache_refresh as cr
+    from src.screening.offensive.cache_readiness import SuspensionEvidence
+
+    price_cache = tmp_path / "price"
+    price_cache.mkdir()
+    (price_cache / "000001.csv").write_text(
+        "date,close,open,high,low,pct_change,volume\n"
+        "2026-07-10,10,9.9,10.2,9.8,1,1000\n",
+        encoding="utf-8",
+    )
+
+    def run():
+        return cr.refresh_daily_action_caches(
+            "20260713",
+            price_cache_dir=price_cache,
+            fund_flow_cache_dir=tmp_path / "flow",
+            snapshot_dir=tmp_path / "snapshots",
+            target_tickers=["000001"],
+            daily_prices_df=_daily_prices(
+                [{"ts_code": "000001.SZ", "trade_date": "20260713", "close": 10.5}]
+            ),
+            suspension_loader=lambda _trade_date: SuspensionEvidence.available(
+                date(2026, 7, 13), set()
+            ),
+            refresh_industry_index=False,
+            refresh_fund_flow=False,
+        )
+
+    first = run()
+    assert first._refresh_counters["price_updated"] == 1
+    assert first._refresh_counters["price_skipped_current"] == 0
+
+    second = run()
+    assert second._refresh_counters["price_updated"] == 0
+    assert second._refresh_counters["price_skipped_current"] == 1
+    # 幂等跳过路径下证据指纹仍产出且逐轮稳定
+    assert (
+        second.outcomes["000001"].evidence_fingerprints["price"]
+        == first.outcomes["000001"].evidence_fingerprints["price"]
+    )
+
+
+def _batch_flow_frame() -> pd.DataFrame:
+    """tushare 批量 moneyflow 拆出的单票当日帧 (close/main_net_pct 为 NaN)。"""
+    return pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-07-13"),
+                "close": float("nan"),
+                "pct_change": 0.0,
+                "main_net_inflow": 1000000.0,
+                "main_net_pct": float("nan"),
+                "big_net_inflow": 500000.0,
+                "super_big_net_inflow": 500000.0,
+                "medium_net_inflow": -200000.0,
+                "small_net_inflow": -300000.0,
+            }
+        ]
+    )
+
+
+def test_fund_flow_prefetched_skips_network_fetch(tmp_path, monkeypatch):
+    """批量预取命中的票: 不调 fetch_fn、不 rate-limit 等待; 未命中票回落逐票。"""
+    from src.screening.offensive import cache_refresh as cr
+    from src.screening.offensive.cache_refresh import refresh_fund_flow_cache
+
+    fetched: list[str] = []
+    sleeps: list[float] = []
+    monkeypatch.setattr(cr.time, "sleep", lambda sec: sleeps.append(sec))
+
+    def fake_fetch(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+        fetched.append(ticker)
+        return pd.DataFrame(
+            [
+                {
+                    "date": pd.Timestamp("2026-07-13"),
+                    "close": 10.2,
+                    "pct_change": 2.0,
+                    "main_net_inflow": 2000000.0,
+                    "main_net_pct": 3.5,
+                }
+            ]
+        )
+
+    stats = refresh_fund_flow_cache(
+        ["000001", "000002", "000003"],
+        "20260713",
+        fund_flow_cache_dir=tmp_path / "flow",
+        fetch_fn=fake_fetch,
+        rate_limit_sec=5.0,  # 若 prefetched 票错误地走网络路径, sleep 会被记录
+        prefetched_frames={"000001": _batch_flow_frame()},
+    )
+
+    # 000001 走预取 (无网络), 000002/000003 回落逐票; sleep 只发生在非末票的网络拉取后
+    assert fetched == ["000002", "000003"]
+    assert len(sleeps) == 1  # 仅 000002 (非末票) 触发 rate-limit
+    assert stats.fund_flow_saved == 3
+    assert stats.fund_flow_prefetched == 1
+    saved = pd.read_csv(tmp_path / "flow" / "000001.csv", dtype={"date": str, "ticker": str})
+    assert saved.iloc[0]["main_net_inflow"] == 1000000.0
+
+
+def test_prefetch_fund_flow_batch_branches(tmp_path, monkeypatch):
+    """helper 各分支: env 关闭 / 注入逐票 / 拉取失败 / 空结果 / 缺价格行 → None 或回落。"""
+    from src.screening.offensive import cache_refresh as cr
+
+    prices = _daily_prices([{"ts_code": "000001.SZ", "trade_date": "20260713"}])
+    calls: list[str] = []
+
+    def batch_fn(trade_date: str):
+        calls.append(trade_date)
+        return {"000001": _batch_flow_frame()}
+
+    base_kwargs = dict(
+        resolved_daily_prices=prices,
+        daily_batch_available=True,
+        per_ticker_fetch_injected=False,
+        batch_fetch_fn=batch_fn,
+    )
+
+    # 命中: close/pct_change 从 daily batch 填入
+    result = cr._prefetch_fund_flow_batch(["000001"], "20260713", **base_kwargs)
+    assert result is not None and "000001" in result
+    filled = result["000001"].iloc[0]
+    assert filled["close"] == 10.2
+    assert filled["pct_change"] == 2.0
+    assert pd.isna(filled["main_net_pct"])  # 留 NaN, store 落盘补 0.0
+
+    # 批量未覆盖的票 → 不在结果中 (回落逐票)
+    result = cr._prefetch_fund_flow_batch(["000002"], "20260713", **base_kwargs)
+    assert result is None
+
+    # daily batch 缺该票价格行 → 不预取
+    result = cr._prefetch_fund_flow_batch(
+        ["000001"],
+        "20260713",
+        resolved_daily_prices=_daily_prices(
+            [{"ts_code": "000003.SZ", "trade_date": "20260713"}]
+        ),
+        daily_batch_available=True,
+        per_ticker_fetch_injected=False,
+        batch_fetch_fn=batch_fn,
+    )
+    assert result is None
+
+    # 注入逐票 fetch → 直接 None (不调批量)
+    calls.clear()
+    assert (
+        cr._prefetch_fund_flow_batch(["000001"], "20260713", **{**base_kwargs, "per_ticker_fetch_injected": True})
+        is None
+    )
+    assert calls == []
+
+    # env 关闭 → None (不调批量)
+    monkeypatch.setenv("DAILY_ACTION_FUND_FLOW_BATCH", "0")
+    assert cr._prefetch_fund_flow_batch(["000001"], "20260713", **base_kwargs) is None
+    assert calls == []
+    monkeypatch.delenv("DAILY_ACTION_FUND_FLOW_BATCH")
+
+    # 批量抛异常 → None (回落逐票)
+    def raising_fn(_trade_date: str):
+        raise RuntimeError("api down")
+
+    assert (
+        cr._prefetch_fund_flow_batch(["000001"], "20260713", **{**base_kwargs, "batch_fetch_fn": raising_fn})
+        is None
+    )
+
+    # 批量返回空 → None
+    assert (
+        cr._prefetch_fund_flow_batch(["000001"], "20260713", **{**base_kwargs, "batch_fetch_fn": lambda _d: {}})
+        is None
+    )
+
+
+def test_refresh_daily_action_caches_fund_flow_batch_end_to_end(tmp_path):
+    """端到端: 批量预取命中 → 落盘 + 状态 CURRENT + 证据指纹产出, 无逐票网络路径。"""
+    from datetime import date
+
+    from src.screening.offensive import cache_refresh as cr
+    from src.screening.offensive.cache_readiness import SuspensionEvidence
+
+    price_cache = tmp_path / "price"
+    price_cache.mkdir()
+    (price_cache / "000001.csv").write_text(
+        "date,close,open,high,low,pct_change,volume\n"
+        "2026-07-10,10,9.9,10.2,9.8,1,1000\n",
+        encoding="utf-8",
+    )
+    batch_calls: list[str] = []
+
+    def batch_fn(trade_date: str):
+        batch_calls.append(trade_date)
+        return {"000001": _batch_flow_frame()}
+
+    result = cr.refresh_daily_action_caches(
+        "20260713",
+        price_cache_dir=price_cache,
+        fund_flow_cache_dir=tmp_path / "flow",
+        snapshot_dir=tmp_path / "snapshots",
+        target_tickers=["000001"],
+        daily_prices_df=_daily_prices(
+            [{"ts_code": "000001.SZ", "trade_date": "20260713", "close": 10.5}]
+        ),
+        suspension_loader=lambda _trade_date: SuspensionEvidence.available(
+            date(2026, 7, 13), set()
+        ),
+        fund_flow_batch_fetch_fn=batch_fn,
+        refresh_industry_index=False,
+        # 注意: 不传 fund_flow_fetch_fn — 若批量失效会走真实网络, 测试环境即失败
+    )
+
+    assert batch_calls == ["20260713"]
+    outcome = result.outcomes["000001"]
+    assert outcome.fund_flow_status.name == "CURRENT"
+    assert "fund_flow" in outcome.evidence_fingerprints
+    assert result._refresh_counters["fund_flow_prefetched"] == 1
+    assert result._refresh_counters["fund_flow_saved"] == 1
+
+    saved = pd.read_csv(tmp_path / "flow" / "000001.csv", dtype={"date": str, "ticker": str})
+    row = saved.iloc[0]
+    assert row["date"] == "20260713"
+    assert row["main_net_inflow"] == 1000000.0
+    assert row["close"] == 10.5  # 来自 daily batch
+    assert row["main_net_pct"] == 0.0  # NaN 按 store 惯例补 0.0 (同逐票 tushare 路径)
+
+    # 第二轮: 缓存已新鲜 → 不再调批量, 状态仍 CURRENT
+    batch_calls.clear()
+    second = cr.refresh_daily_action_caches(
+        "20260713",
+        price_cache_dir=price_cache,
+        fund_flow_cache_dir=tmp_path / "flow",
+        snapshot_dir=tmp_path / "snapshots",
+        target_tickers=["000001"],
+        daily_prices_df=_daily_prices(
+            [{"ts_code": "000001.SZ", "trade_date": "20260713", "close": 10.5}]
+        ),
+        suspension_loader=lambda _trade_date: SuspensionEvidence.available(
+            date(2026, 7, 13), set()
+        ),
+        fund_flow_batch_fetch_fn=batch_fn,
+        refresh_industry_index=False,
+    )
+    assert batch_calls == []
+    assert second.outcomes["000001"].fund_flow_status.name == "CURRENT"
+    assert (
+        second.outcomes["000001"].evidence_fingerprints["fund_flow"]
+        == outcome.evidence_fingerprints["fund_flow"]
+    )
