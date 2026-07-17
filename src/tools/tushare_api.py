@@ -988,6 +988,31 @@ def begin_daily_readiness_reference_capture(
     return token
 
 
+def _ensure_daily_readiness_capture_observations(
+    token: DailyReadinessCaptureToken,
+) -> None:
+    """Fill any missing reference observations while ``token`` is still active.
+
+    The candidate-pool build normally populates these as a side effect of its
+    own fetches, but a same-day pool snapshot cache hit never calls them — so
+    every repeat ``--auto`` run used to end the capture empty and fail closed
+    into a degraded attempt (``typed dated reference snapshot is required``).
+    Self-completion makes evidence acquisition owned by the capture itself
+    instead of by an unrelated cache's miss/hit state. Both fetchers are
+    exception-safe: on provider failure the observation stays ``None`` and the
+    snapshot still fail-closes, exactly as before.
+    """
+
+    with _daily_readiness_reference_lock:
+        state = _daily_readiness_capture_states.get(token.capture_id)
+    if state is None or state.token != token:
+        return
+    if state.security_observation is None:
+        get_all_stock_basic()
+    if state.sw_observation is None:
+        get_sw_industry_classification()
+
+
 def end_daily_readiness_reference_capture(
     token: DailyReadinessCaptureToken,
 ) -> "DailyReadinessReferenceSnapshot | None":
@@ -997,6 +1022,7 @@ def end_daily_readiness_reference_capture(
         raise ValueError("daily readiness capture token is invalid")
     if _daily_readiness_capture_token.get() != token:
         raise ValueError("daily readiness capture token does not own this context")
+    _ensure_daily_readiness_capture_observations(token)
     with _daily_readiness_reference_lock:
         state = _daily_readiness_capture_states.pop(token.capture_id, None)
     _daily_readiness_capture_token.set(None)

@@ -698,9 +698,28 @@ def render_degraded_only(count: int | None = None) -> str:
     return f"结论：ℹ️ 仅供诊断的残缺 setup{suffix}，未生成可交易计划\n影响：残缺/降级命中不进入 BUY 计划，仅用于样本外诊断"
 
 
-def render_readiness_block(reason: str | None = None, *, verbose: bool = False) -> str:
+def render_readiness_block(
+    reason: str | None = None,
+    *,
+    verbose: bool = False,
+    attempt_reasons: tuple[str, ...] = (),
+) -> str:
     detail = _block_reason_zh(reason, verbose=verbose)
-    return f"结论：⛔ 数据护栏阻断新计划\n原因：{detail}\n影响：新候选无法进入计划，但已有持仓的估值和退出仍正常执行\n建议：收盘后运行 uv run python src/main.py --auto 刷新缓存和就绪清单，再运行 --daily-action 获取次日信号"
+    lines = [
+        "结论：⛔ 数据护栏阻断新计划",
+        f"原因：{detail}",
+        "影响：新候选无法进入计划，但已有持仓的估值和退出仍正常执行",
+    ]
+    if attempt_reasons:
+        # 就绪清单缺失时, 上一次 --auto 留下的 attempt 记录了发布失败的真实原因.
+        # 仅提示"重跑 --auto"在系统性失败时无解, 必须让 operator 看到根因.
+        lines.append(
+            f"诊断：最近一次 --auto 发布就绪清单失败（{'; '.join(attempt_reasons)}），请先排查该原因再重跑"
+        )
+    lines.append(
+        "建议：收盘后运行 uv run python src/main.py --auto 刷新缓存和就绪清单，再运行 --daily-action 获取次日信号"
+    )
+    return "\n".join(lines)
 
 
 class _ScannerCompatibilityState:

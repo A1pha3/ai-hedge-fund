@@ -1781,3 +1781,114 @@ def test_write_price_cache_row_skip_path_evidence_is_detached(tmp_path):
     original_close = float(evidence.iloc[-1]["close"])
     combined.loc[combined.index[-1], "close"] = -999.0
     assert float(evidence.iloc[-1]["close"]) == original_close
+
+
+def test_resolve_daily_action_refresh_tickers_drops_unlisted_tickers(tmp_path):
+    """退市/非上市标的 (不在 stock_basic(L)) 必须被剔除: 它们不可能有
+    security/SW 证据, 留在宇宙里会让 v2 readiness 精确覆盖校验全局 fail-closed."""
+    from src.screening.offensive.cache_refresh import resolve_daily_action_refresh_tickers
+
+    price_cache = tmp_path / "price_cache"
+    price_cache.mkdir()
+    for code in ("000001", "000999"):
+        (price_cache / f"{code}.csv").write_text("date,close\n2026-07-08,10\n", encoding="utf-8")
+
+    tickers = resolve_daily_action_refresh_tickers(
+        "20260708",
+        price_cache_dir=price_cache,
+        snapshot_dir=tmp_path / "snapshots",
+        listed_universe_loader=lambda: {"000001", "000002"},
+    )
+
+    assert tickers == ["000001"]
+
+
+def test_resolve_daily_action_refresh_tickers_unlisted_filter_fail_open(tmp_path):
+    """listed universe 不可用 (None) 或 loader 抛错时必须 fail-open:
+    不过滤, 由 readiness 严格校验兜底."""
+    from src.screening.offensive.cache_refresh import resolve_daily_action_refresh_tickers
+
+    price_cache = tmp_path / "price_cache"
+    price_cache.mkdir()
+    (price_cache / "000001.csv").write_text("date,close\n2026-07-08,10\n", encoding="utf-8")
+
+    for loader in (lambda: None, lambda: (_ for _ in ()).throw(RuntimeError("boom"))):
+        tickers = resolve_daily_action_refresh_tickers(
+            "20260708",
+            price_cache_dir=price_cache,
+            snapshot_dir=tmp_path / "snapshots",
+            listed_universe_loader=loader,
+        )
+        assert tickers == ["000001"]
+
+
+def test_load_listed_ticker_symbols_guards_against_partial_stock_basic(
+    monkeypatch, _disable_listed_universe_default_loader
+):
+    """默认 loader 对残缺 stock_basic (< 合理下限, 如缓存被污染) 必须 fail-open,
+    而不是用一个残缺清单把宇宙误删到近乎为空."""
+    import pandas as pd
+    from src.tools import tushare_api
+
+    real_loader = _disable_listed_universe_default_loader
+
+    monkeypatch.setattr(
+        tushare_api,
+        "get_all_stock_basic",
+        lambda: pd.DataFrame([{"ts_code": "000001.SZ"}]),
+    )
+    assert real_loader() is None
+
+    monkeypatch.setattr(
+        tushare_api,
+        "get_all_stock_basic",
+        lambda: pd.DataFrame([{"ts_code": f"{700000 + i}.SZ"} for i in range(3001)]),
+    )
+    listed = real_loader()
+    assert listed is not None and "700000" in listed and len(listed) == 3001
+
+    monkeypatch.setattr(tushare_api, "get_all_stock_basic", lambda: None)
+    assert real_loader() is None
+
+
+def test_refresh_projects_market_wide_suspension_evidence_to_universe(tmp_path):
+    """提供商停牌列表是全市场的; 冻结结果只携带宇宙内停牌票, 且
+    source_fingerprint 按投影后行重导 (v2 清单构建的自校验要求)."""
+    from datetime import date
+
+    from src.screening.offensive.cache_readiness import SuspensionEvidence
+    from src.screening.offensive.cache_refresh import refresh_daily_action_caches
+    from src.screening.offensive.daily_action_readiness import _suspension_from_refresh
+    from src.screening.offensive.pit_evidence import canonical_fingerprint
+
+    source_fp = canonical_fingerprint(
+        "suspension",
+        "*",
+        [
+            {"date": "2026-07-13", "ticker": "000001"},
+            {"date": "2026-07-13", "ticker": "000999"},
+        ],
+    )
+    result = refresh_daily_action_caches(
+        "20260713",
+        price_cache_dir=tmp_path / "price",
+        fund_flow_cache_dir=tmp_path / "flow",
+        snapshot_dir=tmp_path / "snapshots",
+        daily_prices_df=_daily_prices(
+            [{"ts_code": "000001.SZ", "trade_date": "20260713", "pct_chg": 1.0}]
+        ),
+        target_tickers=["000001"],
+        backfill_price_history_fn=lambda *_args: _history_rows(
+            start="2026-05-26", periods=34
+        ),
+        suspension_loader=lambda _trade_date: SuspensionEvidence.available(
+            date(2026, 7, 13), {"000001", "000999"}, source_fingerprint=source_fp
+        ),
+        refresh_industry_index=False,
+        refresh_fund_flow=False,
+    )
+
+    assert result.suspension_evidence.tickers == frozenset({"000001"})
+    # 重导后的指纹必须通过 v2 清单构建的自校验.
+    serialized = _suspension_from_refresh(result)
+    assert serialized.tickers == ("000001",)

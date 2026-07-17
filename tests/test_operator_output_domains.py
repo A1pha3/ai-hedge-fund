@@ -72,3 +72,56 @@ def test_auto_verbose_output_may_include_raw_readiness_codes():
     )
 
     assert "readiness_attempt" in text
+
+
+def test_readiness_block_surfaces_attempt_diagnostics():
+    text = render_readiness_block(
+        "daily_action_readiness_missing",
+        attempt_reasons=("shared_source_capture_failed:ManifestValidationError: security rows must exactly cover frozen universe",),
+    )
+
+    assert "数据护栏阻断新计划" in text
+    assert "诊断" in text
+    assert "shared_source_capture_failed" in text
+    assert "security rows must exactly cover frozen universe" in text
+
+
+def test_readiness_block_without_attempts_keeps_original_shape():
+    text = render_readiness_block("daily_action_readiness_missing")
+
+    assert "诊断" not in text
+    assert "建议" in text
+
+
+def test_latest_daily_action_attempt_reasons_reads_newest_attempt(tmp_path):
+    import json
+    from datetime import date
+
+    from src.cli.dispatcher import _latest_daily_action_attempt_reasons
+
+    older = tmp_path / "daily_action_readiness_attempt_20260717_aaa.json"
+    newer = tmp_path / "daily_action_readiness_attempt_20260717_bbb.json"
+    older.write_text(json.dumps({"reasons": ["older_reason"]}), encoding="utf-8")
+    newer.write_text(json.dumps({"reasons": ["newer_reason"]}), encoding="utf-8")
+    other_day = tmp_path / "daily_action_readiness_attempt_20260716_ccc.json"
+    other_day.write_text(json.dumps({"reasons": ["other_day_reason"]}), encoding="utf-8")
+
+    import os, time
+    now = time.time()
+    os.utime(older, (now - 10, now - 10))
+    os.utime(newer, (now, now))
+
+    assert _latest_daily_action_attempt_reasons(tmp_path, date(2026, 7, 17)) == ("newer_reason",)
+    assert _latest_daily_action_attempt_reasons(tmp_path, date(2026, 7, 18)) == ()
+
+
+def test_latest_daily_action_attempt_reasons_never_raises(tmp_path):
+    from datetime import date
+
+    from src.cli.dispatcher import _latest_daily_action_attempt_reasons
+
+    (tmp_path / "daily_action_readiness_attempt_20260717_broken.json").write_text(
+        "not-json", encoding="utf-8"
+    )
+
+    assert _latest_daily_action_attempt_reasons(tmp_path, date(2026, 7, 17)) == ()

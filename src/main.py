@@ -1379,7 +1379,7 @@ def _complete_daily_action_readiness_for_auto(
         return _publish_daily_action_attempt_for_auto(
             refresh_result=refresh_result,
             reports_dir=Path(reports_dir),
-            reason=f"shared_evidence_or_publication_failed:{type(exc).__name__}",
+            reason=f"shared_evidence_or_publication_failed:{type(exc).__name__}: {str(exc)[:200]}",
         )
 
 

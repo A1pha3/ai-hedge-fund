@@ -109,7 +109,10 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 - **schema v1 只读迁移行为**：旧 `schema_version=1` readiness 文件没有新仓授权；loader 必须返回 `readiness_schema_unsupported`，生命周期仍可先结算到期退出，但不得创建新计划。
 - **fail closed**：空/未知策略版本、伪造或空 fingerprint、字符串布尔值、manifest / candidate / ledger provenance 不匹配，都没有新仓权限。
 - **部署后必须重跑 `uv run python src/main.py --auto`**，让 schema v2 manifest 与最新缓存证据重新发布；不要用旧 v1 readiness 文件授权 `--daily-action` 新仓。
-- **测试隔离规则**：readiness v2 / ledger 集成测试必须把 `data/`、`data/reports/`、ledger sqlite 都建在 `tmp_path`（或测试专用生成目录）下，禁止写工作区运行时 `data/reports`、生产 ledger、`data/paper_trading_backtest/`、历史报告或 legacy ledgers。
+- **证据捕获自愈**（2026-07-17 修复）：`end_daily_readiness_reference_capture` 在捕获窗内自行补齐缺失的 stock_basic/SW 观测，不再依赖候选池构建的副作用——此前候选池当日缓存命中时两个 fetcher 不会被调用，同日重复跑 `--auto` 必然发布失败（`typed dated reference snapshot is required`）。数据源失败仍按原样 fail closed。
+- **宇宙退市过滤**（2026-07-17 修复）：`resolve_daily_action_refresh_tickers` 用 stock_basic(L) 自动剔除退市/非上市标的（数据源不可用或宇宙 <3000 只时 fail-open 不过滤，由 readiness 严格校验兜底）。此前一只退市票（002808）就会让 security/SW 精确覆盖校验把全宇宙清单整体阻断。
+- **停牌证据宇宙投影**（2026-07-17 修复）：tushare 停牌列表是全市场的，而 v2 清单要求停牌证据 ⊆ 宇宙；`refresh_daily_action_caches` 在冻结结果前把停牌证据投影到宇宙内（source_fingerprint 按投影后行重导，保持自校验）。不投影时清单一律 fail-closed（`suspension evidence contains ticker outside universe`）。
+- **测试隔离规则**：readiness v2 / ledger 集成测试必须把 `data/`、`data/reports/`、ledger sqlite 都建在 `tmp_path`（或测试专用生成目录）下，禁止写工作区运行时 `data/reports`、生产 ledger、`data/paper_trading_backtest/`、历史报告或 legacy ledgers。`tests/offensive/conftest.py` 的 autouse fixture 会把退市过滤的默认 loader 置为 fail-open，测试过滤器时显式传 `listed_universe_loader=`。
 
 ## 已知数据/逻辑陷阱（避坑）
 
@@ -125,6 +128,8 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 10. **东财 push2his 会按源 IP 行为封禁，ProxyError 有误导性**（2026-07-17 定位）：`--auto` 每日对 `push2his.eastmoney.com` 逐票数百次 fflow 请求（含 enrich 补全），东财 WAF 对本机 IP 的 `/api/qt/*` 100% 断连（TLS 正常、请求发出后 empty reply；根路径 404、push2 实时 API 200 → 定点封 API 路径，非网络故障）。报错显示 ProxyError 是因为 requests 走系统代理（Clash），**根因不在代理**。已加熔断器（`src/tools/akshare_fund_flow.py`：连续 5 次网络错误熔断 15 分钟、半开自动复位；enrich 路径同步跳过），熔断期 akshare 源由 tushare/ftshare 兜底。注意：`push2` 的 `fflow/kline/get` 只有当日实时数据，**不能**替代历史接口；分片主机 `N.push2his.*` 同被封。封禁期 ftshare 缺的日子 `close`/`main_net_pct` 补不上属预期代价，解封后（通常数小时~几天）自动恢复。
 11. **东财 `main_net_pct` 口径 ≠ 主力净流入/成交额**（2026-07-17 实测）：000504 2026-07-16 tushare 推导 -13.76%（net_mf/成交额，成交额与 daily amount 吻合）vs 东财缓存 -2.83%（分母疑为流通市值）。且 2026-07-16 批次东财行 pct 与 main_net_inflow **符号大量不一致**（如 000014 inflow=-2164万 却 pct=+26.45），该列数据质量存疑。**下游 setup（BTST/OB）只消费 `main_net_inflow` 金额，不消费 pct**，影响为零；但任何新逻辑引用 pct 前必须重新核对口径。资金流批量预取路径因此 pct 留 NaN（落盘补 0.0，同逐票 tushare 惯例）。
 12. **缓存目录不能放在 symlink 路径下**（2026-07-17 实测）：`atomic_write_csv` 的 `_open_parent` 用 `O_NOFOLLOW` 逐层打开目录组件，macOS 的 `/var`、`/tmp`（→ `/private/*`）会报 `[Errno 20] Not a directory: 'var'`。`tempfile.TemporaryDirectory()` 创建的目录就在其下——测试/bench 里构造缓存目录要用项目内路径或 pytest `tmp_path`（本仓库 basetemp 在工作区内）。生产 `data/` 用相对路径不受影响。
+13. **readiness v2 精确覆盖 vs 现实数据滞后**（2026-07-17 记录）：v2 要求宇宙内每票都有 stock_basic(L) + 申万行业成员证据，缺一票全局 fail-closed。退市票由宇宙构建时的 stock_basic(L) 过滤解决（见"宇宙退市过滤"）；残留风险是**新上市/次新股尚未纳入申万行业指数**（stock_basic 有、SW 成员没有）——若此类票经涨停注入进入宇宙，SW 覆盖校验仍会阻断当日清单。出现时把该票加入 `EXTRA_EXCLUDED_TICKERS` 临时屏蔽，或等申万收录后自愈。
+
 
 ## 关键文件速查
 

@@ -26,6 +26,7 @@ from src.screening.offensive.cache_readiness import (
     FundFlowStatus,
     PriceStatus,
     SuspensionEvidence,
+    SuspensionEvidenceStatus,
     TickerRefreshOutcome,
     derive_stats_from_outcomes,
     universe_fingerprint,
@@ -467,12 +468,47 @@ def _load_candidate_pool_tickers(path: Path, *, include_shadow: bool = False) ->
     return tickers
 
 
+# 全 A 股 list_status=L 的合理下限 (2020 年 ~3700 只, 2026 年 ~5500 只).
+# 低于此值说明 stock_basic 数据残缺 (如缓存被污染), 过滤器必须 fail-open
+# 而不是用一个残缺清单把宇宙误删到近乎为空.
+_MIN_LISTED_UNIVERSE_SIZE = 3000
+
+
+def _load_listed_ticker_symbols() -> set[str] | None:
+    """当前上市 (list_status=L) 的 6 位代码集合; 不可用时返回 ``None``.
+
+    Fail-open 契约: ``None`` 表示"不知道, 不要过滤", 由下游 v2 readiness 的
+    精确覆盖校验兜底 (届时全局 fail-closed, 不会静默放行).
+    """
+
+    try:
+        from src.tools.tushare_api import get_all_stock_basic
+
+        frame = get_all_stock_basic()
+    except Exception as exc:  # noqa: BLE001 - 过滤失败不得拖垮缓存刷新
+        logger.warning("[cache_refresh] 上市宇宙获取失败, 退市过滤跳过: %s", exc)
+        return None
+    if frame is None or frame.empty or "ts_code" not in frame.columns:
+        logger.warning("[cache_refresh] 上市宇宙为空, 退市过滤跳过")
+        return None
+    listed = {str(code).split(".", 1)[0] for code in frame["ts_code"]}
+    if len(listed) < _MIN_LISTED_UNIVERSE_SIZE:
+        logger.warning(
+            "[cache_refresh] 上市宇宙仅 %d 只 (< %d), 疑似数据残缺, 退市过滤跳过",
+            len(listed),
+            _MIN_LISTED_UNIVERSE_SIZE,
+        )
+        return None
+    return listed
+
+
 def resolve_daily_action_refresh_tickers(
     trade_date: str,
     *,
     price_cache_dir: Path | str = _DEFAULT_PRICE_CACHE_DIR,
     snapshot_dir: Path | str = _DEFAULT_SNAPSHOT_DIR,
     include_shadow: bool = False,
+    listed_universe_loader: Callable[[], set[str] | None] | None = None,
 ) -> list[str]:
     """Return the ticker universe whose caches must be fresh for ``--daily-action``."""
 
@@ -483,6 +519,24 @@ def resolve_daily_action_refresh_tickers(
             if "shadow" in path.name and not include_shadow:
                 continue
             tickers.update(_load_candidate_pool_tickers(path, include_shadow=include_shadow))
+    # 退市/非上市标的剔除: 它们不可能有 stock_basic/SW 证据, 而 v2 readiness 对
+    # 宇宙内任一缺证据票全局 fail-closed —— 一只退市票会阻断全宇宙的清单发布.
+    # 数据源不可用时 fail-open (不过滤), 由 readiness 严格校验兜底.
+    loader = listed_universe_loader if listed_universe_loader is not None else _load_listed_ticker_symbols
+    try:
+        listed = loader()
+    except Exception as exc:  # noqa: BLE001 - 过滤失败不得拖垮缓存刷新
+        logger.warning("[cache_refresh] 退市过滤失败, 跳过: %s", exc)
+        listed = None
+    if listed is not None:
+        dropped = sorted(ticker for ticker in tickers if ticker not in listed)
+        if dropped:
+            logger.info(
+                "[cache_refresh] 剔除退市/非上市标的 %d 只: %s",
+                len(dropped),
+                ",".join(dropped),
+            )
+            tickers -= set(dropped)
     # 北交所全面排除 (数据获取 + 选股): 覆盖 price_cache 已有文件与候选池残留。
     # 永久排除票 (退市/数据残缺) 同步剔除。
     return sorted(
@@ -719,6 +773,38 @@ def _load_suspended_codes(trade_date: str) -> set[str]:
     """Backward-compatible suspension-code helper for direct fund-flow refreshes."""
 
     return set(load_suspension_evidence(trade_date).tickers)
+
+
+def _project_suspension_evidence_to_universe(
+    evidence: SuspensionEvidence, universe: tuple[str, ...]
+) -> SuspensionEvidence:
+    """Restrict market-wide suspension evidence to the frozen universe.
+
+    The provider suspension list is market-wide, but the frozen refresh result
+    — and the v2 readiness manifest built from it — is universe-scoped:
+    evidence covering non-universe tickers is rejected as inconsistent. The
+    source fingerprint is re-derived over the projected rows (identical
+    canonical construction) so the evidence stays self-verifiable.
+    """
+
+    if evidence.status is not SuspensionEvidenceStatus.AVAILABLE_NONEMPTY:
+        return evidence
+    projected = sorted(ticker for ticker in evidence.tickers if ticker in set(universe))
+    if len(projected) == len(evidence.tickers):
+        return evidence
+    rows = (
+        []
+        if not projected
+        else [
+            {"date": evidence.trade_date.isoformat(), "ticker": ticker}
+            for ticker in projected
+        ]
+    )
+    return SuspensionEvidence.available(
+        evidence.trade_date,
+        set(projected),
+        source_fingerprint=canonical_fingerprint("suspension", "*", rows),
+    )
 
 
 def _check_tushare_available() -> bool:
@@ -1206,6 +1292,11 @@ def refresh_daily_action_caches(
     except Exception:  # noqa: BLE001 - unavailable remains distinct from empty
         logger.warning("[cache_refresh] suspension evidence unavailable", exc_info=True)
         suspension_evidence = SuspensionEvidence.unavailable(trade_date_dt)
+    # 提供商停牌列表是全市场的; 冻结结果与 v2 清单都按宇宙取证, 宇宙外停牌票
+    # 必须投影剔除 (指纹按投影后行重导, 保持自校验), 否则清单构建 fail-closed.
+    suspension_evidence = _project_suspension_evidence_to_universe(
+        suspension_evidence, frozen_universe
+    )
 
     if refresh_industry_index is None:
         refresh_industry_index = _env_enabled("DAILY_ACTION_REFRESH_INDUSTRY_INDEX", default=True)

@@ -989,6 +989,34 @@ _DAILY_ACTION_BLOCK_REASONS_ZH = {
 }
 
 
+def _latest_daily_action_attempt_reasons(reports_dir, signal_date) -> tuple[str, ...]:
+    """Best-effort: reasons recorded by the newest readiness attempt for ``signal_date``.
+
+    When the canonical manifest is missing, the degraded attempt left by the
+    last ``--auto`` run is the only operator-visible record of *why* the
+    publish failed. Diagnostics must never block rendering: any read/parse
+    failure yields an empty tuple.
+    """
+    import json
+
+    try:
+        attempts = sorted(
+            Path(reports_dir).glob(
+                f"daily_action_readiness_attempt_{signal_date.strftime('%Y%m%d')}_*.json"
+            ),
+            key=lambda path: path.stat().st_mtime,
+        )
+        if not attempts:
+            return ()
+        payload = json.loads(attempts[-1].read_text(encoding="utf-8"))
+        reasons = payload.get("reasons")
+        if isinstance(reasons, list):
+            return tuple(str(reason) for reason in reasons if reason)
+    except Exception:  # noqa: BLE001 - 诊断信息不得阻断渲染
+        pass
+    return ()
+
+
 def _resolve_daily_action(
     argv: list[str], *, open_sessions=None, ledger_path=None
 ) -> int | None:
@@ -1087,6 +1115,7 @@ def _resolve_daily_action(
         context = service.advance_lifecycle(signal_date)
         verified = None
         snapshot_block_reason: str | None = None
+        attempt_reasons: tuple[str, ...] = ()
         try:
             verified = load_verified_daily_action_snapshot(
                 signal_date,
@@ -1099,6 +1128,7 @@ def _resolve_daily_action(
             snapshot_block_reason = (
                 verified.global_reason if verified is not None else "readiness_snapshot_load_failed"
             ) or "daily_action_readiness_missing"
+            attempt_reasons = _latest_daily_action_attempt_reasons(reports_dir, signal_date)
             scan = DailyActionScan(signal_date, (), (), ())
             v2_run = complete_daily_action_v2(
                 service,
@@ -1140,7 +1170,9 @@ def _resolve_daily_action(
         verbose = "--verbose" in argv
         rendered = render_daily_action_v2(v2_run, verbose=verbose)
         if snapshot_block_reason:
-            rendered = rendered + "\n" + render_readiness_block(snapshot_block_reason, verbose=verbose)
+            rendered = rendered + "\n" + render_readiness_block(
+                snapshot_block_reason, verbose=verbose, attempt_reasons=attempt_reasons
+            )
         elif not v2_run.plans:
             if v2_run.blocked_candidates:
                 rendered = rendered + "\n" + render_degraded_only(len(v2_run.blocked_candidates))

@@ -94,7 +94,9 @@ def build_beijing_exchange_mask_from_series(series: pd.Series) -> pd.Series:
 # 这些票残留在 price_cache/fund_flow_cache 里会被 scanner 拾起, 每天制造 degraded 噪声.
 # 000004.SZ: 2023-12-31 退市 (tests/tools/test_tushare_stock_basic_pit.py:48),
 #   industry/资金流/快照均停更 → 每天以 industry_data_missing 进"不可计划候选".
-_EXCLUDED_TICKERS: frozenset[str] = frozenset({"000004"})
+# 002808.SZ: 2026-07-14 起停更 (价格止于 2026-07-13), 已不在 stock_basic(L) →
+#   v2 readiness 的 security/SW 精确覆盖校验会因它全局 fail-closed.
+_EXCLUDED_TICKERS: frozenset[str] = frozenset({"000004", "002808"})
 
 
 def excluded_tickers() -> frozenset[str]:
