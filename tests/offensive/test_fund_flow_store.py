@@ -152,22 +152,39 @@ def test_save_fills_legacy_close_nan_with_zero_to_unblock_pit_validation(tmp_pat
     assert persisted["main_net_inflow"].tolist() == [-175899900, -129818600, -119486600]
 
 
-def test_save_does_not_fill_main_net_pct_nan_to_avoid_fabricating_ratios(tmp_path):
-    """main_net_pct 的 NaN 不填 0 — 它有下游消费者 (scoring_feature_store),
-    0.0 会被当成真实 '主力净流入占比 0%' 而非 '未知'。NaN 让 _percent_to_ratio 返回
-    None 跳过该票, 是正确行为。所以 main_net_pct 有 NaN 时仍应被 PIT 校验拒绝。"""
+def test_save_fills_legacy_main_net_pct_nan_to_unblock_pit_validation(tmp_path):
+    """main_net_pct 的历史 NaN (07-13/14/15, 约 13% 票) 也填 0.0。
+
+    权衡: 0.0 会让 scoring 算出 main_flow_ratio=0.0 (而非跳过), 但只影响这 3 天
+    历史行, 后续会被 ftshare enrich 补的正确值覆盖。代价远小于"整票被拒丢失全部
+    资金流数据" — main_net_inflow 等 setup 真正依赖的金额列必须能落盘。
+    """
+    path = tmp_path / "000519.csv"
+    path.write_text(
+        "date,close,pct_change,main_net_inflow,main_net_pct\n"
+        "20260714,0.0,0.0,-175899900,\n"  # main_net_pct NaN (历史遗留)
+        "20260715,0.0,0.0,-129818600,\n",
+        encoding="utf-8",
+    )
     store = FundFlowStore(cache_dir=tmp_path)
 
-    with pytest.raises(PITEvidenceError, match="invalid PIT numeric"):
-        store.save(
-            "000519",
-            pd.DataFrame(
-                {
-                    "date": pd.to_datetime(["2026-07-16"]),
-                    "close": [14.18],
-                    "pct_change": [-5.84],
-                    "main_net_inflow": [-119486600],
-                    "main_net_pct": [float("nan")],  # NaN — 必须被拒, 不能填 0
-                }
-            ),
-        )
+    count = store.save(
+        "000519",
+        pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-07-16"]),
+                "close": [14.18],
+                "pct_change": [-5.84],
+                "main_net_inflow": [-119486600],
+                "main_net_pct": [-5.84],  # 当天新行有值 (enrich 补的)
+            }
+        ),
+    )
+
+    persisted = pd.read_csv(path, dtype={"date": str})
+    assert count == 3
+    assert persisted["main_net_pct"].isna().sum() == 0
+    # 历史行填 0.0, 当天行保持真实值
+    assert persisted["main_net_pct"].tolist() == [0.0, 0.0, -5.84]
+    # 金额列保持原值
+    assert persisted["main_net_inflow"].tolist() == [-175899900, -129818600, -119486600]
