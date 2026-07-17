@@ -35,35 +35,67 @@ def _fetch_enrich_supplement(
     start_date: str,
     end_date: str | None,
 ) -> pd.DataFrame:
-    """尝试 ftshare → akshare, 返回第一个非空的 close/main_net_pct 补全源。
+    """合并 ftshare + akshare 两源, 返回 close/main_net_pct 的补全数据。
 
-    ftshare 是可选 SDK (不在 PyPI, 生产常未安装); akshare 是已安装依赖, 但其东财
-    push2his 域间歇性 ProxyError (实测 ~60% 成功率), 故对 akshare 加一次重试
-    (单次 60% → 两次 ~84%)。两者都失败时返回空 DataFrame, 调用方按原样保留 base。
+    两源覆盖区间可能不同 (实测 ftshare 偶尔缺某天, akshare 间歇 ProxyError),
+    所以合并而非二选一: ftshare 优先, ftshare 缺的日期用 akshare 补。
+    只取 _ENRICHABLE_FIELDS 列返回 (金额列由 base 主源负责, 不从这里取)。
+
+    ftshare: 已安装时稳定 (market.ft.tech 网关), 提供 eastmoney_stock_flow。
+    akshare: 东财 push2his 域间歇性 ProxyError (实测 ~60%), 重试一次 (→ ~84%)。
+    两源都失败时返回空 DataFrame, 调用方按原样保留 base。
     """
-    # 1) ftshare (优先, 数据更准)
+    import pandas as pd  # local import, 模块顶部已 import 但显式声明
+
+    supplements: list[pd.DataFrame] = []
+
+    # 1) ftshare (优先)
     try:
         from src.tools.ftshare_api import fetch_individual_fund_flow_ftshare
 
         supp = fetch_individual_fund_flow_ftshare(ticker, start_date, end_date)
         if supp is not None and len(supp) > 0:
-            return supp
+            supplements.append(supp)
     except Exception as exc:  # noqa: BLE001 - ftshare 故障不阻塞, 试 akshare
         logger.debug("[资金流] %s ftshare 补全失败, 试 akshare: %s", ticker, exc)
 
-    # 2) akshare (兜底; 间歇性 ProxyError, 重试一次)
+    # 2) akshare (补 ftshare 缺口; 间歇性 ProxyError, 重试一次)
     for attempt in (1, 2):
         try:
             supp = _try_akshare(ticker, start_date=start_date, end_date=end_date)
             if supp is not None and len(supp) > 0:
-                return supp
+                supplements.append(supp)
+                break
         except Exception as exc:  # noqa: BLE001 - akshare 间歇性故障, 再试一次
             logger.debug("[资金流] %s akshare 补全尝试 %d 失败: %s", ticker, attempt, exc)
         if attempt == 1:
             import time
             time.sleep(0.5)  # 短退避, 缓解 push2his 域瞬时拥塞
 
-    return pd.DataFrame()
+    if not supplements:
+        return pd.DataFrame()
+
+    # 合并: ftshare 优先 (supplements[0]), akshare 补缺口 (supplements[1])。
+    # 只保留 _ENRICHABLE_FIELDS 列 (close/main_net_pct); 金额列由 base 主源负责。
+    keep_cols = [f for f in _ENRICHABLE_FIELDS if any(f in s.columns for s in supplements)]
+    if not keep_cols:
+        return pd.DataFrame()
+
+    # 按 YYYYMMDD 字符串建 key, combine_first: supplements[0] 的 NaN 用 supplements[1] 填。
+    normalized = []
+    for supp in supplements:
+        s = supp.copy()
+        s["_date_key"] = _normalize_date_key(s["date"])
+        cols = ["_date_key"] + [c for c in keep_cols if c in s.columns]
+        normalized.append(s[cols].set_index("_date_key"))
+    merged = normalized[0]
+    for extra in normalized[1:]:
+        merged = merged.combine_first(extra)
+    # 返回带 date 列的结构 (下游 _enrich_close_and_main_net_pct 期望 supplement 有 date 列)。
+    # _date_key 是 YYYYMMDD 字符串, 转成 pandas datetime 作为 date 列。
+    result = merged.reset_index().rename(columns={"_date_key": "date"})
+    result["date"] = pd.to_datetime(result["date"], format="%Y%m%d", errors="coerce")
+    return result
 
 
 def _enrich_close_and_main_net_pct(

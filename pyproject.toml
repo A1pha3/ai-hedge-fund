@@ -40,6 +40,7 @@ dependencies = [
     "aiohttp>=3.11.0",
     "requests>=2.31.0",
     "python-dateutil>=2.8.2",
+    "ftshare",
 ]
 
 [tool.poetry]
@@ -93,11 +94,9 @@ baostock = "^0.9.2"
 akshare = "^1.18.27"
 # A-share market data (src/tools/ashare_data_sources.py TushareDataSource — top-level import; R37 packaging parity fix)
 tushare = "^1.4.24"
-# A-share market data fallback (src/tools/ftshare_api.py — lazy import; 3rd source after tushare/akshare)
-# NOTE: ftshare is not yet on PyPI. Install from source:
-#   pip install git+https://github.com/FTShare-Lab/FTShare-python-sdk.git
-# The SDK is optional — ftshare_client._get_market() returns None gracefully when not installed.
-# ftshare = "^0.1.1"  # uncomment when published to PyPI
+# A-share market data 3rd source (src/tools/ftshare_api.py — eastmoney_stock_flow, provides
+# close + main_net_pct that tushare moneyflow lacks). Git source configured in [tool.uv.sources].
+# ftshare_client._get_market() still returns None gracefully if SDK import fails.
 # Disk cache backend (src/data/enhanced_cache.py — top-level import; R37 packaging parity fix)
 redis = "^7.4.0"
 # JWT auth (app/backend/auth/utils.py — top-level import; R37 packaging parity fix)
@@ -138,6 +137,9 @@ pythonpath = ["."]
 
 [tool.flake8]
 max-line-length = 420
+
+[tool.uv.sources]
+ftshare = { git = "https://github.com/FTShare-Lab/FTShare-python-sdk.git" }
 
 [tool.poetry.scripts]
 backtester = "src.backtesting.cli:main"

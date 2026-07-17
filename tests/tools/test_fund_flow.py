@@ -121,11 +121,18 @@ def _ftshare_like_df():
 
 
 def test_tushare_nan_close_and_main_net_pct_enriched_from_ftshare():
-    """tushare 返回 NaN close/main_net_pct → ftshare 按日期补全, 金额列保持 tushare 原值。"""
+    """tushare 返回 NaN close/main_net_pct → ftshare 按日期补全, 金额列保持 tushare 原值。
+
+    新设计 (两源合并): ftshare 命中后仍会调 akshare 补 ftshare 可能的缺口,
+    所以 akshare 会被调用 — 这是预期行为, 不是 bug。
+    """
     with patch("src.tools.fund_flow._try_tushare", return_value=_tushare_like_df_with_nan_gaps()), patch(
         "src.tools.ftshare_api.fetch_individual_fund_flow_ftshare",
         return_value=_ftshare_like_df(),
-    ) as mock_ftshare_call, patch("src.tools.fund_flow._try_akshare") as mock_akshare_call:
+    ) as mock_ftshare_call, patch(
+        "src.tools.fund_flow._try_akshare",
+        return_value=pd.DataFrame(),  # akshare 空, 不干扰 ftshare 的补全值
+    ):
         df = fetch_individual_fund_flow("000504", start_date="20260701", end_date="20260716")
 
     assert len(df) == 2
@@ -135,9 +142,8 @@ def test_tushare_nan_close_and_main_net_pct_enriched_from_ftshare():
     # 金额列保持 tushare 原值, ftshare 的值没被采纳
     assert df["main_net_inflow"].tolist() == [6_386_000.0, -24_061_900.0]
     assert df["big_net_inflow"].tolist() == [-1_444_800.0, -8_718_900.0]
-    # ftshare 命中, akshare 不再被试
+    # ftshare 被调用
     mock_ftshare_call.assert_called_once_with("000504", "20260701", "20260716")
-    mock_akshare_call.assert_not_called()
 
 
 def test_enrich_skipped_when_base_already_complete():
@@ -204,6 +210,58 @@ def test_enrich_falls_back_to_akshare_when_ftshare_unavailable():
     # ftshare 先被试, akshare 作为兜底被调
     mock_ftshare_call.assert_called_once()
     mock_akshare_call.assert_called_once()
+
+
+def test_enrich_merges_ftshare_and_akshare_to_cover_gaps():
+    """ftshare 缺某天 (实测偶发), akshare 补上 → 两源合并覆盖完整区间。
+
+    生产场景: ftshare 的 eastmoney_stock_flow 偶尔缺某交易日 (实测 000504 的 07-15),
+    akshare 同日有数据 → 合并后两源覆盖互补, 避免 PIT 校验因单行 NaN 拒整票。
+    """
+    # base 有 3 天, close/main_net_pct 全 NaN
+    base = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-14", "2026-07-15", "2026-07-16"]),
+            "close": [float("nan"), float("nan"), float("nan")],
+            "pct_change": [0.0, 0.0, 0.0],
+            "main_net_inflow": [6_386_000.0, -24_061_900.0, -36_413_000.0],
+            "main_net_pct": [float("nan"), float("nan"), float("nan")],
+            "big_net_inflow": [-1_444_800.0, -8_718_900.0, -28_842_900.0],
+        }
+    )
+    # ftshare 缺 07-15 (只有 07-14, 07-16)
+    ftshare_supp = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-14", "2026-07-16"]),
+            "close": [7.74, 9.36],
+            "main_net_pct": [-7.97, -2.83],
+        }
+    )
+    # akshare 三天都有 (含 07-15)
+    akshare_supp = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-14", "2026-07-15", "2026-07-16"]),
+            "close": [7.74, 8.51, 9.36],
+            "main_net_pct": [-7.97, 32.37, -2.83],
+        }
+    )
+    with patch("src.tools.fund_flow._try_tushare", return_value=base), patch(
+        "src.tools.ftshare_api.fetch_individual_fund_flow_ftshare",
+        return_value=ftshare_supp,
+    ), patch(
+        "src.tools.fund_flow._try_akshare",
+        return_value=akshare_supp,
+    ):
+        df = fetch_individual_fund_flow("000504", start_date="20260701", end_date="20260716")
+
+    assert len(df) == 3
+    # 关键: 3 天的 close/main_net_pct 全部补上 (ftshare 缺的 07-15 被 akshare 补)
+    assert df["close"].isna().sum() == 0
+    assert df["main_net_pct"].isna().sum() == 0
+    assert df["close"].tolist() == [7.74, 8.51, 9.36]
+    assert df["main_net_pct"].tolist() == [-7.97, 32.37, -2.83]
+    # 金额列保持 tushare 原值 (三源合并只动 close/main_net_pct)
+    assert df["main_net_inflow"].tolist() == [6_386_000.0, -24_061_900.0, -36_413_000.0]
 
 
 def test_enrich_preserves_base_rows_when_supplement_has_extra_dates():

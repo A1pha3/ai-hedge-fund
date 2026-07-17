@@ -100,8 +100,12 @@ def _get_market():
         try:
             session = _get_retry_session()
             timeout = getattr(session, "_ftshare_timeout", 30.0)
-            # ft.market_api 工厂函数: 接受 base_url/timeout/headers/session 参数
-            _market = ft.market_api(session=session, timeout=timeout)  # type: ignore[union-attr]
+            # 直接构造 FtshareClient 注入 retry session。
+            # 不能用 ft.market_api() 工厂 — 它的签名 (base_url/timeout/headers) 不接受 session,
+            # 而 FtshareClient.__init__ 接受 session。我们要 session 注入来做 429/5xx 重试。
+            from ftshare.client import FtshareClient
+
+            _market = FtshareClient(timeout=timeout, session=session)
             logger.debug("ftshare market client 初始化成功 (timeout=%.1fs, retry=%d)", timeout, 3)
             return _market
         except Exception as e:
