@@ -701,6 +701,20 @@ def _attach_signal_decay(
     return decay_summary
 
 
+def _investability_profit_aware() -> bool:
+    """profit_aware 排序 (empirical bucket winrate 主键) 默认开启 (2026-07-18).
+
+    证据: composite/score_b 作为 Top10 内部排序主键显著反向 — c272 (47% score_desc
+    vs 60% equal_weight) 与 2026-07-18 独立复核 (tracking n=8168/89日: T+5 日级
+    IC=-0.112 t=-2.49, T+30 IC=-0.138 t=-3.12; top-3 胜率 45.2% vs 反选 58.3%).
+    profit_aware (c273) 以 tracking 样本外 bucket 胜率重键, composite 降为末位
+    tie-break. 变更经 panel/tracking 持续样本外监测; INVESTABILITY_PROFIT_AWARE=false
+    可回退旧主键.
+    """
+    raw = os.environ.get("INVESTABILITY_PROFIT_AWARE", "").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
 def _rank_pool_by_investability(ranking_pool: list[dict], trade_date: str) -> list[dict]:
     """Composite-score + expected-return 投资性排名; 任何异常时回退到原 ``ranking_pool``。
 
@@ -739,7 +753,12 @@ def _rank_pool_by_investability(ranking_pool: list[dict], trade_date: str) -> li
             history_records=history_records,
             lookback_days=60,
         )
-        return rank_recommendations_by_investability(ranking_pool, composite_report, expected_report)
+        return rank_recommendations_by_investability(
+            ranking_pool,
+            composite_report,
+            expected_report,
+            profit_aware=_investability_profit_aware(),
+        )
     except Exception as exc:
         # BH-017: never crash auto-screening on ranking failure, but make the
         # silent fallback observable — the user otherwise sees an unranked pool

@@ -55,6 +55,15 @@ HARD_STOCK_CAP = 0.12
 LOT_SIZE = 100
 SETUP_HOLDING_SESSIONS = {"btst_breakout": 10}
 
+# Drawdown 熔断 (与 legacy paper_tracker.drawdown_action 对齐, v2 迁移时丢失, 2026-07-18 恢复):
+# 组合回撤 ≤ -20% 停止一切新仓 (情绪移除), ≤ -15% 新仓权重减半.
+_DRAWDOWN_HALT_THRESHOLD = -0.20
+_DRAWDOWN_REDUCE_THRESHOLD = -0.15
+# 行业集中度: 同一入场日同行业新仓 ≤ 2 (含当日已预留计划).
+# 回测依据 (legacy daily_action.py 同款): 集中日 E[r] +6.3% vs 分散日 +9.7%,
+# 最差日全部高度集中.
+_MAX_PER_INDUSTRY_DAILY = 2
+
 
 class RegimeAuthorization(StrEnum):
     NORMAL = "normal"
@@ -839,6 +848,31 @@ class DailyActionService:
             for plan in self.repository.planned_trades()
             if plan.planned_entry_date == entry_date
         ]
+        # Drawdown 熔断 (v2 迁移时丢失, 与 legacy drawdown_action 对齐恢复):
+        # 组合回撤 ≤ -20% 停止一切新仓; ≤ -15% 新仓权重减半.
+        if valuation.drawdown <= _DRAWDOWN_HALT_THRESHOLD:
+            self._add_block_reason("drawdown_circuit_breaker")
+            return ()
+        drawdown_multiplier = (
+            0.5 if valuation.drawdown <= _DRAWDOWN_REDUCE_THRESHOLD else 1.0
+        )
+        # 行业集中度: 同一入场日同行业新仓 ≤ 2 (含已预留). 行业映射来自 verified
+        # snapshot 的共享证据 (universe 全覆盖); 缺映射的票各自独立成行, 不误并组.
+        industry_by_ticker: Mapping[str, str] = {}
+        snapshot = self._active_snapshot
+        snapshot_manifest = getattr(snapshot, "manifest", None)
+        shared_evidence = getattr(snapshot_manifest, "shared_evidence", None)
+        snapshot_industry_map = getattr(shared_evidence, "industry_by_ticker", None)
+        if isinstance(snapshot_industry_map, Mapping):
+            industry_by_ticker = snapshot_industry_map
+
+        def _industry_of(ticker: str) -> str:
+            return industry_by_ticker.get(ticker) or f"__unknown__{ticker}"
+
+        industry_count: dict[str, int] = {}
+        for plan in reserved:
+            industry = _industry_of(plan.ticker)
+            industry_count[industry] = industry_count.get(industry, 0) + 1
         seen: set[str] = set()
         created_items: list[ActionItem] = []
         for candidate in sorted(
@@ -849,12 +883,16 @@ class DailyActionService:
             seen.add(candidate.ticker)
             if candidate.authorization is not RegimeAuthorization.NORMAL:
                 self._add_block_reason("regime_authorization_evidence_unavailable")
+            industry = _industry_of(candidate.ticker)
+            if industry_count.get(industry, 0) >= _MAX_PER_INDUSTRY_DAILY:
+                continue
             provenance = self._plan_provenance(candidate, as_of, entry_date)
             weight = min(
                 candidate.target_weight,
                 candidate.authorization.ticker_cap,
                 provenance.ticker_cap(candidate.setup),
             )
+            weight *= drawdown_multiplier
             open_weight = sum(values.values()) / valuation.nav
             ticker_weight = values.get(candidate.ticker, 0.0) / valuation.nav
             ticker_reserved = sum(
@@ -882,6 +920,7 @@ class DailyActionService:
             )
             if created:
                 reserved.append(trade)
+                industry_count[industry] = industry_count.get(industry, 0) + 1
                 created_items.append(self._item(trade, "entry_planned"))
         return tuple(created_items)
 

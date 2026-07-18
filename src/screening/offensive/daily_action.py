@@ -692,6 +692,7 @@ _BLOCK_REASON_ZH = {
     "incomplete_setup_data": "setup 数据不完整",
     "setup_disabled_by_default": "setup 默认暂停",
     "setup_not_ledger_enabled": "setup 未在台账启用",
+    "drawdown_circuit_breaker": "组合回撤熔断",
     "detector_degraded": "检测器降级",
     "regime_authorization_evidence_unavailable": "regime 加仓证据暂不可验，按 10% 单票上限披露",
 }

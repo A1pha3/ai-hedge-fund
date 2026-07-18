@@ -19,6 +19,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
+import logging
+
 from src.screening.data_quality_manifest import (
     RunManifest,
     TickerReadiness,
@@ -29,11 +31,48 @@ from src.utils.atomic_files import (
     atomic_write_json,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class AutoRunStatus(str, Enum):
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     FATAL = "fatal"
+
+
+def _append_regime_history(trade_date: str, payload: dict, reports_dir: Path) -> None:
+    """把当日 regime 追加进 regime_history.json (幂等, best-effort).
+
+    regime_history.json 此前停在 20260707 且无生产写入者 (backfill 脚本硬编码
+    _END_DATE), legacy 扫描/回测路径的 regime 静默退化为 normal. --auto 每日
+    计算的 market_state.regime_gate_level 与 backfill 同源 (detect_market_state),
+    顺手落一行; 行未变则跳过写盘 (与缓存幂等跳写同哲学).
+    """
+
+    try:
+        market_state = payload.get("market_state")
+        regime = (
+            market_state.get("regime_gate_level")
+            if isinstance(market_state, dict)
+            else None
+        )
+        if type(regime) is not str or not regime:
+            return
+        path = Path(reports_dir) / "regime_history.json"
+        history: dict[str, str] = {}
+        if path.exists():
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    history = {str(k): str(v) for k, v in raw.items()}
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("[Auto] regime_history 读取失败, 从空重建: %s", exc)
+        if history.get(trade_date) == regime:
+            return
+        history[trade_date] = regime
+        atomic_write_json(path, history)
+    except Exception as exc:  # noqa: BLE001 - best-effort, 不得拖垮 --auto
+        logger.warning("[Auto] regime_history 追加失败: %s", exc)
 
 
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -880,6 +919,7 @@ def _default_dependencies(
         if inputs.cache_refresh_summary:
             payload["daily_action_cache_refresh"] = dict(inputs.cache_refresh_summary)
         main._attach_freshness_check(inputs.trade_date, payload)
+        _append_regime_history(inputs.trade_date, payload, reports_dir)
         refresh_result = readiness_state["refresh_result"]
         from src.screening.offensive.cache_readiness import DailyActionRefreshResult
         from src.screening.offensive.daily_action_readiness import (

@@ -1133,7 +1133,14 @@ def _resolve_daily_action(
         return pd.read_csv(cache, dtype={"date": str})
 
     resolved_ledger_path = Path(ledger_path or "data/paper_trading_v2/ledger.sqlite3")
-    execution_costs = ExecutionCosts(version="daily-action-v2")
+    # 成本口径与 Kelly 先验对齐 (known_distributions/adjust_returns: 30bps/边滑点),
+    # 加 5bps 卖出印花税; 此前 v2 全零成本, 实盘 P&L 系统性优于证据 ~0.6pp/笔,
+    # 污染 "paper P&L vs 先验" 的 edge 衰减监测. version 随成本语义演进 (provenance 记录).
+    execution_costs = ExecutionCosts(
+        version="daily-action-v2.1",
+        tax_rate=0.0005,
+        slippage_bps=30.0,
+    )
     with LedgerRepository(
         resolved_ledger_path,
         "daily-action-v2",

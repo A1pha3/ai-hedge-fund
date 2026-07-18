@@ -62,7 +62,7 @@ regime 分层: crisis>normal>risk_off 排序保留, 量级下修 (如 BTST crisi
 
 | 数据源 | 位置 | 深度 |
 |---|---|---|
-| regime_history | `data/reports/regime_history.json` | 2020-2026，1588 天 ✅ 完整 |
+| regime_history | `data/reports/regime_history.json` | 2020-2026，`--auto` 每日追加当日 regime（2026-07-18 起有生产写入者）；此前停在 20260707，legacy 路径静默退化 normal |
 | industry_index_cache | `data/industry_index_cache/*.csv` | 2020-2026，31 个行业，1577 行 ✅ 完整 |
 | fund_flow_cache | `data/fund_flow_cache/*.csv` | 370 文件，深度不一（部分仅 1 行）⚠️ |
 | tracking_history | `data/reports/tracking_history.json` | `--auto` 推荐追踪，跨日 T+1/T+3/T+5 收益 |
@@ -77,13 +77,14 @@ regime 分层: crisis>normal>risk_off 排序保留, 量级下修 (如 BTST crisi
   - 恢复：`DAILY_ACTION_DISABLED_SETUPS=none`（补全历史数据重跑后再决定去留）。
   - ⚠️ 暂停理由不是"crisis 亏钱"（crisis n=21 太小不可靠），而是"无法证明赚钱 + 亏起来更狠 + 仓位有更好去处"。详见上文"2026 实测表现"。
 - Kelly 仓位：half-Kelly，当前 v2 ledger 单票硬上限 10%，组合上限 60%；12% regime 例外暂停，待 canonical regime evidence 可由 repository 重验后恢复。
+- **Drawdown 熔断 + 行业集中度（2026-07-18 恢复，v2 迁移时曾丢失）**：组合回撤 ≤-20% 停止一切新仓、≤-15% 新仓权重减半（与 legacy `drawdown_action` 对齐）；同一入场日同行业新仓 ≤2（含当日已预留，依据：集中日 E[r] +6.3% vs 分散日 +9.7%）。
+- **执行成本口径 v2.1**（2026-07-18）：v2 ledger 执行成本从零成本改为 30bps/边滑点 + 5bps 卖出印花税，与 Kelly 先验（`adjust_returns` 30bps/边）对齐；此前零成本使实盘 P&L 系统性优于证据 ~0.6pp/笔，污染 edge 衰减监测。
 - 止损：⚠️ **当前是披露用的，不执行**——`stop_would_have_triggered` 只进 reasoning 字符串，**不影响 realized P&L**（账面按 T+N close）。⚠️ 旧述"192 笔回测 0 笔触发（2026 行情好）"**因果错误**（2026-07-18 审查定位）：生成该 journal 的回测传了 `price_loader=None`，止损检测根本没运行（0 触发是默认值不是检测结果）；独立重算持有期 raw low ≤ -8% 硬止损 **43% 会触发**。"止损不执行不伤 P&L"的有效证据是 `scripts/backtest_exit_strategies.py` 的独立止损回测（2026-07-10，81 笔 BTST：所有止损策略在当前牛市样本都降低 E[r] 和 Sharpe），不是 journal 的 0 触发。可用 `DAILY_ACTION_EXECUTION_STOP=atr_k2|atr_k3|fixed8` 在熊市/高波动期手动启用真实止损执行（改变 P&L 口径，启用前应跑 `scripts/backtest_exit_strategies.py` 确认当前行情有利）。
 
 ### 因子评分（`--auto`）
 
 - 四策略 → score_b → composite_score → investability 排序。
-- `profit_aware` 排序模式默认关闭（代码注释称 composite_score 有负预测值）。
-- ⚠️ **score_b 在真实 Top10 切片内显著反向**（2026-07-18 对抗性审查实证，tracking_history n=8168/89 日）：日级 rank IC **T+5=-0.112（t=-2.49）/ T+30=-0.138（t=-3.12）**；全池 300 票日 IC 为正（+0.028/+0.059）——顶部非单调反转（极端动量过热 → 短 horizon 反转），"选择偏差伪象"解释不了符号翻转。top-3-by-score 胜率 45.2% vs 当日等权 54.8% vs 反向选取 58.3%。**这是排序键问题（Top10 内部名次），不是池子问题；修复方向是 profit_aware 默认化或顶部过热衰减，变更前需经 panel 样本外确认。**
+- **`profit_aware` 排序默认开启**（2026-07-18 切换，`INVESTABILITY_PROFIT_AWARE=false` 回退）：主键改为 empirical bucket 胜率（tracking 样本外），composite/score_b 降为末位 tie-break。依据（双确认）：composite/score_b 主键在真实 Top10 切片显著反向 — c272（47% score_desc vs 60% 等权）+ 2026-07-18 独立复核（tracking n=8168/89日：T+5 日级 IC=-0.112 t=-2.49，T+30 IC=-0.138 t=-3.12；top-3 胜率 45.2% vs 反选 58.3%）。全池 300 票日 IC 为正（+0.028/+0.059）——顶部非单调反转（极端动量过热 → 短 horizon 反转），"选择偏差伪象"解释不了符号翻转。**切换后经 tracking/panel 持续样本外监测，若 profit_aware 主键也反转须回滚。**
 
 ### 样本外验证闭环（logger → backfill → panel）
 

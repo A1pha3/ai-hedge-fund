@@ -504,3 +504,94 @@ def test_reentry_missing_close_does_not_inherit_closed_trade_mark(service, sessi
         new.raw_entry_price * new.quantity
     )
     assert new.ticker in run.valuation.stale_tickers
+
+
+def test_drawdown_circuit_breaker_halts_new_plans(service, sessions):
+    """组合回撤 ≤ -20%: 停止一切新仓 (legacy drawdown_action=liquidate 对齐)."""
+    from src.screening.offensive.ledger_repository import DailyValuation
+
+    valuation = DailyValuation(
+        sessions[0], 75_000.0, 0.0, 75_000.0, 100_000.0, -0.25, ()
+    )
+    created = service._create_capacity_safe_plans(
+        sessions[0], (candidate("000001"), candidate("000002", priority=2)), valuation
+    )
+    assert created == ()
+    assert "drawdown_circuit_breaker" in service._block_reasons
+
+
+def test_drawdown_reduce_halves_new_plan_weights(service, sessions):
+    """组合回撤 ≤ -15% (未达 -20%): 新仓权重减半."""
+    from src.screening.offensive.ledger_repository import DailyValuation
+
+    valuation = DailyValuation(
+        sessions[0], 84_000.0, 0.0, 84_000.0, 100_000.0, -0.16, ()
+    )
+    created = service._create_capacity_safe_plans(
+        sessions[0], (candidate("000001", weight=0.10),), valuation
+    )
+    assert len(created) == 1
+    planned = service.repository.planned_trades()
+    assert len(planned) == 1
+    assert planned[0].planned_weight == pytest.approx(0.05)
+
+
+def test_industry_concentration_caps_two_new_plans_per_day(service, sessions):
+    """同一入场日同行业新仓 ≤ 2 (含已预留); 缺映射的票各自独立成行."""
+    from types import SimpleNamespace
+
+    industry_map = {"000001": "电子", "000002": "电子", "000003": "电子", "000004": "医药"}
+    service._active_snapshot = SimpleNamespace(
+        manifest=SimpleNamespace(
+            run_id="test",
+            content_fingerprint="sha256:" + "1" * 64,
+            input_fingerprint="sha256:" + "2" * 64,
+            shared_evidence=SimpleNamespace(industry_by_ticker=industry_map),
+        ),
+        snapshot_id="sha256:" + "3" * 64,
+        board_rule_version="v1",
+        reference_price=lambda ticker: 10.0,
+    )
+    from src.screening.offensive.ledger_repository import DailyValuation
+
+    valuation = DailyValuation(
+        sessions[0], 100_000.0, 0.0, 100_000.0, 100_000.0, 0.0, ()
+    )
+    created = service._create_capacity_safe_plans(
+        sessions[0],
+        tuple(candidate(t, priority=i + 1) for i, t in enumerate(industry_map)),
+        valuation,
+    )
+    tickers = sorted(item.ticker for item in created)
+    assert tickers == ["000001", "000002", "000004"]  # 电子第 3 只被集中度拦下
+
+
+def test_append_regime_history_writes_and_is_idempotent(tmp_path):
+    from src.screening.auto_pipeline import _append_regime_history
+
+    payload = {"market_state": {"regime_gate_level": "normal"}}
+    _append_regime_history("20260717", payload, tmp_path)
+    path = tmp_path / "regime_history.json"
+    import json
+
+    assert json.loads(path.read_text()) == {"20260717": "normal"}
+    mtime = path.stat().st_mtime_ns
+    _append_regime_history("20260717", payload, tmp_path)  # 行未变 → 跳过写盘
+    assert path.stat().st_mtime_ns == mtime
+    _append_regime_history("20260718", {"market_state": {"regime_gate_level": "crisis"}}, tmp_path)
+    assert json.loads(path.read_text()) == {"20260717": "normal", "20260718": "crisis"}
+    # 无 regime 的 payload / 缺 market_state → no-op, 不报错
+    _append_regime_history("20260719", {}, tmp_path)
+    _append_regime_history("20260719", {"market_state": None}, tmp_path)
+    assert "20260719" not in json.loads(path.read_text())
+
+
+def test_investability_profit_aware_env_semantics(monkeypatch):
+    from src.main import _investability_profit_aware
+
+    monkeypatch.delenv("INVESTABILITY_PROFIT_AWARE", raising=False)
+    assert _investability_profit_aware() is True
+    monkeypatch.setenv("INVESTABILITY_PROFIT_AWARE", "false")
+    assert _investability_profit_aware() is False
+    monkeypatch.setenv("INVESTABILITY_PROFIT_AWARE", "0")
+    assert _investability_profit_aware() is False
