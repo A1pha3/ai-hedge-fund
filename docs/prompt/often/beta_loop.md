@@ -71,12 +71,13 @@ uv run python src/main.py --daily-action
 
 ### find bug
 
-uv run python src/main.py --auto
-
-uv run python src/main.py --daily-action
-
 我每天通过这两个命令，更新数据，选出一些值得投资的股票，能让我次日买入后，未来10天中大概率可以获取非常大的收益。
-你们作为顶级量化交易专家团队从第一性原理出发, 通过对抗性审查，认真仔细的审查这两个命令的代码逻辑，找到软件中隐藏的bug，优化选股胜率和赔率
+
+$ uv run python src/main.py --auto
+$ uv run python src/main.py --daily-action
+
+你们作为顶级量化交易专家团队, 从第一性原理出发, 通过对抗性审查，认真仔细的审查这两个命令使用的代码逻辑，找到软件中隐藏的bug，最简洁,最优雅,最干净,最安全的修复这些问题。
+你们作为顶级量化交易专家团队, 从第一性原理出发, 通过对抗性审查，找到目前这两个命令使用选股的策略的胜率和赔率的不足，并以最简洁,最优雅,最干净,最安全的方法去优化胜率，提高赔率。
 
 ### fix bug
 
