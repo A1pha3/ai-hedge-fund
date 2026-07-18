@@ -4,7 +4,7 @@ import json
 import math
 import os
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
 from numbers import Real
@@ -98,6 +98,17 @@ class PlanCandidate:
     setup_consumed_fingerprint: str
     detector_degraded: bool = False
     authorization: RegimeAuthorization = RegimeAuthorization.NORMAL
+    # 样本外记录字段 (setup_output_log 按 legacy 字段名取数): v2 迁移后
+    # PlanCandidate 缺这些字段, panel 新行全部退化为空壳 (0.0/null).
+    # compare=False: dict 不可哈希, 且诊断不影响候选身份.
+    trigger_strength: float = 0.0
+    entry_price: float = 0.0
+    metadata: dict = field(default_factory=dict, compare=False)
+
+    @property
+    def kelly_pct(self) -> float:
+        """logger/legacy 口径的仓位比例别名 (target_weight 即 Kelly 权重)."""
+        return self.target_weight
 
     def __post_init__(self) -> None:
         if self.setup != "btst_breakout":
@@ -908,16 +919,25 @@ class DailyActionService:
                 > candidate.authorization.ticker_cap + 1e-12
             ):
                 continue
-            trade, created = self.repository.create_plan_if_absent(
-                candidate.ticker,
-                candidate.setup,
-                candidate.setup_version,
-                as_of,
-                entry_date,
-                weight,
-                candidate.priority,
-                provenance=provenance,
-            )
+            try:
+                trade, created = self.repository.create_plan_if_absent(
+                    candidate.ticker,
+                    candidate.setup,
+                    candidate.setup_version,
+                    as_of,
+                    entry_date,
+                    weight,
+                    candidate.priority,
+                    provenance=provenance,
+                )
+            except ValueError as exc:
+                # 幂等冲突 (同日 --auto 重发快照 → provenance 不同): 跳过该候选
+                # 而不是让异常把整次运行误标为 readiness_scan_failed.
+                logger.warning(
+                    "conflicting idempotent plan skipped: %s %s (%s)",
+                    candidate.ticker, candidate.setup, exc,
+                )
+                continue
             if created:
                 reserved.append(trade)
                 industry_count[industry] = industry_count.get(industry, 0) + 1
@@ -1265,16 +1285,6 @@ class DailyActionService:
             return True
         except ValueError:
             return False
-
-    def _affordable_quantity(self, weight: float, price: float, nav: float) -> int:
-        target, cash = nav * weight, self.repository.cash_balance()
-        quantity = int(min(target, cash) // (price * LOT_SIZE)) * LOT_SIZE
-        while quantity > 0:
-            fill = apply_execution_costs(price, quantity, "buy", self.costs)
-            if -fill.net_cash_flow <= cash and -fill.net_cash_flow <= target:
-                return quantity
-            quantity -= LOT_SIZE
-        return 0
 
     def _skip(self, plan: LedgerTrade, as_of: date, reason: str) -> None:
         self.repository.skip_plan(plan.trade_id, as_of, reason)

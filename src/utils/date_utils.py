@@ -215,6 +215,9 @@ def resolve_signal_session(
     sessions = tuple(sorted(set(open_sessions)))
     if not sessions:
         raise SignalSessionUnavailable("authoritative open sessions unavailable")
+    cutoff_date = (
+        now_cn.date() if now_cn.time() >= ready_cutoff else now_cn.date() - timedelta(days=1)
+    )
     if override is not None:
         selected = (
             override
@@ -223,10 +226,16 @@ def resolve_signal_session(
         )
         if selected not in sessions:
             raise SignalSessionUnavailable("override is not an authoritative open session")
+        # 未来日护栏 (2026-07-18): override 不得晚于 17:00 规则解析出的自然信号日.
+        # 未来日的 lifecycle 会把排队计划按"窗口已过"永久 skip 并写入未来日期估值,
+        # 一次手滑即可损毁台账状态.
+        eligible = tuple(session for session in sessions if session <= cutoff_date)
+        if eligible and selected > eligible[-1]:
+            raise SignalSessionUnavailable(
+                f"override {selected.isoformat()} is after the natural signal session "
+                f"{eligible[-1].isoformat()}"
+            )
         return selected
-    cutoff_date = (
-        now_cn.date() if now_cn.time() >= ready_cutoff else now_cn.date() - timedelta(days=1)
-    )
     eligible = tuple(session for session in sessions if session <= cutoff_date)
     if not eligible:
         raise SignalSessionUnavailable("calendar has no session at or before cutoff")

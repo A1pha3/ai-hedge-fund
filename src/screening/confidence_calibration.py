@@ -268,17 +268,26 @@ def _records_as_of(
     *,
     as_of: Any,
     model_version: str,
+    sessions: Sequence[date] | None = None,
 ) -> list[dict[str, Any]]:
     """Return a point-in-time tracking snapshot, failing closed on bad dates.
 
     A realized label is admissible only after its nominal maturity date is
     strictly before ``as_of``.  Immature fields are removed from a copy so the
     caller's history snapshot is never mutated.
+
+    2026-07-18 修复:
+    - 移除 git-sha 等值过滤: sha 随每次 commit 漂移 (历史中 27 个版本), 上一
+      commit 的证据次日即全部失效, 校准池在生产中 89/89 天为空. PIT 正确性
+      由日期过滤保证; model_version 保留为 provenance 参数但不再用于过滤.
+    - 未标注 return_tN_date 的成熟 label 用交易日历推断 realized_on
+      (recommended + N 个交易日), 不再一律 pop (98% 记录曾被饿死).
     """
     anchor = _normalize_trade_date(as_of)
     if anchor is None or not isinstance(model_version, str) or not model_version:
         return []
 
+    sorted_sessions = tuple(sorted(set(sessions or ())))
     snapshot: list[dict[str, Any]] = []
     for record in records:
         if not isinstance(record, Mapping):
@@ -286,12 +295,14 @@ def _records_as_of(
         recommended = _normalize_trade_date(record.get("recommended_date"))
         if recommended is None or recommended >= anchor:
             continue
-        if record.get("model_version") != model_version:
-            continue
         item = dict(record)
         item["recommended_date"] = recommended.strftime("%Y%m%d")
         for field_name, realization_field in _RETURN_REALIZATION_DATES.items():
             realized_on = _normalize_trade_date(record.get(realization_field))
+            if realized_on is None and record.get(field_name) is not None:
+                realized_on = _infer_realized_on(
+                    recommended, _RETURN_HORIZON_DAYS[field_name], sorted_sessions
+                )
             if (
                 realized_on is None
                 or realized_on <= recommended
@@ -300,6 +311,61 @@ def _records_as_of(
                 item.pop(field_name, None)
         snapshot.append(item)
     return snapshot
+
+
+# 收益字段 → 成熟所需交易日数 (用于推断未标注日期的 realized_on).
+_RETURN_HORIZON_DAYS: dict[str, int] = {
+    "next_day_return": 1,
+    "next_3day_return": 3,
+    "next_5day_return": 5,
+    "next_10day_return": 10,
+    "next_15day_return": 15,
+    "next_20day_return": 20,
+    "next_25day_return": 25,
+    "next_30day_return": 30,
+}
+
+
+_authoritative_sessions_cache: tuple[date, ...] | None = None
+
+
+def _load_authoritative_sessions() -> tuple[date, ...]:
+    """权威交易日历 (data/reports/trade_calendar.json), 进程内缓存; 缺失返回空."""
+
+    global _authoritative_sessions_cache
+    if _authoritative_sessions_cache is not None:
+        return _authoritative_sessions_cache
+    sessions: tuple[date, ...] = ()
+    try:
+        import json
+        from pathlib import Path
+
+        path = Path("data/reports/trade_calendar.json")
+        if path.exists():
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            sessions = tuple(
+                sorted(
+                    datetime.strptime(str(value), "%Y%m%d").date()
+                    for value in raw
+                    if isinstance(value, str) and len(str(value)) == 8
+                )
+            )
+    except Exception:  # noqa: BLE001 - 日历缺失时按保守语义返回空 (label 不推断)
+        sessions = ()
+    _authoritative_sessions_cache = sessions
+    return sessions
+
+
+def _infer_realized_on(
+    recommended: date, horizon_days: int, sessions: Sequence[date]
+) -> date | None:
+    """recommended 之后第 N 个交易日 (label 的 realized_on 推断); 日历不足返回 None."""
+    if not sessions or horizon_days <= 0:
+        return None
+    later = [session for session in sessions if session > recommended]
+    if len(later) < horizon_days:
+        return None
+    return later[horizon_days - 1]
 
 
 def _optional_float(value: Any) -> float | None:
@@ -437,6 +503,7 @@ def compute_calibration(
                 records,
                 as_of=as_of,
                 model_version=model_version,
+                sessions=_load_authoritative_sessions(),
             )
 
     # 按日期倒序, 截取 lookback_days 天

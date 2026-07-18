@@ -13,14 +13,17 @@ def test_analyze_growth_trends_clamps_extreme_eps_and_preserves_current_trend_ma
 
     result = analyze_growth_trends(metrics)
 
+    # 趋势语义修正 (2026-07-18): 序列 newest-first 倒序回归, slope>0 = 真实加速.
+    # revenue 0.08→0.25 加速 (+0.057), eps 0.10→5.0 加速 (+1.477), fcf 0.04→0.18 加速.
     assert result == {
-        "score": 0.75,
+        "score": 0.9,
+        "raw_score": 0.9,
         "revenue_growth": 0.25,
-        "revenue_trend": -0.05700000000000003,
+        "revenue_trend": 0.05699999999999998,
         "eps_growth": 5.0,
-        "eps_trend": -1.4769999999999999,
+        "eps_trend": 1.4769999999999999,
         "fcf_growth": 0.18,
-        "fcf_trend": -0.046,
+        "fcf_trend": 0.046,
     }
 
 
@@ -34,14 +37,17 @@ def test_analyze_growth_trends_keeps_zero_floor_for_declining_inputs():
 
     result = analyze_growth_trends(metrics)
 
+    # 趋势语义修正: 输入随时间恶化 (0.05→-0.15), slope 应为负 (减速).
+    # raw_score 保留未钳位原值 (score 仍为 0 地板).
     assert result == {
         "score": 0.0,
+        "raw_score": -0.4,
         "revenue_growth": -0.15,
-        "revenue_trend": 0.06999999999999999,
+        "revenue_trend": -0.06999999999999999,
         "eps_growth": -1.0,
-        "eps_trend": 0.33100000000000007,
+        "eps_trend": -0.33099999999999996,
         "fcf_growth": -1.0,
-        "fcf_trend": 0.32699999999999996,
+        "fcf_trend": -0.32700000000000007,
     }
 
 

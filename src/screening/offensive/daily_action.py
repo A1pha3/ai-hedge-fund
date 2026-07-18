@@ -558,6 +558,21 @@ def refresh_authoritative_trade_calendar(
     if not normalized:
         # Fail closed: never clobber a previously-good calendar with nothing.
         return None
+    # 前向覆盖下限: 日历年尾数据商未发布次年日历时, 截断的日历照常覆盖写会让
+    # T+10 horizon 在次年静默失效 (calendar_unavailable 被误读为"今日无信号").
+    # 前向覆盖不足 30 天时保留旧文件并告警.
+    last_session = normalized[-1]
+    from datetime import datetime as _dt_cls
+
+    last_date = _dt_cls.strptime(last_session, "%Y%m%d").date()
+    min_forward = _current_cn_datetime().date() + timedelta(days=30)
+    if last_date < min_forward:
+        logger.warning(
+            "trade calendar forward coverage too short (%s < %s), keeping existing file",
+            last_date,
+            min_forward,
+        )
+        return None
     reports.mkdir(parents=True, exist_ok=True)
     target = reports / "trade_calendar.json"
     atomic_write_json(target, normalized)
@@ -658,6 +673,19 @@ class BlockedCandidate:
     ticker: str
     reason: str
     reference_price: float
+    # setup / entry_price 别名: setup_output_log._record 按 legacy 字段名取数
+    # (setup/block_reason/entry_price/trigger_strength), v2 迁移后 blocked 行曾
+    # 全部退化为空壳. 默认空值兼容旧构造.
+    setup: str = ""
+    trigger_strength: float = 0.0
+
+    @property
+    def block_reason(self) -> str:
+        return self.reason
+
+    @property
+    def entry_price(self) -> float:
+        return self.reference_price
 
 
 @dataclass(frozen=True)
@@ -693,6 +721,7 @@ _BLOCK_REASON_ZH = {
     "setup_disabled_by_default": "setup 默认暂停",
     "setup_not_ledger_enabled": "setup 未在台账启用",
     "drawdown_circuit_breaker": "组合回撤熔断",
+    "entry_window_missed": "入场窗口已过（当前已过入场日 09:30，新计划将按不可执行的开盘价记账）",
     "detector_degraded": "检测器降级",
     "regime_authorization_evidence_unavailable": "regime 加仓证据暂不可验，按 10% 单票上限披露",
 }
@@ -848,7 +877,10 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         return f"{ticker} {name}" if name and name != ticker else ticker
 
     references = dict(run.reference_prices)
-    lines = ["每日动作 v2（模拟台账）", "参考价（信号日收盘，仅供计划）:"]
+    lines = [
+        f"每日动作 v2（模拟台账）  信号日 {run.service_run.trade_date.isoformat()}",
+        "参考价（信号日收盘，仅供计划）:",
+    ]
     if run.plans:
         for plan in run.plans:
             reference = references.get(plan.ticker, 0.0)
@@ -926,8 +958,13 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         if verbose:
             lines.append(f"block_reason={run.service_run.block_reason}")
     if run.service_run.block_reasons:
+        # 运行级阻断 (drawdown 熔断/日历不可用/入场窗口/regime 证据未绑定) 必须在
+        # 默认视图可见 — 此前仅 verbose 显示, 熔断日被渲染成"系统健康，今日无信号".
         if verbose:
             lines.append("block_reasons=" + ",".join(run.service_run.block_reasons))
+        else:
+            labels = "、".join(_block_reason_zh(reason) for reason in run.service_run.block_reasons)
+            lines.append(f"注意：{labels}")
     if run.service_run.blocked_tickers:
         if verbose:
             lines.append(
@@ -938,6 +975,11 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
             lines.append("manifest_gate_blocks:")
             for block in run.service_run.ticker_gate_blocks:
                 lines.append(f"  {block.ticker} reasons={' | '.join(block.reasons)}")
+    valuation = run.service_run.valuation
+    stale = f" 数据过期 {len(valuation.stale_tickers)} 只" if valuation.stale_tickers else ""
+    lines.append(
+        f"台账：净值 {valuation.nav:,.0f}（峰值 {valuation.peak:,.0f}，回撤 {valuation.drawdown:+.1%}）{stale}"
+    )
     return "\n".join(lines)
 
 
@@ -1445,7 +1487,7 @@ def scan_from_verified_snapshot(
                 continue
             entry_price = reference_prices[ticker]
             if not ctx.capability.plan_eligible:
-                blocked.append(BlockedCandidate(ticker, "candidate_not_plan_eligible", entry_price))
+                blocked.append(BlockedCandidate(ticker, "candidate_not_plan_eligible", entry_price, setup_name))
                 continue
 
             prices = price_frame(ctx.prices)
@@ -1475,7 +1517,7 @@ def scan_from_verified_snapshot(
             if not result.hit:
                 continue
             if bool(getattr(result, "degraded", False)):
-                blocked.append(BlockedCandidate(ticker, "detector_degraded", entry_price))
+                blocked.append(BlockedCandidate(ticker, "detector_degraded", entry_price, setup_name, float(result.trigger_strength or 0.0)))
                 continue
 
             setup_max_pct = _MAX_POSITION_PCT_BY_SETUP.get(setup_name, _MAX_POSITION_PCT)
@@ -1504,7 +1546,17 @@ def scan_from_verified_snapshot(
                 "crisis": RegimeAuthorization.BTST_CRISIS,
                 "risk_off": RegimeAuthorization.BTST_RISK_OFF,
             }.get(regime, RegimeAuthorization.NORMAL)
-            ranked.append((float(result.trigger_strength), horizon, ticker, setup_name, kelly_pct, authorization))
+            ranked.append(
+                (
+                    float(result.trigger_strength),
+                    horizon,
+                    ticker,
+                    setup_name,
+                    kelly_pct,
+                    authorization,
+                    dict(result.metadata or {}),
+                )
+            )
 
     # Sort by trigger_strength desc, ticker asc — deterministic ordering.
     ranked.sort(key=lambda item: (-item[0], item[2]))
@@ -1513,23 +1565,23 @@ def scan_from_verified_snapshot(
     # legacy scanner's blocked_candidates path) so the returned list matches the
     # shape operators expect: actionable candidates + filtered-out candidates.
     candidates: list[PlanCandidate] = []
-    for trigger_strength, _horizon, ticker, setup_name, kelly_pct, authorization in ranked:
+    for trigger_strength, _horizon, ticker, setup_name, kelly_pct, authorization, metadata in ranked:
         ts = trigger_strength
         entry_price = reference_prices[ticker]
         if math.isnan(ts) or ts < _MIN_TRIGGER_STRENGTH:
-            blocked.append(BlockedCandidate(ticker, "trigger_strength_below_threshold", entry_price))
+            blocked.append(BlockedCandidate(ticker, "trigger_strength_below_threshold", entry_price, setup_name, float(ts) if not math.isnan(ts) else 0.0))
             continue
         if entry_price < _MIN_ENTRY_PRICE:
-            blocked.append(BlockedCandidate(ticker, "entry_price_below_minimum", entry_price))
+            blocked.append(BlockedCandidate(ticker, "entry_price_below_minimum", entry_price, setup_name, float(ts)))
             continue
         ctx = snapshot.setup_context(ticker, setup_name)
         if ctx is None:
-            blocked.append(BlockedCandidate(ticker, "candidate_not_plan_eligible", entry_price))
+            blocked.append(BlockedCandidate(ticker, "candidate_not_plan_eligible", entry_price, setup_name))
             continue
         if setup_name not in _LEDGER_ENABLED_SETUPS:
             # 台账尚不能承接该 setup (如 OB): 拦截在 PlanCandidate 硬拒之前,
             # 否则异常会把当日全部新计划 (含 BTST) 一起 fail-closed.
-            blocked.append(BlockedCandidate(ticker, "setup_not_ledger_enabled", entry_price))
+            blocked.append(BlockedCandidate(ticker, "setup_not_ledger_enabled", entry_price, setup_name, float(ts)))
             continue
         candidates.append(
             PlanCandidate(
@@ -1543,6 +1595,9 @@ def scan_from_verified_snapshot(
                 setup_consumed_fingerprint=ctx.consumed_fingerprint,
                 detector_degraded=False,
                 authorization=authorization,
+                trigger_strength=float(trigger_strength),
+                entry_price=entry_price,
+                metadata=metadata,
             )
         )
 

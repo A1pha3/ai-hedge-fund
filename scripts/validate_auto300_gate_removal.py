@@ -93,7 +93,13 @@ def load_price_series() -> dict[str, pd.DataFrame]:
 
 
 def _forward_return(df: pd.DataFrame, signal_idx: int, horizon: int) -> float | None:
-    """Enter at T+1 open, exit at T+horizon close. None if unbuyable/insufficient."""
+    """Enter at T+1 open, exit at T+horizon close. None if unbuyable/insufficient.
+
+    除权免疫 (2026-07-18): T+1 日内腿用同日 open→close (天然无跨日缺口), 之后
+    各 leg 用 pct_change 链复合 (provider 真实日涨幅), 不用原始跨日价比 — 原始价
+    跨除权缺口会把送转日读成 -30pp 级幻影收益 (001388 型), 污染 panel 样本外结论.
+    链条含非有限值时返回 None (收益不可验证, 与 fail-closed 同语义).
+    """
     entry_idx = signal_idx + 1
     exit_idx = signal_idx + horizon
     if exit_idx >= len(df):
@@ -103,10 +109,20 @@ def _forward_return(df: pd.DataFrame, signal_idx: int, horizon: int) -> float | 
     if float(entry["high"]) == float(entry["low"]):
         return None
     entry_open = float(entry["open"])
-    if entry_open <= 0:
+    entry_close = float(entry["close"])
+    if entry_open <= 0 or not math.isfinite(entry_open) or not math.isfinite(entry_close):
         return None
-    exit_close = float(df.iloc[exit_idx]["close"])
-    return (exit_close - entry_open) / entry_open * 100.0
+    first_leg = entry_close / entry_open
+    chain = 1.0
+    for i in range(entry_idx + 1, exit_idx + 1):
+        try:
+            pct = float(df.iloc[i]["pct_change"])
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(pct):
+            return None
+        chain *= 1.0 + pct / 100.0
+    return (first_leg * chain - 1.0) * 100.0
 
 
 def collect_events(

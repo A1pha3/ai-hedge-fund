@@ -519,7 +519,12 @@ CREATE TABLE IF NOT EXISTS position_marks (
                 and current.provenance.verification_status == "verified"
                 and current.provenance.execution_cost_version != getattr(costs, "version", None)
             ):
-                raise ValueError("execution cost version does not match plan provenance")
+                # 成本口径演进 (如 v2.1→v2.2) 后旧 provenance 的计划按 skip 处理 —
+                # 绝不能 raise: 它会在 advance_lifecycle 第一步炸掉整个命令,
+                # 之后的退出结算/估值全部停摆, 且计划每天重炸 (崩溃死锁).
+                return self._skip_plan_in_transaction(
+                    conn, current, entry_date, "cost_version_mismatch"
+                ), "cost_version_mismatch"
 
             higher = conn.execute(
                 """SELECT trade_id FROM trades WHERE ledger_id=? AND state='planned'
@@ -574,6 +579,10 @@ CREATE TABLE IF NOT EXISTS position_marks (
                 quantity = requested_quantity
             else:
                 quantity = int(target // (raw_open_price * 100)) * 100
+            # 最小交易单位截断: target 不足一手 (100 股) 时 quantity=0 — 这与真实现金
+            # 不足是两种原因 (10 万台账 × 10% 上限 = 1 万, 股价 >100 元即买不起一手),
+            # 必须区分披露, 否则容量统计被污染.
+            lot_floor_zero = quantity == 0 and requested_quantity is None
             fill = None
             while quantity > 0:
                 if explicit_costs is None:
@@ -597,7 +606,8 @@ CREATE TABLE IF NOT EXISTS position_marks (
                     break
                 quantity -= 100
             if fill is None:
-                return self._skip_plan_in_transaction(conn, current, entry_date, "cash_capacity"), "cash_capacity"
+                reason = "lot_floor_zero_shares" if lot_floor_zero else "cash_capacity"
+                return self._skip_plan_in_transaction(conn, current, entry_date, reason), reason
             conn.execute(
                 """UPDATE trades SET state='open',execution_mode=?,fill_source=?,entry_date=?,
                    raw_entry_price=?,quantity=?,entry_commission=?,entry_tax=?,entry_slippage=? WHERE trade_id=?""",

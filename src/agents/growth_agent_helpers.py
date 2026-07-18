@@ -63,6 +63,9 @@ def _build_growth_trend_result(
 ) -> dict:
     return {
         "score": max(min(score, 1.0), 0.0),
+        # 未钳位原值: 下游方向判定需要区分 "负增长" 与 "零增长"
+        # (钳位后都是 0.0, 曾被统一误判为满置信看空).
+        "raw_score": score,
         "revenue_growth": revenue_growth[0],
         "revenue_trend": revenue_trend,
         "eps_growth": eps_growth[0],

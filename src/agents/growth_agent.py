@@ -165,12 +165,18 @@ def growth_analyst_agent(state: AgentState, agent_id: str = "growth_analyst_agen
 
 
 def _calculate_trend(data: list[float | None]) -> float:
-    """Calculates the slope of the trend line for the given data."""
+    """Calculates the slope of the trend line for the given data.
+
+    调用方传入的序列是 newest-first (快照规范序: 20250930 → 20240331).
+    先倒序使回归 x 轴指向时间正方向 — slope > 0 才表示"加速".
+    此前 slope > 0 表示"越旧越高" (减速), 加速加分发给了减速公司
+    (n=4873 实测 50.8% 的票符号反了).
+    """
     clean_data = [d for d in data if d is not None]
     if len(clean_data) < 2:
         return 0.0
 
-    y = clean_data
+    y = list(reversed(clean_data))
     x = list(range(len(y)))
 
     try:

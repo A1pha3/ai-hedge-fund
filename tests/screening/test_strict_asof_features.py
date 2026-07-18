@@ -53,7 +53,10 @@ def test_future_tracking_record_does_not_change_past_expected_return() -> None:
     assert before == after_append
 
 
-def test_other_model_version_is_not_pooled() -> None:
+def test_other_model_version_still_pooled_as_provenance() -> None:
+    """2026-07-18 契约变更: model_version 是 provenance 不再用于过滤 — git sha
+    随每次 commit 漂移 (历史 27 个版本), 上一 commit 的证据次日即失效, 校准池
+    在生产中 89/89 天为空. PIT 正确性由日期过滤保证."""
     records = [
         {
             "ticker": "A",
@@ -69,7 +72,7 @@ def test_other_model_version_is_not_pooled() -> None:
         model_version="new",
         history_records=records,
     )
-    assert report.total_samples == 0
+    assert report.total_samples > 0
 
 
 def test_unmatured_label_is_not_used_before_as_of() -> None:
@@ -128,7 +131,9 @@ def test_label_maturity_fails_closed_across_exchange_holidays() -> None:
     assert report.items[0].expected_returns["t5"] is None
 
 
-def test_strict_label_requires_persisted_realization_date() -> None:
+def test_undated_label_is_inferred_from_trade_calendar() -> None:
+    """2026-07-18 契约变更: 未标注 return_tN_date 的成熟 label 用交易日历推断
+    realized_on (recommended + N 个交易日), 不再一律 pop (98% 记录曾被饿死)."""
     report = compute_expected_returns(
         recommendations=[{"ticker": "X", "score_b": 0.5}],
         as_of="20261231",
@@ -143,7 +148,7 @@ def test_strict_label_requires_persisted_realization_date() -> None:
             }
         ],
     )
-    assert report.items[0].expected_returns["t5"] is None
+    assert report.items[0].expected_returns["t5"] == 100.0
 
 
 def test_realization_date_controls_label_admissibility_across_price_gaps() -> None:

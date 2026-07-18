@@ -78,13 +78,18 @@ regime 分层: crisis>normal>risk_off 排序保留, 量级下修 (如 BTST crisi
   - ⚠️ 暂停理由不是"crisis 亏钱"（crisis n=21 太小不可靠），而是"无法证明赚钱 + 亏起来更狠 + 仓位有更好去处"。详见上文"2026 实测表现"。
 - Kelly 仓位：half-Kelly，当前 v2 ledger 单票硬上限 10%，组合上限 60%；12% regime 例外暂停，待 canonical regime evidence 可由 repository 重验后恢复。
 - **Drawdown 熔断 + 行业集中度（2026-07-18 恢复，v2 迁移时曾丢失）**：组合回撤 ≤-20% 停止一切新仓、≤-15% 新仓权重减半（与 legacy `drawdown_action` 对齐）；同一入场日同行业新仓 ≤2（含当日已预留，依据：集中日 E[r] +6.3% vs 分散日 +9.7%）。
-- **执行成本口径 v2.1**（2026-07-18）：v2 ledger 执行成本从零成本改为 30bps/边滑点 + 5bps 卖出印花税，与 Kelly 先验（`adjust_returns` 30bps/边）对齐；此前零成本使实盘 P&L 系统性优于证据 ~0.6pp/笔，污染 edge 衰减监测。
+- **执行成本口径 v2.1**（2026-07-18）：v2 ledger 执行成本从零成本改为 30bps/边滑点 + 5bps 卖出印花税，与 Kelly 先验（`adjust_returns` 30bps/边）对齐；此前零成本使实盘 P&L 系统性优于证据 ~0.6pp/笔，污染 edge 衰减监测。成本版本不匹配的计划按 `cost_version_mismatch` skip（不再 raise 崩溃死锁）。
+- **运行护栏**（2026-07-18）：`--end-date` 不得晚于 17:00 规则的自然信号日（未来日会永久杀掉排队计划并写入未来估值）；入场日 09:30 后不再创建当日入场计划（`entry_window_missed`，防止按不可执行的开盘价记账）；交易日历前向覆盖 <30 天时保留旧文件（防止年末日历截断静默失效）；drawdown 熔断/日历不可用/窗口阻断在默认渲染可见（不再伪装成"今日无信号"），并输出台账净值/回撤行。
+- **panel 样本外闭环**（2026-07-18）：v2 scan 对象已补齐 logger 字段（trigger_strength/entry_price/metadata/kelly_pct 别名），`candidate_not_plan_eligible`（未触发的契约拒票）不再写入 panel 对照组（防止对照总体被宇宙噪声稀释成假 ✅）；`_forward_return` 已除权免疫（T+1 日内腿同日价 + 后续 pct_change 链）。
 - 止损：⚠️ **当前是披露用的，不执行**——`stop_would_have_triggered` 只进 reasoning 字符串，**不影响 realized P&L**（账面按 T+N close）。⚠️ 旧述"192 笔回测 0 笔触发（2026 行情好）"**因果错误**（2026-07-18 审查定位）：生成该 journal 的回测传了 `price_loader=None`，止损检测根本没运行（0 触发是默认值不是检测结果）；独立重算持有期 raw low ≤ -8% 硬止损 **43% 会触发**。"止损不执行不伤 P&L"的有效证据是 `scripts/backtest_exit_strategies.py` 的独立止损回测（2026-07-10，81 笔 BTST：所有止损策略在当前牛市样本都降低 E[r] 和 Sharpe），不是 journal 的 0 触发。可用 `DAILY_ACTION_EXECUTION_STOP=atr_k2|atr_k3|fixed8` 在熊市/高波动期手动启用真实止损执行（改变 P&L 口径，启用前应跑 `scripts/backtest_exit_strategies.py` 确认当前行情有利）。
 
 ### 因子评分（`--auto`）
 
-- 四策略 → score_b → composite_score → investability 排序。
-- **`profit_aware` 排序默认开启**（2026-07-18 切换，`INVESTABILITY_PROFIT_AWARE=false` 回退）：主键改为 empirical bucket 胜率（tracking 样本外），composite/score_b 降为末位 tie-break。依据（双确认）：composite/score_b 主键在真实 Top10 切片显著反向 — c272（47% score_desc vs 60% 等权）+ 2026-07-18 独立复核（tracking n=8168/89日：T+5 日级 IC=-0.112 t=-2.49，T+30 IC=-0.138 t=-3.12；top-3 胜率 45.2% vs 反选 58.3%）。全池 300 票日 IC 为正（+0.028/+0.059）——顶部非单调反转（极端动量过热 → 短 horizon 反转），"选择偏差伪象"解释不了符号翻转。**切换后经 tracking/panel 持续样本外监测，若 profit_aware 主键也反转须回滚。**
+- 四策略 → score_b → composite_score → investability 排序（`profit_aware` 默认开启，`INVESTABILITY_PROFIT_AWARE=false` 回退；主键 empirical bucket 胜率，composite 末位 tie-break；bucket 证据缺失的票按 0.5 胜率/0.0 期望中性处理，不再 -inf 垫底）。
+- ⚠️ **profit_aware 校准池曾 89/89 天为空**（2026-07-18 定位修复）：严格模式的 git-sha 等值过滤（历史中 27 个版本，上一 commit 的证据次日即失效）+ 98.3% 记录缺 `return_tN_date` 被 pop，导致排序实际从未脱离 composite。修复：model_version 仅作 provenance 不过滤；未标注日期的成熟 label 用交易日历推断 `realized_on`（recommended+N 个交易日）。**切换前的"profit_aware 已开启"结论需重验**——它自开启起一天都没真正生效过。
+- **评分链已回溯复权**（2026-07-18）：`load_price_frame` 用 pct_change 链把 OHLC 复权到最新行口径（末行=原始价），此前 EMA/RSI/动量/布林带/ATR 从 raw close 重算，除权缺口被读成崩盘幻影（001388 型 raw -26.8% 实际 +10%；~19% 的票近 126 行内有缺口）。**修复前生成的 composite/score_b 与全部因子 IC/校准证据是在幻影污染的信号上量的，重跑前不可直接对比。**
+- **因子数学修正**（2026-07-18）：① growth 趋势符号反转修复（newest-first 序列倒序回归，此前 50.8% 的票加速/减速判反）；② ADX 改 Wilder RMA（与 RSI 同平滑，此前 ewm(span) 系统性偏高、31.5% 趋势门翻转）；③ growth 钳位 score=0 区分负增长/零增长（raw_score 保留原值，此前 27.4% 零增长票被满置信看空）；④ 动量三窗改对数收益求和（消除高波动票动量高估的横截面偏差）。
+- 排序证据（双确认）：composite/score_b 主键在真实 Top10 切片显著反向 — c272（47% vs 60%）+ 2026-07-18 独立复核（T+5 IC=-0.112 t=-2.49，top-3 45% vs 反选 58%）。全池 300 票日 IC 为正——顶部非单调反转。tracking 回填改用 price_cache pct_change 链（43 条幻影记录已迁移重算）。
 
 ### 样本外验证闭环（logger → backfill → panel）
 
@@ -139,7 +144,9 @@ regime 分层: crisis>normal>risk_off 排序保留, 量级下修 (如 BTST crisi
 12. **缓存目录不能放在 symlink 路径下**（2026-07-17 实测）：`atomic_write_csv` 的 `_open_parent` 用 `O_NOFOLLOW` 逐层打开目录组件，macOS 的 `/var`、`/tmp`（→ `/private/*`）会报 `[Errno 20] Not a directory: 'var'`。`tempfile.TemporaryDirectory()` 创建的目录就在其下——测试/bench 里构造缓存目录要用项目内路径或 pytest `tmp_path`（本仓库 basetemp 在工作区内）。生产 `data/` 用相对路径不受影响。
 13. **readiness v2 精确覆盖 vs 现实数据滞后**（2026-07-17 记录）：v2 要求宇宙内每票都有 stock_basic(L) + 申万行业成员证据，缺一票全局 fail-closed。退市票由宇宙构建时的 stock_basic(L) 过滤解决（见"宇宙退市过滤"）；残留风险是**新上市/次新股尚未纳入申万行业指数**（stock_basic 有、SW 成员没有）——若此类票经涨停注入进入宇宙，SW 覆盖校验仍会阻断当日清单。出现时把该票加入 `EXTRA_EXCLUDED_TICKERS` 临时屏蔽，或等申万收录后自愈。
 14. **质量门常量必须与管线设计对齐**（2026-07-18 定位）：`quality_decision` 曾长期 degraded，三根同类的"门与设计矛盾"：① `price_history` 的 eligible 误用全池 300，而技术阶段按设计只消费流动性前 75%（225）→ 现由 scorer 用 `note_eligible_tickers` 显式声明设计消费集；② 生产端"成功观测 0 行"（合法空）不落盘空快照，消费端误报 UNAVAILABLE → `load_event_inputs` 现依据生产端逐源证据把合法空提升回 SUCCESS；③ `min_usable_rows=200` 与候选池 `MIN_LISTING_DAYS=60` 矛盾（次新票按设计只有 ~60 根 bar）→ 硬门槛改为 60，200 保留为 informational 的 full-factor 目标。**改质量门常量前，先确认它约束的是"异常"还是"设计状态"。**
-15. **price_cache 是不复权价，跨日窗口收益必须用 pct_change 链**（2026-07-18 对抗性审查）：825 票中 173 票近 200 行内有除权缺口（close 链收益与 pct_change 偏差 >1pp）。原始价比值跨缺口产生幻影（2026H1 全市场 817 个幻影超跌票日，OB 回测成交 31% 是幻影）。**setup 检测窗（BTST 条件4/OB 条件1/三处预过滤）已改用 `price_returns.chained_return_pct`**（除权免疫）；但**成交收益链（ledger 估值/退出、panel 前向收益、paper_tracker unrealized）仍用原始价出入场**——现金分红方向一律低估收益（0.5~3pp/笔），大比例送转可达 -30pp 级，属已知前视风险，长期方案是收益计算点统一 pct_change 链或缓存存复权价。另外 v2 ledger 的 MarketBar limit_up/limit_down 现由前收 × 板块幅度按交易所规则推导（除权日锚点偏宽，每年 ~1 天/票）。
+15. **price_cache 是不复权价，跨日窗口收益必须用 pct_change 链**（2026-07-18 对抗性审查）：825 票中 173 票近 200 行内有除权缺口（close 链收益与 pct_change 偏差 >1pp）。原始价比值跨缺口产生幻影（2026H1 全市场 817 个幻影超跌票日，OB 回测成交 31% 是幻影）。**已修：setup 检测窗、panel `_forward_return`、tracking 回填、--auto 评分链（`load_price_frame` 回溯复权）全部除权免疫**；成交收益链（ledger 估值/退出、paper_tracker）仍用原始价出入场——现金分红方向一律低估收益（0.5~3pp/笔），属已知前视风险。另外 v2 ledger 的 MarketBar limit_up/limit_down 现由前收 × 板块幅度按交易所规则推导（除权日锚点偏宽，每年 ~1 天/票）。
+16. **profit_aware 校准池饥饿与 None 语义**（2026-07-18 定位）：严格模式 git-sha 等值过滤（27 版本漂移）+ 98% 记录无 `return_tN_date`，校准池 89/89 天为空 → profit_aware 实际从未生效（排序静默退回 composite）。已修：sha 仅 provenance 不过滤、未标注日期用交易日历推断 realized_on。另：profit_aware 主键 None 从 -inf 改中性（0.5 胜率/0.0 期望）——旧语义让"已知 30% 胜率"排在"未知"前（方向错误）。
+17. **台账 10 万初始资金的整手截断**（2026-07-18 定位）：10% 单票上限 × 10 万 = 1 万，股价 >100 元即买不起一手（journal 样本 28%~46% 的价格带，含 688 高价龙头）。v2 台账可成交宇宙因此比回测证据宇宙窄，edge 衰减监测会混入口径偏差。skip 原因已区分 `lot_floor_zero_shares` vs `cash_capacity`；**根治需把 paper 台账 initial_cash 提到 100 万**（当前 0 成交，重置成本低——`initial_cash` 有 mismatch 校验，需归档旧 ledger 重建，属用户决策）。
 
 
 ## 关键文件速查

@@ -178,10 +178,11 @@ def classify_news_sentiment(title: str, content: str = "") -> str:
         "违规",
         "处罚",
         "退市",
-        "st",
         "爆雷",
         "债务",
         "诉讼",
+        "炸板",
+        "打开涨停",
         "下滑",
         "萎缩",
         "破发",
@@ -244,6 +245,10 @@ def classify_news_sentiment(title: str, content: str = "") -> str:
 
     pos_count = sum(1 for kw in positive_keywords if kw in text)
     neg_count = sum(1 for kw in negative_keywords if kw in text)
+    # "st" (ST 股前缀) 用词边界匹配 — 子串会误伤拉丁词内部
+    # (如 "SST签定战略协议" 实质利好, 曾误判 negative).
+    if re.search(r"(?<![a-z])st(?![a-z])", text):
+        neg_count += 1
 
     if pos_count > neg_count:
         return "positive"

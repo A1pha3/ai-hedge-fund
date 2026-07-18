@@ -356,3 +356,120 @@ def test_market_bar_first_row_stays_fail_closed(tmp_path) -> None:
         )
         is ExecutionStatus.UNKNOWN_QUEUE
     )
+
+
+# ---------------------------------------------------------------------------
+# 第二轮: tracking 回填复权 / 校准池 / 评分链复权 / 窗口护栏 / lot floor
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_actual_returns_immune_to_ex_dividend(tmp_path, monkeypatch) -> None:
+    """tracking 回填用 price_cache pct_change 链: 除权日 raw -26.8% 实际 +10%,
+    幻影收益不得进入 tracking 标签."""
+    from src.screening.recommendation_tracker import fetch_actual_returns
+
+    monkeypatch.chdir(tmp_path)
+    cache_dir = tmp_path / "data" / "price_cache"
+    cache_dir.mkdir(parents=True)
+    dates = ["2026-07-15", "2026-07-16", "2026-07-17", "2026-07-20", "2026-07-21"]
+    closes = [33.78, 33.9, 24.74, 25.0, 25.5]
+    pcts = [0.0, 0.36, 10.0044, 1.05, 2.0]
+    pd.DataFrame({"date": dates, "close": closes, "pct_change": pcts}).to_csv(
+        cache_dir / "001388.csv", index=False
+    )
+
+    result = fetch_actual_returns(["001388"], "20260715", "20260721")
+
+    # raw 口径: 25.5/33.78-1 = -24.5% (幻影); 链式: 1.0036×1.1004×1.0105×1.02-1 ≈ +14.1%
+    assert "001388" in result
+    assert result["001388"]["day_3"] == pytest.approx(11.56, abs=0.05)
+
+
+def test_back_adjust_ohlcv_anchors_latest_row() -> None:
+    from src.screening.scoring_feature_store import _back_adjust_ohlcv
+
+    frame = pd.DataFrame(
+        {
+            "open": [33.78, 24.7],
+            "close": [33.78, 24.74],
+            "high": [34.0, 25.0],
+            "low": [33.0, 24.5],
+            "pct_change": [0.0, 10.0044],
+        }
+    )
+    adjusted = _back_adjust_ohlcv(frame)
+    # 末行与原始价一致 (factor=1); 首行 factor 吸收除权缺口
+    # (raw 比值 0.7324 / 真实步进 1.100044 ≈ 0.6658)
+    assert adjusted.iloc[-1]["close"] == pytest.approx(24.74)
+    assert adjusted.iloc[0]["close"] == pytest.approx(24.74 / 1.10044, rel=1e-3)
+    # 调整后的步进 == provider 真实日涨幅 (除权免疫)
+    ratio = adjusted.iloc[1]["close"] / adjusted.iloc[0]["close"]
+    assert ratio == pytest.approx(1.100044, rel=1e-3)
+
+
+def test_records_as_of_no_sha_filter_and_undated_inference() -> None:
+    from src.screening.confidence_calibration import _records_as_of
+
+    records = [
+        {
+            "ticker": "A",
+            "recommended_date": "20260601",
+            "model_version": "old-sha",
+            "recommendation_score": 0.5,
+            "next_5day_return": 7.5,
+        }
+    ]
+    sessions = [date(2026, 6, 1) + pd.Timedelta(days=i) for i in range(0, 30, 1)]
+    sessions = [d for d in sessions if d.weekday() < 5]
+
+    snap = _records_as_of(
+        records, as_of="20260710", model_version="new-sha", sessions=sessions
+    )
+
+    assert len(snap) == 1  # sha 不同也入池 (provenance, 不过滤)
+    assert snap[0].get("next_5day_return") == 7.5  # 未标注日期 → 推断后保留
+
+
+def test_entry_window_block_reason_boundary() -> None:
+    from datetime import date as _date
+
+    from src.cli.dispatcher import _entry_window_block_reason
+
+    sessions = [_date(2026, 7, 17), _date(2026, 7, 20), _date(2026, 7, 21)]
+    now = pd.Timestamp.now(tz="Asia/Shanghai")
+    # 运行时间已过下一个开市日 → 必然 miss; 信号日为未来最后一个开市日 → 必然不 miss
+    assert _entry_window_block_reason(_date(2026, 7, 17), sessions) in (
+        "entry_window_missed",
+        None,
+    )
+    assert _entry_window_block_reason(_date(2099, 1, 5), [_date(2099, 1, 5), _date(2099, 1, 6)]) is None
+
+
+def test_lot_floor_zero_shares_reason_distinct(tmp_path) -> None:
+    """10 万台账 × 10% 上限 = 1 万 < 高价票一手: skip 原因必须是
+    lot_floor_zero_shares 而不是 cash_capacity (两种原因须可区分)."""
+    from src.screening.offensive.daily_action_service import PlanCandidate
+    from src.screening.offensive.execution_adjuster import ExecutionCosts
+    from src.screening.offensive.ledger_repository import LedgerRepository
+
+    repo = LedgerRepository(
+        tmp_path / "ledger.sqlite3", "test", 100_000, execution_costs=ExecutionCosts(version="t")
+    )
+    repo.initialize()
+    plan, _created = repo.create_plan_if_absent(
+        "688037", "btst_breakout", "v2",
+        __import__("datetime").date(2026, 7, 17),
+        __import__("datetime").date(2026, 7, 20),
+        0.10, 1,
+    )
+    _trade, outcome = repo.settle_plan_at_open(
+        plan.trade_id,
+        __import__("datetime").date(2026, 7, 20),
+        209.09,  # 209 元 × 100 股 = 2.09 万 > 1 万 target
+        188.18,
+        230.0,
+        False,
+        210.0,
+        208.0,
+    )
+    assert outcome == "lot_floor_zero_shares"

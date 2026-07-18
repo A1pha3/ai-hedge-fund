@@ -1024,6 +1024,26 @@ _DAILY_ACTION_BLOCK_REASONS_ZH = {
 }
 
 
+def _entry_window_block_reason(signal_date, open_sessions) -> str | None:
+    """入场窗口护栏: 计划按入场日开盘价成交, 当前时刻走过入场日 09:30 后,
+    再创建的计划会按"现实不可执行"的今日开盘记账 — 返回阻断原因, 否则 None."""
+
+    from datetime import time as _time
+
+    from src.screening.offensive.daily_action import _current_cn_datetime
+
+    later = [s for s in open_sessions if s > signal_date]
+    if not later:
+        return None  # 前向日历不足由 calendar_unavailable 路径披露
+    entry_date = min(later)
+    now = _current_cn_datetime()
+    if (now.date() > entry_date) or (
+        now.date() == entry_date and now.time() >= _time(9, 30)
+    ):
+        return "entry_window_missed"
+    return None
+
+
 def _latest_daily_action_attempt_reasons(reports_dir, signal_date) -> tuple[str, ...]:
     """Best-effort: reasons recorded by the newest readiness attempt for ``signal_date``.
 
@@ -1158,16 +1178,23 @@ def _resolve_daily_action(
         verified = None
         snapshot_block_reason: str | None = None
         attempt_reasons: tuple[str, ...] = ()
-        try:
-            verified = load_verified_daily_action_snapshot(
-                signal_date,
-                reports_dir=reports_dir,
-                data_dir=data_dir,
-            )
-        except Exception:
-            logger.warning("daily-action readiness snapshot load failed", exc_info=True)
+        # 入场窗口护栏 (2026-07-18): 计划按入场日开盘价结算 — 若当前时刻已走过
+        # 入场日 09:30, 此时创建的计划会按"现实不可执行"的今日开盘记账 (cron 漏跑
+        # 后的盘中补跑场景). 阻断新计划并明示, 生命周期结算 (退出/估值) 不受影响.
+        entry_window_reason = _entry_window_block_reason(signal_date, open_sessions)
+        if entry_window_reason is not None:
+            snapshot_block_reason = entry_window_reason
+        else:
+            try:
+                verified = load_verified_daily_action_snapshot(
+                    signal_date,
+                    reports_dir=reports_dir,
+                    data_dir=data_dir,
+                )
+            except Exception:
+                logger.warning("daily-action readiness snapshot load failed", exc_info=True)
         if verified is None or verified.snapshot is None:
-            snapshot_block_reason = (
+            snapshot_block_reason = snapshot_block_reason or (
                 verified.global_reason if verified is not None else "readiness_snapshot_load_failed"
             ) or "daily_action_readiness_missing"
             attempt_reasons = _latest_daily_action_attempt_reasons(reports_dir, signal_date)
@@ -1185,10 +1212,19 @@ def _resolve_daily_action(
                 try:
                     from src.screening.offensive.setup_output_log import log_setup_outputs
 
+                    # 样本外对照组纯度: candidate_not_plan_eligible 是 detect 前的数据
+                    # 契约拒票 (未触发, 0715 量级 263/267), 混入会把 filtered 组从
+                    # "触发但被过滤的动量票"稀释成"宇宙普通票", 偏向假 ✅ 结论.
+                    # readiness manifest 已记录它们, panel 日志只留触发后的被拒候选.
+                    logged_blocked = tuple(
+                        b
+                        for b in scan.blocked_candidates
+                        if b.reason != "candidate_not_plan_eligible"
+                    )
                     log_setup_outputs(
                         verified.snapshot.signal_date,
                         scan.candidates,
-                        scan.blocked_candidates,
+                        logged_blocked,
                         regime=regime,
                     )
                 except Exception:

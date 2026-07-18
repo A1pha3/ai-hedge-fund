@@ -152,7 +152,10 @@ def _score_growth(metrics_list: list[FinancialMetrics]) -> SubFactor:
     if len(metrics_list) < 4:
         return _make_sub_factor("growth", 0, 0.0, FUNDAMENTAL_SUBFACTOR_WEIGHTS["growth"], completeness=0.0)
     analysis = analyze_growth_trends(metrics_list)
-    direction, confidence = _resolve_growth_direction_and_confidence(float(analysis["score"]))
+    direction, confidence = _resolve_growth_direction_and_confidence(
+        float(analysis["score"]),
+        raw_score=float(analysis.get("raw_score", analysis["score"])),
+    )
     return _make_sub_factor(
         "growth",
         direction,
@@ -162,7 +165,12 @@ def _score_growth(metrics_list: list[FinancialMetrics]) -> SubFactor:
     )
 
 
-def _resolve_growth_direction_and_confidence(score: float) -> tuple[int, float]:
+def _resolve_growth_direction_and_confidence(score: float, raw_score: float | None = None) -> tuple[int, float]:
+    # 负增长 (raw<0) 与零增长 (钳位后 score==0) 必须区分: 旧实现把 27.4% 的
+    # 零增长票统一判为 direction=-1 @ confidence=100 (满置信看空).
+    raw = score if raw_score is None else raw_score
+    if raw < 0:
+        return -1, min(100.0, abs(raw) * 200.0)
     return (1 if score > 0.6 else -1 if score < 0.4 else 0), abs(score - 0.5) * 200.0
 
 

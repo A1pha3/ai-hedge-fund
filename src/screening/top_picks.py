@@ -1275,15 +1275,18 @@ def _apply_consecutive_bonus_and_resort(ranked: list[dict], *, profit_aware: boo
     # The prior impl always used composite_score primary here, silently reverting
     # the ranker's profit-aware ordering and making ``--profit-aware`` a no-op.
     if profit_aware:
+        # None → 中性 (未知 ≠ 已知差): bucket 证据缺失的票按 0.5 胜率/0.0 期望
+        # 中性处理, 与 A/B 诊断口径一致; 旧 -inf 语义让"已知 30% 胜率"反而
+        # 排在"未知"之前 (经济学方向错误).
         ranked.sort(
             key=lambda recommendation: (
                 -_safe_metric(
                     _max_short_horizon_metric(recommendation.get("win_rates")),
-                    float("-inf"),
+                    0.5,
                 ),
                 -_safe_metric(
                     _max_short_horizon_metric(recommendation.get("expected_returns")),
-                    float("-inf"),
+                    0.0,
                 ),
                 -_safe_metric(recommendation.get("bucket_sample_count"), 0.0),
                 -_safe_float_value(recommendation.get("composite_score", 0.0), 0.0),

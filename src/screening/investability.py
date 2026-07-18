@@ -543,10 +543,12 @@ def rank_recommendations_by_investability(
         # composite_score demoted to tie-break (keeps the model's residual signal
         # as the last resort, so profit-aware mode never throws the model away
         # entirely — it just stops trusting it as the PRIMARY key).
+        # None → 中性 (2026-07-18): 未知证据 (None) 按 0.5 胜率/0.0 期望处理 —
+        # 旧 -inf 语义让"已知 30% 胜率"排在"未知"之前 (经济学方向错误).
         ranked.sort(
             key=lambda rec: (
-                -_safe_metric(_max_short_horizon_metric(rec.get("win_rates")), float("-inf")),
-                -_safe_metric(_max_short_horizon_metric(rec.get("expected_returns")), float("-inf")),
+                -_safe_metric(_max_short_horizon_metric(rec.get("win_rates")), 0.5),
+                -_safe_metric(_max_short_horizon_metric(rec.get("expected_returns")), 0.0),
                 -_safe_metric(rec.get("bucket_sample_count"), 0.0),
                 -_safe_metric(rec.get("composite_score"), _safe_metric(rec.get("score_b", 0.0), 0.0)),
                 -_safe_metric(rec.get("score_b", 0.0), 0.0),

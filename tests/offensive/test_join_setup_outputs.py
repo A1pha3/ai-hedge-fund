@@ -13,7 +13,9 @@ def _series() -> pd.DataFrame:
     dates = ["20260101"] + [f"202601{d:02d}" for d in range(2, 13)]  # 12 sessions
     for i, d in enumerate(dates):
         close = 10.0 + i * 0.5  # rises 0.5/session
-        rows.append({"compact": d, "open": 10.0, "high": 12.0, "low": 8.0, "close": close})
+        prev_close = 10.0 + (i - 1) * 0.5 if i > 0 else close
+        pct = (close / prev_close - 1) * 100 if prev_close else 0.0
+        rows.append({"compact": d, "open": 10.0, "high": 12.0, "low": 8.0, "close": close, "pct_change": pct})
     return pd.DataFrame(rows)
 
 

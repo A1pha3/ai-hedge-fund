@@ -57,15 +57,22 @@ def test_refresh_writes_forward_inclusive_calendar(tmp_path):
     """The refresh persists real open sessions incl. future dates."""
     reports = tmp_path / "reports"
 
+    from datetime import date, timedelta
+
+    today = date.today()
+    sessions = [
+        (today + timedelta(days=offset)).strftime("%Y%m%d")
+        for offset in (-10, -3, 0, 1, 40)
+    ]
     target = da.refresh_authoritative_trade_calendar(
         reports_dir=reports,
-        fetch=lambda _start, _end: ["20260707", "20260714", "20260715", "20260716"],
+        fetch=lambda _start, _end: sessions,
     )
 
     assert target is not None
     stored = json.loads(target.read_text(encoding="utf-8"))
-    assert "20260715" in stored
-    assert "20260716" in stored
+    assert sessions[-2] in stored
+    assert sessions[-1] in stored
     # Sorted, deduplicated, compact YYYYMMDD.
     assert stored == sorted(set(stored))
 

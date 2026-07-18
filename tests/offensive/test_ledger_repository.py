@@ -628,7 +628,9 @@ def test_public_synthetic_fill_and_policy_overrides_are_rejected(tmp_path: Path)
         )
 
 
-def test_verified_synthetic_fill_requires_provenance_cost_version(tmp_path: Path) -> None:
+def test_verified_synthetic_fill_with_cost_version_mismatch_is_skipped(tmp_path: Path) -> None:
+    """成本口径演进后旧 provenance 的计划按 skip 处理 (cost_version_mismatch),
+    绝不能 raise — raise 会在 advance_lifecycle 第一步炸掉整个命令 (崩溃死锁)."""
     repo = LedgerRepository(
         tmp_path / "mismatch.sqlite3", "test", 100_000,
         execution_costs=ExecutionCosts(version="forged-zero-cost"),
@@ -638,11 +640,13 @@ def test_verified_synthetic_fill_requires_provenance_cost_version(tmp_path: Path
         "000001", "btst_breakout", "v1", date(2026, 7, 10), date(2026, 7, 13),
         0.10, 1, provenance=_provenance(),
     )
-    with pytest.raises(ValueError, match="cost version"):
-        repo.settle_plan_at_open(
-            plan.trade_id, date(2026, 7, 13), 10.0, 9.0, 11.0, False,
-            10.5, 9.5,
-        )
+    _trade, outcome = repo.settle_plan_at_open(
+        plan.trade_id, date(2026, 7, 13), 10.0, 9.0, 11.0, False,
+        10.5, 9.5,
+    )
+    assert outcome == "cost_version_mismatch"
+    refreshed = repo.get_trade(plan.trade_id)
+    assert refreshed.state.value == "skipped"
 
 
 def test_forged_crisis_provenance_cannot_authorize_twelve_percent(tmp_path: Path) -> None:

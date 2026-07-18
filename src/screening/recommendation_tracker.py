@@ -357,6 +357,59 @@ def _default_price_fetcher(ticker: str, start_date: str, end_date: str) -> list[
     return result
 
 
+def _returns_from_price_cache(ticker: str, cleaned_from: str) -> dict[str, float | str]:
+    """从本地 price_cache 计算 T+N 收益 (pct_change 链, 除权免疫).
+
+    fetcher 价格口径不可控 (tushare adj_factor 失败会降级不复权价, 产生除权
+    幻影记录). price_cache 的 pct_change 是 provider 真实日涨幅, 链式复合即得
+    调整后收益, 与 fetcher 路径同锚 (T0 收盘 → T+N 收盘). 返回 {} 表示缓存
+    缺失/不可用 — 调用方回落 fetcher 路径.
+    """
+    import pandas as pd
+
+    path = Path("data/price_cache") / f"{ticker}.csv"
+    if not path.exists():
+        return {}
+    try:
+        frame = pd.read_csv(path, dtype={"date": str})
+    except Exception:  # noqa: BLE001 - 缓存不可读时回落 fetcher
+        return {}
+    if frame.empty or not {"date", "close", "pct_change"}.issubset(frame.columns):
+        return {}
+    base_dash = f"{cleaned_from[:4]}-{cleaned_from[4:6]}-{cleaned_from[6:8]}"
+    frame = frame[frame["date"] >= base_dash].reset_index(drop=True)
+    if frame.empty:
+        return {}
+    try:
+        base_close = float(frame.iloc[0]["close"])
+    except (TypeError, ValueError):
+        return {}
+    if not math.isfinite(base_close) or base_close <= 0:
+        return {}
+    result: dict[str, float | str] = {}
+    for horizon in DEFAULT_HORIZONS:
+        if len(frame) <= horizon:
+            break  # horizons 升序; 后续更长的同样缺失
+        window = frame.iloc[1 : horizon + 1]["pct_change"]
+        chain = 1.0
+        chain_ok = True
+        for value in window:
+            try:
+                pct = float(value)
+            except (TypeError, ValueError):
+                chain_ok = False
+                break
+            if not math.isfinite(pct):
+                chain_ok = False
+                break
+            chain *= 1.0 + pct / 100.0
+        if not chain_ok:
+            continue
+        result[f"day_{horizon}"] = round((chain - 1.0) * 100.0, 4)
+        result[f"day_{horizon}_date"] = str(frame.iloc[horizon]["date"]).replace("-", "")
+    return result
+
+
 def fetch_actual_returns(
     tickers: list[str],
     from_date: str,
@@ -392,6 +445,14 @@ def fetch_actual_returns(
     result: dict[str, dict[str, float | str]] = {}
     for ticker in tickers:
         if not ticker:
+            continue
+        # 除权免疫优先路径: price_cache 的 pct_change 链 (provider 真实日涨幅)
+        # 计算 T+N — 不依赖 fetcher 的价格口径 (tushare adj_factor 失败会降级
+        # 不复权价, 43 条幻影记录即此来源). 仅默认 fetcher 时启用; 注入自定义
+        # fetcher (测试/指定源) 时以注入源为准. 缓存缺失/深度不足时回落 fetcher.
+        cached = _returns_from_price_cache(ticker, cleaned_from) if use_data_fetcher is None else {}
+        if cached:
+            result[ticker] = cached
             continue
         try:
             raw = fetcher(ticker, cleaned_from, extended_to) or []

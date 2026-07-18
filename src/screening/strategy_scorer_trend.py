@@ -506,8 +506,13 @@ def _compute_limit_up_memory_259(prices_df: pd.DataFrame, *, ticker: str) -> flo
 
 
 def _resolve_ashare_price_limit_pct(ticker: str) -> float:
-    symbol = get_ashare_symbol(ticker)
-    return 0.20 if symbol.startswith(("300", "301", "688")) else 0.10
+    """板块真实涨停幅度 (10%/20%/30%) — 与 ashare_board_utils 单一实现同源.
+
+    旧私有副本只有 20%/10% 两档, 北交所 (30%) 的 +12% 普通交易日会被错记涨停.
+    """
+    from src.tools.ashare_board_utils import limit_up_cap_pct_for_ticker
+
+    return limit_up_cap_pct_for_ticker(ticker) / 100.0
 
 
 def _has_recent_limit_up(returns: pd.Series, *, window: int, price_limit_pct: float) -> bool:

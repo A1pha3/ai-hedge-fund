@@ -233,6 +233,38 @@ def _validate_score_outputs(
     return evidence
 
 
+def _back_adjust_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
+    """用 pct_change 链把 OHLC 回溯复权到最新行口径 (前复权; 末行与原始价一致).
+
+    price_cache 是不复权价: 除权日 close 机械跳变, 技术指标 (EMA/RSI/动量/
+    布林带/ATR) 从 raw close 重算会把送转日读成崩盘幻影 (001388 型: raw
+    -26.8% 实际 +10%). 调整因子满足 adj[i+1]/adj[i] == 1+pct[i+1]/100
+    (provider 真实日涨幅) — 递推 f[i] = f[i+1] × (raw[i+1]/raw[i]) / (1+pct[i+1]),
+    普通日 raw 比值 == 1+pct 时因子不变, 除权日自动吸收缺口; 末行 factor=1 →
+    现价不变, 展示/执行口径不受影响. pct_change 列缺失或含非有限值时保持
+    原始价 (fail safe 到旧行为).
+    """
+    if "pct_change" not in frame.columns or frame.empty:
+        return frame
+    closes = pd.to_numeric(frame["close"], errors="coerce").astype(float).values
+    pcts = pd.to_numeric(frame["pct_change"], errors="coerce").values
+    if not all(math.isfinite(float(p)) for p in pcts):
+        return frame
+    n = len(frame)
+    factors = [1.0] * n
+    for i in range(n - 2, -1, -1):
+        prev_close = float(closes[i])
+        next_close = float(closes[i + 1])
+        true_step = 1.0 + float(pcts[i + 1]) / 100.0
+        if not math.isfinite(prev_close) or not math.isfinite(next_close) or prev_close <= 0 or true_step <= 0:
+            return frame
+        factors[i] = factors[i + 1] * (next_close / prev_close) / true_step
+    adjusted = frame.copy()
+    for column in ("open", "close", "high", "low"):
+        adjusted[column] = frame[column].astype(float).values * factors
+    return adjusted
+
+
 @dataclass
 class _QualityTracker:
     candidate_count: int = 0
@@ -440,6 +472,9 @@ class ScoringFeatureStore:
                 "price_history", ticker6, "empty_after_lookback"
             )
             return pd.DataFrame()
+        # 除权幻影修复 (2026-07-18): 技术指标全部从 close 重算, 不复权价的除权
+        # 缺口会被读成崩盘/超跌幻影 — 用 pct_change 链回溯复权到最新行口径.
+        normalized = _back_adjust_ohlcv(normalized)
         normalized = normalized.set_index("Date")
         self._quality.note_loaded("price_history", ticker6, rows=len(normalized), source="local_price_cache")
         self._quality.note_usable("price_history", ticker6)
