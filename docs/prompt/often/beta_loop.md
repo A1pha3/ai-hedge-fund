@@ -13,7 +13,10 @@ uv run python src/main.py --daily-action
  
 
 ## 优化
+
 - 优化后要用历史数据验证优化的效果。
+
+- 这个表中的一些术语的含义不太容易看懂，请简洁，清晰，优雅，准确的加一些中文对应和含义，以及如何使用这些信号
 
 
 ## Adversarial Review（对抗性审查） 
