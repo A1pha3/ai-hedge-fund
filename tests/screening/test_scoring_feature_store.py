@@ -955,3 +955,49 @@ def test_load_event_inputs_does_not_promote_when_producer_source_failed(tmp_path
     store.load_event_inputs("000001", "20260708")
 
     assert "000001" not in store._quality.observed.get("event_inputs", set())
+
+
+def test_legal_empty_overrides_stale_fallback(tmp_path: Path) -> None:
+    """今日权威空 (生产端 success+0行) + 昨日非空快照存在时, 必须以今日的空为准
+    (SUCCESS 不标 stale), 而不是回退到昨日快照触发 required_stale_fallback."""
+    legacy = tmp_path / "snapshots" / "000001" / "20260716"
+    legacy.mkdir(parents=True)
+    (legacy / "company_news.json").write_text(
+        json.dumps({"news": [{"title": "old news", "date": "2026-07-16", "summary": "x", "source": "s", "url": "u"}]}),
+        encoding="utf-8",
+    )
+    feature_dir = tmp_path / "feature_cache"
+    feature_dir.mkdir()
+    (feature_dir / "feature_manifest_20260717.json").write_text(
+        json.dumps({
+            "trade_date": "20260717",
+            "candidate_count": 1,
+            "ticker_outcomes": {
+                "000001": {
+                    "observation_status": "success",
+                    "families": {
+                        "event_inputs": {
+                            "observation_status": "success",
+                            "nonempty_count": 0,
+                            "sources": {
+                                "company_news": {"observation_status": "success", "nonempty_count": 0},
+                                "insider_trades": {"observation_status": "success", "nonempty_count": 0},
+                            },
+                        }
+                    },
+                }
+            },
+        }),
+        encoding="utf-8",
+    )
+    store = ScoringFeatureStore(
+        base_dir=feature_dir, legacy_snapshot_dir=tmp_path / "snapshots", allow_stale=True
+    )
+
+    news, trades = store.load_event_inputs("000001", "20260717")
+
+    assert news == [] and trades == []
+    statuses = store._quality.observation_statuses["event_inputs"]
+    assert statuses["000001"] is ObservationStatus.SUCCESS
+    assert "000001" not in store._quality.stale.get("event_inputs", set())
+    assert "000001" in store._quality.observed["event_inputs"]

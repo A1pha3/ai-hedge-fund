@@ -555,6 +555,19 @@ class ScoringFeatureStore:
             manifest, ticker6, "event_inputs", "insider_trades"
         ):
             trades_status = ObservationStatus.SUCCESS
+        # 合法空还必须压过 stale 回退: 今日权威空 + 昨日非空快照存在时, 消费端会
+        # 回退到昨日快照并标 stale → required_stale_fallback 阻断. 生产端证据表明
+        # 今日已被权威观测为空时, 以今日的空为准 (返回空列表, 不标 stale).
+        if news_stale and self._producer_source_observed_empty(
+            manifest, ticker6, "event_inputs", "company_news"
+        ):
+            news, news_status, news_stale = [], ObservationStatus.SUCCESS, False
+            news_snapshot_date = trade_date
+        if trades_stale and self._producer_source_observed_empty(
+            manifest, ticker6, "event_inputs", "insider_trades"
+        ):
+            trades, trades_status, trades_stale = [], ObservationStatus.SUCCESS, False
+            trades_snapshot_date = trade_date
         consumed_status = _event_source_status([news_status, trades_status])
         producer_status = self._producer_family_status(
             manifest, ticker6, "event_inputs"
