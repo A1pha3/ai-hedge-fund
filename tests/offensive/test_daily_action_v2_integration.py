@@ -306,14 +306,17 @@ def test_missing_authoritative_calendar_fails_closed(monkeypatch):
     assert _resolve_next_trade_date("20260925") == ""
 
 
-def test_cached_market_bar_preserves_unknown_execution_fields(tmp_path):
+def test_cached_market_bar_derives_suspended_but_stays_fail_closed_on_limits(tmp_path):
+    """单行缓存: 有真实 bar → suspended=False; 无前收行 → limit 字段保持 None,
+    classify_open_fill 仍 fail-closed (UNKNOWN_QUEUE). 2026-07-18 起 limit 价由
+    前收 × 板块幅度按交易所规则推导, 不再一律置 None (修复 v2 ledger 全 skip)."""
     cache = tmp_path / "000001.csv"
     cache.write_text(
         "date,open,close,high,low\n2026-07-13,10,10,10.5,9.5\n", encoding="utf-8"
     )
     bar = _cached_daily_action_market_bar(cache, date(2026, 7, 13))
     assert bar is not None
-    assert bar.suspended is None
+    assert bar.suspended is False
     assert bar.limit_up is None
     assert bar.limit_down is None
 

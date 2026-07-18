@@ -9,6 +9,8 @@
 失效条件: 价格跌破触发日收盘 × 0.92 (即 -8% 止损线)
 
 条件 4 的数据依据 (全池回测 2020-2026, 8825 涨停样本, T+5 execution-adjusted):
+  ⚠ 下表基于旧口径 close[T]/close[T-5] (含涨停日本身), 已不描述现行过滤器
+  (现行为 close[T-1]/close[T-5], 不含涨停日), 仅留作历史参考.
   涨停前5日涨幅  样本   E[r]    胜率   凸性
   ≤ 0%          553   +4.17%   61%   —     (超跌后首板, 最强)
   ≤ 5%         1299   +3.20%   60%   2.17
@@ -32,6 +34,7 @@ from typing import Any
 import pandas as pd
 
 from src.screening.offensive.data.fund_flow_store import FundFlowRecord
+from src.screening.offensive.price_returns import chained_return_pct
 from src.screening.offensive.setups.base import DetectionResult, Setup
 
 # 涨停判定: 板块自适应 (主板 9.5%, 科创/创业 19.5%, 北交所 29.0%).
@@ -260,9 +263,13 @@ class BtstBreakoutSetup(Setup):
 
         # 条件 1: 今日涨停 (板块自适应: 主板 ≥9.5%, 科创/创业 ≥19.5%, 北交所 ≥29.0%)
         # 旧固定 9.5% 在 20% 板会把非涨停的大涨日 (如 +13.9%) 误判为涨停 → 语义污染.
-        from src.tools.ashare_board_utils import limit_up_pct_for_ticker
+        from src.tools.ashare_board_utils import (
+            limit_up_cap_pct_for_ticker,
+            limit_up_pct_for_ticker,
+        )
 
         limit_up_pct = limit_up_pct_for_ticker(ticker)
+        limit_up_cap = limit_up_cap_pct_for_ticker(ticker)
         # NaN guard: `NaN or 0.0` 返回 NaN (NaN 是 truthy), `NaN < threshold` 永远 False.
         # 先 float() 再 math.isnan() 统一处理, 数据缺失时保守 miss.
         try:
@@ -271,8 +278,16 @@ class BtstBreakoutSetup(Setup):
             pct_change = float("nan")
         if math.isnan(pct_change) or pct_change < limit_up_pct:
             return self._miss(ticker, trade_date)
+        # 上界护栏: pct 超过交易所真实板帽 (如 +10.5%/+20.5%/+30.5%) 的交易日是
+        # 无涨跌幅限制日 (长期停牌复牌/新股上市初期), 不是涨停 — 案例 000792
+        # 2021-08-10 停牌 15 个月复牌 +306%, pre_runup≈0 会被当成"超跌后首板"误放.
+        if pct_change > limit_up_cap + 0.5:
+            return self._miss(ticker, trade_date)
 
-        # 条件 2: 主力净流入 > 20 日均值 (去掉冗余 >0 检查: 涨停日必然正流入)
+        # 条件 2: 主力净流入 > 20 日均值.
+        # 注意: 涨停日主力净流出是常态 (~59% 的涨停日 main_net_inflow<0, 封板时大单
+        # 卖出打进买单队列), 因此这里有意不含 >0 检查 — 裸信号分组回测未见 E[r] 受损
+        # (负流入组 E[r] 不弱于正流入组). 不要把 ">0" 当作冗余加回来而不跑分组回测.
         records: list[FundFlowRecord] = context.get("fund_flow_records") or []
         today_flow = next((r.main_net_inflow for r in records if r.date == trade_date), None)
         # Bug fix (2026-07-12): NaN guard — fund_flow_store 已修复 `or 0.0` 对 NaN 无效,
@@ -315,23 +330,27 @@ class BtstBreakoutSetup(Setup):
             if industry_pct != industry_pct or industry_pct < _INDUSTRY_PCT_MIN:  # NaN guard
                 return self._miss(ticker, trade_date)
 
-        # 条件 4: 涨停前 5 日累计涨幅 ≤ 10% (防追高; trigger_strength 的 trend 因子进一步区分).
+        # 条件 4: 涨停前窗口累计涨幅 ≤ 8% (防追高, close[T-1]/close[T-5]).
+        # 收益用 pct_change 链式复合 (price_returns.chained_return_pct): 原始价比值
+        # 跨除权缺口会产生幻影 — 如 688167 20260615 raw5=-19.9% (幻影"超跌后首板"),
+        # 实际调整后 +15.9% (追高). 链条断裂 (NaN) 时保守 miss, 与数据不足同语义.
         ref_idx = trigger_idx - _PRE_RUNUP_LOOKBACK_DAYS
         pre_trigger_idx = trigger_idx - 1
         if ref_idx < 0 or pre_trigger_idx < 0:
             return self._miss(ticker, trade_date)  # 数据不足, 保守 miss
-        pre_close = float(prices.iloc[ref_idx]["close"])
-        pre_trigger_close = float(prices.iloc[pre_trigger_idx]["close"])
-        trigger_close = float(trigger_row["close"])
-        pre_runup_pct = (pre_trigger_close / pre_close - 1) * 100
-        if pre_runup_pct > _PRE_RUNUP_MAX_PCT:
+        pre_runup_pct = chained_return_pct(prices, ref_idx, pre_trigger_idx)
+        if pre_runup_pct is None or pre_runup_pct > _PRE_RUNUP_MAX_PCT:
             return self._miss(ticker, trade_date)
 
         # 止损: 基于盘整区底部 (物理结构自适应).
         # 文档 §3.3: "初始止损设在 LL 下方一点" — 止损锚定压缩区间底部, 不是固定 -8%.
         # 压缩越紧 → range_low 越接近 trigger_close → 止损越窄 → 盈亏比天然更大.
+        trigger_close = float(trigger_row["close"])
         range_lookback = max(0, trigger_idx - 20)
         range_low = float(prices.iloc[range_lookback:trigger_idx]["low"].min())
+        # 除权日前的 low 在旧价格尺度上, 可能高于现价 → 钳到现价之下,
+        # 防止输出"跌破 X (X > 现价)"的 nonsense 止损披露 (仅影响披露, 不进 P&L).
+        range_low = min(range_low, trigger_close)
         range_based_stop_pct = (range_low / trigger_close - 1)  # 负数, 如 -0.05 = -5%
         # 安全下限: 止损不超过 -8% (如果盘整区底部太远, 用 -8% 兜底)
         if range_based_stop_pct < -0.08:
@@ -340,8 +359,8 @@ class BtstBreakoutSetup(Setup):
         invalidation = f"价格跌破 {stop_price:.2f} (盘整区底部 {range_low:.2f}, {range_based_stop_pct:+.1%})"
 
         # trigger_strength: 5 因子等权 alpha ranker + 能量耦合 bonus.
-        #   weekday:  Wed-Fri 78% win vs Mon-Tue 51% (+27pp)
-        #   board:    002/300 83% vs SZmain 45% (+38pp)
+        #   weekday:  Wed-Fri 78% win vs Mon-Tue 51% (n=133, 2026 单 regime 样本, 待跨周期验证)
+        #   board:    002/300 61.1% vs 000/001 44.9% (n=1212, 626 票全 universe 回测)
         #   position: Donchian 下半区(新鲜突破) vs 上半区(追高)
         #   squeeze:  波动率压缩(弹簧压紧) vs 未压缩
         #   volume:   成交量比率 (0.8-1.5x 最佳, 0.5-0.8x 最差 ≈ 49.7% 无 α)
@@ -349,7 +368,7 @@ class BtstBreakoutSetup(Setup):
 
         trade_dow = _dt.strptime(trade_date, "%Y%m%d").weekday()  # 0=Mon
         weekday_score = 1.0 if trade_dow >= 2 else 0.0  # Wed-Fri=1, Mon-Tue=0
-        board_score = _board_quality_score(ticker)  # 002/300=1.0, 688/60x=0.7, 000=0.0
+        board_score = _board_quality_score(ticker)  # 002/300=1.0, 688/60x=0.95, 000=0.0
 
         # 位置因子: 用涨停前 5 日 close 计算
         # 压缩因子: 用涨停前 20 日 high/low/close 计算 (需要更长的历史窗口)

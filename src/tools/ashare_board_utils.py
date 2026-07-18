@@ -168,3 +168,25 @@ def limit_up_pct_for_ticker(ticker: Any) -> float:
     if symbol.startswith(("43", "83", "87")) or is_beijing_exchange_stock(symbol=symbol):
         return _LIMIT_UP_PCT_BJ
     return _LIMIT_UP_PCT_MAIN
+
+
+# 交易所真实涨跌停幅度 (不是判定下限): 用于由前收推导涨跌停价 / 识别超帽异动
+# (超帽只可能是复牌/无涨跌幅限制日, 不是涨停).
+_LIMIT_UP_CAP_MAIN = 10.0      # 主板 ±10%
+_LIMIT_UP_CAP_STAR = 20.0      # 科创板 / 创业板 ±20%
+_LIMIT_UP_CAP_BJ = 30.0        # 北交所 ±30%
+
+
+def limit_up_cap_pct_for_ticker(ticker: Any) -> float:
+    """返回该 ticker 的交易所真实涨停幅度 pct (10.0 / 20.0 / 30.0).
+
+    与 ``limit_up_pct_for_ticker`` (判定下限, 含 ~5% 保守容差) 不同, 这是规则
+    真值, 用于: (a) 由前收盘价推导涨跌停价 (四舍五入到分); (b) 涨停语义上界
+    —— pct_change 超过 cap 的交易日是无涨跌幅限制日 (复牌/新股), 不是涨停.
+    """
+    symbol = get_ashare_symbol(ticker)
+    if _is_star_or_chinext_symbol(symbol):
+        return _LIMIT_UP_CAP_STAR
+    if symbol.startswith(("43", "83", "87")) or is_beijing_exchange_stock(symbol=symbol):
+        return _LIMIT_UP_CAP_BJ
+    return _LIMIT_UP_CAP_MAIN

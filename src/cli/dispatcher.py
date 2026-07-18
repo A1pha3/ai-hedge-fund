@@ -939,19 +939,34 @@ def _resolve_top_setups(argv: list[str]) -> int | None:
 
 
 def _cached_daily_action_market_bar(cache, trade_date):
-    """Read an exact cached bar without inventing execution-state fields."""
+    """Read an exact cached bar, deriving execution-state fields from authority facts.
+
+    price_cache 不持久化 limit_up/limit_down/suspended, 但三者可由权威事实推导:
+    - 涨跌停价 = 前收 × (1 ± 板块真实幅度), 按交易所规则四舍五入到 0.01 元
+      (Decimal ROUND_HALF_UP); 无前收行 (缓存首行) 时保持 None → fail-closed.
+    - suspended=False: 当日存在真实 bar ⇒ 当日有成交 ⇒ 未停牌.
+    此前三字段恒为 None → classify_open_fill 一律 UNKNOWN_QUEUE → v2 ledger 自部署
+    起 100% 计划被 skip (entry_queue_unknown), 从未成交一笔.
+    已知边界: 除权日的真实涨停锚是除权基准价而非原始前收 (~每年 1 天/票), 此时
+    推导的涨跌停带偏宽, 一字板可能被误判为可成交 — 概率极低且方向可接受.
+    """
+    import math
+    from decimal import ROUND_HALF_UP, Decimal
+
     import pandas as pd
 
     from src.screening.offensive.daily_action_service import MarketBar
+    from src.tools.ashare_board_utils import limit_up_cap_pct_for_ticker
 
     if not cache.exists():
         return None
-    frame = pd.read_csv(cache)
+    frame = pd.read_csv(cache).reset_index(drop=True)
     dates = pd.to_datetime(frame.get("date"), format="mixed", errors="coerce").dt.date
-    rows = frame.loc[dates == trade_date]
-    if len(rows) != 1:
+    matched = frame.index[dates == trade_date]
+    if len(matched) != 1:
         return None
-    row = rows.iloc[0]
+    pos = int(matched[0])
+    row = frame.iloc[pos]
 
     def positive(name):
         if name not in row or pd.isna(row[name]):
@@ -964,11 +979,31 @@ def _cached_daily_action_market_bar(cache, trade_date):
         raw = row["suspended"]
         if isinstance(raw, bool) or raw in (0, 1):
             suspended = bool(raw)
+    if suspended is None:
+        suspended = False  # 当日存在真实 bar ⇒ 当日有成交 ⇒ 未停牌
+
+    limit_up = positive("limit_up")
+    limit_down = positive("limit_down")
+    if (limit_up is None or limit_down is None) and pos > 0:
+        try:
+            prev_close = float(frame.iloc[pos - 1]["close"])
+        except (TypeError, ValueError, KeyError):
+            prev_close = float("nan")
+        if math.isfinite(prev_close) and prev_close > 0:
+            cap = Decimal(str(limit_up_cap_pct_for_ticker(cache.stem) / 100.0))
+            base = Decimal(str(prev_close))
+            tick = Decimal("0.01")
+            limit_up = float(
+                (base * (1 + cap)).quantize(tick, rounding=ROUND_HALF_UP)
+            )
+            limit_down = float(
+                (base * (1 - cap)).quantize(tick, rounding=ROUND_HALF_UP)
+            )
     return MarketBar(
         positive("open"),
         positive("close"),
-        positive("limit_down"),
-        positive("limit_up"),
+        limit_down,
+        limit_up,
         suspended,
         positive("high"),
         positive("low"),

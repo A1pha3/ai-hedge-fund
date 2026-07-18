@@ -19,6 +19,13 @@ def _ctx(prices, fund_flow_records=None, industry_pct=3.0, regime="normal"):
     }
 
 
+def _sync_pct_change(prices):
+    """让 pct_change 与 close 链一致 (检测条件现按 pct_change 链复合窗口收益)."""
+    prices = prices.copy()
+    prices["pct_change"] = prices["close"].pct_change().fillna(0.0) * 100.0
+    return prices
+
+
 def _prices_with_limit_up_today():
     """今天涨停 (+10%), 主力净流入强, 行业涨 3%.
 
@@ -117,6 +124,7 @@ def test_miss_when_pre_runup_too_high():
     prices = _prices_with_limit_up_today()
     # 把前5日 close 从 10.0 改成 9.0 (今日涨停 11.0, 前5日 9.0 → 涨幅 22% > 5%)
     prices.loc[prices.index[-6], "close"] = 9.0
+    prices = _sync_pct_change(prices)
     today = prices.iloc[-1]["date"].strftime("%Y%m%d")
     recs = [FundFlowRecord(ticker="X", date=today, close=11.0, pct_change=10.0, main_net_inflow=5_000_000, main_net_pct=8.0)]
     old_recs = []
@@ -137,6 +145,7 @@ def test_hit_when_oversold_then_limit_up():
     prices = _prices_with_limit_up_today()
     # 前5日 close 设为 12.0 (今日涨停 11.0, 前5日 12.0 → 跌幅 -8.3%)
     prices.loc[prices.index[-6], "close"] = 12.0
+    prices = _sync_pct_change(prices)
     today = prices.iloc[-1]["date"].strftime("%Y%m%d")
     recs = [FundFlowRecord(ticker="X", date=today, close=11.0, pct_change=10.0, main_net_inflow=5_000_000, main_net_pct=8.0)]
     old_recs = []

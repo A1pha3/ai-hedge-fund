@@ -18,7 +18,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from src.tools.ashare_board_utils import limit_up_pct_for_ticker
+from src.screening.offensive.price_returns import chained_return_pct
+from src.tools.ashare_board_utils import limit_up_cap_pct_for_ticker, limit_up_pct_for_ticker
 from scripts.validate_auto300_gate_removal import (
     HORIZONS,
     _fmt,
@@ -33,12 +34,15 @@ def collect_setup_events(series, regimes) -> list[dict]:
     events: list[dict] = []
     for ticker, df in series.items():
         threshold = limit_up_pct_for_ticker(ticker)
+        cap = limit_up_cap_pct_for_ticker(ticker)
         df = df.reset_index(drop=True)
         closes = df["close"].astype(float).values
         highs = df["high"].astype(float).values
         lows = df["low"].astype(float).values
         vols = df["volume"].astype(float).values if "volume" in df.columns else None
-        for idx in df.index[df["pct_change"] >= threshold].tolist():
+        # 与 live detect 同口径 (2026-07-18): 上界护栏 — 超板帽日是无涨跌幅限制日
+        # (复牌/新股), 不是涨停.
+        for idx in df.index[(df["pct_change"] >= threshold) & (df["pct_change"] <= cap + 0.5)].tolist():
             if idx + 1 >= len(df):
                 continue
             r10 = _forward_return(df, idx, 10)
@@ -46,10 +50,9 @@ def collect_setup_events(series, regimes) -> list[dict]:
             if r10 is None and r5 is None:
                 continue
             # Setup 核心过滤: 涨停前 5 日累计涨幅 (trigger-5 → trigger-1) ≤ 8% (防追高).
-            # 复刻 btst_breakout._PRE_RUNUP; 数据不足按 setup 逻辑视为不通过.
-            if idx - 5 >= 0 and closes[idx - 5] > 0:
-                pre_runup = (closes[idx - 1] / closes[idx - 5] - 1) * 100
-            else:
+            # 与 live detect 同口径: pct_change 链式复合 (除权免疫), 链条断裂视为不通过.
+            pre_runup = chained_return_pct(df, idx - 5, idx - 1)
+            if pre_runup is None:
                 pre_runup = 999.0
             # ATR-squeeze 代理: trigger 前 5 日 (high-low)/close 均值 < 3% = 低波动盘整
             # (btst_breakout: 低波动组 win 82.8% vs 高波动 60%). 数据不足则视为不通过.

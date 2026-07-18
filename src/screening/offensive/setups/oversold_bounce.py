@@ -17,6 +17,7 @@ from typing import Any
 import pandas as pd
 
 from src.screening.offensive.data.fund_flow_store import FundFlowRecord
+from src.screening.offensive.price_returns import chained_return_pct
 from src.screening.offensive.setups.base import DetectionResult, Setup
 
 _LOOKBACK_DROP_DAYS = 30
@@ -43,13 +44,15 @@ class OversoldBounceSetup(Setup):
         trigger_idx = trigger_rows.index[0]
 
         # 条件 1: 近 30 日跌幅 > 20%
+        # 收益用 pct_change 链式复合 (price_returns.chained_return_pct): 原始价比值
+        # 跨除权缺口会产生幻影超跌 — 2026H1 回测 OB 成交 31% 是幻影 (如 300033
+        # 20260410 除权 raw -25.8% 实际 +5.7%). 链条断裂 (NaN) 时保守 miss.
         ref_idx = trigger_idx - _LOOKBACK_DROP_DAYS
         if ref_idx < 0:
             return self._miss(ticker, trade_date)
-        ref_close = float(prices.iloc[ref_idx]["close"])
         trigger_close = float(prices.iloc[trigger_idx]["close"])
-        drop_pct = (trigger_close / ref_close - 1) * 100
-        if drop_pct > _DROP_THRESHOLD:  # drop_pct 是负数, > -20 表示没跌够
+        drop_pct = chained_return_pct(prices, ref_idx, trigger_idx)
+        if drop_pct is None or drop_pct > _DROP_THRESHOLD:  # drop_pct 是负数, > -20 表示没跌够
             return self._miss(ticker, trade_date)
 
         # 条件 2: 近 3 日 (含触发日) 主力净流入累计 > 0 (转正)

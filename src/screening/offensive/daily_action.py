@@ -34,6 +34,7 @@ from src.screening.offensive.daily_action_snapshot import VerifiedDailyActionSna
 from src.screening.offensive.data.fund_flow_store import FundFlowRecord
 from src.screening.offensive.known_distributions import get_known_distribution
 from src.screening.offensive.paper_tracker import PaperTracker, TradeAction
+from src.screening.offensive.price_returns import chained_return_pct
 from src.screening.offensive.risk_framework import build_risk_plan
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
 from src.screening.offensive.setups.oversold_bounce import OversoldBounceSetup
@@ -99,6 +100,19 @@ _REGIME_SIZE_FACTORS_BY_SETUP = {
 # regime 加仓的硬上限: 单票最多 _MAX_POSITION_PCT × 此倍数 (10% → 12%).
 # 即使 crisis 触发 1.2×, 防止仓位失控; 组合层 _MAX_PORTFOLO_PCT 仍兜底.
 _REGIME_POSITION_CAP_MULTIPLE = 1.2
+
+# v2 ledger 可承接的 setup 白名单. PlanCandidate.__post_init__ 硬拒白名单外 setup —
+# scan 层必须先拦截, 否则按文档恢复 OB (DAILY_ACTION_DISABLED_SETUPS=none) 后,
+# OB 命中会在构造 PlanCandidate 时抛异常 → 当日全部新计划 (含 BTST) 被 fail-closed.
+_LEDGER_ENABLED_SETUPS = ("btst_breakout",)
+
+# regime 加仓证据绑定状态: canonical manifest 当前缺少可重算的 regime 授权证据
+# (见 AGENTS.md "Daily Action readiness v2" 节), 绑定完成前扫描不实际执行 regime
+# 加仓 (候选仍带 authorization 标记用于披露, service 披露 evidence_unavailable).
+# 旧实现把 regime_factor 乘进 target_weight — 仅在 strength=1.0 时被 10% clamp 拦住,
+# strength<1 时 crisis/risk_off 实际泄漏 +0.5~2pp/票, 且 provenance 硬写 normal,
+# 与"证据完成绑定前不实际加仓"的承诺矛盾.
+_REGIME_SIZING_EVIDENCE_BOUND = False
 
 
 def _enforce_open_cap() -> bool:
@@ -677,6 +691,7 @@ _BLOCK_REASON_ZH = {
     "calendar_unavailable": "交易日历不可用",
     "incomplete_setup_data": "setup 数据不完整",
     "setup_disabled_by_default": "setup 默认暂停",
+    "setup_not_ledger_enabled": "setup 未在台账启用",
     "detector_degraded": "检测器降级",
     "regime_authorization_evidence_unavailable": "regime 加仓证据暂不可验，按 10% 单票上限披露",
 }
@@ -1159,7 +1174,9 @@ def generate_daily_action(
 
         # 快速预过滤: 只有涨停日 (pct >= 9.5) 或超跌日才需要读 fund_flow.
         # 效率优化: 78%+ 的 ticker 不是涨停日, 跳过昂贵的 fund_flow CSV 读取.
-        needs_flow = pct >= 9.5 or (len(prices) >= 31 and (float(last_row["close"]) / float(prices.iloc[-31]["close"]) - 1) * 100 <= -20)
+        # 超跌判定用 pct_change 链式复合 (除权免疫); 链条断裂时不跳过 (交给 detect 判定).
+        drop30 = chained_return_pct(prices, len(prices) - 31, len(prices) - 1) if len(prices) >= 31 else None
+        needs_flow = pct >= 9.5 or (len(prices) >= 31 and (drop30 is None or drop30 <= -20))
         flow_records = store.get_range(ticker, "20200101", trade_date) if needs_flow else []
 
         # 对每个已验证 setup 跑 detect
@@ -1172,10 +1189,11 @@ def generate_daily_action(
                 continue  # BTST 只看涨停日
             if setup_name == "oversold_bounce":
                 # OversoldBounce: 近30日跌幅需>20% (否则 detect 必 miss)
+                # 与 detect 同口径: pct_change 链式复合 (除权免疫); 链条断裂放行给 detect.
                 if len(prices) < 31:
                     continue
-                drop30 = (float(last_row["close"]) / float(prices.iloc[-31]["close"]) - 1) * 100
-                if drop30 > -20:
+                drop30 = chained_return_pct(prices, len(prices) - 31, len(prices) - 1)
+                if drop30 is not None and drop30 > -20:
                     continue
 
             industry_pct = industry_day_pct_by_ticker.get(ticker) if setup_name == "btst_breakout" else 0.0
@@ -1438,10 +1456,11 @@ def scan_from_verified_snapshot(
             if setup_name == "btst_breakout" and pct < 9.5:
                 continue
             if setup_name == "oversold_bounce":
+                # 与 detect 同口径: pct_change 链式复合 (除权免疫); 链条断裂放行给 detect.
                 if len(prices) < 31:
                     continue
-                drop30 = (float(last_row["close"]) / float(prices.iloc[-31]["close"]) - 1) * 100
-                if drop30 > -20:
+                drop30 = chained_return_pct(prices, len(prices) - 31, len(prices) - 1)
+                if drop30 is not None and drop30 > -20:
                     continue
 
             industry_pct = ctx.industry_day_pct if setup_name == "btst_breakout" else 0.0
@@ -1459,7 +1478,12 @@ def scan_from_verified_snapshot(
                 continue
 
             setup_max_pct = _MAX_POSITION_PCT_BY_SETUP.get(setup_name, _MAX_POSITION_PCT)
-            regime_factor = _regime_size_factor(regime, setup_name)
+            # regime 证据未绑定前不实际加仓 (候选仍带 authorization 披露), 见常量注释.
+            regime_factor = (
+                _regime_size_factor(regime, setup_name)
+                if _REGIME_SIZING_EVIDENCE_BOUND
+                else 1.0
+            )
             strength_factor = max(0.3, min(1.0, float(result.trigger_strength)))
             kelly_pct = setup_max_pct * regime_factor * strength_factor
             kelly_pct = min(kelly_pct, setup_max_pct * _REGIME_POSITION_CAP_MULTIPLE)
@@ -1500,6 +1524,11 @@ def scan_from_verified_snapshot(
         ctx = snapshot.setup_context(ticker, setup_name)
         if ctx is None:
             blocked.append(BlockedCandidate(ticker, "candidate_not_plan_eligible", entry_price))
+            continue
+        if setup_name not in _LEDGER_ENABLED_SETUPS:
+            # 台账尚不能承接该 setup (如 OB): 拦截在 PlanCandidate 硬拒之前,
+            # 否则异常会把当日全部新计划 (含 BTST) 一起 fail-closed.
+            blocked.append(BlockedCandidate(ticker, "setup_not_ledger_enabled", entry_price))
             continue
         candidates.append(
             PlanCandidate(

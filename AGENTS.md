@@ -25,13 +25,20 @@ uv run python src/main.py --daily-action   # 读缓存, ~3 秒, 输出次日 BUY
 - `portfolio_state.json`：nav=2.10，realized_pnl=+110%（2026 上半年回测结果）。
 - **这是验证 setup 表现、regime 分层、止损逻辑的唯一真实数据源。**
 - ⚠️ **不要和 `data/paper_trading/`（运行时实例，0 笔 EXIT）混淆**。曾因此误判系统"0 笔成交"。
+- ⚠️ **journal 的 recorded P&L 存在锚定 bug（2026-07-18 对抗性审查定位，三方独立复现）**：生成它的回测以 `price_loader=None` 调用 `close_matured`（`scripts/backtest_paper_loop.py:134`），`fetch_actual_returns` 把每票收益锚到**本批次最早 buy_date** 而非本仓位 buy_date；且入场口径是 **T0 收盘**（不是文档声称的 T+1 开盘）、零成本。可复核 139 笔中 **42% 偏差 >0.5pp，最大 ±31.6pp**（300033 两笔不同仓位同记 -26.74%，精确复现锚定窗口）。**下表引述值因此系统性虚高**，修正后见"2026 实测表现"。另：**53/192 笔（28%）的 ticker 缓存文件已被删除，永久不可复核**——回测产物必须连同输入数据快照归档。
 
-### 2026 实测表现（截至 2026-07-09，源自 paper_trading_backtest）
+### 2026 实测表现（截至 2026-07-09，源自 paper_trading_backtest；2026-07-18 修正口径）
+
+journal recorded 原值（旧引述，锚定 bug 污染）→ **own-anchor 修正**（本仓位 T0 收盘口径，paired n=97）→ **可执行口径**（T+1 开盘 + 双边 30bps）：
 
 ```
-BTST (n=133):           winrate=68%  E[r]=+8.15%   crisis=+16.93%/76%  risk_off=+8.87%/78%  normal=+6.29%/66%
-OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0.15%/51%   risk_off=+13.11%/100%(n=3)
+BTST:        recorded +8.15%/68%(n=133) → 修正 +6.68%/62.9% → 可执行 ≈+5.28%/58.8%
+OB:          recorded +0.34%/53%(n=59)  → CI 跨 0 结论不变
+regime 分层: crisis>normal>risk_off 排序保留, 量级下修 (如 BTST crisis +18.74%→+11.17%)
+组合 nav:    recorded 2.10 (+110%) → paired 口径 ≈ +70%
 ```
+
+- **方向结论不变**（BTST 三 regime 都为正、crisis 最强；OB 仍统计不显著），但 **E[r] 系统性高估 1.5~4pp、胜率高估 ~5.5pp**。28% 样本不可复核，真实可执行 E[r] 大概率低于 recorded +8.15%，具体修正值待补全缓存重跑。
 
 - **BTST 三个 regime 都赚钱**，crisis 最强 → crisis 加仓有数据支持。
 - **OversoldBounce 默认暂停**，但核心理由不是"crisis 亏钱"，而是统计证据不足：
@@ -64,18 +71,19 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 
 ### 凸性 setup（`--daily-action`）
 
-- **BTST 涨停突破（T+10）**：✅ 启用。扫描器会请求 crisis/risk_off 加仓，但 v2 ledger 当前因 canonical manifest 缺少可重算的 regime 授权证据而安全降级到 10%，并披露 `regime_authorization_evidence_unavailable`；在证据完成绑定前不实际加仓。
+- **BTST 涨停突破（T+10）**：✅ 启用。扫描器会请求 crisis/risk_off 加仓，但 v2 ledger 当前因 canonical manifest 缺少可重算的 regime 授权证据而安全降级到 10%，并披露 `regime_authorization_evidence_unavailable`；在证据完成绑定前不实际加仓。（2026-07-18 修复：旧实现仅在 strength=1.0 时被 clamp 拦住，strength<1 时 regime 加仓实际泄漏 +0.5~2pp/票且 provenance 谎报 normal——现 v2 扫描在证据绑定前 regime_factor 恒 1.0，候选仍带 authorization 标记用于披露。）
 - **OversoldBounce 超跌反弹（T+5）**：⏸️ **默认暂停**（E[r]=+0.34% 统计不显著、CI 跨 0；尾部亏损比 BTST 厚）。
   - 控制：`DAILY_ACTION_DISABLED_SETUPS` env（默认含 `oversold_bounce`）。
   - 恢复：`DAILY_ACTION_DISABLED_SETUPS=none`（补全历史数据重跑后再决定去留）。
   - ⚠️ 暂停理由不是"crisis 亏钱"（crisis n=21 太小不可靠），而是"无法证明赚钱 + 亏起来更狠 + 仓位有更好去处"。详见上文"2026 实测表现"。
 - Kelly 仓位：half-Kelly，当前 v2 ledger 单票硬上限 10%，组合上限 60%；12% regime 例外暂停，待 canonical regime evidence 可由 repository 重验后恢复。
-- 止损：⚠️ **当前是摆设**——`stop_would_have_triggered` 只进 reasoning 字符串，**不影响 realized P&L**（账面按 T+N close）。192 笔回测 0 笔触发（2026 行情好）。
+- 止损：⚠️ **当前是披露用的，不执行**——`stop_would_have_triggered` 只进 reasoning 字符串，**不影响 realized P&L**（账面按 T+N close）。⚠️ 旧述"192 笔回测 0 笔触发（2026 行情好）"**因果错误**（2026-07-18 审查定位）：生成该 journal 的回测传了 `price_loader=None`，止损检测根本没运行（0 触发是默认值不是检测结果）；独立重算持有期 raw low ≤ -8% 硬止损 **43% 会触发**。"止损不执行不伤 P&L"的有效证据是 `scripts/backtest_exit_strategies.py` 的独立止损回测（2026-07-10，81 笔 BTST：所有止损策略在当前牛市样本都降低 E[r] 和 Sharpe），不是 journal 的 0 触发。可用 `DAILY_ACTION_EXECUTION_STOP=atr_k2|atr_k3|fixed8` 在熊市/高波动期手动启用真实止损执行（改变 P&L 口径，启用前应跑 `scripts/backtest_exit_strategies.py` 确认当前行情有利）。
 
 ### 因子评分（`--auto`）
 
 - 四策略 → score_b → composite_score → investability 排序。
-- `profit_aware` 排序模式默认关闭（代码注释称 composite_score 有负预测值，但未经本环境验证）。
+- `profit_aware` 排序模式默认关闭（代码注释称 composite_score 有负预测值）。
+- ⚠️ **score_b 在真实 Top10 切片内显著反向**（2026-07-18 对抗性审查实证，tracking_history n=8168/89 日）：日级 rank IC **T+5=-0.112（t=-2.49）/ T+30=-0.138（t=-3.12）**；全池 300 票日 IC 为正（+0.028/+0.059）——顶部非单调反转（极端动量过热 → 短 horizon 反转），"选择偏差伪象"解释不了符号翻转。top-3-by-score 胜率 45.2% vs 当日等权 54.8% vs 反向选取 58.3%。**这是排序键问题（Top10 内部名次），不是池子问题；修复方向是 profit_aware 默认化或顶部过热衰减，变更前需经 panel 样本外确认。**
 
 ### 样本外验证闭环（logger → backfill → panel）
 
@@ -130,6 +138,7 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 12. **缓存目录不能放在 symlink 路径下**（2026-07-17 实测）：`atomic_write_csv` 的 `_open_parent` 用 `O_NOFOLLOW` 逐层打开目录组件，macOS 的 `/var`、`/tmp`（→ `/private/*`）会报 `[Errno 20] Not a directory: 'var'`。`tempfile.TemporaryDirectory()` 创建的目录就在其下——测试/bench 里构造缓存目录要用项目内路径或 pytest `tmp_path`（本仓库 basetemp 在工作区内）。生产 `data/` 用相对路径不受影响。
 13. **readiness v2 精确覆盖 vs 现实数据滞后**（2026-07-17 记录）：v2 要求宇宙内每票都有 stock_basic(L) + 申万行业成员证据，缺一票全局 fail-closed。退市票由宇宙构建时的 stock_basic(L) 过滤解决（见"宇宙退市过滤"）；残留风险是**新上市/次新股尚未纳入申万行业指数**（stock_basic 有、SW 成员没有）——若此类票经涨停注入进入宇宙，SW 覆盖校验仍会阻断当日清单。出现时把该票加入 `EXTRA_EXCLUDED_TICKERS` 临时屏蔽，或等申万收录后自愈。
 14. **质量门常量必须与管线设计对齐**（2026-07-18 定位）：`quality_decision` 曾长期 degraded，三根同类的"门与设计矛盾"：① `price_history` 的 eligible 误用全池 300，而技术阶段按设计只消费流动性前 75%（225）→ 现由 scorer 用 `note_eligible_tickers` 显式声明设计消费集；② 生产端"成功观测 0 行"（合法空）不落盘空快照，消费端误报 UNAVAILABLE → `load_event_inputs` 现依据生产端逐源证据把合法空提升回 SUCCESS；③ `min_usable_rows=200` 与候选池 `MIN_LISTING_DAYS=60` 矛盾（次新票按设计只有 ~60 根 bar）→ 硬门槛改为 60，200 保留为 informational 的 full-factor 目标。**改质量门常量前，先确认它约束的是"异常"还是"设计状态"。**
+15. **price_cache 是不复权价，跨日窗口收益必须用 pct_change 链**（2026-07-18 对抗性审查）：825 票中 173 票近 200 行内有除权缺口（close 链收益与 pct_change 偏差 >1pp）。原始价比值跨缺口产生幻影（2026H1 全市场 817 个幻影超跌票日，OB 回测成交 31% 是幻影）。**setup 检测窗（BTST 条件4/OB 条件1/三处预过滤）已改用 `price_returns.chained_return_pct`**（除权免疫）；但**成交收益链（ledger 估值/退出、panel 前向收益、paper_tracker unrealized）仍用原始价出入场**——现金分红方向一律低估收益（0.5~3pp/笔），大比例送转可达 -30pp 级，属已知前视风险，长期方案是收益计算点统一 pct_change 链或缓存存复权价。另外 v2 ledger 的 MarketBar limit_up/limit_down 现由前收 × 板块幅度按交易所规则推导（除权日锚点偏宽，每年 ~1 天/票）。
 
 
 ## 关键文件速查
