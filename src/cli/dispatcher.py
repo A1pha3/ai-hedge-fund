@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -1153,6 +1154,12 @@ def _resolve_daily_action(
         return pd.read_csv(cache, dtype={"date": str})
 
     resolved_ledger_path = Path(ledger_path or "data/paper_trading_v2/ledger.sqlite3")
+    # 台账初始资金: 默认 100 万 (原 10 万). 单票上限 10% × 10 万 = 1 万 → 股价
+    # >100 元买不起一手 (journal 样本 28~46% 价格带, 含 688 高价龙头), 可成交
+    # 宇宙被整手截断, 与回测证据宇宙不符. 100 万时 10% = 10 万, 覆盖 ≤1000 元/股.
+    # 可用 DAILY_ACTION_LEDGER_INITIAL_CASH 覆盖 (需与既有 ledger 一致, 否则
+    # 归档旧台账重建 — initial_cash 有 mismatch 校验).
+    initial_cash = float(os.environ.get("DAILY_ACTION_LEDGER_INITIAL_CASH", "1000000"))
     # 成本口径与 Kelly 先验对齐 (known_distributions/adjust_returns: 30bps/边滑点),
     # 加 5bps 卖出印花税; 此前 v2 全零成本, 实盘 P&L 系统性优于证据 ~0.6pp/笔,
     # 污染 "paper P&L vs 先验" 的 edge 衰减监测. version 随成本语义演进 (provenance 记录).
@@ -1164,7 +1171,7 @@ def _resolve_daily_action(
     with LedgerRepository(
         resolved_ledger_path,
         "daily-action-v2",
-        100_000.0,
+        initial_cash,
         execution_costs=execution_costs,
     ) as repository:
         service = DailyActionService(

@@ -1256,7 +1256,12 @@ def generate_daily_action(
             # 简化: BTST Kelly f*=5.35 永远触顶 → 直接用 setup_max_pct, 去掉装饰性 Kelly 计算.
             # trigger_strength (新 alpha ranker: weekday+board+depth) 调节强弱信号仓位.
             setup_max_pct = _MAX_POSITION_PCT_BY_SETUP.get(setup_name, _MAX_POSITION_PCT)
-            regime_factor = _regime_size_factor(regime, setup_name)
+            # 与 v2 路径一致: regime 证据未绑定前不实际加仓 (legacy 研究路径同样适用).
+            regime_factor = (
+                _regime_size_factor(regime, setup_name)
+                if _REGIME_SIZING_EVIDENCE_BOUND
+                else 1.0
+            )
             drawdown_factor = 0.5 if dd_action == "decrease" else 1.0
             strength_factor = max(0.3, min(1.0, float(result.trigger_strength)))
             kelly_pct = setup_max_pct * drawdown_factor * regime_factor * strength_factor

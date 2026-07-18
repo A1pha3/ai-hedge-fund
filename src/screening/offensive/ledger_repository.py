@@ -680,6 +680,15 @@ CREATE TABLE IF NOT EXISTS position_marks (
             )
             return self._get_trade(conn, trade_id)
 
+    def count_exit_defers(self, trade_id: str) -> int:
+        """该仓位已累计的退出延期次数 (EXIT_DEFERRED 事件数)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM trade_events WHERE trade_id=? AND event_type='EXIT_DEFERRED'",
+                (trade_id,),
+            ).fetchone()
+        return int(row[0])
+
     def defer_exit(
         self,
         trade_id: str,

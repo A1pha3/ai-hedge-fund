@@ -43,7 +43,7 @@ def _cache_load_kwargs(**overrides: Any) -> dict:
     return base
 
 
-def test_try_load_both_snapshots_exist_returns_shadow_payload(tmp_path: Path, capfd: pytest.CaptureFixture) -> None:
+def test_try_load_both_snapshots_exist_returns_shadow_payload(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     shadow_path = tmp_path / "shadow.json"
     shadow_path.write_text("{}")  # exists
     main_path = tmp_path / "main.json"
@@ -64,18 +64,19 @@ def test_try_load_both_snapshots_exist_returns_shadow_payload(tmp_path: Path, ca
     def _write_legacy(path, cands):
         legacy_writes.append((path, cands))
 
-    result = _try_load_cached_candidate_pool_with_shadow(
-        **_cache_load_kwargs(
-            snapshot_path=main_path,
-            shadow_snapshot_path=shadow_path,
-            legacy_snapshot_path=tmp_path / "legacy.json",
-        ),
-        load_candidate_pool_shadow_snapshot_fn=_load_shadow,
-        write_candidate_pool_snapshot_fn=_write_legacy,
-        load_candidate_pool_snapshot_fn=lambda path: [],
-        build_shadow_summary_from_selected_candidates_fn=lambda *a, **k: {},
-        write_candidate_pool_shadow_snapshot_fn=lambda *a, **k: None,
-    )
+    with caplog.at_level(logging.DEBUG, logger="src.screening.candidate_pool_run_helpers"):
+        result = _try_load_cached_candidate_pool_with_shadow(
+            **_cache_load_kwargs(
+                snapshot_path=main_path,
+                shadow_snapshot_path=shadow_path,
+                legacy_snapshot_path=tmp_path / "legacy.json",
+            ),
+            load_candidate_pool_shadow_snapshot_fn=_load_shadow,
+            write_candidate_pool_snapshot_fn=_write_legacy,
+            load_candidate_pool_snapshot_fn=lambda path: [],
+            build_shadow_summary_from_selected_candidates_fn=lambda *a, **k: {},
+            write_candidate_pool_shadow_snapshot_fn=lambda *a, **k: None,
+        )
     assert result is not None
     selected, shadow, summary, cached = result
     assert len(selected) == 1
@@ -84,7 +85,8 @@ def test_try_load_both_snapshots_exist_returns_shadow_payload(tmp_path: Path, ca
     assert cached == []  # 4th element empty in full-cache branch
     # legacy snapshot written from shadow payload's selected
     assert len(legacy_writes) == 1
-    assert capfd.readouterr().out.count("从缓存加载") == 1
+    # 0dad80ab 起加载日志降级为 logger.debug (不再 print)
+    assert sum("从缓存加载" in record.message for record in caplog.records) == 1
 
 
 def test_try_load_both_snapshots_load_raises_returns_none(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:

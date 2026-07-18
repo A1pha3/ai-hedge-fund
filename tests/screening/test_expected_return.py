@@ -67,7 +67,12 @@ def _make_calibration() -> CalibrationSummary:
             _make_bucket("中高 (0.7-0.8)", 0.7, 0.8, 50, t5_ret=2.0, t10_ret=3.0),
             _make_bucket("中 (0.6-0.7)", 0.6, 0.7, 45, t5_ret=1.0, t10_ret=1.5),
             _make_bucket("中低 (0.5-0.6)", 0.5, 0.6, 35, t5_ret=-0.5, t10_ret=-1.0),
-            _make_bucket("低 (<0.5)", -1.01, 0.5, 30, t5_ret=-2.0, t10_ret=-3.5),
+            # 低桶细分 (2026-07-18): 与 SCORE_BUCKETS 新边界一致.
+            _make_bucket("低 (0.4-0.5)", 0.4, 0.5, 12, t5_ret=-2.0, t10_ret=-3.5),
+            _make_bucket("较低 (0.3-0.4)", 0.3, 0.4, 8, t5_ret=-1.0, t10_ret=-2.0),
+            _make_bucket("很低 (0.2-0.3)", 0.2, 0.3, 6, t5_ret=-0.5, t10_ret=-1.0),
+            _make_bucket("极低 (0.1-0.2)", 0.1, 0.2, 3, t5_ret=0.5, t10_ret=1.0),
+            _make_bucket("最低 (<0.1)", -1.01, 0.1, 1, t5_ret=0.0, t10_ret=0.0),
         ],
     )
     # Default: all records matured (matches the all-records assumption the
@@ -165,7 +170,7 @@ class TestComputeExpectedReturns:
         # Low score stock
         low = report.items[2]
         assert low.ticker == "000003"
-        assert low.bucket_label == "低 (<0.5)"
+        assert low.bucket_label == "低 (0.4-0.5)"  # 低桶细分 (2026-07-18)
         assert low.expected_returns["t5"] == -2.0
 
     @patch("src.screening.expected_return._load_tracking_records")

@@ -1074,20 +1074,18 @@ def test_score_trend_strategy_builds_optional_sub_factors(monkeypatch):
             "adx_strength": 0.2,
             "momentum": 0.25,
             "volatility": 0.15,
-            "long_trend_alignment": 0.1,
         },
     )
     monkeypatch.setattr(trend_module, "calculate_momentum_signals", lambda df: {"signal": "bullish", "confidence": 0.7, "metrics": {"mom": 1}})
     monkeypatch.setattr(trend_module, "calculate_volatility_signals", lambda df: {"signal": "bearish", "confidence": 0.4, "metrics": {"vol": 2}})
     monkeypatch.setattr(trend_module, "_score_ema_alignment", lambda df, weight: SubFactor(name="ema_alignment", direction=1, confidence=80.0, completeness=1.0, weight=weight, metrics={}))
     monkeypatch.setattr(trend_module, "_score_adx_strength", lambda df, weight: SubFactor(name="adx_strength", direction=1, confidence=25.0, completeness=1.0, weight=weight, metrics={}))
-    monkeypatch.setattr(trend_module, "_score_long_trend_alignment", lambda df, weight: SubFactor(name="long_trend_alignment", direction=1, confidence=30.0, completeness=1.0, weight=weight, metrics={}))
     monkeypatch.setattr(trend_module, "aggregate_sub_factors", fake_aggregate)
 
     score_trend_strategy(prices_df)
 
     factor_names = [factor.name for factor in captured["factors"]]
-    assert factor_names == ["ema_alignment", "adx_strength", "momentum", "volatility", "long_trend_alignment"]
+    assert factor_names == ["ema_alignment", "adx_strength", "momentum", "volatility"]
     momentum = captured["factors"][2]
     volatility = captured["factors"][3]
     assert momentum.direction == 1 and momentum.confidence == 70.0 and momentum.completeness == 1.0

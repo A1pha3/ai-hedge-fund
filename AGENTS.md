@@ -27,18 +27,20 @@ uv run python src/main.py --daily-action   # 读缓存, ~3 秒, 输出次日 BUY
 - ⚠️ **不要和 `data/paper_trading/`（运行时实例，0 笔 EXIT）混淆**。曾因此误判系统"0 笔成交"。
 - ⚠️ **journal 的 recorded P&L 存在锚定 bug（2026-07-18 对抗性审查定位，三方独立复现）**：生成它的回测以 `price_loader=None` 调用 `close_matured`（`scripts/backtest_paper_loop.py:134`），`fetch_actual_returns` 把每票收益锚到**本批次最早 buy_date** 而非本仓位 buy_date；且入场口径是 **T0 收盘**（不是文档声称的 T+1 开盘）、零成本。可复核 139 笔中 **42% 偏差 >0.5pp，最大 ±31.6pp**（300033 两笔不同仓位同记 -26.74%，精确复现锚定窗口）。**下表引述值因此系统性虚高**，修正后见"2026 实测表现"。另：**53/192 笔（28%）的 ticker 缓存文件已被删除，永久不可复核**——回测产物必须连同输入数据快照归档。
 
-### 2026 实测表现（截至 2026-07-09，源自 paper_trading_backtest；2026-07-18 修正口径）
+### 2026 实测表现（截至 2026-07-09，源自 paper_trading_backtest；2026-07-18 全量修正）
 
-journal recorded 原值（旧引述，锚定 bug 污染）→ **own-anchor 修正**（本仓位 T0 收盘口径，paired n=97）→ **可执行口径**（T+1 开盘 + 双边 30bps）：
+journal recorded 原值（旧引述，锚定 bug 污染）→ **全量修正值**（192/192 全部可复核，own-anchor 本仓位 T0 收盘、零成本、pct_change 链除权免疫；32 只缺失票已从 tushare 回填）：
 
 ```
-BTST:        recorded +8.15%/68%(n=133) → 修正 +6.68%/62.9% → 可执行 ≈+5.28%/58.8%
-OB:          recorded +0.34%/53%(n=59)  → CI 跨 0 结论不变
-regime 分层: crisis>normal>risk_off 排序保留, 量级下修 (如 BTST crisis +18.74%→+11.17%)
-组合 nav:    recorded 2.10 (+110%) → paired 口径 ≈ +70%
+BTST (n=133):  recorded +8.15%/68%  →  corrected +5.07%/60%
+  crisis (21):   +16.93%/76%       →  +10.44%/67%   (仍最强)
+  risk_off (9):  +8.87%/78%        →  +1.97%/56%    (优势基本消失, n=9 本就不可靠)
+  normal (103):  +6.29%/66%        →  +4.24%/59%
+OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  (无 alpha 确认)
 ```
 
-- **方向结论不变**（BTST 三 regime 都为正、crisis 最强；OB 仍统计不显著），但 **E[r] 系统性高估 1.5~4pp、胜率高估 ~5.5pp**。28% 样本不可复核，真实可执行 E[r] 大概率低于 recorded +8.15%，具体修正值待补全缓存重跑。
+- **方向结论不变**（BTST 三 regime 都为正、crisis 最强；OB 统计不显著），但 **E[r] 系统性高估 3.1pp、胜率高估 8pp**。可执行口径（T+1 开盘 + 双边 30bps）只会更低。修正产物：`outputs/journal_corrected_stats_20260718.json`；journal 原文件未改动（锚定 bug 机制见上条警示）。
+- **BTST 三个 regime 都赚钱**，crisis 最强 → crisis 加仓有数据支持（但 risk_off 的 1.1× 依据已基本消失，regime 证据绑定恢复时需重估系数）。
 
 - **BTST 三个 regime 都赚钱**，crisis 最强 → crisis 加仓有数据支持。
 - **OversoldBounce 默认暂停**，但核心理由不是"crisis 亏钱"，而是统计证据不足：
@@ -146,7 +148,8 @@ regime 分层: crisis>normal>risk_off 排序保留, 量级下修 (如 BTST crisi
 14. **质量门常量必须与管线设计对齐**（2026-07-18 定位）：`quality_decision` 曾长期 degraded，三根同类的"门与设计矛盾"：① `price_history` 的 eligible 误用全池 300，而技术阶段按设计只消费流动性前 75%（225）→ 现由 scorer 用 `note_eligible_tickers` 显式声明设计消费集；② 生产端"成功观测 0 行"（合法空）不落盘空快照，消费端误报 UNAVAILABLE → `load_event_inputs` 现依据生产端逐源证据把合法空提升回 SUCCESS（且**合法空压过 stale 回退**：今日权威空 + 昨日非空快照时以今日空为准，不再触发 required_stale_fallback）；③ `min_usable_rows=200` 与候选池 `MIN_LISTING_DAYS=60` 矛盾（次新票按设计只有 ~60 根 bar）→ 硬门槛改为 60，200 保留为 informational 的 full-factor 目标。**改质量门常量前，先确认它约束的是"异常"还是"设计状态"。**
 15. **price_cache 是不复权价，跨日窗口收益必须用 pct_change 链**（2026-07-18 对抗性审查）：825 票中 173 票近 200 行内有除权缺口（close 链收益与 pct_change 偏差 >1pp）。原始价比值跨缺口产生幻影（2026H1 全市场 817 个幻影超跌票日，OB 回测成交 31% 是幻影）。**已修：setup 检测窗、panel `_forward_return`、tracking 回填、--auto 评分链（`load_price_frame` 回溯复权）全部除权免疫**；成交收益链（ledger 估值/退出、paper_tracker）仍用原始价出入场——现金分红方向一律低估收益（0.5~3pp/笔），属已知前视风险。另外 v2 ledger 的 MarketBar limit_up/limit_down 现由前收 × 板块幅度按交易所规则推导（除权日锚点偏宽，每年 ~1 天/票）。
 16. **profit_aware 校准池饥饿与 None 语义**（2026-07-18 定位）：严格模式 git-sha 等值过滤（27 版本漂移）+ 98% 记录无 `return_tN_date`，校准池 89/89 天为空 → profit_aware 实际从未生效（排序静默退回 composite）。已修：sha 仅 provenance 不过滤、未标注日期用交易日历推断 realized_on。另：profit_aware 主键 None 从 -inf 改中性（0.5 胜率/0.0 期望）——旧语义让"已知 30% 胜率"排在"未知"前（方向错误）。
-17. **台账 10 万初始资金的整手截断**（2026-07-18 定位）：10% 单票上限 × 10 万 = 1 万，股价 >100 元即买不起一手（journal 样本 28%~46% 的价格带，含 688 高价龙头）。v2 台账可成交宇宙因此比回测证据宇宙窄，edge 衰减监测会混入口径偏差。skip 原因已区分 `lot_floor_zero_shares` vs `cash_capacity`；**根治需把 paper 台账 initial_cash 提到 100 万**（当前 0 成交，重置成本低——`initial_cash` 有 mismatch 校验，需归档旧 ledger 重建，属用户决策）。
+17. **台账初始资金的整手截断**（2026-07-18 定位并修复）：10% 单票上限 × 10 万 = 1 万，股价 >100 元即买不起一手（journal 样本 28%~46% 的价格带，含 688 高价龙头）。**已解决**：initial_cash 默认提至 100 万（`DAILY_ACTION_LEDGER_INITIAL_CASH` 可覆盖），旧 10 万台账归档于 `data/paper_trading_v2/archive/`（0 成交，无损失）；skip 原因区分 `lot_floor_zero_shares` vs `cash_capacity`。
+18. **低桶细分与盈利阈值校准**（2026-07-18）：① `SCORE_BUCKETS` 的 <0.5 单桶细分为 5 桶（tracking n=8168 实证内部单调梯度：0.1-0.2 峰 62.0% → 0.4-0.5 44.7%，高桶边界不变），profit_aware 主键在 Top10 内恢复区分度（此前 ~56% 的天全落同桶）；② profitability 阈值从美股口径（ROE≥0.15/NM≥0.20/OM≥0.15，A 股 75% 满置信看空）改为 A 股全市场 ~p65-70（0.08/0.09/0.11，n≈4800 快照），0 通过率 75%→~30%，quality-first 红旗恢复选择性。
 
 
 ## 关键文件速查

@@ -30,10 +30,12 @@ def test_refresh_optional_features_writes_manifest_without_blocking_on_disabled_
     assert manifest["features"]["daily_fund_flow_metrics"]["provider_failures"] == 0
 
 
-def test_refresh_optional_features_reports_not_implemented_when_enabled(
+def test_refresh_optional_features_reports_completed_when_enabled(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    """9b674ee2 真实现 provider 抓取后: status=completed, 未刷新的 family
+    legacy source 落为 local_cache (不再报 not_implemented)."""
     monkeypatch.delenv("AUTO_OPTIONAL_FEATURE_REFRESH", raising=False)
 
     summary = refresh_optional_features(
@@ -44,10 +46,10 @@ def test_refresh_optional_features_reports_not_implemented_when_enabled(
 
     manifest = json.loads((tmp_path / "feature_manifest_20260708.json").read_text(encoding="utf-8"))
 
-    assert summary["status"] == "not_implemented"
-    assert manifest["status"] == "not_implemented"
-    assert manifest["features"]["intraday_short_trade_metrics"]["source"] == "pending_provider_implementation"
-    assert manifest["features"]["daily_fund_flow_metrics"]["source"] == "pending_provider_implementation"
+    assert summary["status"] == "completed"
+    assert manifest["status"] == "completed"
+    assert manifest["features"]["intraday_short_trade_metrics"]["source"] == "local_cache"
+    assert manifest["features"]["daily_fund_flow_metrics"]["source"] == "local_cache"
 
 
 def test_refresh_scoring_features_writes_all_family_manifest(tmp_path: Path, monkeypatch) -> None:

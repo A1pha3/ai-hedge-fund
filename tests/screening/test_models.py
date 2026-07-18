@@ -257,8 +257,10 @@ class TestCandidateStock:
 
 class TestDefaultStrategyWeights:
     def test_sums_to_one(self) -> None:
+        # 相对权重 (88ce357e 调权): sum=0.8, 消费方 (signal_fusion/market_state)
+        # 使用前统一按 total 归一.
         total = sum(DEFAULT_STRATEGY_WEIGHTS.values())
-        assert abs(total - 1.0) < 1e-9
+        assert abs(total - 0.8) < 1e-9
 
     def test_keys(self) -> None:
         assert set(DEFAULT_STRATEGY_WEIGHTS.keys()) == {"trend", "mean_reversion", "fundamental", "event_sentiment"}

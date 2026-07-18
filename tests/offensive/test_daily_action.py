@@ -1728,7 +1728,13 @@ def _run_daily_action_under_regime(tmp_path, monkeypatch, regime_gate_level: str
 
 
 def test_regime_size_factor_btst_crisis_increases_position(tmp_path, monkeypatch):
-    """BTST + crisis regime 下仓位应放大 (2026 回测 E[r]=+16.93% 支持加仓)."""
+    """BTST + crisis regime 下仓位应放大 (2026 回测 E[r]=+16.93% 支持加仓).
+
+    注意: 2026-07-18 起 regime 加仓受 _REGIME_SIZING_EVIDENCE_BOUND 门控 —
+    证据未绑定时不实际加仓. 本测试显式绑定以验证加仓机制本身."""
+    from src.screening.offensive import daily_action as daily_action_module
+
+    monkeypatch.setattr(daily_action_module, "_REGIME_SIZING_EVIDENCE_BOUND", True)
     monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
     actions_crisis, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
     assert len(actions_crisis) == 1
@@ -1742,6 +1748,15 @@ def test_regime_size_factor_btst_crisis_increases_position(tmp_path, monkeypatch
     assert crisis_pct > normal_pct, f"crisis {crisis_pct} should exceed normal {normal_pct}"
     assert abs(crisis_pct - 0.12) < 1e-6, f"crisis expected 0.12, got {crisis_pct}"
     assert abs(normal_pct - 0.10) < 1e-6, f"normal expected 0.10, got {normal_pct}"
+
+
+def test_regime_uplift_disabled_before_evidence_binding(tmp_path, monkeypatch):
+    """证据未绑定前 (默认): crisis 与 normal 仓位一致, 不实际加仓."""
+    monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
+    actions_crisis, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
+    actions_normal, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "normal", "btst_breakout")
+    assert len(actions_crisis) == 1 and len(actions_normal) == 1
+    assert actions_crisis[0].kelly_pct == actions_normal[0].kelly_pct
 
 
 def test_regime_size_factor_oversold_crisis_no_increase():
@@ -1776,6 +1791,9 @@ def test_regime_sizing_disabled_via_env(tmp_path, monkeypatch):
 
 def test_regime_factor_capped_at_hard_limit(tmp_path, monkeypatch):
     """regime 放大不超 BTST per-setup cap × 1.2 硬上限, 即使 factor 更大."""
+    from src.screening.offensive import daily_action as daily_action_module
+
+    monkeypatch.setattr(daily_action_module, "_REGIME_SIZING_EVIDENCE_BOUND", True)
     monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
     # BTST crisis factor=1.2 → 0.10×1.2=0.12, 正好等于硬上限, 不应突破
     actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")

@@ -105,10 +105,14 @@ def _calculate_profitability_confidence(*, available: int, positive: int, direct
 
 
 def _build_profitability_metric_map(metrics: FinancialMetrics) -> dict[str, tuple[float | None, float]]:
+    # 阈值按 A 股全市场分位校准 (2026-07-18, n≈4800 最新快照):
+    # 旧阈值 (ROE≥0.15/NM≥0.20/OM≥0.15) 是美股分布, A 股通过率仅 8%/10%/22%,
+    # 75% 的票 0 通过 → -1@100, quality-first 红旗退化为只看 financial_health.
+    # 现取全市场 ~p65-p70 (ROE p68/NM p67/OM p67), 0 通过率降至 ~30%, 恢复区分度.
     return {
-        "return_on_equity": (metrics.return_on_equity, 0.15),
-        "net_margin": (metrics.net_margin, 0.20),
-        "operating_margin": (metrics.operating_margin, 0.15),
+        "return_on_equity": (metrics.return_on_equity, 0.08),
+        "net_margin": (metrics.net_margin, 0.09),
+        "operating_margin": (metrics.operating_margin, 0.11),
     }
 
 

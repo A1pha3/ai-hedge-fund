@@ -63,6 +63,9 @@ _DRAWDOWN_REDUCE_THRESHOLD = -0.15
 # 回测依据 (legacy daily_action.py 同款): 集中日 E[r] +6.3% vs 分散日 +9.7%,
 # 最差日全部高度集中.
 _MAX_PER_INDUSTRY_DAILY = 2
+# 退出延期上限: 停牌/长期不可成交的仓位按最后可得价强制了结, 防止估值
+# 永久冻结 (熔断失明) 与复牌跳空亏损集中兑现. 20 个交易日 ≈ 一个月.
+_MAX_EXIT_DEFERS = 20
 
 
 class RegimeAuthorization(StrEnum):
@@ -734,7 +737,8 @@ class DailyActionService:
                 self._add_block_reason("calendar_unavailable")
                 self._skip(plan, as_of, "entry_calendar_unavailable")
                 continue
-            self._snapshot(as_of)
+            # PIT: 不在入场结算前写当日收盘 marks — 开盘时刻不可知当日收盘,
+            # 容量/sizing 基准必须停在前一交易日 marks (mark_to_market 在结算后写).
             bar = self.prices(plan.ticker, as_of)
             settled, reason = self.repository.settle_plan_at_open(
                 plan.trade_id,
@@ -763,6 +767,33 @@ class DailyActionService:
                 or bar is None
                 or bar.open is None
             ):
+                # 延期上限: 停牌/长期不可成交仓位按最后可得价强制了结 —
+                # 估值永久冻结会让 drawdown 熔断失明, 复牌跳空让亏损集中兑现.
+                defer_count = self.repository.count_exit_defers(trade.trade_id)
+                if defer_count >= _MAX_EXIT_DEFERS:
+                    stale_price = (
+                        self.repository.latest_position_mark(trade.trade_id, as_of)
+                        or trade.raw_entry_price
+                    )
+                    if stale_price is not None and stale_price > 0:
+                        fill = apply_execution_costs(
+                            stale_price,
+                            trade.quantity,
+                            "sell",
+                            self.costs,
+                            entry_date=trade.entry_date,
+                            exit_date=as_of,
+                        )
+                        closed = self.repository.close_trade(
+                            trade.trade_id,
+                            as_of,
+                            fill.raw_fill_price,
+                            fill.commission + fill.other_fee,
+                            fill.tax,
+                            fill.slippage_cost,
+                        )
+                        settled.append(self._item(closed, "forced_realization_stale"))
+                        continue
                 reason = (
                     "unknown_queue"
                     if status is ExecutionStatus.UNKNOWN_QUEUE

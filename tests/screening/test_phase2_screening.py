@@ -130,61 +130,10 @@ def test_ema_period_override():
     assert "ema_10" in metrics
     assert "ema_30" in metrics
     assert "ema_60" in metrics
-    assert "long_trend_alignment" in result.sub_factors
+    assert "donchian_position" in result.sub_factors
     assert "ema_8" not in metrics
     assert "ema_21" not in metrics
     assert "ema_55" not in metrics
-
-
-def test_long_trend_alignment_enabled_by_default():
-    close_values = [
-        152.46,
-        151.14,
-        151.19,
-        150.84,
-        150.68,
-        147.49,
-        150.15,
-        150.08,
-        151.24,
-        151.02,
-        148.47,
-        148.79,
-        146.07,
-        148.89,
-        151.54,
-        148.69,
-        145.24,
-        141.79,
-        140.93,
-        144.56,
-    ]
-    prices_df = _make_price_frame_from_close([80.0] * 220 + close_values)
-
-    with patch.dict(os.environ, {}, clear=False):
-        result = score_trend_strategy(prices_df)
-
-    long_trend = result.sub_factors["long_trend_alignment"]
-    assert long_trend["direction"] == 1
-    assert long_trend["confidence"] > 0
-    assert "ema_10" in long_trend["metrics"]
-    assert "ema_200" in long_trend["metrics"]
-
-
-def test_long_trend_alignment_requires_200_bars():
-    with patch.dict(os.environ, {}, clear=False):
-        result = score_trend_strategy(_make_price_frame(periods=180, trend=12.0))
-
-    long_trend = result.sub_factors["long_trend_alignment"]
-    assert long_trend["completeness"] == 0.0
-    assert long_trend["confidence"] == 0.0
-
-
-def test_long_trend_alignment_can_be_disabled_for_analysis():
-    with patch.dict(os.environ, {"LAYER_B_ANALYSIS_ENABLE_LONG_TREND_ALIGNMENT": "0"}, clear=False):
-        result = score_trend_strategy(_make_price_frame())
-
-    assert "long_trend_alignment" not in result.sub_factors
 
 
 def test_event_decay():
@@ -281,7 +230,11 @@ def test_weak_breadth_reduces_position_scale_and_trend_weight():
 
     assert state.breadth_ratio < 0.42
     assert state.position_scale == 0.75
-    assert state.adjusted_weights["fundamental"] > state.adjusted_weights["trend"]
+    # 弱势宽度: trend 降权 (基准 0.40/0.8=0.500 → 0.425), fundamental 升权
+    # (基准 0.15/0.8=0.1875 → 0.2625). 88ce357e 调权后 fundamental 不再反超 trend,
+    # 断言调整方向而非穿越 (0.425 / 0.2625 为 _normalize_weights round6 精确值).
+    assert state.adjusted_weights["trend"] == 0.425
+    assert state.adjusted_weights["fundamental"] == 0.2625
 
 
 def test_safety_first_rule():

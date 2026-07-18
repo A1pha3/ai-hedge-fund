@@ -1111,9 +1111,10 @@ class TestNormalizeActiveWeights:
         }
         weights = {"trend": 0.0, "fundamental": 0.0}
         result = _normalize_active_weights(weights, signals)
-        # falls back to DEFAULT_STRATEGY_WEIGHTS: trend=0.30, fundamental=0.30 → each 0.5
-        assert result["trend"] == pytest.approx(0.5)
-        assert result["fundamental"] == pytest.approx(0.5)
+        # falls back to DEFAULT_STRATEGY_WEIGHTS (88ce357e: trend=0.40, fundamental=0.15)
+        # → 归一化 trend 0.40/0.55, fundamental 0.15/0.55
+        assert result["trend"] == pytest.approx(0.40 / 0.55)
+        assert result["fundamental"] == pytest.approx(0.15 / 0.55)
 
     def test_all_signals_excluded_returns_empty(self):
         from src.screening.signal_fusion import _normalize_active_weights

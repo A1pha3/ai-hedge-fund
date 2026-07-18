@@ -77,8 +77,8 @@ class TestNormalizeWeights:
     def test_zero_total_uses_default(self) -> None:
         w = {"trend": 0.0, "mean_reversion": 0.0}
         result = _normalize_weights(w)
-        # Falls back to DEFAULT_STRATEGY_WEIGHTS
-        assert result["trend"] == 0.30
+        # Falls back to DEFAULT_STRATEGY_WEIGHTS (88ce357e: trend 0.40)
+        assert result["trend"] == 0.40
 
     def test_negative_clamped(self) -> None:
         w = {"trend": 0.6, "mean_reversion": -0.1, "fundamental": 0.3, "event_sentiment": 0.2}
@@ -89,7 +89,8 @@ class TestNormalizeWeights:
 
     def test_all_zero_uses_default(self) -> None:
         result = _normalize_weights({"trend": 0.0, "mean_reversion": 0.0, "fundamental": 0.0, "event_sentiment": 0.0})
-        assert result == {"trend": 0.30, "mean_reversion": 0.20, "fundamental": 0.30, "event_sentiment": 0.20}
+        # 相对权重 (88ce357e 调权, sum=0.8; 消费方使用前自行归一)
+        assert result == {"trend": 0.40, "mean_reversion": 0.20, "fundamental": 0.15, "event_sentiment": 0.05}
 
 
 # ---------------------------------------------------------------------------
