@@ -95,6 +95,28 @@ logger = get_logger(__name__)
 SCORE_B_GREEN_FLOOR = 0.35  # >= 此值 → 绿色 (看多) / high_pool 候选
 SCORE_B_YELLOW_FLOOR = 0.0  # >= 此值 (但 < 绿色) → 黄色 (中性); 低于此值 → 红色 (看空)
 
+# --auto 表格的中文展示标签 (仅渲染层使用; JSON 报告与逻辑层保持英文枚举)。
+# 键必须覆盖 models.py 中 classify_decision / ArbitrationAction 的全部取值;
+# 未知值经 .get(x, x) 回退为原始字符串, 新增枚举值不会渲染成空白。
+_DECISION_LABELS = {
+    "strong_buy": "强烈买入",
+    "watch": "关注",
+    "neutral": "观望",
+    "sell": "卖出",
+    "strong_sell": "强烈卖出",
+}
+_ARBITRATION_LABELS = {
+    "avoid": "回避",
+    "short_hold": "短线持有",
+    "long_hold": "长线持有",
+    "risk_off": "弱势降权",
+    "trust_trend": "信趋势",
+    "trust_reversion": "信均值回归",
+    "both_demote": "双向降权",
+    "consensus_bonus": "共识加分★",
+    "none": "",
+}
+
 # Composite scoring lookback — 动量/板块/成交量维度计算窗口。
 # Bug fix: 原来误用 DEFAULT_LOOKBACK_DAYS=3 (连续推荐窗口), 但 signal_momentum/
 # sector_strength 设计默认值是 5 天。3 天太短, 噪声大, 导致排名次级键不稳定。
@@ -2380,7 +2402,7 @@ def _print_score_decomposition(
         print(f"  {consensus} {Fore.CYAN}{ticker:<8s}{Style.RESET_ALL} " f"{score_color}{score_b:+.4f}{Style.RESET_ALL}  " f"{' | '.join(parts)}  " f"{att_str}  {stab_str}")
 
     print(f"{Fore.WHITE}{'━' * 72}{Style.RESET_ALL}")
-    print(f"  {Fore.WHITE}T=趋势 MR=均值回归 F=基本面 E=事件情绪  att=注意力  stab=连续推荐加成  ★=共识加成{Style.RESET_ALL}\n")
+    print(f"  {Fore.WHITE}T=趋势 MR=均值回归 F=基本面 E=事件情绪  att=市场关注度(>0.7自动剔除)  stab=连续推荐加成  ★=共识加成{Style.RESET_ALL}\n")
 
 
 def _print_score_waterfall(
@@ -2421,9 +2443,8 @@ def _print_score_waterfall(
             label = strategy_labels.get(sname, sname)
             if abs(contrib) < 1e-6:
                 continue
-            arrow = "+" if contrib > 0 else ""
             color = Fore.GREEN if contrib > 0 else Fore.RED
-            print(f"    {Fore.WHITE}{label:<6s}{Style.RESET_ALL} {color}{arrow}{contrib:+.4f}{Style.RESET_ALL}")
+            print(f"    {Fore.WHITE}{label:<6s}{Style.RESET_ALL} {color}{contrib:+.4f}{Style.RESET_ALL}")
 
         # Attention — non-additive metadata (not part of score_b)
         if abs(decomp["attention_contribution"]) > 1e-6:
@@ -2505,17 +2526,18 @@ def _build_auto_screening_table_row(
     from src.screening.signal_decay_detector import DecayLevel
 
     decision = item.decision
+    decision_label = _DECISION_LABELS.get(decision, decision)
     score_b = item.score_b
 
     # Color-code the decision
     if score_b >= SCORE_B_GREEN_FLOOR:
-        decision_colored = f"{Fore.GREEN}{decision}{Style.RESET_ALL}"
+        decision_colored = f"{Fore.GREEN}{decision_label}{Style.RESET_ALL}"
         score_colored = f"{Fore.GREEN}{score_b:+.4f}{Style.RESET_ALL}"
     elif score_b >= SCORE_B_YELLOW_FLOOR:
-        decision_colored = f"{Fore.YELLOW}{decision}{Style.RESET_ALL}"
+        decision_colored = f"{Fore.YELLOW}{decision_label}{Style.RESET_ALL}"
         score_colored = f"{Fore.YELLOW}{score_b:+.4f}{Style.RESET_ALL}"
     else:
-        decision_colored = f"{Fore.RED}{decision}{Style.RESET_ALL}"
+        decision_colored = f"{Fore.RED}{decision_label}{Style.RESET_ALL}"
         score_colored = f"{Fore.RED}{score_b:+.4f}{Style.RESET_ALL}"
 
     # Composite score (主排序键) — 用 score_b 同款色阶, 让排序自解释。
@@ -2543,18 +2565,21 @@ def _build_auto_screening_table_row(
         signal_parts.append(f"{arrow}{sig.confidence:.0f}")
     signal_summary = " ".join(signal_parts)
 
-    # Arbitration flags
-    arbitration = ", ".join(item.arbitration_applied) if item.arbitration_applied else ""
+    # Arbitration flags (渲染为中文标签; 未知标签回退原始字符串, "none" 不显示)
+    if item.arbitration_applied:
+        arbitration = ", ".join(label for a in item.arbitration_applied if (label := _ARBITRATION_LABELS.get(a, a)))
+    else:
+        arbitration = ""
 
     # P0-6 连续推荐标记
     consecutive_info = consecutive_lookup.get(item.ticker, {})
     consecutive_days = int(consecutive_info.get("consecutive_days", 0) or 0)
     if consecutive_days >= 3:
-        consecutive_str = f"{Fore.GREEN}{Style.BRIGHT}{consecutive_days}d{Style.RESET_ALL}"
+        consecutive_str = f"{Fore.GREEN}{Style.BRIGHT}{consecutive_days}天{Style.RESET_ALL}"
     elif consecutive_days == 2:
-        consecutive_str = f"{Fore.YELLOW}{consecutive_days}d{Style.RESET_ALL}"
+        consecutive_str = f"{Fore.YELLOW}{consecutive_days}天{Style.RESET_ALL}"
     elif consecutive_days == 1:
-        consecutive_str = f"{Fore.WHITE}{consecutive_days}d{Style.RESET_ALL}"
+        consecutive_str = f"{Fore.WHITE}{consecutive_days}天{Style.RESET_ALL}"
     else:
         consecutive_str = f"{Fore.RED}—{Style.RESET_ALL}"
 
@@ -2569,9 +2594,9 @@ def _build_auto_screening_table_row(
         decay_str = f"{Fore.WHITE}—{Style.RESET_ALL}"
     else:
         # R53: append days_since_peak tag (computed-but-hidden) so the user
-        # can distinguish early decay (↓20% 1d) from late decay (↓20% 5d).
+        # can distinguish early decay (↓20% 1天) from late decay (↓20% 5天).
         _dsp = int(getattr(decay_info, "days_since_peak", 0) or 0)
-        _days_tag = f"({_dsp}d)" if _dsp > 0 else ""
+        _days_tag = f"({_dsp}天)" if _dsp > 0 else ""
         if decay_info.level == DecayLevel.MILD:
             decay_str = f"{Fore.YELLOW}↓{abs(decay_info.change_pct or 0):.0f}%{_days_tag}{Style.RESET_ALL}"
         elif decay_info.level == DecayLevel.MODERATE:
@@ -2591,6 +2616,22 @@ def _build_auto_screening_table_row(
         decay_str,
         arbitration,
     ]
+
+
+def _print_table_legend() -> None:
+    """打印表格下方的通俗图例, 让不熟悉术语的用户也能读懂各列含义与用法。"""
+    from colorama import Fore, Style
+
+    lines = [
+        "怎么看这张表:",
+        "  · 排序看「综合分」, 信号强度看「信号分」(=报告中的 score_b); 绿=强, 黄=中, 红=弱",
+        "  · 「信号」= 趋势/均值回归/基本面/事件情绪四个策略的投票: ↑看多 ↓看空 —无信号, 数字=信心(0-100)",
+        "  · 「连续」= 连续上榜天数, ≥3天(绿)说明信号持续稳定; 「衰减」= 信号分较近期峰值的跌幅, 红色=严重",
+        "  · 「提示」= 策略冲突或市场环境触发的自动调整: 弱势降权/短线持有/信趋势/信均值回归/共识加分★",
+        "  · 本表是候选清单; 每日实际 BUY 信号见 --daily-action",
+    ]
+    for line in lines:
+        print(f"  {Fore.WHITE}{line}{Style.RESET_ALL}")
 
 
 def _print_auto_screening_table(
@@ -2654,17 +2695,19 @@ def _print_auto_screening_table(
 
     headers = [
         f"{Fore.WHITE}#",
-        "Ticker",
-        "Industry",
-        "Score B",
-        "Composite",
-        "Decision",
-        "Signals (T MR F E)",
-        "Consecutive",
-        "Decay",
-        "Arbitration",
+        "代码 名称",
+        "行业",
+        "信号分",
+        "综合分(排序)",
+        "决策",
+        "信号(趋 均 基 情)",
+        "连续",
+        "衰减",
+        "提示",
     ]
     print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "right", "center", "center", "center", "center", "left")))
+
+    _print_table_legend()
 
     print(f"\n  详细报告已保存: {Fore.CYAN}{report_path}{Style.RESET_ALL}")
 
