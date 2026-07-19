@@ -11,7 +11,14 @@ import json
 import math
 from typing import Annotated, Any, TypeAlias
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, StringConstraints, TypeAdapter
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    StringConstraints,
+    TypeAdapter,
+)
 
 
 class ExecutionMode(StrEnum):
@@ -46,7 +53,21 @@ def _validate_utc(value: datetime) -> datetime:
     return value
 
 
-UtcInstant: TypeAlias = Annotated[datetime, AfterValidator(_validate_utc)]
+def _normalize_json_utc(value: Any, info: Any) -> Any:
+    if info.mode == "json" and isinstance(value, str):
+        iso_value = value[:-1] + "+00:00" if value.endswith("Z") else value
+        parsed = datetime.fromisoformat(iso_value)
+        if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+            raise ValueError("UTC instant must use the UTC timezone")
+        return parsed.astimezone(timezone.utc)
+    return value
+
+
+UtcInstant: TypeAlias = Annotated[
+    datetime,
+    BeforeValidator(_normalize_json_utc),
+    AfterValidator(_validate_utc),
+]
 """A timezone-aware datetime whose offset is exactly UTC."""
 
 UtcInstantAdapter = TypeAdapter(UtcInstant, config=ConfigDict(strict=True))

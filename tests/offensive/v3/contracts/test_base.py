@@ -39,6 +39,21 @@ def test_non_utc_datetime_is_rejected() -> None:
         )
 
 
+def test_utc_instant_round_trips_canonical_json() -> None:
+    from src.screening.offensive.v3.contracts.base import (
+        UtcInstantAdapter,
+        canonical_json_bytes,
+    )
+
+    instant = datetime(2026, 7, 19, 8, 0, tzinfo=timezone.utc)
+    encoded = canonical_json_bytes(instant)
+    parsed = UtcInstantAdapter.validate_json(encoded)
+
+    assert encoded == b'"2026-07-19T08:00:00Z"'
+    assert parsed == instant
+    assert parsed.tzinfo is timezone.utc
+
+
 def test_canonical_model_rejects_boolean_coercion() -> None:
     from src.screening.offensive.v3.contracts.base import CanonicalModel
 
