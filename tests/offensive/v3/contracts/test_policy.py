@@ -167,7 +167,7 @@ def test_behavior_fingerprint_is_typed_deterministic_and_policy_bound() -> None:
         )
 
 
-def test_behavior_fingerprint_excludes_provenance_only_policy_identity() -> None:
+def test_behavior_fingerprint_excludes_provenance_only_policy_labels() -> None:
     policy_api = _policy_api()
     policy = _initial_policy()
     producer = policy_api.ProducerIdentity(
@@ -178,14 +178,24 @@ def test_behavior_fingerprint_excludes_provenance_only_policy_identity() -> None
         update={
             "policy_id": "growth-kernel-v3-republished",
             "policy_version": "policy-v2",
-            "policy_epoch": 2,
-            "authority_epoch": 2,
-            "risk_epoch": 2,
         }
     )
 
     assert policy.policy_fingerprint != provenance_revision.policy_fingerprint
     assert policy_api.behavior_fingerprint(producer, policy) == policy_api.behavior_fingerprint(producer, provenance_revision)
+
+
+@pytest.mark.parametrize("epoch_field", ["policy_epoch", "authority_epoch", "risk_epoch"])
+def test_behavior_fingerprint_includes_governed_epochs(epoch_field: str) -> None:
+    policy_api = _policy_api()
+    policy = _initial_policy()
+    producer = policy_api.ProducerIdentity(
+        producer_namespace="daily_action.btst",
+        strategy_semver="3.0.0",
+    )
+    next_epoch = policy.model_copy(update={epoch_field: 2})
+
+    assert policy_api.behavior_fingerprint(producer, policy) != policy_api.behavior_fingerprint(producer, next_epoch)
 
 
 @pytest.mark.parametrize(
@@ -292,6 +302,25 @@ def test_loader_rejects_oversized_policy_before_parsing(tmp_path: Path) -> None:
 
     with pytest.raises(policy_api.PolicyLoadError, match="too large"):
         policy_api.load_policy_snapshot(policy_path)
+
+
+@pytest.mark.parametrize(
+    "missing_flag",
+    ["O_NOFOLLOW", "O_DIRECTORY", "O_CLOEXEC", "O_NONBLOCK"],
+)
+def test_loader_fails_closed_when_required_descriptor_flag_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing_flag: str,
+) -> None:
+    from src.screening.offensive.v3.policy import loader
+
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_bytes(INITIAL_POLICY_PATH.read_bytes())
+    monkeypatch.delattr(loader.os, missing_flag)
+
+    with pytest.raises(loader.PolicyLoadError, match=missing_flag):
+        loader.load_policy_snapshot(policy_path)
 
 
 def test_loader_does_not_consult_permissive_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

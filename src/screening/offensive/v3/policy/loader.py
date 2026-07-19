@@ -30,6 +30,13 @@ def _reject_duplicate_keys(pairs: Iterable[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _required_descriptor_flag(name: str) -> int:
+    value = getattr(os, name, None)
+    if not isinstance(value, int) or value == 0:
+        raise PolicyLoadError(f"required descriptor safety flag is unavailable: {name}")
+    return value
+
+
 def _read_regular_file(path: str | os.PathLike[str]) -> bytes:
     path_value = os.fspath(path)
     parsed_path = Path(path_value)
@@ -43,8 +50,12 @@ def _read_regular_file(path: str | os.PathLike[str]) -> bytes:
     if not components:
         raise PolicyLoadError("policy path must name one non-symlink regular file")
 
-    directory_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    file_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    nofollow = _required_descriptor_flag("O_NOFOLLOW")
+    directory = _required_descriptor_flag("O_DIRECTORY")
+    cloexec = _required_descriptor_flag("O_CLOEXEC")
+    nonblock = _required_descriptor_flag("O_NONBLOCK")
+    directory_flags = os.O_RDONLY | cloexec | directory | nofollow
+    file_flags = os.O_RDONLY | cloexec | nofollow | nonblock
     try:
         directory_descriptor = os.open(directory_path, directory_flags)
     except (OSError, TypeError, ValueError) as exc:

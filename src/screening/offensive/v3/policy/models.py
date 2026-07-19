@@ -279,6 +279,9 @@ def behavior_fingerprint(
     validated_producer = ProducerIdentity.model_validate(producer.model_dump(mode="python", round_trip=True), strict=True)
     validated_policy = _revalidate_policy_snapshot(policy)
     behavior_policy = {
+        "policy_epoch": validated_policy.policy_epoch,
+        "authority_epoch": validated_policy.authority_epoch,
+        "risk_epoch": validated_policy.risk_epoch,
         "runtime_mode": validated_policy.runtime_mode,
         "capital": validated_policy.capital,
         "risk": validated_policy.risk,
