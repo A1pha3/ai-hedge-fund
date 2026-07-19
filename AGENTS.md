@@ -3,7 +3,7 @@
 本文件给 AI 助手（zcode / claude / codex 等）提供本项目的关键上下文。
 **修改代码前必读**，尤其是数据完整性部分。
 
-## 项目概览
+## 当前 legacy 项目概览
 
 A 股每日选股系统。用户每天跑两个命令获取次日买入信号：
 ```bash
@@ -12,18 +12,37 @@ uv run python src/main.py --daily-action   # 读缓存, ~3 秒, 输出次日 BUY
 ```
 
 - **`--auto`**：四策略因子评分（trend/mean_reversion/fundamental/event_sentiment）→ score_b → investability 排序 → Top 10。存 `data/reports/auto_screening_YYYYMMDD.json`。
-- **`--daily-action`**：凸性 setup（BTST 涨停突破 T+10、OversoldBounce 超跌反弹 T+5）→ Kelly 仓位 → paper trading。**与 `--auto` 是两套独立系统**，只共享缓存数据。
+- **`--daily-action`**：凸性 setup（BTST 涨停突破 T+10、OversoldBounce 超跌反弹 T+5）→ Kelly 仓位 → paper trading。**在当前 legacy 实现中与 `--auto` 是两套独立系统**，只共享缓存数据；目标态会共享不可变 Evidence Store/Outcome/Capital Truth 基础设施，但 producer namespace、edge 与评分永久独立。
 - 入口在 `src/cli/dispatcher.py`（命令分发），核心逻辑在 `src/screening/offensive/`。
+
+## 长期目标架构宪章（2026-07-19 已批准，尚未全部实现）
+
+完整、唯一权威设计见 [`docs/superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md`](docs/superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md)。本节是所有 Agent 修改、实现或审阅相关代码时必须遵守的短约束；下文“当前状态”描述的是 legacy 现实，**不得据此声称目标架构已经上线**。若旧文档与该设计冲突，以该设计为准；实际行为仍以代码、版本化策略快照和可重验台账为准。
+
+1. **两个生产者保持独立**：`--auto` 与 BTST 不合并分数。目标态初期只有 BTST 可申请交易授权；`--auto`、OversoldBounce、regime、streak、composite 等均为 shadow/feature，未经新的前向证据不得影响准入、排序或仓位。
+2. **唯一经济目标**：优化扣除真实成本、约束和现金占用后的组合单位净值长期对数增长；固定可执行合约为 T0 收盘后决策、T+1 开盘买、T+10 开盘卖。胜率、赔率、IC 和单票收益只作诊断，不得替代组合路径证据。
+3. **四种执行模式永不混算**：`RESEARCH_RECONSTRUCTION`、`DAILY_BAR_PROXY`、`MANUAL_CONFIRMED`、`BROKER_CONFIRMED` 的成交、收益、NAV 和样本必须分开；当前手工/paper 工作流不得冒充 broker-live，人工确认不得写 broker namespace。
+4. **readiness 只证明数据，不证明 edge**：PIT 快照、策略盈利证据、资本/台账真相是三层独立事实。数据未知、估计过期、版本不匹配、执行不确定或证据不可重验时，禁止新增风险，但不得阻断真实退出。
+5. **唯一授权路径**：生产者只能提交候选，不能自报授权；独立 Authorizer 才能签发 `EdgeAuthorization`，首次 broker 2% 只能使用治理层限风险 `ExplorationAuthorization`。薄决策内核统一验证 `CapitalAuthorization`、组合约束和风险缩放，生成不可变 `DecisionSeal`。shadow 只能生成 gateway 永不接受的 `ShadowDecision`。任何 CLI、Agent 或策略不得绕过唯一 gateway/authoritative writer 直接写生产台账或经纪商。
+6. **决策与成交不可回填伪造**：必须满足 `T0 close finalized < Seal deadline < Permit deadline < gateway send deadline < broker auction cutoff`，并封存数量、限价和最坏现金占用；T+1 只能缩减或取消，不能看到开盘后增加。未成交、部分成交、撤单未确认、涨跌停/停牌不确定必须保持真实状态，禁止用日线高低价或事后价格补造成交。
+7. **风险约束作用一次且可审计**：回撤幅度小于 10% 不缩放，10%–15% 线性降至 0，达到 15% 锁存为 `RISK_HALTED` 并停止新仓；它是“停止增加风险”，不是最大亏损保证。恢复必须开启新 Risk/Authority Epoch，以 portfolio-wide 2% gross cap 重启且继承风险全部计入，永久保留全生命周期净值和高水位。
+8. **证据必须双时态且保存原文**：所有依赖记录 `effective_at`、`observed_at`、`available_at`、`mode`；决策只能消费 cutoff 前可用的数据。fingerprint 只校验一致性，不能替代发行者权限，也不能替代内容寻址的原始 payload 归档。
+9. **行为变化必须开启新证据世代**：策略语义、过滤、排序、仓位、成本、执行或数据口径改变时，更新 semver/behavior fingerprint/policy epoch，并在不可改名的 economic lineage/research program 下预注册一个 champion 与一个 challenger；failed/abandoned 尝试也进入全局 Attempt Ledger 和 multiplicity budget。变更前数据只能作先验或研究，不能伪装成新策略样本外证据。
+10. **资金与公司行动守恒**：权威台账以整数分/`Decimal` 记录现金流，按真实整手、最低佣金、税费、滑点和公司行动结算。每个经济事实只有一个 canonical event；分红应收、股份应收、可交易数量、拆并股、退市/换股必须显式建模，仓位只可由真实成交或法律上生效的公司行动消失。
+11. **完整组合路径决定晋级**：所有 walk-forward、压力测试和 challenger 比较必须保留重叠持仓、现金、延迟退出、公司行动、回撤状态和容量约束；外层未来窗口不可参与调参。状态型尾部风险只能用连续时间回放或每个情景完整重放，不能通过拼接独立收益块来声称安全。
+12. **先 shadow，后 canary，允许不交易**：v3 与 v2 分账，完成版本绑定、资本守恒和 CAS authority flip 后 v2 才只读；新内核先用 gateway 不可接受的 `ShadowDecision` 对账。BTST 的 2%→5%→最多 10% 以不可改名的 `economic_lineage_id` 为键，覆盖 open/pending/live/reserved 的组合级总风险，不是单票额度；所有并发首次探索合计最多 2% portfolio gross，且不可续期。每个 stage 另有盈利不可补回的累计 loss budget，触及即 `STAGE_LOSS_HALTED`、只退出。每级必须用不复用的新前向证据重新满足最低门。`--auto` 只有在独立前向证据通过后才可另行申请授权。保守绝对/增量 edge 未达最小经济效应或任一关键事实未知时，正确输出是 no-trade。
+
+任何影响上述语义的代码变更，必须同步更新权威设计、机器可读策略快照（实现后）、契约/故障注入测试和迁移说明；不得通过修改报告文案掩盖台账、授权或证据冲突。
 
 ## 数据完整性（⚠ 最重要，曾因此误判）
 
-### 真实回测成交数据（验证 setup 有效性的**第一性原理依据**）
+### legacy 历史成交候选源（研究重建用，非授权证据）
 
 **位置：`data/paper_trading_backtest/`**（不是 `data/paper_trading/`！）
 
 - `journal.jsonl`：403 条记录，含 **211 笔 BUY + 192 笔 EXIT**，覆盖 2026-01-15 → 2026-07-06。
-- `portfolio_state.json`：nav=2.10，realized_pnl=+110%（2026 上半年回测结果）。
-- **这是验证 setup 表现、regime 分层、止损逻辑的唯一真实数据源。**
+- `portfolio_state.json`：legacy 记录为 nav=2.10、realized_pnl=+110%；该数值受下述锚定 bug 与零成本/T0 收盘口径污染，**不得继续作为有效业绩引用**。
+- **这是目前唯一真实的历史成交候选源**，但不是可直接引用的收益真相；验证 setup、regime 或止损前必须按本仓位锚点和目标执行合约重建。
 - ⚠️ **不要和 `data/paper_trading/`（运行时实例，0 笔 EXIT）混淆**。曾因此误判系统"0 笔成交"。
 - ⚠️ **journal 的 recorded P&L 存在锚定 bug（2026-07-18 对抗性审查定位，三方独立复现）**：生成它的回测以 `price_loader=None` 调用 `close_matured`（`scripts/backtest_paper_loop.py:134`），`fetch_actual_returns` 把每票收益锚到**本批次最早 buy_date** 而非本仓位 buy_date；且入场口径是 **T0 收盘**（不是文档声称的 T+1 开盘）、零成本。可复核 139 笔中 **42% 偏差 >0.5pp，最大 ±31.6pp**（300033 两笔不同仓位同记 -26.74%，精确复现锚定窗口）。**下表引述值因此系统性虚高**，修正后见"2026 实测表现"。另：**53/192 笔（28%）的 ticker 缓存文件已被删除，永久不可复核**——回测产物必须连同输入数据快照归档。
 
@@ -39,15 +58,9 @@ BTST (n=133):  recorded +8.15%/68%  →  corrected +5.07%/60%
 OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  (无 alpha 确认)
 ```
 
-- **方向结论不变**（BTST 三 regime 都为正、crisis 最强；OB 统计不显著），但 **E[r] 系统性高估 3.1pp、胜率高估 8pp**。可执行口径（T+1 开盘 + 双边 30bps）只会更低。修正产物：`outputs/journal_corrected_stats_20260718.json`；journal 原文件未改动（锚定 bug 机制见上条警示）。
-- **BTST 三个 regime 都赚钱**，crisis 最强 → crisis 加仓有数据支持（但 risk_off 的 1.1× 依据已基本消失，regime 证据绑定恢复时需重估系数）。
-
-- **BTST 三个 regime 都赚钱**，crisis 最强 → crisis 加仓有数据支持。
-- **OversoldBounce 默认暂停**，但核心理由不是"crisis 亏钱"，而是统计证据不足：
-  - E[r]=+0.34% 但 95% CI `[-3.15%, +3.83%]` 跨 0（t=0.19, p≈0.85）→ **无法证明它赚钱**
-  - 尾部比 BTST 更毒：亏损>10% 占比 **20%** vs BTST 11%；亏损>15% 占比 **12%** vs 6%
-  - 机会成本：仓位受限时有统计显著的替代品（BTST E=+8.15%）
-  - crisis n=21 的 -1.15% **样本太小，不是独立决策依据**（risk_off n=3 反而 +13.11%，与 crisis 矛盾 → 分层不可靠）
+- **方向结论不变**（BTST 三 regime 都为正、crisis 最强；OB 统计不显著），但 **E[r] 系统性高估 3.1pp、胜率高估 8pp**。双边成本必然拖累收益，但 T+1 开盘相对 T0 收盘的 gap 可正可负；目标执行口径的准确结果仍须重建，不能断言“只会更低”。修正产物：`outputs/journal_corrected_stats_20260718.json`；journal 原文件未改动（锚定 bug 机制见上条警示）。
+- **BTST 三个 regime 的修正均值都为正，crisis 最强**，说明它值得优先重建执行匹配证据；但样本小、T0 收盘/零成本口径与目标执行不一致，**不能据此授权 regime 加仓**。risk_off 的 1.1× 依据已基本消失。
+- **OversoldBounce 默认暂停**：全量修正后 E[r]=-0.13%、胜率 44%，没有可授权的正 alpha。旧版 `+0.34%/52%`、CI 与尾部数字来自锚定 bug 污染的 recorded P&L，只能作为历史审计线索，不能继续用作定量决策；仓位受限时应优先研究修正均值更高的 BTST（+5.07%），但 BTST 同样须先重建 T+1/T+10、真实成本口径。
 - ⚠️ 样本期仅 6 个月，可能有样本期偏差；补全历史数据重跑前，这些结论是"当前最佳依据"而非定论。
 - ✅ **已验证**：59 笔回测用的是完整版 setup（volume 列存在、量比条件3 生效），不是残缺版。git 证据：volume 列在 commit `7c51cef8`(07-07) 加入，回测在 07-08 跑，setup 代码当时已有完整过滤逻辑。
 
@@ -58,7 +71,7 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  (无 alpha 确认
 - **深度已补齐**（2026-07-17 实测）：823 票，中位 1579 行，2020-01-02 → 2026-07-17。（07-08 时曾只有 6 个月 ~117 行/股，之后做过历史回填。）
 - `scripts/setup_research.py` 直接跑仍会 **n≈0**：完整 setup 需要资金流条件，而 `fund_flow_cache` 历史仍浅（见下表）——价格深度不再是瓶颈，资金流才是。
 - `data/reports/setup_research/phase0_report_20260708.md` 声称的 n=1762 **无法从本地数据复现**——它在别处（更深资金流历史）生成。
-- ⚠️ **引用 Phase 0 报告的结论前，先与 paper_trading_backtest 真实数据交叉验证。** 曾因盲信 Phase 0（声称 OB E=+3.42%/n=1113）对 OversoldBounce 统一加仓，但真实回测（n=59/E=+0.34%/CI 跨 0）显示无 alpha 可放大 → 有害。
+- ⚠️ **引用 Phase 0 报告的结论前，先与修正后的 paper_trading_backtest 重建结果交叉验证。** 曾因盲信 Phase 0（声称 OB E=+3.42%/n=1113）对 OversoldBounce 统一加仓；全量修正后 OB 为 n=59/E=-0.13%/winrate=44%，没有可授权 alpha。
 
 ### 其它历史数据（深度较全）
 
@@ -69,15 +82,15 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  (无 alpha 确认
 | fund_flow_cache | `data/fund_flow_cache/*.csv` | 370 文件，深度不一（部分仅 1 行）⚠️ |
 | tracking_history | `data/reports/tracking_history.json` | `--auto` 推荐追踪，跨日 T+1/T+3/T+5 收益 |
 
-## 当前选股系统状态（2026-07-09）
+## 当前选股系统状态（截至 2026-07-18）
 
 ### 凸性 setup（`--daily-action`）
 
 - **BTST 涨停突破（T+10）**：✅ 启用。扫描器会请求 crisis/risk_off 加仓，但 v2 ledger 当前因 canonical manifest 缺少可重算的 regime 授权证据而安全降级到 10%，并披露 `regime_authorization_evidence_unavailable`；在证据完成绑定前不实际加仓。（2026-07-18 修复：旧实现仅在 strength=1.0 时被 clamp 拦住，strength<1 时 regime 加仓实际泄漏 +0.5~2pp/票且 provenance 谎报 normal——现 v2 扫描在证据绑定前 regime_factor 恒 1.0，候选仍带 authorization 标记用于披露。）
-- **OversoldBounce 超跌反弹（T+5）**：⏸️ **默认暂停**（E[r]=+0.34% 统计不显著、CI 跨 0；尾部亏损比 BTST 厚）。
+- **OversoldBounce 超跌反弹（T+5）**：⏸️ **默认暂停**（全量修正 E[r]=-0.13%、winrate=44%，没有可授权的正 alpha）。
   - 控制：`DAILY_ACTION_DISABLED_SETUPS` env（默认含 `oversold_bounce`）。
   - 恢复：`DAILY_ACTION_DISABLED_SETUPS=none`（补全历史数据重跑后再决定去留）。
-  - ⚠️ 暂停理由不是"crisis 亏钱"（crisis n=21 太小不可靠），而是"无法证明赚钱 + 亏起来更狠 + 仓位有更好去处"。详见上文"2026 实测表现"。
+  - ⚠️ 旧 `+0.34%`、CI、crisis 和尾部数字来自受污染 recorded P&L，不再作为恢复或分层依据。详见上文“2026 实测表现”。
 - Kelly 仓位：half-Kelly，当前 v2 ledger 单票硬上限 10%，组合上限 60%；12% regime 例外暂停，待 canonical regime evidence 可由 repository 重验后恢复。
 - **Drawdown 熔断 + 行业集中度（2026-07-18 恢复，v2 迁移时曾丢失）**：组合回撤 ≤-20% 停止一切新仓、≤-15% 新仓权重减半（与 legacy `drawdown_action` 对齐）；同一入场日同行业新仓 ≤2（含当日已预留，依据：集中日 E[r] +6.3% vs 分散日 +9.7%）。
 - **执行成本口径 v2.1**（2026-07-18）：v2 ledger 执行成本从零成本改为 30bps/边滑点 + 5bps 卖出印花税，与 Kelly 先验（`adjust_returns` 30bps/边）对齐；此前零成本使实盘 P&L 系统性优于证据 ~0.6pp/笔，污染 edge 衰减监测。成本版本不匹配的计划按 `cost_version_mismatch` skip（不再 raise 崩溃死锁）。
@@ -119,9 +132,9 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  (无 alpha 确认
 - **资金流批量预取**（`DAILY_ACTION_FUND_FLOW_BATCH`，默认开）：stale 票用 `fetch_batch_fund_flow_tushare(trade_date)` 单次 API 全市场拉取替代逐票串行（~1.3s/票），命中票免网络与 rate-limit；close/pct_change 从当日 daily batch 填，main_net_pct 留 NaN（见陷阱 11）。冷缓存实测 68 票 30.6s → 6.4s；首日 ~500 票场景从 >10min 量级降到秒级。批量失败/未覆盖自动回落逐票路径。
 - 复测入口：`/tmp/refresh_probe2.py`（分段计时探针，一次性诊断脚本，不入库）。
 
-### Daily Action readiness v2 迁移与证据链
+### Daily Action readiness v2 legacy 数据完整性链
 
-- **唯一可信新仓证据路径**：`--auto` 刷新 Daily Action 缓存 → `DailyActionRefreshResult` 冻结结果 → readiness schema v2 manifest → `load_verified_daily_action_snapshot()` 重算 PIT 指纹 → `scan_from_verified_snapshot()` → `DailyActionService.complete_run()` → ledger 写入 `verification_status="verified"`、`snapshot_id`、`setup_consumed_fingerprint`。
+- **legacy v2 数据完整性/来源路径**：`--auto` 刷新 Daily Action 缓存 → `DailyActionRefreshResult` 冻结结果 → readiness schema v2 manifest → `load_verified_daily_action_snapshot()` 重算 PIT 指纹 → `scan_from_verified_snapshot()` → `DailyActionService.complete_run()` → ledger 写入 `verification_status="verified"`、`snapshot_id`、`setup_consumed_fingerprint`。`verified` **只表示数据合格，不构成 edge authorization**，不得把这条 legacy 路径原样迁移成 v3 新仓授权。
 - **schema v1 只读迁移行为**：旧 `schema_version=1` readiness 文件没有新仓授权；loader 必须返回 `readiness_schema_unsupported`，生命周期仍可先结算到期退出，但不得创建新计划。
 - **fail closed**：空/未知策略版本、伪造或空 fingerprint、字符串布尔值、manifest / candidate / ledger provenance 不匹配，都没有新仓权限。
 - **部署后必须重跑 `uv run python src/main.py --auto`**，让 schema v2 manifest 与最新缓存证据重新发布；不要用旧 v1 readiness 文件授权 `--daily-action` 新仓。

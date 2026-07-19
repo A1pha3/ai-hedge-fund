@@ -44,18 +44,20 @@ uv run python src/main.py --daily-action   # 读缓存, 约 3 秒, 输出次日 
 
 **Contributor（想 fork 或提交 PR）**
 
-1. [项目定位与边界](01-introduction/positioning.md)：明确上游与本分叉的分界
-2. [设计哲学与原则](01-introduction/design-philosophy.md)：约束改动方向
-3. [三层管线架构](03-architecture/three-layer-pipeline.md)
-4. [设计原则与权衡](04-design/principles.md)：各模块设计文档入口
+1. [Evidence-Gated Growth Kernel 权威设计](../superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md)：先区分已批准目标态与当前实现
+2. [项目定位与边界](01-introduction/positioning.md)：明确上游与本分叉的分界
+3. [设计哲学与原则](01-introduction/design-philosophy.md)：理解历史设计背景
+4. [三层管线架构](03-architecture/three-layer-pipeline.md)
+5. [设计原则与权衡](04-design/principles.md)：各 legacy 模块设计文档入口
 
-## 关键事实
+## 关键事实（2026-07-18 修正口径）
 
 - 两条管线**只共享缓存数据**，决策逻辑独立
-- 回测数据在 `data/paper_trading_backtest/`（403 条记录、nav=2.10），不是 `data/paper_trading/`（运行时实例，0 笔 EXIT）
-- BTST 涨停突破（T+10）：✅ 启用，2026 H1 winrate=68%，E[r]=+8.15%
-- OversoldBounce 超跌反弹（T+5）：⏸️ 默认暂停，E[r]=+0.34% 但 95% CI 跨 0，统计不显著
-- `price_cache` 只有 6 个月深度，引用 Phase 0 报告结论前先用回测数据交叉验证
+- 历史成交候选源在 `data/paper_trading_backtest/`（403 条记录），不是 `data/paper_trading/`；legacy nav=2.10/+110% 受锚定 bug、T0 收盘和零成本口径污染，不能作为有效业绩
+- 全量修正的历史诊断：BTST `n=133, winrate=60%, E[r]=+5.07%`；仍非目标 T+1/T+10、真实成本口径，不足以直接授权
+- OversoldBounce `n=59, winrate=44%, E[r]=-0.13%`，默认暂停
+- `price_cache` 已补至约 2020–2026；`setup_research.py` 仍难以重放完整 setup 的主要瓶颈是 `fund_flow_cache` 历史浅
+- 部分下游专题文章仍保留修正前数字用于解释 legacy；做交易或架构判断前必须回到根目录 `AGENTS.md` 和权威设计核对
 
 ## 上游 README
 

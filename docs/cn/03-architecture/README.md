@@ -11,12 +11,15 @@
 
 本目录把这套 A 股每日选股系统拆成 5 条独立主线。它们看起来像一条流水线,实际是两条几乎不重叠的管线加三块支撑设施,各自有不同的触发命令、数据来源和退出条件。
 
+> **目标架构与当前实现必须分开阅读。** 2026-07-19 已批准的长期约束见 [Evidence-Gated Growth Kernel 权威设计](../../superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md)。该设计尚未全部实现；本目录其他文章主要解释 legacy/当前代码，涉及交易授权、收益口径、风险或迁移时以权威设计和根目录 `AGENTS.md` 为准。
+
 阅读顺序按"先看整体,再进细节"。先读 [overview.md](./overview.md) 把两条管线的边界画清楚,再按需深入。
 
 ## 文档清单
 
 | 文档 | 难度 | 覆盖主线 | 关键判断 |
 |---|---|---|---|
+| [Evidence-Gated Growth Kernel](../../superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md) | ⭐⭐⭐⭐⭐ | 长期目标架构 | 两个 producer + 薄决策内核 + sealed ledger；已批准、尚未全部实现 |
 | [overview.md](./overview.md) | ⭐⭐⭐ | 全系统 | `--auto` 与 `--daily-action` 是两条独立管线,只共享缓存 |
 | [three-layer-pipeline.md](./three-layer-pipeline.md) | ⭐⭐⭐ | 管线 1: `--auto` | Layer A/B/C 是职责分离,不是流水线步骤 |
 | [daily-action-system.md](./daily-action-system.md) | ⭐⭐⭐⭐ | 管线 2: `--daily-action` | 凸性 setup 不依赖 `--auto` 候选池,扫描全市场极端股票 |
