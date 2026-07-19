@@ -311,6 +311,131 @@ def test_industry_data_zero_still_misses():
     assert result.hit is False, "行业涨幅 0.0 < 2.0 应正常 miss (非降级)"
 
 
+def test_compute_limit_up_streak_counts_consecutive_limit_ups():
+    """连板数 helper: 从 trigger 日向前数连续涨停日 (含 trigger 日).
+
+    首板=1, 2连板=2, 3连板=3; 中途断开 (pct<阈值) 即停.
+    """
+    from src.screening.offensive.setups.btst_breakout import _compute_limit_up_streak
+
+    def _df(pcts):
+        n = len(pcts)
+        return pd.DataFrame({
+            "date": pd.bdate_range("2026-06-01", periods=n),
+            "close": [10.0] * n,
+            "pct_change": pcts,
+        })
+
+    # 首板: 仅 trigger 日涨停
+    assert _compute_limit_up_streak(_df([0.0] * 12 + [10.0]), 12, 9.5) == 1
+    # 2连板: trigger + 前一日涨停
+    assert _compute_limit_up_streak(_df([0.0] * 10 + [10.0, 10.0]), 11, 9.5) == 2
+    # 3连板
+    assert _compute_limit_up_streak(_df([0.0] * 9 + [10.0, 10.0, 10.0]), 11, 9.5) == 3
+    # 断开: trigger 前 2 日涨停但前 1 日非涨停 → streak=1
+    assert _compute_limit_up_streak(_df([0.0] * 9 + [10.0, 0.0, 10.0]), 11, 9.5) == 1
+    # 20% 板 (科创/创业) 用 19.5 阈值: +10% 不算涨停
+    assert _compute_limit_up_streak(_df([0.0] * 10 + [10.0, 20.0]), 11, 19.5) == 1
+    assert _compute_limit_up_streak(_df([0.0] * 10 + [20.0, 20.0]), 11, 19.5) == 2
+
+
+def test_streak_bonus_for_two_consecutive_limit_ups():
+    """连板数因子 (2026-07-19 实证, 9497 涨停样本 price-eligible): 2连板给 +0.04 streak_bonus.
+
+    首板 n=9019 WR45.5%/E+0.98% vs 2连板 n=456 WR48.0%/E+2.20% (+2.5pp WR).
+    但 streak×volume 交叉表显示 edge 部分被 volume_score 吸收 (2连板本就偏高量), 且
+    条件桶 n=58-137 噪讯 → 取 energy_bonus 半量 (+0.04, 单条件 vs energy 双条件).
+    3+连板 WR22.7% (高位连板破裂=反转, 暂不给 bonus).
+
+    构造 2连板且过 pre_runup≤8%: T-5 close 10.0 → 先跌至 9.5 (T-2) 再连两涨停
+    (9.5→10.45→11.495). pre_runup close[T-1]/close[T-5] = 10.45/10.0 = +4.5%.
+    """
+    from src.screening.offensive.setups.btst_breakout import (
+        _board_quality_score,
+        _compute_trend_vol_scores,
+        _compute_volume_score,
+    )
+
+    dates = pd.bdate_range("2026-06-01", periods=22)
+    closes = [10.0] * 16 + [10.0, 9.6, 9.4, 9.5, 10.45, 11.495]  # idx16-21; idx20/21 连涨停
+    prices = pd.DataFrame({
+        "date": dates, "close": closes, "open": closes,
+        "high": closes, "low": closes, "volume": [1000.0] * 22,
+    })
+    prices = _sync_pct_change(prices)  # pct_change 链一致; idx20/21 自动成 +10%
+
+    today = prices.iloc[-1]["date"].strftime("%Y%m%d")
+    recs_today = [FundFlowRecord(ticker="X", date=today, close=11.495, pct_change=10.0,
+                                 main_net_inflow=5_000_000, main_net_pct=8.0)]
+    old_recs = []
+    for i in range(1, 21):
+        d = (prices.iloc[-1 - i]["date"]).strftime("%Y%m%d")
+        old_recs.append(FundFlowRecord(ticker="X", date=d, close=10.0, pct_change=0.0,
+                                       main_net_inflow=100_000, main_net_pct=0.5))
+    ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=3.0)
+
+    result = BtstBreakoutSetup().detect("X", today, ctx)
+    assert result.hit is True
+    assert result.metadata["limit_up_streak"] == 2, "构造为 2连板 (T-1+T 均涨停)"
+
+    # 用同一组 helper 重算 base 公式, 证明 strength == base + 0.08 (streak_bonus 实际生效).
+    trigger_idx = len(prices) - 1
+    pre_window = prices.iloc[trigger_idx - 5 : trigger_idx]
+    position_score, squeeze_score = _compute_trend_vol_scores(pre_window, prices, trigger_idx)
+    weekday_score = 1.0 if _dt.strptime(today, "%Y%m%d").weekday() >= 2 else 0.0
+    board_score = _board_quality_score("X")
+    volume_score = _compute_volume_score(prices, trigger_idx)
+    base = min(1.0, 0.20 * weekday_score + 0.20 * board_score + 0.20 * position_score
+               + 0.20 * squeeze_score + 0.20 * volume_score)
+    # streak=2 → +0.04; position=0.0 (T-1 close 在 5 日窗口顶部) → energy_bonus=0
+    expected = min(1.0, base + 0.04)
+    assert abs(result.trigger_strength - expected) < 1e-9, (
+        f"2连板应得 +0.04 streak_bonus: got {result.trigger_strength}, expected {expected}, base {base}")
+    assert abs(result.trigger_strength - base) >= 0.039, "streak_bonus 必须非零实际生效"
+
+
+def test_no_streak_bonus_for_high_streaks():
+    """3+连板不给 bonus (实测 WR22.7% 反转风险; 样本 n=22 小, 暂仅 neutral 不排除)."""
+    from src.screening.offensive.setups.btst_breakout import (
+        _board_quality_score,
+        _compute_trend_vol_scores,
+        _compute_volume_score,
+    )
+
+    dates = pd.bdate_range("2026-06-01", periods=22)
+    # 3连板 (T-2/T-1/T 均涨停) 且 pre_runup≤8%: T-5=10.0 先跌至 8.8 (T-3) 再连三涨停;
+    # pre_runup close[T-1]/close[T-5] = 10.648/10.0 = +6.48%; idx19/20/21 连涨停.
+    closes = [10.0] * 16 + [10.0, 8.9, 8.8, 9.68, 10.648, 11.7128]
+    prices = pd.DataFrame({
+        "date": dates, "close": closes, "open": closes,
+        "high": closes, "low": closes, "volume": [1000.0] * 22,
+    })
+    prices = _sync_pct_change(prices)
+    today = prices.iloc[-1]["date"].strftime("%Y%m%d")
+    recs_today = [FundFlowRecord(ticker="X", date=today, close=11.7128, pct_change=10.0,
+                                 main_net_inflow=5_000_000, main_net_pct=8.0)]
+    old_recs = []
+    for i in range(1, 21):
+        d = (prices.iloc[-1 - i]["date"]).strftime("%Y%m%d")
+        old_recs.append(FundFlowRecord(ticker="X", date=d, close=10.0, pct_change=0.0,
+                                       main_net_inflow=100_000, main_net_pct=0.5))
+    ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=3.0)
+    result = BtstBreakoutSetup().detect("X", today, ctx)
+    assert result.hit is True, "构造应通过所有 BTST 过滤 (pre_runup +6.48%)"
+    assert result.metadata["limit_up_streak"] == 3
+    trigger_idx = len(prices) - 1
+    pre_window = prices.iloc[trigger_idx - 5 : trigger_idx]
+    position_score, squeeze_score = _compute_trend_vol_scores(pre_window, prices, trigger_idx)
+    weekday_score = 1.0 if _dt.strptime(today, "%Y%m%d").weekday() >= 2 else 0.0
+    board_score = _board_quality_score("X")
+    volume_score = _compute_volume_score(prices, trigger_idx)
+    base = min(1.0, 0.20 * weekday_score + 0.20 * board_score + 0.20 * position_score
+               + 0.20 * squeeze_score + 0.20 * volume_score)
+    # streak=3 → streak_bonus=0; position=0.0 → energy_bonus=0 → strength == base (无任何 bonus)
+    assert abs(result.trigger_strength - base) < 1e-9, (
+        f"3+连板不应得 streak_bonus: got {result.trigger_strength}, base {base}")
+
+
 def test_energy_bonus_not_granted_when_squeeze_neutral():
     """Finding A 回归: energy_bonus 只在 position+squeeze 同时=1.0 (完整弹簧释放) 时发放.
 

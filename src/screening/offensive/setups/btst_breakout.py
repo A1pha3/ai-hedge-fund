@@ -194,7 +194,8 @@ def _compute_volume_score(prices: pd.DataFrame, trigger_idx: int) -> float:
       1.2-1.5x: 59.8% / +5.84%        → 0.9
       1.5-2.0x: 55.6% / +4.91%        → 0.4 (噪讯区, 无增量 α)
       0.5-0.8x: 49.7% / +2.82%        → 0.0 (回避区, 无 α)
-      <0.5 或 >5.0: 样本不足          → 0.5 (中性)
+      <0.5: 极低量偏弱 (非中性)       → 0.4 (2026-07-19 实测 price-eligible n=190 WR43.2%/E[r]-0.06%, 勿 flip→0.5)
+      >5.0: 样本不足                  → 0.5 (中性)
 
     第一性原理 (修正后):
     - A 股涨停本质是多空博弈锁定: 缩量涨停 ≠ 弱势 (可以是筹码锁定)
@@ -236,6 +237,45 @@ def _compute_volume_score(prices: pd.DataFrame, trigger_idx: int) -> float:
         return 0.3  # >2.0x: 换手率过高, 55.1% 但收益显著偏低 (+2.83%)
     except Exception:
         return 0.5
+
+
+def _compute_limit_up_streak(prices: pd.DataFrame, trigger_idx: int, limit_up_pct: float) -> int:
+    """计算截至 trigger_idx 的连续涨停天数 (连板数, 含 trigger 日本身).
+
+    第一性原理: A 股连板数是动量阶段最强预测因子之一。9497 涨停样本 price-eligible
+    回测 (2026-07-19): 首板 n=9019 WR45.5%/E[r]+0.98% | 2连板 n=456 WR48.0%/E[r]+2.20%
+    (+2.5pp WR, 动量确认但未过热) | 3+连板 n=22 WR22.7%/E[r]-4.34% (高位连板破裂=反转)。
+    故 streak==2 给 +0.04 bonus (见 detect; 经 streak×volume 交叉表对抗性校准, 证据偏弱且体积相关→半能量级), streak>=3 暂不给 (样本小且部分被 T+1 续涨停
+    自滤), 仅暴露 metadata 供后续复核。
+
+    Args:
+        prices: 单 ticker 价格 DataFrame (需含 pct_change 列)
+        trigger_idx: 涨停日 positional index
+        limit_up_pct: 板块涨停阈值 (pct 下限, 如 9.5/19.5; 由 limit_up_pct_for_ticker 给)
+
+    Returns:
+        连续涨停天数 (含 trigger 日; 首板=1)。数据不足/异常保守返回 1。
+    """
+    if prices is None or "pct_change" not in prices.columns:
+        return 1
+    try:
+        pcts = prices["pct_change"].astype(float).values
+        if trigger_idx < 0 or trigger_idx >= len(pcts):
+            return 1
+        streak = 1
+        k = trigger_idx - 1
+        while k >= 0:
+            try:
+                prior_pct = float(pcts[k])
+            except (TypeError, ValueError):
+                break
+            if math.isnan(prior_pct) or prior_pct < limit_up_pct:
+                break
+            streak += 1
+            k -= 1
+        return streak
+    except Exception:
+        return 1
 
 
 class BtstBreakoutSetup(Setup):
@@ -381,7 +421,7 @@ class BtstBreakoutSetup(Setup):
         # 1.2-1.5x: 59.8% / +5.84%  ← 优质
         # 1.5-2.0x: 55.6% / +4.91%  ← 中性偏弱 (噪音)
         # 0.5-0.8x: 49.7% / +2.82%  ← 回避区 (无 α)
-        # <0.5 或 >5.0: 样本少, 中性处理
+        # <0.5: 极低量偏弱 → 0.4 (2026-07-19 实测非中性, 勿 flip→0.5); >5.0: 样本少, 中性
         volume_score = _compute_volume_score(prices, trigger_idx)
 
         # energy_bonus 仅在 position+squeeze 同时=1.0 (完整弹簧释放) 时发放.
@@ -391,7 +431,19 @@ class BtstBreakoutSetup(Setup):
         # 与 docstring "同时=1" 矛盾, 并把阶段证据不足的票抬过 _MIN_TRIGGER_STRENGTH.
         # 两 score 取值集合 {0.0, 0.5, 1.0}; ``>= 1.0`` == "都到满正值" 即文档意图.
         energy_bonus = 0.08 if position_score >= 1.0 and squeeze_score >= 1.0 else 0.0
-        strength = min(1.0, 0.20 * weekday_score + 0.20 * board_score + 0.20 * position_score + 0.20 * squeeze_score + 0.20 * volume_score + energy_bonus)
+
+        # ★ 连板数因子 (2026-07-19 实证, 9497 涨停样本 price-eligible universe):
+        # 2连板 (streak=2) 给 +0.04 streak_bonus. unconditional WR48.0%/E[r]+2.20% vs 首板
+        # WR45.5%/+0.98% (+2.5pp WR); 但 streak×volume 交叉表 (对抗性审查) 显示 edge 部分
+        # 被 volume_score 吸收 — 2连板本就偏高量 (median 1.83 vs 首板 1.76), 控制体积后
+        # 0.5-1.5x 桶 +1.67pp (独立信号存在), 0.8-1.2x 桶 n=58 反转 -1.24pp (噪讯).
+        # 故取 energy_bonus 一半: streak 单条件 vs energy 双条件 (position+squeeze 同=1),
+        # 证据偏弱且体积相关 → 保守 +0.04. streak>=3 不给 (WR22.7% 高位连板破裂=反转,
+        # n=22 小, 部分被 T+1 续涨停 is_limit_up_unbuyable_next_day 自滤).
+        # 仅在池内重排序不改入池集合 → 低风险; 量级可经 dogfood 观测后再调。
+        streak = _compute_limit_up_streak(prices, trigger_idx, limit_up_pct)
+        streak_bonus = 0.04 if streak == 2 else 0.0
+        strength = min(1.0, 0.20 * weekday_score + 0.20 * board_score + 0.20 * position_score + 0.20 * squeeze_score + 0.20 * volume_score + energy_bonus + streak_bonus)
 
         return DetectionResult(
             hit=True,
@@ -401,6 +453,7 @@ class BtstBreakoutSetup(Setup):
             invalidation_condition=invalidation,
             metadata={
                 "pct_change": pct_change,
+                "limit_up_streak": streak,
                 "main_net_inflow": today_flow,
                 "industry_pct": industry_pct,
                 "pre_5d_runup_pct": pre_runup_pct,
