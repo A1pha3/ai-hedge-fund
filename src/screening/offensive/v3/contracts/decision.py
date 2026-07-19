@@ -8,7 +8,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
-from .base import CanonicalModel, Sha256, UtcInstant
+from .base import CanonicalModel, ExecutionMode, Sha256, UtcInstant
 from .evidence import EvidenceEnvelope, NonEmptyStr
 
 
@@ -119,6 +119,8 @@ class DecisionSeal(_DecisionProjection):
     def validate_active_revision(self) -> Self:
         if self.active_seal_id != self.seal_id:
             raise ValueError("active_seal_id must identify this active seal revision")
+        if self.mode is ExecutionMode.RESEARCH_RECONSTRUCTION:
+            raise ValueError("research reconstruction cannot create a DecisionSeal")
         return self
 
 
@@ -128,6 +130,8 @@ class ShadowDecision(_DecisionProjection):
     decision_kind: Literal["shadow_decision"]
     shadow_decision_id: NonEmptyStr
     gateway_acceptable: Literal[False]
+
+
 class ExecutionPermit(CanonicalModel):
     """One bounded gateway permit which may only cancel or shrink a seal."""
 
@@ -138,6 +142,9 @@ class ExecutionPermit(CanonicalModel):
     capital_authorization_id: NonEmptyStr
     authorization_version: PositiveInt
     evidence_set_merkle_root: Sha256
+    mode: ExecutionMode
+    sealed_mode: ExecutionMode
+    capital_authorization_mode: ExecutionMode
     permitted_quantity: NonNegativeInt
     sealed_quantity: PositiveInt
     capital_version: PositiveInt
@@ -150,6 +157,14 @@ class ExecutionPermit(CanonicalModel):
     def shrink_only(self) -> Self:
         if self.permitted_quantity > self.sealed_quantity:
             raise ValueError("permit may only shrink sealed quantity")
+        if not (
+            self.mode is self.sealed_mode is self.capital_authorization_mode
+        ):
+            raise ValueError(
+                "permit mode must match sealed mode and capital authorization mode"
+            )
+        if self.mode is ExecutionMode.RESEARCH_RECONSTRUCTION:
+            raise ValueError("research reconstruction cannot receive an ExecutionPermit")
         return self
 
 

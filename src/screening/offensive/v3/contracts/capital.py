@@ -233,12 +233,62 @@ class OrderSnapshot(CanonicalModel):
     ordered_quantity: PositiveInt
     filled_quantity: NonNegativeInt
     leaves_quantity: NonNegativeInt
+    released_quantity: NonNegativeInt
     as_of: UtcInstant
 
     @model_validator(mode="after")
     def validate_quantities(self) -> Self:
-        if self.filled_quantity + self.leaves_quantity > self.ordered_quantity:
-            raise ValueError("filled plus leaves quantity cannot exceed ordered quantity")
+        if (
+            self.filled_quantity
+            + self.leaves_quantity
+            + self.released_quantity
+            != self.ordered_quantity
+        ):
+            raise ValueError(
+                "order quantity conservation requires ordered = filled + leaves + released"
+            )
+        if self.state in {OrderState.CREATED, OrderState.SUBMITTED}:
+            if not (
+                self.filled_quantity == 0
+                and self.leaves_quantity == self.ordered_quantity
+                and self.released_quantity == 0
+            ):
+                raise ValueError(f"{self.state.value} state has contradictory quantities")
+        elif self.state is OrderState.PARTIALLY_FILLED:
+            if not (
+                0 < self.filled_quantity < self.ordered_quantity
+                and self.leaves_quantity > 0
+                and self.released_quantity == 0
+            ):
+                raise ValueError("PARTIALLY_FILLED state has contradictory quantities")
+        elif self.state is OrderState.FILLED:
+            if not (
+                self.filled_quantity == self.ordered_quantity
+                and self.leaves_quantity == 0
+                and self.released_quantity == 0
+            ):
+                raise ValueError("FILLED state has contradictory quantities")
+        elif self.state is OrderState.REJECTED:
+            if not (
+                self.filled_quantity == 0
+                and self.leaves_quantity == 0
+                and self.released_quantity == self.ordered_quantity
+            ):
+                raise ValueError("REJECTED state has contradictory quantities")
+        elif self.state is OrderState.CANCEL_REQUESTED:
+            if not (
+                self.filled_quantity < self.ordered_quantity
+                and self.leaves_quantity > 0
+                and self.released_quantity == 0
+            ):
+                raise ValueError("CANCEL_REQUESTED state has contradictory quantities")
+        elif self.state is OrderState.CANCELLED:
+            if not (
+                self.filled_quantity < self.ordered_quantity
+                and self.leaves_quantity == 0
+                and self.released_quantity > 0
+            ):
+                raise ValueError("CANCELLED state has contradictory quantities")
         return self
 
 
@@ -514,7 +564,6 @@ class EconomicEvent(CanonicalModel):
             elif self.event_kind in {
                 EconomicEventKind.SPLIT,
                 EconomicEventKind.MERGE,
-                EconomicEventKind.SECURITY_CONVERTED,
             }:
                 security_directions = {
                     leg.direction
@@ -524,6 +573,21 @@ class EconomicEvent(CanonicalModel):
                 if security_directions != {debit, credit}:
                     raise ValueError(
                         f"{self.event_kind.value} requires security debit and credit legs"
+                    )
+            elif self.event_kind is EconomicEventKind.SECURITY_CONVERTED:
+                security_directions = directions_by_asset[EconomicAssetKind.SECURITY]
+                has_source_debit = debit in security_directions
+                has_tradable_destination = credit in security_directions
+                share_directions = directions_by_asset.get(
+                    EconomicAssetKind.SHARE_RECEIVABLE,
+                    set(),
+                )
+                has_receivable_destination = share_directions == {credit}
+                if not has_source_debit:
+                    raise ValueError("SECURITY_CONVERTED requires a source security debit")
+                if has_tradable_destination == has_receivable_destination:
+                    raise ValueError(
+                        "SECURITY_CONVERTED requires exactly one destination representation"
                     )
             elif self.event_kind is EconomicEventKind.CORPORATE_CASH_SETTLED:
                 cash_is_credit = directions_by_asset[EconomicAssetKind.CASH] == {

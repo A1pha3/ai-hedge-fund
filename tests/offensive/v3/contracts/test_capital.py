@@ -197,6 +197,7 @@ def test_capital_aggregate_shapes_reject_impossible_quantities() -> None:
             ordered_quantity=100,
             filled_quantity=80,
             leaves_quantity=30,
+            released_quantity=0,
             as_of=now,
         )
 
@@ -223,6 +224,7 @@ def test_capital_plan_and_order_snapshots_preserve_sealed_line_identity() -> Non
         ordered_quantity=100,
         filled_quantity=0,
         leaves_quantity=100,
+        released_quantity=0,
         as_of=now,
     )
     assert order.order_line_id == plan.order_line_id
@@ -235,6 +237,72 @@ def test_capital_plan_and_order_snapshots_preserve_sealed_line_identity() -> Non
             tradable_date=date(2026, 7, 20),
             quantity=100,
             tradable_quantity=101,
+        )
+
+
+@pytest.mark.parametrize(
+    ("state", "filled", "leaves", "released"),
+    [
+        ("CREATED", 0, 100, 0),
+        ("SUBMITTED", 0, 100, 0),
+        ("PARTIALLY_FILLED", 40, 60, 0),
+        ("FILLED", 100, 0, 0),
+        ("REJECTED", 0, 0, 100),
+        ("CANCEL_REQUESTED", 40, 60, 0),
+        ("CANCELLED", 40, 0, 60),
+    ],
+)
+def test_order_snapshot_accepts_exact_state_quantity_classes(
+    state, filled, leaves, released
+) -> None:
+    c = _contracts()
+    snapshot = c.OrderSnapshot(
+        order_id="order-state",
+        seal_id="seal-001",
+        order_line_id="line-600000-entry",
+        order_revision=1,
+        state=c.OrderState(state),
+        ordered_quantity=100,
+        filled_quantity=filled,
+        leaves_quantity=leaves,
+        released_quantity=released,
+        as_of=datetime(2026, 7, 19, 8, 0, tzinfo=UTC),
+    )
+    assert snapshot.ordered_quantity == (
+        snapshot.filled_quantity
+        + snapshot.leaves_quantity
+        + snapshot.released_quantity
+    )
+
+
+@pytest.mark.parametrize(
+    ("state", "filled", "leaves", "released"),
+    [
+        ("CREATED", 1, 99, 0),
+        ("SUBMITTED", 1, 99, 0),
+        ("PARTIALLY_FILLED", 0, 100, 0),
+        ("FILLED", 99, 1, 0),
+        ("REJECTED", 0, 100, 0),
+        ("CANCEL_REQUESTED", 0, 99, 1),
+        ("CANCELLED", 40, 1, 59),
+    ],
+)
+def test_order_snapshot_rejects_state_quantity_contradictions(
+    state, filled, leaves, released
+) -> None:
+    c = _contracts()
+    with pytest.raises(ValidationError, match="state|quantity|conservation"):
+        c.OrderSnapshot(
+            order_id="order-state-invalid",
+            seal_id="seal-001",
+            order_line_id="line-600000-entry",
+            order_revision=1,
+            state=c.OrderState(state),
+            ordered_quantity=100,
+            filled_quantity=filled,
+            leaves_quantity=leaves,
+            released_quantity=released,
+            as_of=datetime(2026, 7, 19, 8, 0, tzinfo=UTC),
         )
 
 
@@ -275,6 +343,33 @@ def test_economic_event_supports_multi_leg_company_actions_and_late_corrections(
 
     with pytest.raises(ValidationError, match="leg"):
         c.EconomicEvent.model_validate(event.model_dump() | {"legs": ()})
+
+    source_debit = event.legs[0]
+    receivable_credit = c.ShareReceivableEconomicEventLeg(
+        leg_id="replacement-receivable",
+        asset_kind=c.EconomicAssetKind.SHARE_RECEIVABLE,
+        direction=c.EconomicLegDirection.CREDIT,
+        receivable_id="replacement-shares-001",
+        security_id="600001.SH",
+        quantity=750,
+    )
+    receivable_conversion = c.EconomicEvent.model_validate(
+        event.model_dump()
+        | {
+            "economic_event_id": "event-receivable-conversion",
+            "legs": (source_debit, receivable_credit),
+        }
+    )
+    assert receivable_conversion.legs[1] == receivable_credit
+
+    with pytest.raises(ValidationError, match="destination|double"):
+        c.EconomicEvent.model_validate(
+            event.model_dump()
+            | {
+                "economic_event_id": "event-double-destination",
+                "legs": (source_debit, event.legs[1], receivable_credit),
+            }
+        )
 
 
 def test_economic_event_leg_discriminator_prevents_ambiguous_dimensions() -> None:

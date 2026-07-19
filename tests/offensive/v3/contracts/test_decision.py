@@ -144,6 +144,8 @@ def _shadow(**overrides):
 
 
 def _permit(**overrides):
+    from src.screening.offensive.v3.contracts.base import ExecutionMode
+
     payload = {
         "permit_id": "permit-001",
         "active_seal_id": "seal-001-r1",
@@ -152,6 +154,9 @@ def _permit(**overrides):
         "capital_authorization_id": "auth-001",
         "authorization_version": 4,
         "evidence_set_merkle_root": HASH,
+        "mode": ExecutionMode.BROKER_CONFIRMED,
+        "sealed_mode": ExecutionMode.BROKER_CONFIRMED,
+        "capital_authorization_mode": ExecutionMode.BROKER_CONFIRMED,
         "permitted_quantity": 700,
         "sealed_quantity": 1000,
         "capital_version": 19,
@@ -253,6 +258,8 @@ def test_shadow_and_seal_have_non_interchangeable_discriminators() -> None:
 
 
 def test_seal_requires_positive_integer_quantity_reserves_and_ordered_deadline() -> None:
+    from src.screening.offensive.v3.contracts.base import ExecutionMode
+
     _, _, seal, _, logical_key, _ = _contracts()
     for override in (
         {"order_lines": (_order_line(sealed_quantity=0),)},
@@ -269,6 +276,7 @@ def test_seal_requires_positive_integer_quantity_reserves_and_ordered_deadline()
         },
         {"deadline": datetime(2026, 7, 19, 8, 9, tzinfo=UTC)},
         {"active_seal_id": "another-seal"},
+        {"mode": ExecutionMode.RESEARCH_RECONSTRUCTION},
         {
             "idempotency_key": logical_key(
                 portfolio_id="another-portfolio",
@@ -282,17 +290,29 @@ def test_seal_requires_positive_integer_quantity_reserves_and_ordered_deadline()
 
 
 def test_execution_permit_binds_authorization_and_only_shrinks_sealed_quantity() -> None:
+    from src.screening.offensive.v3.contracts.base import ExecutionMode
+
     _, _, _, permit, _, _ = _contracts()
     item = permit.model_validate(_permit())
     assert item.capital_authorization_id == "auth-001"
     assert item.authorization_version == 4
     assert item.evidence_set_merkle_root == HASH
     assert item.order_line_id == "line-600000-entry"
+    assert item.mode is ExecutionMode.BROKER_CONFIRMED
+    assert item.mode is item.sealed_mode is item.capital_authorization_mode
     assert item.permitted_quantity < item.sealed_quantity
 
     for quantity in (-1, 1001, True):
         with pytest.raises(ValidationError, match="shrink|integer|greater than"):
             permit.model_validate(_permit(permitted_quantity=quantity))
+
+    for override in (
+        {"sealed_mode": ExecutionMode.MANUAL_CONFIRMED},
+        {"capital_authorization_mode": ExecutionMode.DAILY_BAR_PROXY},
+        {"mode": "broker_confirmed"},
+    ):
+        with pytest.raises(ValidationError, match="mode|ExecutionMode"):
+            permit.model_validate(_permit(**override))
 
 
 def test_zero_quantity_permit_is_an_explicit_cancellation() -> None:
