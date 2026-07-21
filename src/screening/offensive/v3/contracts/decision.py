@@ -68,6 +68,77 @@ class PlanEvidence(EvidenceEnvelope):
     created_at: UtcInstant
 
 
+class DecisionInput(CanonicalModel):
+    """Complete kernel output economics before writer-owned seal identity."""
+
+    plan_evidence: PlanEvidence
+    evidence_set_merkle_root: Sha256
+    authority_epoch: PositiveInt
+    risk_epoch: PositiveInt
+    order_lines: Annotated[tuple[SealedOrderLine, ...], Field(min_length=1)]
+    created_at: UtcInstant
+    deadline: UtcInstant
+    idempotency_key: DecisionLogicalKey
+
+    @model_validator(mode="after")
+    def validate_decision_input(self) -> Self:
+        if self.created_at > self.deadline:
+            raise ValueError("decision deadline must be at or after created_at")
+        if self.plan_evidence.available_at > self.created_at:
+            raise ValueError("plan evidence must be available before decision creation")
+        if self.plan_evidence.created_at > self.created_at:
+            raise ValueError("plan evidence cannot be created after the decision")
+        expected_key = (
+            self.plan_evidence.portfolio_id,
+            self.plan_evidence.signal_session,
+            self.authority_epoch,
+        )
+        actual_key = (
+            self.idempotency_key.portfolio_id,
+            self.idempotency_key.signal_session,
+            self.idempotency_key.authority_epoch,
+        )
+        if actual_key != expected_key:
+            raise ValueError(
+                "idempotency key must match plan portfolio/session and authority epoch"
+            )
+        order_line_ids = [line.order_line_id for line in self.order_lines]
+        if len(order_line_ids) != len(set(order_line_ids)):
+            raise ValueError("order line IDs must be unique within a decision input")
+        return self
+
+
+class CapitalAuthorizationBinding(CanonicalModel):
+    """Minimal reference which a seal writer must re-fetch and re-verify."""
+
+    capital_authorization_id: NonEmptyStr
+    authorization_version: PositiveInt
+    evidence_set_merkle_root: Sha256
+    economic_lineage_id: NonEmptyStr
+    mode: ExecutionMode
+
+
+class PublishDecisionCommand(CanonicalModel):
+    """Request seal publication without a seal identity or authority self-claim."""
+
+    decision: DecisionInput
+    authorization: CapitalAuthorizationBinding
+
+    @model_validator(mode="after")
+    def validate_authorization_binding(self) -> Self:
+        plan = self.decision.plan_evidence
+        binding = self.authorization
+        if plan.mode is ExecutionMode.RESEARCH_RECONSTRUCTION:
+            raise ValueError("research reconstruction cannot publish an executable decision")
+        if binding.mode is not plan.mode:
+            raise ValueError("authorization mode must match decision mode")
+        if binding.economic_lineage_id != plan.economic_lineage_id:
+            raise ValueError("authorization lineage must match decision lineage")
+        if binding.evidence_set_merkle_root != self.decision.evidence_set_merkle_root:
+            raise ValueError("authorization evidence root must match decision evidence root")
+        return self
+
+
 class _DecisionProjection(EvidenceEnvelope):
     """Shared economics for live and gateway-ineligible decision projections."""
 
@@ -169,10 +240,13 @@ class ExecutionPermit(CanonicalModel):
 
 
 __all__ = [
+    "CapitalAuthorizationBinding",
+    "DecisionInput",
     "DecisionLogicalKey",
     "DecisionSeal",
     "ExecutionPermit",
     "PlanEvidence",
+    "PublishDecisionCommand",
     "SealedOrderLine",
     "ShadowDecision",
 ]

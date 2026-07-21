@@ -34,6 +34,10 @@ uv run python src/main.py --daily-action   # 读缓存, ~3 秒, 输出次日 BUY
 
 任何影响上述语义的代码变更，必须同步更新权威设计、机器可读策略快照（实现后）、契约/故障注入测试和迁移说明；不得通过修改报告文案掩盖台账、授权或证据冲突。
 
+### 当前 v3 已实现范围（2026-07-22）
+
+当前只实现了无存储的 strict/frozen v3 领域契约、默认 `off` 的版本化 PolicySnapshot 与行为指纹、只读 public-key trust registry/capability verifier，以及跨计划稳定 ports。**目标架构尚未上线，也没有资本授权。** 仍未实现 v3 capital repository/authoritative writer、Evidence Store、Authorizer、Growth Kernel、gateway、broker connection、authority flip 或任何可执行资本路径；这些接口和契约不得被解释为已经具备交易权限。
+
 ## 数据完整性（⚠ 最重要，曾因此误判）
 
 ### legacy 历史成交候选源（研究重建用，非授权证据）
