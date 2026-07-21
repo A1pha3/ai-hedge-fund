@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from base64 import b64encode
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -134,6 +136,21 @@ def _signed(
 
 def _verifier(api: Any, issuer: Any) -> Any:
     return api.CapabilityVerifier(api.TrustedRegistry(issuers=(issuer,)))
+
+
+def _registry_json(issuer: Any) -> str:
+    return json.dumps(
+        {"issuers": [issuer.model_dump(mode="json")]},
+        separators=(",", ":"),
+    )
+
+
+def _unchecked_mutation(model: Any, method: str, **updates: Any) -> Any:
+    if method == "model_copy":
+        return model.model_copy(update=updates)
+    values = {name: getattr(model, name) for name in type(model).model_fields}
+    values.update(updates)
+    return type(model).model_construct(**values)
 
 
 def test_valid_signature_returns_only_verified_issuer_and_required_capability() -> None:
@@ -444,13 +461,7 @@ def test_registry_loads_only_strict_public_key_truth(tmp_path: Path) -> None:
     capability = _capability(api)
     issuer = _issuer(api, private_key, capability)
     path = tmp_path / "trusted-issuers.json"
-    path.write_text(
-        json.dumps(
-            {"issuers": [issuer.model_dump(mode="json")]},
-            separators=(",", ":"),
-        ),
-        encoding="utf-8",
-    )
+    path.write_text(_registry_json(issuer), encoding="utf-8")
 
     loaded = api.TrustedRegistry.load(path)
 
@@ -464,6 +475,286 @@ def test_registry_loads_only_strict_public_key_truth(tmp_path: Path) -> None:
     path.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(api.TrustedRegistryLoadError):
         api.TrustedRegistry.load(path)
+
+
+def test_registry_loader_rejects_duplicate_json_keys(tmp_path: Path) -> None:
+    api = _api()
+    private_key = Ed25519PrivateKey.generate()
+    issuer = _issuer(api, private_key, _capability(api))
+    path = tmp_path / "trusted-issuers.json"
+    path.write_text(
+        '{"issuers":[],"issuers":' + _registry_json(issuer)[11:],
+        encoding="utf-8",
+    )
+
+    with pytest.raises(api.TrustedRegistryLoadError, match="duplicate"):
+        api.TrustedRegistry.load(path)
+
+
+def test_registry_loader_rejects_leaf_and_parent_symlinks(tmp_path: Path) -> None:
+    api = _api()
+    private_key = Ed25519PrivateKey.generate()
+    issuer = _issuer(api, private_key, _capability(api))
+    real_directory = tmp_path / "real-directory"
+    real_directory.mkdir()
+    real_path = real_directory / "trusted-issuers.json"
+    real_path.write_text(_registry_json(issuer), encoding="utf-8")
+
+    leaf_link = tmp_path / "leaf-link.json"
+    leaf_link.symlink_to(real_path)
+    parent_link = tmp_path / "parent-link"
+    parent_link.symlink_to(real_directory, target_is_directory=True)
+
+    with pytest.raises(api.TrustedRegistryLoadError, match="regular|symlink"):
+        api.TrustedRegistry.load(leaf_link)
+    with pytest.raises(api.TrustedRegistryLoadError, match="regular|symlink"):
+        api.TrustedRegistry.load(parent_link / real_path.name)
+
+
+def test_registry_loader_rejects_non_regular_files_without_blocking(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    fifo_path = tmp_path / "registry.fifo"
+    os.mkfifo(fifo_path)
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(api.TrustedRegistry.load, fifo_path)
+    blocked = False
+    try:
+        with pytest.raises(api.TrustedRegistryLoadError, match="regular"):
+            future.result(timeout=0.5)
+    except FutureTimeoutError:
+        blocked = True
+    finally:
+        if not future.done():
+            writer = os.open(fifo_path, os.O_WRONLY | os.O_NONBLOCK)
+            try:
+                os.write(writer, b"{}")
+            finally:
+                os.close(writer)
+        executor.shutdown(wait=True)
+
+    assert blocked is False, "registry loader blocked while opening a FIFO"
+    with pytest.raises(api.TrustedRegistryLoadError, match="regular"):
+        api.TrustedRegistry.load(tmp_path)
+
+
+def test_registry_loader_rejects_oversized_file_before_parsing(tmp_path: Path) -> None:
+    api = _api()
+    path = tmp_path / "oversized-registry.json"
+    path.write_bytes(b" " * (1024 * 1024 + 1) + b'{"issuers":[]}')
+
+    with pytest.raises(api.TrustedRegistryLoadError, match="too large"):
+        api.TrustedRegistry.load(path)
+
+
+def test_registry_loader_rejects_file_mutation_during_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    private_key = Ed25519PrivateKey.generate()
+    issuer = _issuer(api, private_key, _capability(api))
+    path = tmp_path / "trusted-issuers.json"
+    original = _registry_json(issuer).encode("utf-8")
+    path.write_bytes(original)
+    real_read = os.read
+    mutated = False
+
+    def mutate_after_first_read(descriptor: int, size: int) -> bytes:
+        nonlocal mutated
+        chunk = real_read(descriptor, size)
+        if chunk and not mutated:
+            mutated = True
+            path.write_bytes(original)
+        return chunk
+
+    monkeypatch.setattr(os, "read", mutate_after_first_read)
+
+    with pytest.raises(api.TrustedRegistryLoadError, match="changed"):
+        api.TrustedRegistry.load(path)
+
+
+def test_registry_loader_rejects_descriptor_length_inconsistency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _api()
+    path = tmp_path / "trusted-issuers.json"
+    path.write_bytes(b'{"issuers":[]}')
+    real_read = os.read
+    first_read = True
+
+    def truncate_observed_bytes(descriptor: int, size: int) -> bytes:
+        nonlocal first_read
+        chunk = real_read(descriptor, size)
+        if first_read:
+            first_read = False
+            return chunk[:-1]
+        return chunk
+
+    monkeypatch.setattr(os, "read", truncate_observed_bytes)
+
+    with pytest.raises(api.TrustedRegistryLoadError, match="changed"):
+        api.TrustedRegistry.load(path)
+
+
+@pytest.mark.parametrize(
+    "missing_flag",
+    ["O_NOFOLLOW", "O_DIRECTORY", "O_CLOEXEC", "O_NONBLOCK"],
+)
+def test_registry_loader_fails_closed_without_descriptor_safety_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing_flag: str,
+) -> None:
+    api = _api()
+    private_key = Ed25519PrivateKey.generate()
+    issuer = _issuer(api, private_key, _capability(api))
+    path = tmp_path / "trusted-issuers.json"
+    path.write_text(_registry_json(issuer), encoding="utf-8")
+    monkeypatch.delattr(os, missing_flag)
+
+    with pytest.raises(api.TrustedRegistryLoadError, match=missing_flag):
+        api.TrustedRegistry.load(path)
+
+
+@pytest.mark.parametrize(
+    ("mode", "accepted"),
+    [
+        ("research_reconstruction", False),
+        ("daily_bar_proxy", False),
+        ("manual_confirmed", True),
+        ("broker_confirmed", False),
+    ],
+)
+def test_manual_outcome_issuer_is_isolated_to_manual_confirmed_mode(
+    mode: str,
+    accepted: bool,
+) -> None:
+    api = _api()
+    private_key = Ed25519PrivateKey.generate()
+    required = _capability(
+        api,
+        artifact=api.ArtifactKind.OUTCOME,
+        namespace="outcome.manual",
+        mode=api.ExecutionMode(mode),
+        capability_version="manual-outcome.v1",
+        scope="portfolio:manual-v3",
+    )
+    issuer = _issuer(
+        api,
+        private_key,
+        required,
+        issuer_id="manual.operator",
+        key_id="manual-key-2026-07",
+        issuer_kind=api.IssuerKind.MANUAL,
+    )
+    signed = _signed(
+        api,
+        private_key,
+        required,
+        issuer_id=issuer.issuer_id,
+        key_id=issuer.key_id,
+    )
+
+    if accepted:
+        assert _verifier(api, issuer).verify(
+            signed,
+            required,
+            verification_time=NOW,
+        ).issuer_id == issuer.issuer_id
+    else:
+        with pytest.raises(api.TrustVerificationError, match="manual"):
+            _verifier(api, issuer).verify(
+                signed,
+                required,
+                verification_time=NOW,
+            )
+
+
+@pytest.mark.parametrize("mutation_method", ["model_copy", "model_construct"])
+def test_verifier_revalidates_registry_instances_at_the_public_boundary(
+    mutation_method: str,
+) -> None:
+    api = _api()
+    private_key = Ed25519PrivateKey.generate()
+    required = _capability(
+        api,
+        artifact=api.ArtifactKind.OUTCOME,
+        namespace="outcome.manual",
+        mode=api.ExecutionMode.DAILY_BAR_PROXY,
+        capability_version="manual-outcome.v1",
+        scope="portfolio:manual-v3",
+    )
+    manual_issuer = _issuer(
+        api,
+        private_key,
+        required,
+        issuer_id="manual.operator",
+        key_id="manual-key-2026-07",
+        issuer_kind=api.IssuerKind.MANUAL,
+    )
+    poisoned_issuer = _unchecked_mutation(
+        manual_issuer,
+        mutation_method,
+        issuer_kind=api.IssuerKind.MANUAL.value,
+    )
+    valid_registry = api.TrustedRegistry(issuers=(manual_issuer,))
+    poisoned_registry = _unchecked_mutation(
+        valid_registry,
+        mutation_method,
+        issuers=(poisoned_issuer,),
+    )
+    signed = _signed(
+        api,
+        private_key,
+        required,
+        issuer_id=manual_issuer.issuer_id,
+        key_id=manual_issuer.key_id,
+    )
+
+    with pytest.raises(api.TrustVerificationError, match="registry"):
+        verifier = api.CapabilityVerifier(poisoned_registry)
+        verifier.verify(signed, required, verification_time=NOW)
+
+
+@pytest.mark.parametrize("mutation_method", ["model_copy", "model_construct"])
+def test_verifier_revalidates_signed_envelope_instances_at_the_public_boundary(
+    mutation_method: str,
+) -> None:
+    api = _api()
+    private_key = Ed25519PrivateKey.generate()
+    required = _capability(api)
+    signed = _signed(api, private_key, required)
+    poisoned_signed = _unchecked_mutation(
+        signed,
+        mutation_method,
+        mode=required.mode.value,
+    )
+    verifier = _verifier(api, _issuer(api, private_key, required))
+
+    with pytest.raises(api.TrustVerificationError, match="signed envelope"):
+        verifier.verify(poisoned_signed, required, verification_time=NOW)
+
+
+@pytest.mark.parametrize("mutation_method", ["model_copy", "model_construct"])
+def test_verifier_revalidates_required_capability_at_the_public_boundary(
+    mutation_method: str,
+) -> None:
+    api = _api()
+    private_key = Ed25519PrivateKey.generate()
+    required = _capability(api)
+    poisoned_required = _unchecked_mutation(
+        required,
+        mutation_method,
+        mode=required.mode.value,
+    )
+    signed = _signed(api, private_key, required)
+    verifier = _verifier(api, _issuer(api, private_key, required))
+
+    with pytest.raises(api.TrustVerificationError, match="required capability"):
+        verifier.verify(signed, poisoned_required, verification_time=NOW)
 
 
 def test_registry_rejects_duplicate_identity_and_malformed_public_key() -> None:

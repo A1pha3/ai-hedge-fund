@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from base64 import b64decode, b64encode
 import binascii
+from collections.abc import Iterable
 from datetime import datetime
 from enum import StrEnum
 import hashlib
+import json
+import os
 from pathlib import Path
-from typing import Annotated, Self
+import stat
+from typing import Annotated, Any, Self, TypeVar
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -39,6 +43,137 @@ class TrustVerificationError(ValueError):
 
 class TrustedRegistryLoadError(ValueError):
     """A public trusted-issuer registry could not be loaded strictly."""
+
+
+MAX_TRUSTED_REGISTRY_FILE_BYTES = 1024 * 1024
+
+
+def _reject_duplicate_keys(pairs: Iterable[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise TrustedRegistryLoadError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _required_descriptor_flag(name: str) -> int:
+    value = getattr(os, name, None)
+    if not isinstance(value, int) or value == 0:
+        raise TrustedRegistryLoadError(
+            f"required descriptor safety flag is unavailable: {name}"
+        )
+    return value
+
+
+def _read_regular_registry_file(path: str | os.PathLike[str]) -> bytes:
+    try:
+        parsed_path = Path(os.fspath(path))
+    except (OSError, TypeError, ValueError) as exc:
+        raise TrustedRegistryLoadError(
+            "trusted registry path must name one non-symlink regular file"
+        ) from exc
+
+    path_parts = parsed_path.parts
+    if parsed_path.is_absolute():
+        directory_path = path_parts[0]
+        components = path_parts[1:]
+    else:
+        directory_path = "."
+        components = path_parts
+    if not components:
+        raise TrustedRegistryLoadError(
+            "trusted registry path must name one non-symlink regular file"
+        )
+
+    nofollow = _required_descriptor_flag("O_NOFOLLOW")
+    directory = _required_descriptor_flag("O_DIRECTORY")
+    cloexec = _required_descriptor_flag("O_CLOEXEC")
+    nonblock = _required_descriptor_flag("O_NONBLOCK")
+    directory_flags = os.O_RDONLY | cloexec | directory | nofollow
+    file_flags = os.O_RDONLY | cloexec | nofollow | nonblock
+    try:
+        directory_descriptor = os.open(directory_path, directory_flags)
+    except (OSError, TypeError, ValueError) as exc:
+        raise TrustedRegistryLoadError(
+            "trusted registry path must name one non-symlink regular file"
+        ) from exc
+
+    try:
+        for component in components[:-1]:
+            next_descriptor = os.open(
+                component,
+                directory_flags,
+                dir_fd=directory_descriptor,
+            )
+            try:
+                next_stat = os.fstat(next_descriptor)
+            except OSError:
+                os.close(next_descriptor)
+                raise
+            if not stat.S_ISDIR(next_stat.st_mode):
+                os.close(next_descriptor)
+                raise TrustedRegistryLoadError(
+                    "trusted registry parent must be a non-symlink directory"
+                )
+            os.close(directory_descriptor)
+            directory_descriptor = next_descriptor
+        descriptor = os.open(
+            components[-1],
+            file_flags,
+            dir_fd=directory_descriptor,
+        )
+    except TrustedRegistryLoadError:
+        raise
+    except (OSError, TypeError, ValueError) as exc:
+        raise TrustedRegistryLoadError(
+            "trusted registry path must contain no symlinks"
+        ) from exc
+    finally:
+        os.close(directory_descriptor)
+
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise TrustedRegistryLoadError(
+                "trusted registry path must name one regular file"
+            )
+        if before.st_size > MAX_TRUSTED_REGISTRY_FILE_BYTES:
+            raise TrustedRegistryLoadError("trusted registry file is too large")
+
+        chunks: list[bytes] = []
+        bytes_read = 0
+        while chunk := os.read(descriptor, 64 * 1024):
+            chunks.append(chunk)
+            bytes_read += len(chunk)
+            if bytes_read > MAX_TRUSTED_REGISTRY_FILE_BYTES:
+                raise TrustedRegistryLoadError("trusted registry file is too large")
+        payload = b"".join(chunks)
+        after = os.fstat(descriptor)
+        unchanged_fields = (
+            "st_dev",
+            "st_ino",
+            "st_size",
+            "st_mtime_ns",
+            "st_ctime_ns",
+        )
+        if (
+            any(
+                getattr(before, field) != getattr(after, field)
+                for field in unchanged_fields
+            )
+            or len(payload) != before.st_size
+        ):
+            raise TrustedRegistryLoadError(
+                "trusted registry file changed while it was being read"
+            )
+        return payload
+    except OSError as exc:
+        raise TrustedRegistryLoadError(
+            "unable to read trusted registry regular file"
+        ) from exc
+    finally:
+        os.close(descriptor)
 
 
 class ArtifactKind(StrEnum):
@@ -192,10 +327,22 @@ class TrustedRegistry(CanonicalModel):
     def load(cls, path: str | Path) -> TrustedRegistry:
         """Load one strict local public registry file without network access."""
 
+        payload = _read_regular_registry_file(path)
         try:
-            return cls.model_validate_json(Path(path).read_bytes())
-        except (OSError, ValidationError, ValueError) as exc:
-            raise TrustedRegistryLoadError("invalid trusted issuer registry") from exc
+            json.loads(payload, object_pairs_hook=_reject_duplicate_keys)
+        except TrustedRegistryLoadError:
+            raise
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise TrustedRegistryLoadError(
+                "trusted registry file must contain one valid JSON value"
+            ) from exc
+
+        try:
+            return cls.model_validate_json(payload)
+        except (ValidationError, ValueError) as exc:
+            raise TrustedRegistryLoadError(
+                f"invalid trusted issuer registry: {exc}"
+            ) from exc
 
     def require(self, issuer_id: str, key_id: str) -> TrustedIssuer:
         """Resolve one exact issuer/key pair without fallback or aliasing."""
@@ -247,6 +394,28 @@ class VerifiedIssuer(CanonicalModel):
     capability: Capability
 
 
+StrictModel = TypeVar("StrictModel", bound=BaseModel)
+
+
+def _strict_revalidate_model(
+    value: StrictModel,
+    model_type: type[StrictModel],
+    *,
+    label: str,
+) -> StrictModel:
+    """Rebuild an instance so unchecked Pydantic construction cannot cross trust."""
+
+    try:
+        raw = value.model_dump(
+            mode="python",
+            round_trip=True,
+            warnings="none",
+        )
+        return model_type.model_validate(raw, strict=True)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise TrustVerificationError(f"invalid {label}") from exc
+
+
 _ROLE_ARTIFACTS: dict[IssuerKind, frozenset[ArtifactKind]] = {
     IssuerKind.MARKET_PUBLISHER: frozenset({ArtifactKind.SNAPSHOT}),
     IssuerKind.SIGNAL_PRODUCER: frozenset({ArtifactKind.SIGNAL, ArtifactKind.PLAN}),
@@ -283,9 +452,11 @@ def _require_active(
 def _require_role_boundary(issuer: TrustedIssuer, required: Capability) -> None:
     if (
         issuer.issuer_kind is IssuerKind.MANUAL
-        and required.mode is ExecutionMode.BROKER_CONFIRMED
+        and required.mode is not ExecutionMode.MANUAL_CONFIRMED
     ):
-        raise TrustVerificationError("manual issuer cannot assert broker mode")
+        raise TrustVerificationError(
+            "manual issuer can only assert manual-confirmed outcomes"
+        )
     if required.artifact not in _ROLE_ARTIFACTS[issuer.issuer_kind]:
         raise TrustVerificationError(
             f"{issuer.issuer_kind.value} issuer cannot sign {required.artifact.value}"
@@ -298,7 +469,11 @@ class CapabilityVerifier:
     def __init__(self, registry: TrustedRegistry) -> None:
         if not isinstance(registry, TrustedRegistry):
             raise TypeError("registry must be a TrustedRegistry")
-        self._registry = registry
+        self._registry = _strict_revalidate_model(
+            registry,
+            TrustedRegistry,
+            label="trusted registry",
+        )
 
     @property
     def registry(self) -> TrustedRegistry:
@@ -317,6 +492,16 @@ class CapabilityVerifier:
             raise TypeError("signed must be a SignedEnvelope")
         if not isinstance(required, Capability):
             raise TypeError("required must be a Capability")
+        signed = _strict_revalidate_model(
+            signed,
+            SignedEnvelope,
+            label="signed envelope",
+        )
+        required = _strict_revalidate_model(
+            required,
+            Capability,
+            label="required capability",
+        )
         try:
             checked_time = UtcInstantAdapter.validate_python(
                 verification_time,
