@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from base64 import b64decode, b64encode
 import binascii
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager, ExitStack
 from datetime import datetime
 from enum import StrEnum
 import hashlib
@@ -66,6 +67,29 @@ def _required_descriptor_flag(name: str) -> int:
     return value
 
 
+@contextmanager
+def _owned_descriptor(descriptor: int) -> Iterator[int]:
+    """Close one descriptor without replacing an error already in flight."""
+
+    try:
+        yield descriptor
+    except BaseException as primary_error:
+        try:
+            os.close(descriptor)
+        except OSError as close_error:
+            primary_error.add_note(
+                f"also failed to close trusted registry descriptor: {close_error}"
+            )
+        raise
+    else:
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            raise TrustedRegistryLoadError(
+                "unable to close trusted registry descriptor"
+            ) from exc
+
+
 def _read_regular_registry_file(path: str | os.PathLike[str]) -> bytes:
     try:
         parsed_path = Path(os.fspath(path))
@@ -99,81 +123,80 @@ def _read_regular_registry_file(path: str | os.PathLike[str]) -> bytes:
             "trusted registry path must name one non-symlink regular file"
         ) from exc
 
-    try:
-        for component in components[:-1]:
-            next_descriptor = os.open(
-                component,
-                directory_flags,
+    with ExitStack() as descriptors:
+        directory_descriptor = descriptors.enter_context(
+            _owned_descriptor(directory_descriptor)
+        )
+        try:
+            for component in components[:-1]:
+                next_descriptor = os.open(
+                    component,
+                    directory_flags,
+                    dir_fd=directory_descriptor,
+                )
+                next_descriptor = descriptors.enter_context(
+                    _owned_descriptor(next_descriptor)
+                )
+                if not stat.S_ISDIR(os.fstat(next_descriptor).st_mode):
+                    raise TrustedRegistryLoadError(
+                        "trusted registry parent must be a non-symlink directory"
+                    )
+                directory_descriptor = next_descriptor
+            descriptor = os.open(
+                components[-1],
+                file_flags,
                 dir_fd=directory_descriptor,
             )
-            try:
-                next_stat = os.fstat(next_descriptor)
-            except OSError:
-                os.close(next_descriptor)
-                raise
-            if not stat.S_ISDIR(next_stat.st_mode):
-                os.close(next_descriptor)
+            descriptor = descriptors.enter_context(_owned_descriptor(descriptor))
+        except TrustedRegistryLoadError:
+            raise
+        except (OSError, TypeError, ValueError) as exc:
+            raise TrustedRegistryLoadError(
+                "trusted registry path must contain no symlinks"
+            ) from exc
+
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
                 raise TrustedRegistryLoadError(
-                    "trusted registry parent must be a non-symlink directory"
+                    "trusted registry path must name one regular file"
                 )
-            os.close(directory_descriptor)
-            directory_descriptor = next_descriptor
-        descriptor = os.open(
-            components[-1],
-            file_flags,
-            dir_fd=directory_descriptor,
-        )
-    except TrustedRegistryLoadError:
-        raise
-    except (OSError, TypeError, ValueError) as exc:
-        raise TrustedRegistryLoadError(
-            "trusted registry path must contain no symlinks"
-        ) from exc
-    finally:
-        os.close(directory_descriptor)
-
-    try:
-        before = os.fstat(descriptor)
-        if not stat.S_ISREG(before.st_mode):
-            raise TrustedRegistryLoadError(
-                "trusted registry path must name one regular file"
-            )
-        if before.st_size > MAX_TRUSTED_REGISTRY_FILE_BYTES:
-            raise TrustedRegistryLoadError("trusted registry file is too large")
-
-        chunks: list[bytes] = []
-        bytes_read = 0
-        while chunk := os.read(descriptor, 64 * 1024):
-            chunks.append(chunk)
-            bytes_read += len(chunk)
-            if bytes_read > MAX_TRUSTED_REGISTRY_FILE_BYTES:
+            if before.st_size > MAX_TRUSTED_REGISTRY_FILE_BYTES:
                 raise TrustedRegistryLoadError("trusted registry file is too large")
-        payload = b"".join(chunks)
-        after = os.fstat(descriptor)
-        unchanged_fields = (
-            "st_dev",
-            "st_ino",
-            "st_size",
-            "st_mtime_ns",
-            "st_ctime_ns",
-        )
-        if (
-            any(
-                getattr(before, field) != getattr(after, field)
-                for field in unchanged_fields
+
+            chunks: list[bytes] = []
+            bytes_read = 0
+            while chunk := os.read(descriptor, 64 * 1024):
+                chunks.append(chunk)
+                bytes_read += len(chunk)
+                if bytes_read > MAX_TRUSTED_REGISTRY_FILE_BYTES:
+                    raise TrustedRegistryLoadError(
+                        "trusted registry file is too large"
+                    )
+            payload = b"".join(chunks)
+            after = os.fstat(descriptor)
+            unchanged_fields = (
+                "st_dev",
+                "st_ino",
+                "st_size",
+                "st_mtime_ns",
+                "st_ctime_ns",
             )
-            or len(payload) != before.st_size
-        ):
+            if (
+                any(
+                    getattr(before, field) != getattr(after, field)
+                    for field in unchanged_fields
+                )
+                or len(payload) != before.st_size
+            ):
+                raise TrustedRegistryLoadError(
+                    "trusted registry file changed while it was being read"
+                )
+            return payload
+        except OSError as exc:
             raise TrustedRegistryLoadError(
-                "trusted registry file changed while it was being read"
-            )
-        return payload
-    except OSError as exc:
-        raise TrustedRegistryLoadError(
-            "unable to read trusted registry regular file"
-        ) from exc
-    finally:
-        os.close(descriptor)
+                "unable to read trusted registry regular file"
+            ) from exc
 
 
 class ArtifactKind(StrEnum):
@@ -321,6 +344,14 @@ class TrustedRegistry(CanonicalModel):
         identities = [(issuer.issuer_id, issuer.key_id) for issuer in self.issuers]
         if len(identities) != len(set(identities)):
             raise ValueError("duplicate issuer/key identity")
+        issuer_kinds: dict[str, IssuerKind] = {}
+        for issuer in self.issuers:
+            existing_kind = issuer_kinds.setdefault(
+                issuer.issuer_id,
+                issuer.issuer_kind,
+            )
+            if existing_kind is not issuer.issuer_kind:
+                raise ValueError("issuer_id cannot change issuer_kind across keys")
         return self
 
     @classmethod
@@ -422,9 +453,7 @@ _ROLE_ARTIFACTS: dict[IssuerKind, frozenset[ArtifactKind]] = {
     IssuerKind.OUTCOME_FINALIZER: frozenset({ArtifactKind.OUTCOME}),
     IssuerKind.AUTHORIZER: frozenset({ArtifactKind.EDGE_AUTHORIZATION}),
     IssuerKind.GOVERNANCE: frozenset({ArtifactKind.EXPLORATION_AUTHORIZATION}),
-    IssuerKind.GROWTH_KERNEL: frozenset(
-        {ArtifactKind.DECISION_SEAL, ArtifactKind.SHADOW_DECISION}
-    ),
+    IssuerKind.GROWTH_KERNEL: frozenset({ArtifactKind.DECISION_SEAL}),
     IssuerKind.BROKER_GATEWAY: frozenset({ArtifactKind.EXECUTION_PERMIT}),
     IssuerKind.SHADOW: frozenset(
         {ArtifactKind.SIGNAL, ArtifactKind.PLAN, ArtifactKind.SHADOW_DECISION}

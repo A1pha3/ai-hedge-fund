@@ -455,6 +455,40 @@ def test_issuer_role_separation_cannot_be_overridden_by_a_registry_grant(
         )
 
 
+def test_growth_kernel_cannot_sign_shadow_decisions() -> None:
+    api = _api()
+    private_key = Ed25519PrivateKey.generate()
+    required = _capability(
+        api,
+        artifact=api.ArtifactKind.SHADOW_DECISION,
+        namespace="decision.shadow",
+        capability_version="shadow-decision.v1",
+        scope="portfolio:shadow-v3",
+    )
+    issuer = _issuer(
+        api,
+        private_key,
+        required,
+        issuer_id="growth-kernel.service",
+        key_id="growth-kernel-key-2026-07",
+        issuer_kind=api.IssuerKind.GROWTH_KERNEL,
+    )
+    signed = _signed(
+        api,
+        private_key,
+        required,
+        issuer_id=issuer.issuer_id,
+        key_id=issuer.key_id,
+    )
+
+    with pytest.raises(api.TrustVerificationError, match="growth_kernel"):
+        _verifier(api, issuer).verify(
+            signed,
+            required,
+            verification_time=NOW,
+        )
+
+
 def test_registry_loads_only_strict_public_key_truth(tmp_path: Path) -> None:
     api = _api()
     private_key = Ed25519PrivateKey.generate()
@@ -488,6 +522,68 @@ def test_registry_loader_rejects_duplicate_json_keys(tmp_path: Path) -> None:
     )
 
     with pytest.raises(api.TrustedRegistryLoadError, match="duplicate"):
+        api.TrustedRegistry.load(path)
+
+
+def test_registry_rejects_key_rotation_that_changes_issuer_kind() -> None:
+    api = _api()
+    authorizer_key = Ed25519PrivateKey.generate()
+    shadow_key = Ed25519PrivateKey.generate()
+    authorizer = _issuer(api, authorizer_key, _capability(api))
+    shadow_capability = _capability(
+        api,
+        artifact=api.ArtifactKind.SIGNAL,
+        namespace="signal.shadow",
+        capability_version="shadow-signal.v1",
+        scope="portfolio:shadow-v3",
+    )
+    shadow = _issuer(
+        api,
+        shadow_key,
+        shadow_capability,
+        key_id="shadow-key-2026-07",
+        issuer_kind=api.IssuerKind.SHADOW,
+    )
+
+    with pytest.raises(ValidationError, match="issuer.kind|issuer_kind"):
+        api.TrustedRegistry(issuers=(authorizer, shadow))
+
+
+def test_registry_loader_rejects_key_rotation_that_changes_issuer_kind(
+    tmp_path: Path,
+) -> None:
+    api = _api()
+    authorizer_key = Ed25519PrivateKey.generate()
+    shadow_key = Ed25519PrivateKey.generate()
+    authorizer = _issuer(api, authorizer_key, _capability(api))
+    shadow = _issuer(
+        api,
+        shadow_key,
+        _capability(
+            api,
+            artifact=api.ArtifactKind.SIGNAL,
+            namespace="signal.shadow",
+            capability_version="shadow-signal.v1",
+            scope="portfolio:shadow-v3",
+        ),
+        key_id="shadow-key-2026-07",
+        issuer_kind=api.IssuerKind.SHADOW,
+    )
+    path = tmp_path / "trusted-issuers.json"
+    path.write_text(
+        json.dumps(
+            {
+                "issuers": [
+                    authorizer.model_dump(mode="json"),
+                    shadow.model_dump(mode="json"),
+                ]
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(api.TrustedRegistryLoadError, match="issuer.kind|issuer_kind"):
         api.TrustedRegistry.load(path)
 
 
@@ -597,6 +693,137 @@ def test_registry_loader_rejects_descriptor_length_inconsistency(
 
     with pytest.raises(api.TrustedRegistryLoadError, match="changed"):
         api.TrustedRegistry.load(path)
+
+
+def test_registry_loader_closes_leaf_if_parent_descriptor_close_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.screening.offensive.v3.trust import registry as registry_module
+
+    api = _api()
+    private_key = Ed25519PrivateKey.generate()
+    issuer = _issuer(api, private_key, _capability(api))
+    path = tmp_path / "trusted-issuers.json"
+    path.write_text(_registry_json(issuer), encoding="utf-8")
+    real_open = registry_module.os.open
+    real_close = registry_module.os.close
+    leaf_descriptor: int | None = None
+    parent_descriptor: int | None = None
+    leaf_close_attempted = False
+    parent_close_failed = False
+    closed_descriptors: set[int] = set()
+
+    def track_open(
+        file: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal leaf_descriptor, parent_descriptor
+        descriptor = real_open(file, flags, mode, dir_fd=dir_fd)
+        if os.fspath(file) == path.name and not flags & os.O_DIRECTORY:
+            leaf_descriptor = descriptor
+            parent_descriptor = dir_fd
+        return descriptor
+
+    def fail_parent_close_once(descriptor: int) -> None:
+        nonlocal leaf_close_attempted, parent_close_failed
+        if descriptor == leaf_descriptor:
+            leaf_close_attempted = True
+        if descriptor == parent_descriptor and not parent_close_failed:
+            parent_close_failed = True
+            raise OSError("simulated parent close failure")
+        real_close(descriptor)
+        closed_descriptors.add(descriptor)
+
+    monkeypatch.setattr(registry_module.os, "open", track_open)
+    monkeypatch.setattr(registry_module.os, "close", fail_parent_close_once)
+    caught: Exception | None = None
+    try:
+        api.TrustedRegistry.load(path)
+    except Exception as exc:  # noqa: BLE001 - public-boundary assertion
+        caught = exc
+    finally:
+        for descriptor in (leaf_descriptor, parent_descriptor):
+            if descriptor is not None and descriptor not in closed_descriptors:
+                try:
+                    real_close(descriptor)
+                except OSError:
+                    pass
+
+    assert (
+        isinstance(caught, api.TrustedRegistryLoadError),
+        leaf_close_attempted,
+    ) == (True, True)
+
+
+def test_registry_loader_preserves_read_error_and_continues_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.screening.offensive.v3.trust import registry as registry_module
+
+    api = _api()
+    path = tmp_path / "trusted-issuers.json"
+    path.write_bytes(b'{"issuers":[]}')
+    real_open = registry_module.os.open
+    real_close = registry_module.os.close
+    real_read = registry_module.os.read
+    leaf_descriptor: int | None = None
+    parent_descriptor: int | None = None
+    leaf_close_failed = False
+    parent_close_after_leaf_failure = False
+    closed_descriptors: set[int] = set()
+
+    def track_open(
+        file: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal leaf_descriptor, parent_descriptor
+        descriptor = real_open(file, flags, mode, dir_fd=dir_fd)
+        if os.fspath(file) == path.name and not flags & os.O_DIRECTORY:
+            leaf_descriptor = descriptor
+            parent_descriptor = dir_fd
+        return descriptor
+
+    def fail_leaf_read(descriptor: int, size: int) -> bytes:
+        if descriptor == leaf_descriptor:
+            raise OSError("simulated registry read failure")
+        return real_read(descriptor, size)
+
+    def fail_leaf_close_once(descriptor: int) -> None:
+        nonlocal leaf_close_failed, parent_close_after_leaf_failure
+        if descriptor == leaf_descriptor and not leaf_close_failed:
+            leaf_close_failed = True
+            raise OSError("simulated leaf close failure")
+        if descriptor == parent_descriptor and leaf_close_failed:
+            parent_close_after_leaf_failure = True
+        real_close(descriptor)
+        closed_descriptors.add(descriptor)
+
+    monkeypatch.setattr(registry_module.os, "open", track_open)
+    monkeypatch.setattr(registry_module.os, "read", fail_leaf_read)
+    monkeypatch.setattr(registry_module.os, "close", fail_leaf_close_once)
+    caught: Exception | None = None
+    try:
+        api.TrustedRegistry.load(path)
+    except Exception as exc:  # noqa: BLE001 - public-boundary assertion
+        caught = exc
+    finally:
+        if leaf_descriptor is not None and leaf_descriptor not in closed_descriptors:
+            try:
+                real_close(leaf_descriptor)
+            except OSError:
+                pass
+
+    assert isinstance(caught, api.TrustedRegistryLoadError)
+    assert "unable to read" in str(caught)
+    assert (leaf_close_failed, parent_close_after_leaf_failure) == (True, True)
 
 
 @pytest.mark.parametrize(
