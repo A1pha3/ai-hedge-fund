@@ -48,7 +48,7 @@ FORBIDDEN_ANNOTATIONS = {
     "set",
 }
 CONTRACTS_PACKAGE = ("src", "screening", "offensive", "v3", "contracts")
-PROJECT_PACKAGE = ("src", "screening", "offensive")
+PROJECT_LOCAL_ROOTS = {"app", "scripts", "src", "tests"}
 
 
 def _file_package(root: Path, path: Path) -> tuple[str, ...]:
@@ -82,6 +82,15 @@ def _resolved_import_targets(
     return tuple(targets)
 
 
+def _contains_path_pattern(parts: list[str], pattern: str) -> bool:
+    pattern_parts = tuple(pattern.split("."))
+    width = len(pattern_parts)
+    return any(
+        tuple(parts[index : index + width]) == pattern_parts
+        for index in range(len(parts) - width + 1)
+    )
+
+
 def _scan_contract_imports(root: Path) -> list[str]:
     violations: list[str] = []
     for path in sorted(root.rglob("*.py")):
@@ -101,7 +110,7 @@ def _scan_contract_imports(root: Path) -> list[str]:
                         f"{path.relative_to(root)}:{node.lineno}: {target}"
                     )
                     continue
-                if target_parts[: len(PROJECT_PACKAGE)] == PROJECT_PACKAGE:
+                if root_name in PROJECT_LOCAL_ROOTS:
                     if target_parts[: len(CONTRACTS_PACKAGE)] != CONTRACTS_PACKAGE:
                         violations.append(
                             f"{path.relative_to(root)}:{node.lineno}: "
@@ -109,12 +118,9 @@ def _scan_contract_imports(root: Path) -> list[str]:
                         )
                         continue
                 lowered_parts = [part.lower() for part in target_parts]
-                lowered_target = ".".join(lowered_parts)
                 if any(
-                    segment in lowered_parts
-                    if "." not in segment
-                    else segment in lowered_target
-                    for segment in FORBIDDEN_V3_SEGMENTS
+                    _contains_path_pattern(lowered_parts, pattern)
+                    for pattern in FORBIDDEN_V3_SEGMENTS
                 ):
                     violations.append(f"{path.relative_to(root)}:{node.lineno}: {target}")
     return violations
@@ -204,6 +210,54 @@ def test_import_scanner_rejects_all_project_siblings_and_allows_contracts(
     assert "legal_contracts.py" not in rendered
 
 
+def test_import_scanner_rejects_every_project_local_root(tmp_path: Path) -> None:
+    (tmp_path / "project_local.py").write_text(
+        "from src.tools.api import get_data as fetch\n"
+        "from app.backend.auth import utils as auth_utils\n"
+        "from .....tools import api as relative_api\n"
+        "from scripts.setup_research import run as research_run\n"
+        "from tests.offensive import helpers as test_helpers\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "legal_nonlocal.py").write_text(
+        "import os\n"
+        "from datetime import datetime as Instant\n"
+        "from pydantic import BaseModel as Model\n"
+        "from .base import CanonicalModel as Contract\n",
+        encoding="utf-8",
+    )
+
+    violations = _scan_contract_imports(tmp_path)
+
+    assert len(violations) == 5
+    rendered = "\n".join(violations)
+    for module in (
+        "src.tools.api",
+        "app.backend.auth.utils",
+        "scripts.setup_research.run",
+        "tests.offensive.helpers",
+    ):
+        assert module in rendered
+    assert rendered.count("src.tools.api") == 2
+    assert "legal_nonlocal.py" not in rendered
+
+
+def test_dotted_forbidden_pattern_matches_complete_path_segments_only(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "dotted.py").write_text(
+        "from vendor.capital.repository import Store as Exact\n"
+        "from vendor.capital.repository_helpers import Store as Helper\n",
+        encoding="utf-8",
+    )
+
+    violations = _scan_contract_imports(tmp_path)
+
+    assert len(violations) == 1
+    assert "vendor.capital.repository.Store" in violations[0]
+    assert "repository_helpers" not in violations[0]
+
+
 def test_annotation_scanner_catches_attribute_and_string_forms() -> None:
     source = """
 class BadPort:
@@ -288,8 +342,8 @@ else:
     trust = importlib.import_module('src.screening.offensive.v3.trust')
     contracts = importlib.import_module('src.screening.offensive.v3.contracts')
 
-assert Path(contracts.__file__).resolve().is_relative_to(root)
-assert Path(trust.__file__).resolve().is_relative_to(root)
+assert Path(contracts.__file__).resolve() == root / 'src/screening/offensive/v3/contracts/__init__.py'
+assert Path(trust.__file__).resolve() == root / 'src/screening/offensive/v3/trust/__init__.py'
 assert contracts.ArtifactKind is trust.ArtifactKind
 assert contracts.Capability is trust.Capability
 assert contracts.SignedEnvelope is trust.SignedEnvelope
@@ -326,7 +380,7 @@ import sys
 import src.screening.offensive.v3.contracts as contracts
 
 root = Path(sys.argv[1]).resolve()
-assert Path(contracts.__file__).resolve().is_relative_to(root)
+assert Path(contracts.__file__).resolve() == root / 'src/screening/offensive/v3/contracts/__init__.py'
 forbidden = (
     'src.screening.offensive.v3.trust',
     'sqlalchemy', 'pandas', 'numpy', 'requests', 'httpx', 'sqlite3',
