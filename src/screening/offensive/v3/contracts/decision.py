@@ -8,7 +8,8 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
-from .base import CanonicalModel, ExecutionMode, Sha256, UtcInstant
+from .base import CanonicalModel, EvidenceScope, ExecutionMode, Sha256, UtcInstant
+from .capital import CapitalSnapshot
 from .evidence import EvidenceEnvelope, NonEmptyStr
 
 
@@ -67,11 +68,19 @@ class PlanEvidence(EvidenceEnvelope):
     raw_target_fraction: Annotated[Decimal, Field(gt=0, le=1)]
     created_at: UtcInstant
 
+    @model_validator(mode="after")
+    def validate_plan_scope(self) -> Self:
+        if self.subject_scope is not EvidenceScope.STRATEGY_LINEAGE:
+            raise ValueError("plan evidence requires strategy-lineage scope")
+        return self
+
 
 class DecisionInput(CanonicalModel):
     """Complete kernel output economics before writer-owned seal identity."""
 
     plan_evidence: PlanEvidence
+    capital_snapshot: CapitalSnapshot
+    target_portfolio_policy_fingerprint: Sha256
     evidence_set_merkle_root: Sha256
     authority_epoch: PositiveInt
     risk_epoch: PositiveInt
@@ -88,6 +97,17 @@ class DecisionInput(CanonicalModel):
             raise ValueError("plan evidence must be available before decision creation")
         if self.plan_evidence.created_at > self.created_at:
             raise ValueError("plan evidence cannot be created after the decision")
+        capital = self.capital_snapshot
+        if capital.as_of > self.created_at:
+            raise ValueError("capital snapshot as_of cannot be after decision creation")
+        if capital.portfolio_id != self.plan_evidence.portfolio_id:
+            raise ValueError("capital portfolio must match plan portfolio")
+        if capital.mode is not self.plan_evidence.mode:
+            raise ValueError("capital mode must match plan mode")
+        if capital.authority_epoch != self.authority_epoch:
+            raise ValueError("capital authority epoch must match decision authority epoch")
+        if capital.risk_epoch != self.risk_epoch:
+            raise ValueError("capital risk epoch must match decision risk epoch")
         expected_key = (
             self.plan_evidence.portfolio_id,
             self.plan_evidence.signal_session,
@@ -115,7 +135,9 @@ class CapitalAuthorizationBinding(CanonicalModel):
     authorization_version: PositiveInt
     evidence_set_merkle_root: Sha256
     economic_lineage_id: NonEmptyStr
+    family_id: NonEmptyStr
     mode: ExecutionMode
+    target_portfolio_policy_fingerprint: Sha256
 
 
 class PublishDecisionCommand(CanonicalModel):
@@ -134,8 +156,17 @@ class PublishDecisionCommand(CanonicalModel):
             raise ValueError("authorization mode must match decision mode")
         if binding.economic_lineage_id != plan.economic_lineage_id:
             raise ValueError("authorization lineage must match decision lineage")
+        if binding.family_id != plan.family_id:
+            raise ValueError("authorization family must match plan family")
         if binding.evidence_set_merkle_root != self.decision.evidence_set_merkle_root:
             raise ValueError("authorization evidence root must match decision evidence root")
+        if (
+            binding.target_portfolio_policy_fingerprint
+            != self.decision.target_portfolio_policy_fingerprint
+        ):
+            raise ValueError(
+                "authorization target policy fingerprint must match decision policy fingerprint"
+            )
         return self
 
 

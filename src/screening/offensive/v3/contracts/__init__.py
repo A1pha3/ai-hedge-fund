@@ -70,14 +70,17 @@ from .ports import (
     EvidenceQueryPort,
     SealWriterPort,
 )
+from .trust import ArtifactKind, Capability, SignedEnvelope, VerifiedIssuer
 
 __all__ = [
     "AUTHORITY_STATE_TRANSITIONS",
+    "ArtifactKind",
     "AuthorizationUnion",
     "CapitalAuthorizationBinding",
     "CapitalAuthorization",
     "CapitalViewPort",
     "CapabilityVerifier",
+    "Capability",
     "CanonicalModel",
     "CashEconomicEventLeg",
     "CashReceivableEconomicEventLeg",
@@ -121,7 +124,9 @@ __all__ = [
     "SignalEvidence",
     "SignalStage",
     "SnapshotEvidence",
+    "SignedEnvelope",
     "UtcInstant",
+    "VerifiedIssuer",
     "AuthoritySnapshot",
     "AuthorityState",
     "CapitalSnapshot",

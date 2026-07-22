@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from base64 import b64decode, b64encode
-import binascii
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager, ExitStack
 from datetime import datetime
@@ -20,8 +18,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import (
     AfterValidator,
     BaseModel,
-    ConfigDict,
-    Field,
     StringConstraints,
     ValidationError,
     model_validator,
@@ -30,12 +26,17 @@ from pydantic import (
 from ..contracts.base import (
     CanonicalModel,
     ExecutionMode,
-    Sha256,
     UtcInstant,
     UtcInstantAdapter,
-    canonical_json_bytes,
 )
 from ..contracts.evidence import NonEmptyStr, SUPPORTED_SCHEMA_MAJOR
+from ..contracts.trust import (
+    ArtifactKind,
+    Capability,
+    SignedEnvelope,
+    VerifiedIssuer,
+    _decode_canonical_base64,
+)
 
 
 class TrustVerificationError(ValueError):
@@ -199,20 +200,6 @@ def _read_regular_registry_file(path: str | os.PathLike[str]) -> bytes:
             ) from exc
 
 
-class ArtifactKind(StrEnum):
-    """Existing v3 evidence, authorization, and decision discriminators."""
-
-    SNAPSHOT = "snapshot"
-    SIGNAL = "signal"
-    OUTCOME = "outcome"
-    PLAN = "plan"
-    EDGE_AUTHORIZATION = "edge"
-    EXPLORATION_AUTHORIZATION = "exploration"
-    DECISION_SEAL = "decision_seal"
-    SHADOW_DECISION = "shadow_decision"
-    EXECUTION_PERMIT = "execution_permit"
-
-
 class IssuerKind(StrEnum):
     """Service-principal role used to enforce non-overridable separation."""
 
@@ -227,25 +214,8 @@ class IssuerKind(StrEnum):
     MANUAL = "manual"
 
 
-def _decode_canonical_base64(value: str, *, expected_length: int, label: str) -> bytes:
-    try:
-        decoded = b64decode(value, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise ValueError(f"{label} must be canonical base64") from exc
-    if len(decoded) != expected_length:
-        raise ValueError(f"{label} must decode to {expected_length} bytes")
-    if b64encode(decoded).decode("ascii") != value:
-        raise ValueError(f"{label} must be canonical base64")
-    return decoded
-
-
 def _validate_public_key(value: str) -> str:
     _decode_canonical_base64(value, expected_length=32, label="public key")
-    return value
-
-
-def _validate_signature(value: str) -> str:
-    _decode_canonical_base64(value, expected_length=64, label="signature")
     return value
 
 
@@ -254,45 +224,6 @@ PublicKey = Annotated[
     StringConstraints(min_length=1),
     AfterValidator(_validate_public_key),
 ]
-Signature = Annotated[
-    str,
-    StringConstraints(min_length=1),
-    AfterValidator(_validate_signature),
-]
-
-
-class Capability(CanonicalModel):
-    """One time-bounded registry grant and caller-required trust context."""
-
-    artifact: ArtifactKind
-    namespace: NonEmptyStr
-    mode: ExecutionMode
-    schema_major: Annotated[int, Field(ge=1)]
-    capability_version: NonEmptyStr
-    scope: NonEmptyStr
-    valid_from: UtcInstant
-    valid_until: UtcInstant
-    revoked_at: UtcInstant | None
-
-    @model_validator(mode="after")
-    def validate_lifecycle(self) -> Self:
-        if self.valid_until <= self.valid_from:
-            raise ValueError("capability valid_until must be after valid_from")
-        return self
-
-    def context(self) -> tuple[ArtifactKind, str, ExecutionMode, int, str, str]:
-        """Return fields that an endpoint, rather than an envelope, requires."""
-
-        return (
-            self.artifact,
-            self.namespace,
-            self.mode,
-            self.schema_major,
-            self.capability_version,
-            self.scope,
-        )
-
-
 class TrustedIssuer(CanonicalModel):
     """One immutable public key, its lifecycle, and explicit grants."""
 
@@ -382,47 +313,6 @@ class TrustedRegistry(CanonicalModel):
             if issuer.issuer_id == issuer_id and issuer.key_id == key_id:
                 return issuer
         raise TrustVerificationError("unknown issuer or key")
-
-
-class SignedEnvelope(BaseModel):
-    """Payload plus protected authority and capability audit claims."""
-
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
-    issuer_id: NonEmptyStr
-    key_id: NonEmptyStr
-    schema_major: Annotated[int, Field(ge=1)]
-    artifact: ArtifactKind
-    namespace: NonEmptyStr
-    mode: ExecutionMode
-    capability_version: NonEmptyStr
-    capability_scope: NonEmptyStr
-    payload_hash: Sha256
-    payload: bytes
-    signature: Signature
-
-    def _protected_signing_input(self) -> bytes:
-        return canonical_json_bytes(
-            {
-                "artifact": self.artifact,
-                "capability_scope": self.capability_scope,
-                "capability_version": self.capability_version,
-                "issuer_id": self.issuer_id,
-                "key_id": self.key_id,
-                "mode": self.mode,
-                "namespace": self.namespace,
-                "payload": b64encode(self.payload).decode("ascii"),
-                "payload_hash": self.payload_hash,
-                "schema_major": self.schema_major,
-            }
-        )
-
-
-class VerifiedIssuer(CanonicalModel):
-    """Minimal authority result safe for downstream trust decisions."""
-
-    issuer_id: NonEmptyStr
-    capability: Capability
 
 
 StrictModel = TypeVar("StrictModel", bound=BaseModel)

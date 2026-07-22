@@ -49,52 +49,116 @@ FORBIDDEN_ANNOTATIONS = {
 }
 
 
-def _modules(node: ast.Import | ast.ImportFrom) -> tuple[str, ...]:
+def _import_targets(node: ast.Import | ast.ImportFrom) -> tuple[str, ...]:
     if isinstance(node, ast.Import):
         return tuple(alias.name for alias in node.names)
-    return (node.module or "",)
+    relative = "." * node.level
+    module = node.module or ""
+    base = f"{relative}{module}"
+    targets = []
+    for alias in node.names:
+        separator = "." if module and alias.name != "*" else ""
+        suffix = "" if alias.name == "*" else alias.name
+        targets.append(f"{base}{separator}{suffix}")
+    return tuple(targets)
 
 
-def _inside_type_checking(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
-    current = parents.get(node)
-    while current is not None:
-        if isinstance(current, ast.If):
-            test = current.test
-            if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
-                return True
-        current = parents.get(current)
-    return False
-
-
-def test_contract_imports_are_storage_network_cli_broker_and_v2_free() -> None:
+def _scan_contract_imports(root: Path) -> list[str]:
     violations: list[str] = []
-    for path in sorted(CONTRACTS.glob("*.py")):
+    for path in sorted(root.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        parents = {
-            child: parent
-            for parent in ast.walk(tree)
-            for child in ast.iter_child_nodes(parent)
-        }
         for node in ast.walk(tree):
             if not isinstance(node, (ast.Import, ast.ImportFrom)):
                 continue
-            for module in _modules(node):
-                root = module.split(".", 1)[0]
-                if root in FORBIDDEN_ROOTS:
-                    violations.append(f"{path.name}:{node.lineno}: {module}")
-                lowered = module.lower()
-                if any(segment in lowered for segment in FORBIDDEN_V3_SEGMENTS):
-                    violations.append(f"{path.name}:{node.lineno}: {module}")
-                if module.startswith("src.screening.offensive.") and ".v3." not in module:
-                    violations.append(f"{path.name}:{node.lineno}: v2 runtime {module}")
-                if "trust" in module and not _inside_type_checking(node, parents):
+            if isinstance(node, ast.ImportFrom) and node.level >= 3:
+                violations.append(
+                    f"{path.relative_to(root)}:{node.lineno}: relative v2 escape"
+                )
+            for target in _import_targets(node):
+                absolute = target.lstrip(".")
+                root_name = absolute.split(".", 1)[0]
+                if root_name in FORBIDDEN_ROOTS:
+                    violations.append(f"{path.relative_to(root)}:{node.lineno}: {target}")
+                lowered_parts = absolute.lower().split(".")
+                lowered_target = ".".join(lowered_parts)
+                if any(
+                    segment in lowered_parts
+                    if "." not in segment
+                    else segment in lowered_target
+                    for segment in FORBIDDEN_V3_SEGMENTS
+                ):
+                    violations.append(f"{path.relative_to(root)}:{node.lineno}: {target}")
+                if (
+                    absolute.startswith("src.screening.offensive.")
+                    and ".v3." not in absolute
+                ):
                     violations.append(
-                        f"{path.name}:{node.lineno}: runtime trust dependency {module}"
+                        f"{path.relative_to(root)}:{node.lineno}: v2 runtime {target}"
                     )
-    assert violations == []
+                if target.startswith("..trust") or absolute.startswith(
+                    "src.screening.offensive.v3.trust"
+                ):
+                    violations.append(
+                        f"{path.relative_to(root)}:{node.lineno}: trust implementation {target}"
+                    )
+    return violations
 
 
-def test_ports_expose_no_forbidden_boundary_annotations_or_method_implementation() -> None:
+def _annotation_names(annotation: ast.expr) -> set[str]:
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            annotation = ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return {annotation.value}
+    names: set[str] = set()
+    for node in ast.walk(annotation):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+    return names
+
+
+def test_contract_imports_are_storage_network_cli_broker_and_v2_free() -> None:
+    assert _scan_contract_imports(CONTRACTS) == []
+
+
+def test_import_scanner_catches_nested_relative_aliases(tmp_path: Path) -> None:
+    nested = tmp_path / "nested/contracts"
+    nested.mkdir(parents=True)
+    (nested / "leak.py").write_text(
+        "from .. import storage\nfrom ... import daily_action\n",
+        encoding="utf-8",
+    )
+
+    violations = _scan_contract_imports(tmp_path)
+
+    assert len(violations) == 2
+    assert "nested/contracts/leak.py:1" in violations[0]
+    assert "..storage" in violations[0]
+    assert "nested/contracts/leak.py:2" in violations[1]
+    assert "relative v2 escape" in violations[1]
+
+
+def test_annotation_scanner_catches_attribute_and_string_forms() -> None:
+    source = """
+class BadPort:
+    def one(self, value: pandas.DataFrame) -> None: ...
+    def two(self, value: 'list[domain.Row]') -> None: ...
+"""
+    tree = ast.parse(source)
+    annotations = [
+        argument.annotation
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        for argument in (*node.args.args, *node.args.kwonlyargs)
+        if argument.arg != "self" and argument.annotation is not None
+    ]
+    names = set().union(*(_annotation_names(annotation) for annotation in annotations))
+    assert {"DataFrame", "list"} <= names
+
+
+def test_ports_expose_no_forbidden_annotations_or_method_implementation() -> None:
     path = CONTRACTS / "ports.py"
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     violations: list[str] = []
@@ -111,18 +175,19 @@ def test_ports_expose_no_forbidden_boundary_annotations_or_method_implementation
         found.add(node.name)
         for method in (item for item in node.body if isinstance(item, ast.FunctionDef)):
             annotation_nodes = [
-                arg.annotation
-                for arg in (*method.args.posonlyargs, *method.args.args, *method.args.kwonlyargs)
-                if arg.arg != "self" and arg.annotation is not None
+                argument.annotation
+                for argument in (
+                    *method.args.posonlyargs,
+                    *method.args.args,
+                    *method.args.kwonlyargs,
+                )
+                if argument.arg != "self" and argument.annotation is not None
             ]
             if method.returns is not None:
                 annotation_nodes.append(method.returns)
-            names = {
-                item.id
-                for annotation in annotation_nodes
-                for item in ast.walk(annotation)
-                if isinstance(item, ast.Name)
-            }
+            names = set().union(
+                *(_annotation_names(annotation) for annotation in annotation_nodes)
+            )
             forbidden = sorted(names & FORBIDDEN_ANNOTATIONS)
             if forbidden:
                 violations.append(f"{node.name}.{method.name}: {forbidden}")
@@ -141,10 +206,63 @@ def test_ports_expose_no_forbidden_boundary_annotations_or_method_implementation
     assert violations == []
 
 
-def test_contract_runtime_import_does_not_load_trust_or_optional_runtime_layers() -> None:
+def test_protocol_hints_resolve_in_both_fresh_import_orders() -> None:
     script = """
+from pathlib import Path
+import importlib
+import inspect
 import sys
-import src.screening.offensive.v3.contracts  # noqa: F401
+from typing import get_type_hints
+
+order = sys.argv[1]
+root = Path(sys.argv[2]).resolve()
+if order == 'contracts-first':
+    contracts = importlib.import_module('src.screening.offensive.v3.contracts')
+    assert 'src.screening.offensive.v3.trust' not in sys.modules
+    trust = importlib.import_module('src.screening.offensive.v3.trust')
+else:
+    trust = importlib.import_module('src.screening.offensive.v3.trust')
+    contracts = importlib.import_module('src.screening.offensive.v3.contracts')
+
+assert Path(contracts.__file__).resolve().is_relative_to(root)
+assert Path(trust.__file__).resolve().is_relative_to(root)
+assert contracts.ArtifactKind is trust.ArtifactKind
+assert contracts.Capability is trust.Capability
+assert contracts.SignedEnvelope is trust.SignedEnvelope
+assert contracts.VerifiedIssuer is trust.VerifiedIssuer
+
+protocols = (
+    contracts.CapitalViewPort,
+    contracts.EvidenceQueryPort,
+    contracts.SealWriterPort,
+    contracts.CapabilityVerifier,
+)
+for protocol in protocols:
+    for name, method in inspect.getmembers(protocol, inspect.isfunction):
+        if name.startswith('_'):
+            continue
+        hints = get_type_hints(method)
+        assert hints, (protocol.__name__, name)
+"""
+    for order in ("contracts-first", "trust-first"):
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", script, order, str(ROOT)],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"{order}: {result.stderr or result.stdout}"
+
+
+def test_contract_runtime_import_does_not_load_optional_runtime_layers() -> None:
+    script = """
+from pathlib import Path
+import sys
+import src.screening.offensive.v3.contracts as contracts
+
+root = Path(sys.argv[1]).resolve()
+assert Path(contracts.__file__).resolve().is_relative_to(root)
 forbidden = (
     'src.screening.offensive.v3.trust',
     'sqlalchemy', 'pandas', 'numpy', 'requests', 'httpx', 'sqlite3',
@@ -154,7 +272,7 @@ loaded = sorted(name for name in sys.modules if any(name == item or name.startsw
 assert loaded == [], loaded
 """
     result = subprocess.run(
-        [sys.executable, "-I", "-c", script],
+        [sys.executable, "-I", "-c", script, str(ROOT)],
         cwd=ROOT,
         text=True,
         capture_output=True,

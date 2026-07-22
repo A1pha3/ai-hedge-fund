@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from .authorization import CapitalAuthorization
 from .capital import CapitalSnapshot
 from .decision import DecisionSeal, PublishDecisionCommand
 from .evidence import SnapshotEvidence
-
-if TYPE_CHECKING:
-    from ..trust import Capability, SignedEnvelope, VerifiedIssuer
+from .trust import Capability, SignedEnvelope, VerifiedIssuer
 
 
 @runtime_checkable

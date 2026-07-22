@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal
 import inspect
-from typing import get_type_hints
+from typing import Any, get_args, get_origin, get_type_hints
 
 import pytest
 from pydantic import ValidationError
@@ -14,6 +14,7 @@ from pydantic import ValidationError
 UTC = timezone.utc
 NOW = datetime(2026, 7, 19, 8, 0, tzinfo=UTC)
 HASH = "e" * 64
+POLICY_HASH = "1" * 64
 
 
 def _api():
@@ -89,6 +90,8 @@ def _order_line(api):
 def _decision_input(api, **overrides):
     values = {
         "plan_evidence": _plan(api),
+        "capital_snapshot": _capital_snapshot(api),
+        "target_portfolio_policy_fingerprint": POLICY_HASH,
         "evidence_set_merkle_root": HASH,
         "authority_epoch": 3,
         "risk_epoch": 8,
@@ -111,29 +114,33 @@ def _binding(api, **overrides):
         "authorization_version": 4,
         "evidence_set_merkle_root": HASH,
         "economic_lineage_id": "btst-economic-lineage",
+        "family_id": "btst.limit-up-breakout",
         "mode": api.ExecutionMode.DAILY_BAR_PROXY,
+        "target_portfolio_policy_fingerprint": POLICY_HASH,
     }
     values.update(overrides)
     return api.CapitalAuthorizationBinding(**values)
 
 
-def _capital_snapshot(api):
-    return api.CapitalSnapshot(
-        capital_snapshot_id="capital-019",
-        portfolio_id="paper-v3",
-        authority_epoch=3,
-        risk_epoch=8,
-        capital_version=19,
-        stream_version=29,
-        mode=api.ExecutionMode.DAILY_BAR_PROXY,
-        as_of=NOW,
-        cash=Decimal("50000"),
-        nav=Decimal("100000"),
-        gross_exposure=Decimal("0"),
-        high_water_mark=Decimal("100000"),
-        positions=(),
-        payload_content_hash=HASH,
-    )
+def _capital_snapshot(api, **overrides):
+    values = {
+        "capital_snapshot_id": "capital-019",
+        "portfolio_id": "paper-v3",
+        "authority_epoch": 3,
+        "risk_epoch": 8,
+        "capital_version": 19,
+        "stream_version": 29,
+        "mode": api.ExecutionMode.DAILY_BAR_PROXY,
+        "as_of": NOW,
+        "cash": Decimal("50000"),
+        "nav": Decimal("100000"),
+        "gross_exposure": Decimal("0"),
+        "high_water_mark": Decimal("100000"),
+        "positions": (),
+        "payload_content_hash": HASH,
+    }
+    values.update(overrides)
+    return api.CapitalSnapshot(**values)
 
 
 def _snapshot_evidence(api):
@@ -250,7 +257,21 @@ def test_publish_command_is_immutable_input_plus_reference_not_authority_or_seal
         "authorization_version",
         "evidence_set_merkle_root",
         "economic_lineage_id",
+        "family_id",
         "mode",
+        "target_portfolio_policy_fingerprint",
+    }
+    assert set(api.DecisionInput.model_fields) == {
+        "plan_evidence",
+        "capital_snapshot",
+        "target_portfolio_policy_fingerprint",
+        "evidence_set_merkle_root",
+        "authority_epoch",
+        "risk_epoch",
+        "order_lines",
+        "created_at",
+        "deadline",
+        "idempotency_key",
     }
     assert {
         "seal_id",
@@ -276,7 +297,13 @@ def test_publish_command_is_immutable_input_plus_reference_not_authority_or_seal
     [
         ({}, {"mode": None}, "mode"),
         ({}, {"economic_lineage_id": "auto-lineage"}, "lineage"),
+        ({}, {"family_id": "auto.family"}, "family"),
         ({}, {"evidence_set_merkle_root": "f" * 64}, "evidence"),
+        (
+            {},
+            {"target_portfolio_policy_fingerprint": "2" * 64},
+            "policy fingerprint",
+        ),
     ],
 )
 def test_publish_command_requires_exact_authorization_binding(
@@ -297,7 +324,14 @@ def test_publish_command_rejects_research_and_mismatched_logical_key() -> None:
     research_plan = _plan(api, mode=api.ExecutionMode.RESEARCH_RECONSTRUCTION)
     with pytest.raises(ValidationError, match="research"):
         api.PublishDecisionCommand(
-            decision=_decision_input(api, plan_evidence=research_plan),
+            decision=_decision_input(
+                api,
+                plan_evidence=research_plan,
+                capital_snapshot=_capital_snapshot(
+                    api,
+                    mode=api.ExecutionMode.RESEARCH_RECONSTRUCTION,
+                ),
+            ),
             authorization=_binding(
                 api,
                 mode=api.ExecutionMode.RESEARCH_RECONSTRUCTION,
@@ -317,6 +351,77 @@ def test_publish_command_rejects_research_and_mismatched_logical_key() -> None:
             ),
             idempotency_key=wrong_key,
         )
+
+
+def test_plan_evidence_and_publish_path_require_strategy_lineage_scope() -> None:
+    api = _api()
+    with pytest.raises(ValidationError, match="strategy-lineage|STRATEGY_LINEAGE"):
+        _plan(
+            api,
+            subject_scope=api.EvidenceScope.GLOBAL,
+            family_id=None,
+        )
+
+
+@pytest.mark.parametrize(
+    ("capital_overrides", "expected_message"),
+    [
+        (
+            {"portfolio_id": "other-portfolio"},
+            "capital portfolio must match plan portfolio",
+        ),
+        ({"mode": None}, "capital mode must match plan mode"),
+        (
+            {"authority_epoch": 4},
+            "capital authority epoch must match decision authority epoch",
+        ),
+        (
+            {"risk_epoch": 9},
+            "capital risk epoch must match decision risk epoch",
+        ),
+        (
+            {"as_of": datetime(2026, 7, 19, 8, 1, tzinfo=UTC)},
+            "capital snapshot as_of cannot be after decision creation",
+        ),
+    ],
+)
+def test_decision_input_rejects_capital_identity_mismatch(
+    capital_overrides, expected_message
+) -> None:
+    api = _api()
+    if "mode" in capital_overrides and capital_overrides["mode"] is None:
+        capital_overrides["mode"] = api.ExecutionMode.MANUAL_CONFIRMED
+    with pytest.raises(ValidationError) as error:
+        _decision_input(api, capital_snapshot=_capital_snapshot(api, **capital_overrides))
+    validation_messages = {
+        str(item.get("ctx", {}).get("error", ""))
+        for item in error.value.errors(include_url=False)
+    }
+    assert expected_message in validation_messages
+
+
+def test_decision_input_binds_exact_capital_revision_and_payload_hash() -> None:
+    api = _api()
+    current = _decision_input(api)
+    stale = _decision_input(
+        api,
+        capital_snapshot=_capital_snapshot(
+            api,
+            capital_snapshot_id="capital-018",
+            capital_version=18,
+            stream_version=28,
+            payload_content_hash="3" * 64,
+        ),
+    )
+
+    assert current.capital_snapshot.capital_snapshot_id == "capital-019"
+    assert current.capital_snapshot.capital_version == 19
+    assert current.capital_snapshot.stream_version == 29
+    assert current.capital_snapshot.payload_content_hash == HASH
+    assert stale.capital_snapshot.capital_version == 18
+    assert current.content_hash() != stale.content_hash()
+    with pytest.raises(ValidationError, match="frozen_instance"):
+        current.capital_snapshot.capital_version = 18
 
 
 def test_stable_ports_are_runtime_structural_and_return_domain_objects() -> None:
@@ -384,6 +489,12 @@ def test_capability_verifier_port_preserves_explicit_verification_time() -> None
     ]
     assert signature.parameters["verification_time"].kind is inspect.Parameter.KEYWORD_ONLY
     assert signature.parameters["verification_time"].default is inspect.Parameter.empty
+    assert get_type_hints(api.CapabilityVerifier.verify) == {
+        "signed": trust.SignedEnvelope,
+        "required": trust.Capability,
+        "verification_time": datetime,
+        "return": trust.VerifiedIssuer,
+    }
 
 
 def test_stable_port_annotations_are_exact_and_contain_no_mutable_or_any_boundary() -> None:
@@ -424,3 +535,35 @@ def test_stable_port_annotations_are_exact_and_contain_no_mutable_or_any_boundar
                 "Cursor",
             )
         )
+
+    from src.screening.offensive.v3 import trust
+
+    expected[api.CapabilityVerifier.verify] = {
+        "signed": trust.SignedEnvelope,
+        "required": trust.Capability,
+        "verification_time": datetime,
+        "return": trust.VerifiedIssuer,
+    }
+    forbidden_types = {Any, dict, list, set}
+    forbidden_names = {
+        "Connection",
+        "Cursor",
+        "DataFrame",
+        "MutableMapping",
+        "Session",
+    }
+
+    def annotation_nodes(annotation):
+        yield annotation
+        for argument in get_args(annotation):
+            yield from annotation_nodes(argument)
+
+    for method, expected_annotations in expected.items():
+        hints = get_type_hints(method)
+        assert hints == expected_annotations
+        for annotation in hints.values():
+            for node in annotation_nodes(annotation):
+                origin = get_origin(node)
+                assert node not in forbidden_types
+                assert origin not in forbidden_types
+                assert getattr(node, "__name__", "") not in forbidden_names
