@@ -2544,6 +2544,12 @@ def test_render_shows_held_positions_and_maturity_release_schedule(tmp_path, mon
     from src.screening.offensive import daily_action as da
     from src.screening.offensive.paper_tracker import PaperTracker
 
+    class FrozenDatetime(da.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 17, 12, 0, tzinfo=tz)
+
+    monkeypatch.setattr(da, "datetime", FrozenDatetime)
     monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
     monkeypatch.setattr(da, "_setup_policy_lines", lambda **kw: [], raising=False)
     monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
