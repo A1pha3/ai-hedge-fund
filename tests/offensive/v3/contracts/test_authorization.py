@@ -1,6 +1,6 @@
 """Contract tests for edge and one-shot exploration authorizations."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -60,7 +60,7 @@ def _edge(**overrides):
         "research_program_id": "growth-program",
         "baseline_portfolio_policy_fingerprint": HASH,
         "target_portfolio_policy_fingerprint": HASH,
-        "evidence_as_of": datetime(2026, 7, 19, 7, 55, tzinfo=UTC),
+        "evidence_as_of": datetime(2026, 7, 19, 8, 2, tzinfo=UTC),
         "evidence_set_merkle_root": HASH,
         "issued_at": datetime(2026, 7, 19, 8, 3, tzinfo=UTC),
         "expires_at": datetime(2026, 8, 19, 8, 3, tzinfo=UTC),
@@ -189,6 +189,56 @@ def test_authorizations_require_a_bounded_validity_window() -> None:
             model.model_validate(payload)
 
 
+def test_edge_authorization_enforces_complete_pit_order_at_microsecond_boundary() -> None:
+    major, _, edge, _ = _contracts()
+    available = datetime(2026, 7, 19, 8, 2, tzinfo=UTC)
+    issued = datetime(2026, 7, 19, 8, 3, tzinfo=UTC)
+
+    assert edge.model_validate(
+        _edge(
+            schema_major=major,
+            available_at=available,
+            evidence_as_of=available,
+            issued_at=issued,
+        )
+    ).evidence_as_of == available
+    with pytest.raises(ValidationError, match="available_at|evidence_as_of"):
+        edge.model_validate(
+            _edge(
+                schema_major=major,
+                available_at=available + timedelta(microseconds=1),
+                evidence_as_of=available,
+                issued_at=issued,
+            )
+        )
+    with pytest.raises(ValidationError, match="evidence_as_of|issued_at"):
+        edge.model_validate(
+            _edge(
+                schema_major=major,
+                available_at=available,
+                evidence_as_of=issued + timedelta(microseconds=1),
+                issued_at=issued,
+            )
+        )
+
+
+def test_exploration_authorization_cannot_precede_evidence_availability() -> None:
+    major, _, _, exploration = _contracts()
+    issued = datetime(2026, 7, 19, 8, 3, tzinfo=UTC)
+
+    assert exploration.model_validate(
+        _exploration(schema_major=major, available_at=issued, issued_at=issued)
+    ).issued_at == issued
+    with pytest.raises(ValidationError, match="available_at|issued_at"):
+        exploration.model_validate(
+            _exploration(
+                schema_major=major,
+                available_at=issued + timedelta(microseconds=1),
+                issued_at=issued,
+            )
+        )
+
+
 def test_capital_authorization_is_a_discriminated_union() -> None:
     major, union, edge, exploration = _contracts()
     parsed_edge = union.model_validate(_edge(schema_major=major)).root
@@ -198,3 +248,31 @@ def test_capital_authorization_is_a_discriminated_union() -> None:
     assert isinstance(parsed_exploration, exploration)
     with pytest.raises(ValidationError):
         union.model_validate(_edge(schema_major=major, authorization_kind="exploration"))
+
+
+@pytest.mark.parametrize(
+    ("model_index", "payload_factory"),
+    [(2, _edge), (3, _exploration)],
+)
+def test_authorization_identity_requires_strategy_scope_and_distinct_family_lineage(
+    model_index, payload_factory
+) -> None:
+    from src.screening.offensive.v3.contracts.base import EvidenceScope
+
+    contracts = _contracts()
+    model = contracts[model_index]
+    with pytest.raises(ValidationError, match="strategy-lineage"):
+        model.model_validate(
+            payload_factory(
+                schema_major=contracts[0],
+                subject_scope=EvidenceScope.GLOBAL,
+                family_id=None,
+            )
+        )
+    with pytest.raises(ValidationError, match="family.*lineage|lineage.*family"):
+        model.model_validate(
+            payload_factory(
+                schema_major=contracts[0],
+                family_id="btst-economic-lineage",
+            )
+        )

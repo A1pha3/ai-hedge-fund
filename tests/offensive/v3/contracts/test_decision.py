@@ -1,6 +1,6 @@
 """Contract tests for plan evidence, decisions, seals, and permits."""
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import subprocess
 import sys
@@ -112,6 +112,23 @@ def _seal(**overrides):
         "snapshot_id": "snapshot-001",
         "capital_authorization_id": "auth-001",
         "authorization_version": 4,
+        "command_binding": {
+            "publish_command_content_hash": "d" * 64,
+            "portfolio_id": "paper-v3",
+            "capital_snapshot_id": "capital-019",
+            "capital_version": 19,
+            "capital_stream_version": 29,
+            "capital_payload_content_hash": HASH,
+            "target_portfolio_policy_fingerprint": "1" * 64,
+            "capital_authorization_id": "auth-001",
+            "authorization_version": 4,
+            "evidence_set_merkle_root": HASH,
+            "family_id": "btst.limit-up-breakout",
+            "economic_lineage_id": "btst-economic-lineage",
+            "mode": _envelope_fields()["mode"],
+            "authority_epoch": 3,
+            "risk_epoch": 8,
+        },
         "evidence_set_merkle_root": HASH,
         "authority_epoch": 3,
         "risk_epoch": 8,
@@ -139,6 +156,7 @@ def _shadow(**overrides):
     payload.pop("seal_revision")
     payload.pop("capital_authorization_id")
     payload.pop("authorization_version")
+    payload.pop("command_binding")
     payload.update(overrides)
     return payload
 
@@ -192,6 +210,18 @@ def test_plan_evidence_is_immutable_raw_target_not_an_authorization() -> None:
         item.raw_target_fraction = Decimal("0.10")
 
 
+def test_plan_identity_requires_strategy_scope_and_distinct_family_lineage() -> None:
+    from src.screening.offensive.v3.contracts.base import EvidenceScope
+
+    plan, *_ = _contracts()
+    with pytest.raises(ValidationError, match="strategy-lineage"):
+        plan.model_validate(
+            _plan(subject_scope=EvidenceScope.GLOBAL, family_id=None)
+        )
+    with pytest.raises(ValidationError, match="family.*lineage|lineage.*family"):
+        plan.model_validate(_plan(family_id="btst-economic-lineage"))
+
+
 def test_decision_seal_has_exact_execution_and_authority_bindings() -> None:
     _, _, seal, _, _, _ = _contracts()
     item = seal.model_validate(_seal())
@@ -222,6 +252,7 @@ def test_decision_seal_has_exact_execution_and_authority_bindings() -> None:
         "schema_major",
         "capital_authorization_id",
         "authorization_version",
+        "command_binding",
         "evidence_set_merkle_root",
         "authority_epoch",
         "risk_epoch",
@@ -257,6 +288,41 @@ def test_shadow_and_seal_have_non_interchangeable_discriminators() -> None:
         )
 
 
+@pytest.mark.parametrize("payload_factory", [_seal, _shadow])
+def test_direct_decision_projection_requires_strategy_lineage_scope(
+    payload_factory,
+) -> None:
+    from src.screening.offensive.v3.contracts.base import EvidenceScope
+
+    _, shadow, seal, _, _, _ = _contracts()
+    model = seal if payload_factory is _seal else shadow
+    with pytest.raises(ValidationError, match="strategy-lineage"):
+        model.model_validate(
+            payload_factory(
+                subject_scope=EvidenceScope.GLOBAL,
+                family_id=None,
+            )
+        )
+
+
+@pytest.mark.parametrize("payload_factory", [_seal, _shadow])
+def test_direct_decision_projection_keeps_family_and_lineage_distinct(
+    payload_factory,
+) -> None:
+    _, shadow, seal, _, _, _ = _contracts()
+    model = seal if payload_factory is _seal else shadow
+    payload = payload_factory(
+        family_id="btst-economic-lineage",
+        economic_lineage_id="btst-economic-lineage",
+    )
+    if payload_factory is _seal:
+        payload["command_binding"] = payload["command_binding"] | {
+            "family_id": "btst-economic-lineage"
+        }
+    with pytest.raises(ValidationError, match="family.*lineage|lineage.*family"):
+        model.model_validate(payload)
+
+
 def test_seal_requires_positive_integer_quantity_reserves_and_ordered_deadline() -> None:
     from src.screening.offensive.v3.contracts.base import ExecutionMode
 
@@ -287,6 +353,26 @@ def test_seal_requires_positive_integer_quantity_reserves_and_ordered_deadline()
     ):
         with pytest.raises(ValidationError):
             seal.model_validate(_seal(**override))
+
+
+@pytest.mark.parametrize("payload_factory", [_seal, _shadow])
+def test_decision_projection_cannot_precede_evidence_availability(
+    payload_factory,
+) -> None:
+    _, shadow, seal, _, _, _ = _contracts()
+    model = seal if payload_factory is _seal else shadow
+    created = datetime(2026, 7, 19, 8, 10, tzinfo=UTC)
+
+    assert model.model_validate(
+        payload_factory(available_at=created, created_at=created)
+    ).created_at == created
+    with pytest.raises(ValidationError, match="available_at|created_at"):
+        model.model_validate(
+            payload_factory(
+                available_at=created + timedelta(microseconds=1),
+                created_at=created,
+            )
+        )
 
 
 def test_execution_permit_binds_authorization_and_only_shrinks_sealed_quantity() -> None:
@@ -341,5 +427,5 @@ def test_serialized_seal_hash_is_stable_across_processes() -> None:
     assert (
         hashes[0]
         == hashes[1]
-        == "2e12de2b0cc18d0c93437c7a6e2eb9b6d4669a2b3c2d28e9c69cde7db7e1c43c"
+        == "e1ed11871df00c9785fffcf1d51eb34648e31e5de02965de522b4ed70cfecc4d"
     )

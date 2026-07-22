@@ -213,31 +213,13 @@ def _seal(api):
         decision=_decision_input(api),
         authorization=_binding(api),
     )
-    plan = command.decision.plan_evidence
-    return api.DecisionSeal(
-        **plan.model_dump(
-            mode="python",
-            exclude={
-                "evidence_id",
-                "evidence_kind",
-                "raw_target_fraction",
-                "source_authority",
-            },
-        ),
+    return api.DecisionSeal.from_command(
+        command,
         evidence_id="seal-001-r1",
-        source_authority="growth-kernel",
-        decision_kind="decision_seal",
         seal_id="seal-001-r1",
-        active_seal_id="seal-001-r1",
         seal_revision=1,
-        capital_authorization_id=command.authorization.capital_authorization_id,
-        authorization_version=command.authorization.authorization_version,
-        evidence_set_merkle_root=command.decision.evidence_set_merkle_root,
-        authority_epoch=command.decision.authority_epoch,
-        risk_epoch=command.decision.risk_epoch,
-        order_lines=command.decision.order_lines,
-        deadline=command.decision.deadline,
-        idempotency_key=command.decision.idempotency_key,
+        source_authority="growth-kernel",
+        payload_content_hash="9" * 64,
     )
 
 

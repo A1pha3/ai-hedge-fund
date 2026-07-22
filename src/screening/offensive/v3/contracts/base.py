@@ -156,7 +156,12 @@ def content_hash(value: Any) -> str:
 class CanonicalModel(BaseModel):
     """Base model for immutable, strict, canonically hashable contracts."""
 
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+    model_config = ConfigDict(
+        strict=True,
+        frozen=True,
+        extra="forbid",
+        revalidate_instances="always",
+    )
 
     def canonical_bytes(self) -> bytes:
         return canonical_json_bytes(self.model_dump(mode="python", exclude_none=False))

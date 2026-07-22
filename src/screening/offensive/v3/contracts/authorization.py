@@ -42,12 +42,16 @@ class EdgeAuthorization(EvidenceEnvelope):
     def validate_authorization(self) -> Self:
         if self.mode is ExecutionMode.RESEARCH_RECONSTRUCTION:
             raise ValueError("research reconstruction cannot receive capital authorization")
+        if self.available_at > self.evidence_as_of:
+            raise ValueError("available_at must be at or before evidence_as_of")
         if self.evidence_as_of > self.issued_at:
             raise ValueError("evidence_as_of must be at or before issued_at")
         if self.expires_at <= self.issued_at:
             raise ValueError("expires_at must be after issued_at")
         if self.subject_scope is not EvidenceScope.STRATEGY_LINEAGE:
             raise ValueError("edge authorization requires strategy-lineage scope")
+        if self.family_id == self.economic_lineage_id:
+            raise ValueError("family_id must remain distinct from economic_lineage_id")
         return self
 
 
@@ -75,10 +79,14 @@ class ExplorationAuthorization(EvidenceEnvelope):
     def validate_authorization(self) -> Self:
         if self.mode is not ExecutionMode.BROKER_CONFIRMED:
             raise ValueError("exploration authorization requires broker-confirmed mode")
+        if self.available_at > self.issued_at:
+            raise ValueError("available_at must be at or before issued_at")
         if self.expires_at <= self.issued_at:
             raise ValueError("expires_at must be after issued_at")
         if self.subject_scope is not EvidenceScope.STRATEGY_LINEAGE:
             raise ValueError("exploration authorization requires strategy-lineage scope")
+        if self.family_id == self.economic_lineage_id:
+            raise ValueError("family_id must remain distinct from economic_lineage_id")
         return self
 
 
@@ -91,7 +99,11 @@ AuthorizationUnion = Annotated[
 class CapitalAuthorization(RootModel[AuthorizationUnion]):
     """Discriminated union accepted by the decision/gateway boundary."""
 
-    model_config = ConfigDict(strict=True, frozen=True)
+    model_config = ConfigDict(
+        strict=True,
+        frozen=True,
+        revalidate_instances="always",
+    )
 
 
 __all__ = [

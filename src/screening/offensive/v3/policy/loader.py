@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from contextlib import contextmanager, ExitStack
 from decimal import Decimal
 import json
 import os
 from pathlib import Path
 import stat
-from typing import Any
+from typing import Any, Iterator
 
 from pydantic import ValidationError
 
@@ -37,9 +38,35 @@ def _required_descriptor_flag(name: str) -> int:
     return value
 
 
+@contextmanager
+def _owned_descriptor(descriptor: int) -> Iterator[int]:
+    """Close one descriptor without replacing an error already in flight."""
+
+    try:
+        yield descriptor
+    except BaseException as primary_error:
+        try:
+            os.close(descriptor)
+        except OSError as close_error:
+            primary_error.add_note(
+                f"also failed to close policy descriptor: {close_error}"
+            )
+        raise
+    else:
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            raise PolicyLoadError("unable to close policy descriptor") from exc
+
+
 def _read_regular_file(path: str | os.PathLike[str]) -> bytes:
-    path_value = os.fspath(path)
-    parsed_path = Path(path_value)
+    try:
+        parsed_path = Path(os.fspath(path))
+    except (OSError, TypeError, ValueError) as exc:
+        raise PolicyLoadError(
+            "policy path must name one non-symlink regular file"
+        ) from exc
+
     path_parts = parsed_path.parts
     if parsed_path.is_absolute():
         directory_path = path_parts[0]
@@ -61,44 +88,69 @@ def _read_regular_file(path: str | os.PathLike[str]) -> bytes:
     except (OSError, TypeError, ValueError) as exc:
         raise PolicyLoadError("policy path must name one non-symlink regular file") from exc
 
-    try:
-        for component in components[:-1]:
-            next_descriptor = os.open(component, directory_flags, dir_fd=directory_descriptor)
-            next_stat = os.fstat(next_descriptor)
-            if not stat.S_ISDIR(next_stat.st_mode):
-                os.close(next_descriptor)
-                raise PolicyLoadError("policy parent must be a non-symlink directory")
-            os.close(directory_descriptor)
-            directory_descriptor = next_descriptor
-        descriptor = os.open(components[-1], file_flags, dir_fd=directory_descriptor)
-    except (OSError, TypeError, ValueError) as exc:
-        raise PolicyLoadError("policy path must contain no symlinks") from exc
-    finally:
-        os.close(directory_descriptor)
+    with ExitStack() as descriptors:
+        directory_descriptor = descriptors.enter_context(
+            _owned_descriptor(directory_descriptor)
+        )
+        try:
+            for component in components[:-1]:
+                next_descriptor = os.open(
+                    component,
+                    directory_flags,
+                    dir_fd=directory_descriptor,
+                )
+                next_descriptor = descriptors.enter_context(
+                    _owned_descriptor(next_descriptor)
+                )
+                if not stat.S_ISDIR(os.fstat(next_descriptor).st_mode):
+                    raise PolicyLoadError(
+                        "policy parent must be a non-symlink directory"
+                    )
+                directory_descriptor = next_descriptor
+            descriptor = os.open(
+                components[-1],
+                file_flags,
+                dir_fd=directory_descriptor,
+            )
+            descriptor = descriptors.enter_context(_owned_descriptor(descriptor))
+        except PolicyLoadError:
+            raise
+        except (OSError, TypeError, ValueError) as exc:
+            raise PolicyLoadError("policy path must contain no symlinks") from exc
 
-    try:
-        before = os.fstat(descriptor)
-        if not stat.S_ISREG(before.st_mode):
-            raise PolicyLoadError("policy path must name one regular file")
-        if before.st_size > MAX_POLICY_FILE_BYTES:
-            raise PolicyLoadError("policy file is too large")
-        chunks: list[bytes] = []
-        bytes_read = 0
-        while chunk := os.read(descriptor, 64 * 1024):
-            chunks.append(chunk)
-            bytes_read += len(chunk)
-            if bytes_read > MAX_POLICY_FILE_BYTES:
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                raise PolicyLoadError("policy path must name one regular file")
+            if before.st_size > MAX_POLICY_FILE_BYTES:
                 raise PolicyLoadError("policy file is too large")
-        payload = b"".join(chunks)
-        after = os.fstat(descriptor)
-        unchanged_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
-        if any(getattr(before, field) != getattr(after, field) for field in unchanged_fields) or len(payload) != before.st_size:
-            raise PolicyLoadError("policy file changed while it was being read")
-        return payload
-    except OSError as exc:
-        raise PolicyLoadError("unable to read policy regular file") from exc
-    finally:
-        os.close(descriptor)
+            chunks: list[bytes] = []
+            bytes_read = 0
+            while chunk := os.read(descriptor, 64 * 1024):
+                chunks.append(chunk)
+                bytes_read += len(chunk)
+                if bytes_read > MAX_POLICY_FILE_BYTES:
+                    raise PolicyLoadError("policy file is too large")
+            payload = b"".join(chunks)
+            after = os.fstat(descriptor)
+            unchanged_fields = (
+                "st_dev",
+                "st_ino",
+                "st_size",
+                "st_mtime_ns",
+                "st_ctime_ns",
+            )
+            if (
+                any(
+                    getattr(before, field) != getattr(after, field)
+                    for field in unchanged_fields
+                )
+                or len(payload) != before.st_size
+            ):
+                raise PolicyLoadError("policy file changed while it was being read")
+            return payload
+        except OSError as exc:
+            raise PolicyLoadError("unable to read policy regular file") from exc
 
 
 def load_policy_snapshot(path: str | os.PathLike[str] | Path) -> PolicySnapshot:

@@ -322,6 +322,286 @@ def test_loader_fails_closed_when_required_descriptor_flag_is_unavailable(
         loader.load_policy_snapshot(policy_path)
 
 
+@pytest.mark.filterwarnings("error::ResourceWarning")
+def test_policy_loader_closes_leaf_if_parent_descriptor_close_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.screening.offensive.v3.policy import loader
+
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_bytes(INITIAL_POLICY_PATH.read_bytes())
+    real_open = loader.os.open
+    real_close = loader.os.close
+    leaf_descriptor: int | None = None
+    parent_descriptor: int | None = None
+    leaf_close_attempted = False
+    parent_close_failed = False
+    closed_descriptors: set[int] = set()
+
+    def track_open(
+        file: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal leaf_descriptor, parent_descriptor
+        descriptor = real_open(file, flags, mode, dir_fd=dir_fd)
+        if os.fspath(file) == policy_path.name and not flags & os.O_DIRECTORY:
+            leaf_descriptor = descriptor
+            parent_descriptor = dir_fd
+        return descriptor
+
+    def fail_parent_close_once(descriptor: int) -> None:
+        nonlocal leaf_close_attempted, parent_close_failed
+        if descriptor == leaf_descriptor:
+            leaf_close_attempted = True
+        if descriptor == parent_descriptor and not parent_close_failed:
+            parent_close_failed = True
+            raise OSError("simulated parent close failure")
+        real_close(descriptor)
+        closed_descriptors.add(descriptor)
+
+    monkeypatch.setattr(loader.os, "open", track_open)
+    monkeypatch.setattr(loader.os, "close", fail_parent_close_once)
+    caught: Exception | None = None
+    try:
+        loader.load_policy_snapshot(policy_path)
+    except Exception as exc:  # noqa: BLE001 - public-boundary assertion
+        caught = exc
+    finally:
+        for descriptor in (leaf_descriptor, parent_descriptor):
+            if descriptor is not None and descriptor not in closed_descriptors:
+                try:
+                    real_close(descriptor)
+                except OSError:
+                    pass
+
+    assert (
+        isinstance(caught, loader.PolicyLoadError),
+        leaf_close_attempted,
+    ) == (True, True)
+
+
+@pytest.mark.filterwarnings("error::ResourceWarning")
+def test_policy_loader_normalizes_leaf_close_failure_and_cleans_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.screening.offensive.v3.policy import loader
+
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_bytes(INITIAL_POLICY_PATH.read_bytes())
+    real_open = loader.os.open
+    real_close = loader.os.close
+    leaf_descriptor: int | None = None
+    parent_descriptor: int | None = None
+    leaf_close_failed = False
+    parent_closed_after_failure = False
+    closed_descriptors: set[int] = set()
+
+    def track_open(
+        file: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal leaf_descriptor, parent_descriptor
+        descriptor = real_open(file, flags, mode, dir_fd=dir_fd)
+        if os.fspath(file) == policy_path.name and not flags & os.O_DIRECTORY:
+            leaf_descriptor = descriptor
+            parent_descriptor = dir_fd
+        return descriptor
+
+    def fail_leaf_close_once(descriptor: int) -> None:
+        nonlocal leaf_close_failed, parent_closed_after_failure
+        if descriptor == leaf_descriptor and not leaf_close_failed:
+            leaf_close_failed = True
+            raise OSError("simulated leaf close failure")
+        if descriptor == parent_descriptor and leaf_close_failed:
+            parent_closed_after_failure = True
+        real_close(descriptor)
+        closed_descriptors.add(descriptor)
+
+    monkeypatch.setattr(loader.os, "open", track_open)
+    monkeypatch.setattr(loader.os, "close", fail_leaf_close_once)
+    caught: Exception | None = None
+    try:
+        loader.load_policy_snapshot(policy_path)
+    except Exception as exc:  # noqa: BLE001 - public-boundary assertion
+        caught = exc
+    finally:
+        if leaf_descriptor is not None and leaf_descriptor not in closed_descriptors:
+            try:
+                real_close(leaf_descriptor)
+            except OSError:
+                pass
+
+    assert isinstance(caught, loader.PolicyLoadError)
+    assert (leaf_close_failed, parent_closed_after_failure) == (True, True)
+
+
+@pytest.mark.filterwarnings("error::ResourceWarning")
+def test_policy_loader_owns_parent_before_fstat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.screening.offensive.v3.policy import loader
+
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    policy_path = nested / "policy.json"
+    policy_path.write_bytes(INITIAL_POLICY_PATH.read_bytes())
+    real_open = loader.os.open
+    real_close = loader.os.close
+    real_fstat = loader.os.fstat
+    target_descriptor: int | None = None
+    target_close_attempted = False
+
+    def track_open(
+        file: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal target_descriptor
+        descriptor = real_open(file, flags, mode, dir_fd=dir_fd)
+        if os.fspath(file) == nested.name and flags & os.O_DIRECTORY:
+            target_descriptor = descriptor
+        return descriptor
+
+    def fail_target_fstat(descriptor: int) -> os.stat_result:
+        if descriptor == target_descriptor:
+            raise OSError("simulated parent fstat failure")
+        return real_fstat(descriptor)
+
+    def track_close(descriptor: int) -> None:
+        nonlocal target_close_attempted
+        if descriptor == target_descriptor:
+            target_close_attempted = True
+        real_close(descriptor)
+
+    monkeypatch.setattr(loader.os, "open", track_open)
+    monkeypatch.setattr(loader.os, "fstat", fail_target_fstat)
+    monkeypatch.setattr(loader.os, "close", track_close)
+    try:
+        with pytest.raises(loader.PolicyLoadError):
+            loader.load_policy_snapshot(policy_path)
+    finally:
+        if target_descriptor is not None and not target_close_attempted:
+            real_close(target_descriptor)
+
+    assert target_close_attempted is True
+
+
+@pytest.mark.filterwarnings("error::ResourceWarning")
+def test_policy_loader_preserves_primary_read_error_when_leaf_close_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.screening.offensive.v3.policy import loader
+
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_bytes(INITIAL_POLICY_PATH.read_bytes())
+    real_open = loader.os.open
+    real_close = loader.os.close
+    real_read = loader.os.read
+    leaf_descriptor: int | None = None
+    leaf_close_failed = False
+
+    def track_open(
+        file: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal leaf_descriptor
+        descriptor = real_open(file, flags, mode, dir_fd=dir_fd)
+        if os.fspath(file) == policy_path.name and not flags & os.O_DIRECTORY:
+            leaf_descriptor = descriptor
+        return descriptor
+
+    def fail_leaf_read(descriptor: int, size: int) -> bytes:
+        if descriptor == leaf_descriptor:
+            raise OSError("simulated policy read failure")
+        return real_read(descriptor, size)
+
+    def fail_leaf_close_once(descriptor: int) -> None:
+        nonlocal leaf_close_failed
+        if descriptor == leaf_descriptor and not leaf_close_failed:
+            leaf_close_failed = True
+            raise OSError("simulated leaf close failure")
+        real_close(descriptor)
+
+    monkeypatch.setattr(loader.os, "open", track_open)
+    monkeypatch.setattr(loader.os, "read", fail_leaf_read)
+    monkeypatch.setattr(loader.os, "close", fail_leaf_close_once)
+    try:
+        with pytest.raises(loader.PolicyLoadError, match="unable to read"):
+            loader.load_policy_snapshot(policy_path)
+    finally:
+        if leaf_descriptor is not None:
+            try:
+                real_close(leaf_descriptor)
+            except OSError:
+                pass
+
+    assert leaf_close_failed is True
+
+
+@pytest.mark.filterwarnings("error::ResourceWarning")
+def test_policy_loader_closes_leaf_after_fstat_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.screening.offensive.v3.policy import loader
+
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_bytes(INITIAL_POLICY_PATH.read_bytes())
+    real_open = loader.os.open
+    real_close = loader.os.close
+    real_fstat = loader.os.fstat
+    leaf_descriptor: int | None = None
+    leaf_close_attempted = False
+
+    def track_open(
+        file: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal leaf_descriptor
+        descriptor = real_open(file, flags, mode, dir_fd=dir_fd)
+        if os.fspath(file) == policy_path.name and not flags & os.O_DIRECTORY:
+            leaf_descriptor = descriptor
+        return descriptor
+
+    def fail_leaf_fstat(descriptor: int) -> os.stat_result:
+        if descriptor == leaf_descriptor:
+            raise OSError("simulated leaf fstat failure")
+        return real_fstat(descriptor)
+
+    def track_close(descriptor: int) -> None:
+        nonlocal leaf_close_attempted
+        if descriptor == leaf_descriptor:
+            leaf_close_attempted = True
+        real_close(descriptor)
+
+    monkeypatch.setattr(loader.os, "open", track_open)
+    monkeypatch.setattr(loader.os, "fstat", fail_leaf_fstat)
+    monkeypatch.setattr(loader.os, "close", track_close)
+
+    with pytest.raises(loader.PolicyLoadError, match="unable to read"):
+        loader.load_policy_snapshot(policy_path)
+
+    assert leaf_close_attempted is True
+
+
 def test_loader_does_not_consult_permissive_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     policy_api = _policy_api()
     path = tmp_path / "policy.json"

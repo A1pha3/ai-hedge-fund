@@ -172,6 +172,45 @@ def test_valid_signature_returns_only_verified_issuer_and_required_capability() 
     assert set(api.VerifiedIssuer.model_fields) == {"issuer_id", "capability"}
 
 
+def test_trust_verification_does_not_substitute_for_decision_seal_parsing() -> None:
+    from src.screening.offensive.v3.contracts import DecisionSeal
+
+    api = _api()
+    private_key = Ed25519PrivateKey.generate()
+    required = _capability(
+        api,
+        artifact=api.ArtifactKind.DECISION_SEAL,
+        namespace="decision.live",
+        capability_version="growth-kernel.v1",
+        scope="portfolio:paper-v3",
+    )
+    issuer = _issuer(
+        api,
+        private_key,
+        required,
+        issuer_id="growth-kernel.service",
+        key_id="growth-kernel-key-2026-07",
+        issuer_kind=api.IssuerKind.GROWTH_KERNEL,
+    )
+    opaque_payload = b'{"decision_kind":"decision_seal"}'
+    signed = _signed(
+        api,
+        private_key,
+        required,
+        issuer_id=issuer.issuer_id,
+        key_id=issuer.key_id,
+        payload=opaque_payload,
+    )
+
+    assert _verifier(api, issuer).verify(
+        signed,
+        required,
+        verification_time=NOW,
+    ).issuer_id == issuer.issuer_id
+    with pytest.raises(ValidationError):
+        DecisionSeal.model_validate_json(signed.payload, strict=True)
+
+
 def test_verified_capability_lifecycle_always_comes_from_registry_truth() -> None:
     api = _api()
     private_key = Ed25519PrivateKey.generate()

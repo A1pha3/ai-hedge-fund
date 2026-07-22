@@ -72,6 +72,8 @@ class PlanEvidence(EvidenceEnvelope):
     def validate_plan_scope(self) -> Self:
         if self.subject_scope is not EvidenceScope.STRATEGY_LINEAGE:
             raise ValueError("plan evidence requires strategy-lineage scope")
+        if self.family_id == self.economic_lineage_id:
+            raise ValueError("family_id must remain distinct from economic_lineage_id")
         return self
 
 
@@ -139,6 +141,12 @@ class CapitalAuthorizationBinding(CanonicalModel):
     mode: ExecutionMode
     target_portfolio_policy_fingerprint: Sha256
 
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        if self.family_id == self.economic_lineage_id:
+            raise ValueError("family_id must remain distinct from economic_lineage_id")
+        return self
+
 
 class PublishDecisionCommand(CanonicalModel):
     """Request seal publication without a seal identity or authority self-claim."""
@@ -170,6 +178,64 @@ class PublishDecisionCommand(CanonicalModel):
         return self
 
 
+class DecisionSealBinding(CanonicalModel):
+    """Exact capital, policy, and authorization truth consumed by a seal."""
+
+    publish_command_content_hash: Sha256
+    portfolio_id: NonEmptyStr
+    capital_snapshot_id: NonEmptyStr
+    capital_version: PositiveInt
+    capital_stream_version: PositiveInt
+    capital_payload_content_hash: Sha256
+    target_portfolio_policy_fingerprint: Sha256
+    capital_authorization_id: NonEmptyStr
+    authorization_version: PositiveInt
+    evidence_set_merkle_root: Sha256
+    family_id: NonEmptyStr
+    economic_lineage_id: NonEmptyStr
+    mode: ExecutionMode
+    authority_epoch: PositiveInt
+    risk_epoch: PositiveInt
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        if self.family_id == self.economic_lineage_id:
+            raise ValueError("family_id must remain distinct from economic_lineage_id")
+        return self
+
+    @classmethod
+    def from_command(cls, command: PublishDecisionCommand) -> Self:
+        """Derive one deterministic binding after strict recursive reconstruction."""
+
+        validated = PublishDecisionCommand.model_validate(
+            command.model_dump(mode="python", round_trip=True),
+            strict=True,
+        )
+        decision = validated.decision
+        capital = decision.capital_snapshot
+        authorization = validated.authorization
+        plan = decision.plan_evidence
+        return cls(
+            publish_command_content_hash=validated.content_hash(),
+            portfolio_id=plan.portfolio_id,
+            capital_snapshot_id=capital.capital_snapshot_id,
+            capital_version=capital.capital_version,
+            capital_stream_version=capital.stream_version,
+            capital_payload_content_hash=capital.payload_content_hash,
+            target_portfolio_policy_fingerprint=(
+                decision.target_portfolio_policy_fingerprint
+            ),
+            capital_authorization_id=authorization.capital_authorization_id,
+            authorization_version=authorization.authorization_version,
+            evidence_set_merkle_root=authorization.evidence_set_merkle_root,
+            family_id=authorization.family_id,
+            economic_lineage_id=authorization.economic_lineage_id,
+            mode=authorization.mode,
+            authority_epoch=decision.authority_epoch,
+            risk_epoch=decision.risk_epoch,
+        )
+
+
 class _DecisionProjection(EvidenceEnvelope):
     """Shared economics for live and gateway-ineligible decision projections."""
 
@@ -187,8 +253,14 @@ class _DecisionProjection(EvidenceEnvelope):
 
     @model_validator(mode="after")
     def validate_projection(self) -> Self:
+        if self.subject_scope is not EvidenceScope.STRATEGY_LINEAGE:
+            raise ValueError("decision projection requires strategy-lineage scope")
+        if self.family_id == self.economic_lineage_id:
+            raise ValueError("family_id must remain distinct from economic_lineage_id")
         if self.created_at > self.deadline:
             raise ValueError("decision deadline must be at or after created_at")
+        if self.available_at > self.created_at:
+            raise ValueError("available_at must be at or before created_at")
         expected_key = (
             self.portfolio_id,
             self.signal_session,
@@ -216,6 +288,7 @@ class DecisionSeal(_DecisionProjection):
     seal_revision: PositiveInt
     capital_authorization_id: NonEmptyStr
     authorization_version: PositiveInt
+    command_binding: DecisionSealBinding
 
     @model_validator(mode="after")
     def validate_active_revision(self) -> Self:
@@ -223,7 +296,83 @@ class DecisionSeal(_DecisionProjection):
             raise ValueError("active_seal_id must identify this active seal revision")
         if self.mode is ExecutionMode.RESEARCH_RECONSTRUCTION:
             raise ValueError("research reconstruction cannot create a DecisionSeal")
+        binding_matches = (
+            self.command_binding.portfolio_id == self.portfolio_id
+            and self.command_binding.mode is self.mode
+            and self.command_binding.authority_epoch == self.authority_epoch
+            and self.command_binding.risk_epoch == self.risk_epoch
+            and self.command_binding.family_id == self.family_id
+            and self.command_binding.economic_lineage_id
+            == self.economic_lineage_id
+            and self.command_binding.capital_authorization_id
+            == self.capital_authorization_id
+            and self.command_binding.authorization_version
+            == self.authorization_version
+            and self.command_binding.evidence_set_merkle_root
+            == self.evidence_set_merkle_root
+        )
+        if not binding_matches:
+            raise ValueError("command binding must match the DecisionSeal projection")
         return self
+
+    @classmethod
+    def from_command(
+        cls,
+        command: PublishDecisionCommand,
+        *,
+        evidence_id: NonEmptyStr,
+        seal_id: NonEmptyStr,
+        seal_revision: int,
+        source_authority: NonEmptyStr,
+        payload_content_hash: Sha256,
+    ) -> Self:
+        """Build a projection only from one validated publish command."""
+
+        validated = PublishDecisionCommand.model_validate(
+            command.model_dump(mode="python", round_trip=True),
+            strict=True,
+        )
+        decision = validated.decision
+        plan = decision.plan_evidence
+        authorization = validated.authorization
+        return cls(
+            evidence_id=evidence_id,
+            subject_scope=plan.subject_scope,
+            subject_producer=plan.subject_producer,
+            family_id=plan.family_id,
+            strategy_semver=plan.strategy_semver,
+            behavior_fingerprint=plan.behavior_fingerprint,
+            policy_epoch=plan.policy_epoch,
+            execution_version=plan.execution_version,
+            cost_version=plan.cost_version,
+            effective_at=plan.effective_at,
+            observed_at=plan.observed_at,
+            available_at=plan.available_at,
+            mode=plan.mode,
+            source_authority=source_authority,
+            payload_content_hash=payload_content_hash,
+            schema_major=plan.schema_major,
+            decision_kind="decision_seal",
+            seal_id=seal_id,
+            active_seal_id=seal_id,
+            seal_revision=seal_revision,
+            portfolio_id=plan.portfolio_id,
+            signal_session=plan.signal_session,
+            economic_lineage_id=plan.economic_lineage_id,
+            snapshot_id=plan.snapshot_id,
+            evidence_set_merkle_root=decision.evidence_set_merkle_root,
+            authority_epoch=decision.authority_epoch,
+            risk_epoch=decision.risk_epoch,
+            order_lines=decision.order_lines,
+            created_at=decision.created_at,
+            deadline=decision.deadline,
+            idempotency_key=decision.idempotency_key,
+            capital_authorization_id=(
+                authorization.capital_authorization_id
+            ),
+            authorization_version=authorization.authorization_version,
+            command_binding=DecisionSealBinding.from_command(validated),
+        )
 
 
 class ShadowDecision(_DecisionProjection):
@@ -272,6 +421,7 @@ class ExecutionPermit(CanonicalModel):
 
 __all__ = [
     "CapitalAuthorizationBinding",
+    "DecisionSealBinding",
     "DecisionInput",
     "DecisionLogicalKey",
     "DecisionSeal",

@@ -104,7 +104,12 @@ class Capability(CanonicalModel):
 class SignedEnvelope(BaseModel):
     """Payload plus protected authority and capability audit claims."""
 
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+    model_config = ConfigDict(
+        strict=True,
+        frozen=True,
+        extra="forbid",
+        revalidate_instances="always",
+    )
 
     issuer_id: NonEmptyStr
     key_id: NonEmptyStr
