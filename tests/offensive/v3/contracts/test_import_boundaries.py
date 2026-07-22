@@ -47,19 +47,38 @@ FORBIDDEN_ANNOTATIONS = {
     "list",
     "set",
 }
+CONTRACTS_PACKAGE = ("src", "screening", "offensive", "v3", "contracts")
+PROJECT_PACKAGE = ("src", "screening", "offensive")
 
 
-def _import_targets(node: ast.Import | ast.ImportFrom) -> tuple[str, ...]:
+def _file_package(root: Path, path: Path) -> tuple[str, ...]:
+    relative = path.relative_to(root)
+    parent_parts = relative.parent.parts if relative.parent != Path(".") else ()
+    return CONTRACTS_PACKAGE + parent_parts
+
+
+def _resolved_import_targets(
+    node: ast.Import | ast.ImportFrom,
+    *,
+    package: tuple[str, ...],
+) -> tuple[str, ...]:
     if isinstance(node, ast.Import):
         return tuple(alias.name for alias in node.names)
-    relative = "." * node.level
-    module = node.module or ""
-    base = f"{relative}{module}"
+
+    if node.level:
+        parents_to_remove = node.level - 1
+        if parents_to_remove >= len(package):
+            return ("<invalid-relative-import>",)
+        base_parts = package[: len(package) - parents_to_remove]
+    else:
+        base_parts = ()
+    if node.module:
+        base_parts += tuple(node.module.split("."))
+
     targets = []
     for alias in node.names:
-        separator = "." if module and alias.name != "*" else ""
-        suffix = "" if alias.name == "*" else alias.name
-        targets.append(f"{base}{separator}{suffix}")
+        alias_parts = () if alias.name == "*" else tuple(alias.name.split("."))
+        targets.append(".".join(base_parts + alias_parts))
     return tuple(targets)
 
 
@@ -67,19 +86,29 @@ def _scan_contract_imports(root: Path) -> list[str]:
     violations: list[str] = []
     for path in sorted(root.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        package = _file_package(root, path)
         for node in ast.walk(tree):
             if not isinstance(node, (ast.Import, ast.ImportFrom)):
                 continue
-            if isinstance(node, ast.ImportFrom) and node.level >= 3:
-                violations.append(
-                    f"{path.relative_to(root)}:{node.lineno}: relative v2 escape"
-                )
-            for target in _import_targets(node):
-                absolute = target.lstrip(".")
-                root_name = absolute.split(".", 1)[0]
+            for target in _resolved_import_targets(node, package=package):
+                target_parts = tuple(target.split("."))
+                root_name = target_parts[0]
                 if root_name in FORBIDDEN_ROOTS:
                     violations.append(f"{path.relative_to(root)}:{node.lineno}: {target}")
-                lowered_parts = absolute.lower().split(".")
+                    continue
+                if target == "<invalid-relative-import>":
+                    violations.append(
+                        f"{path.relative_to(root)}:{node.lineno}: {target}"
+                    )
+                    continue
+                if target_parts[: len(PROJECT_PACKAGE)] == PROJECT_PACKAGE:
+                    if target_parts[: len(CONTRACTS_PACKAGE)] != CONTRACTS_PACKAGE:
+                        violations.append(
+                            f"{path.relative_to(root)}:{node.lineno}: "
+                            f"project boundary {target}"
+                        )
+                        continue
+                lowered_parts = [part.lower() for part in target_parts]
                 lowered_target = ".".join(lowered_parts)
                 if any(
                     segment in lowered_parts
@@ -88,19 +117,6 @@ def _scan_contract_imports(root: Path) -> list[str]:
                     for segment in FORBIDDEN_V3_SEGMENTS
                 ):
                     violations.append(f"{path.relative_to(root)}:{node.lineno}: {target}")
-                if (
-                    absolute.startswith("src.screening.offensive.")
-                    and ".v3." not in absolute
-                ):
-                    violations.append(
-                        f"{path.relative_to(root)}:{node.lineno}: v2 runtime {target}"
-                    )
-                if target.startswith("..trust") or absolute.startswith(
-                    "src.screening.offensive.v3.trust"
-                ):
-                    violations.append(
-                        f"{path.relative_to(root)}:{node.lineno}: trust implementation {target}"
-                    )
     return violations
 
 
@@ -124,7 +140,7 @@ def test_contract_imports_are_storage_network_cli_broker_and_v2_free() -> None:
 
 
 def test_import_scanner_catches_nested_relative_aliases(tmp_path: Path) -> None:
-    nested = tmp_path / "nested/contracts"
+    nested = tmp_path / "nested"
     nested.mkdir(parents=True)
     (nested / "leak.py").write_text(
         "from .. import storage\nfrom ... import daily_action\n",
@@ -134,10 +150,58 @@ def test_import_scanner_catches_nested_relative_aliases(tmp_path: Path) -> None:
     violations = _scan_contract_imports(tmp_path)
 
     assert len(violations) == 2
-    assert "nested/contracts/leak.py:1" in violations[0]
-    assert "..storage" in violations[0]
-    assert "nested/contracts/leak.py:2" in violations[1]
-    assert "relative v2 escape" in violations[1]
+    assert "nested/leak.py:1" in violations[0]
+    assert "src.screening.offensive.v3.contracts.storage" in violations[0]
+    assert "nested/leak.py:2" in violations[1]
+    assert "src.screening.offensive.v3.daily_action" in violations[1]
+
+
+def test_import_scanner_rejects_all_project_siblings_and_allows_contracts(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "root_relative.py").write_text(
+        "from ..kernel import decide as run\n"
+        "from ..policy import loader as policy_loader\n",
+        encoding="utf-8",
+    )
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "relative_escape.py").write_text(
+        "from ...kernel import decide as run\n"
+        "from ...policy import loader as policy_loader\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "absolute_siblings.py").write_text(
+        "from src.screening.offensive.v3.kernel import decide as run\n"
+        "import src.screening.offensive.v3.policy.loader as policy_loader\n"
+        "from src.screening.offensive import daily_action as legacy\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "legal_contracts.py").write_text(
+        "from . import base as base_contract\n"
+        "from .decision import DecisionSeal as Seal\n"
+        "from src.screening.offensive.v3.contracts import CapitalSnapshot as Snapshot\n",
+        encoding="utf-8",
+    )
+    (nested / "legal_contracts.py").write_text(
+        "from .. import base as base_contract\n"
+        "from ..trust import Capability as RequiredCapability\n"
+        "from ..kernel import KernelInput as Input\n"
+        "from ..policy import PolicySnapshot as Policy\n",
+        encoding="utf-8",
+    )
+
+    violations = _scan_contract_imports(tmp_path)
+
+    assert len(violations) == 7
+    rendered = "\n".join(violations)
+    for module in (
+        "src.screening.offensive.v3.kernel",
+        "src.screening.offensive.v3.policy",
+        "src.screening.offensive.daily_action",
+    ):
+        assert module in rendered
+    assert "legal_contracts.py" not in rendered
 
 
 def test_annotation_scanner_catches_attribute_and_string_forms() -> None:
