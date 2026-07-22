@@ -136,7 +136,6 @@ def test_initial_policy_payload_has_no_self_referential_fingerprint() -> None:
 
 
 def test_policy_fingerprint_covers_the_complete_payload() -> None:
-    policy_api = _policy_api()
     original = _initial_policy()
     changed = original.model_copy(update={"versions": original.versions.model_copy(update={"governance_version": "growth-kernel-governance.v2"})})
 

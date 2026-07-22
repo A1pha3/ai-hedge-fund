@@ -1,6 +1,6 @@
 """Contract tests for immutable v3 market, signal, and outcome evidence."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 from pydantic import ValidationError

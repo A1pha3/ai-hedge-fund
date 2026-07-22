@@ -1,6 +1,6 @@
 """Contract tests for edge and one-shot exploration authorizations."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -104,7 +104,7 @@ def _exploration(**overrides):
 
 def test_edge_authorization_binds_every_required_assessment_field() -> None:
     major, _, edge, _ = _contracts()
-    item = edge.model_validate(_edge(schema_major=major))
+    edge.model_validate(_edge(schema_major=major))
 
     required = {
         "economic_lineage_id",
