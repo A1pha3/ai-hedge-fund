@@ -181,6 +181,7 @@ class PublishDecisionCommand(CanonicalModel):
 class DecisionSealBinding(CanonicalModel):
     """Exact capital, policy, and authorization truth consumed by a seal."""
 
+    publish_command: PublishDecisionCommand
     publish_command_content_hash: Sha256
     portfolio_id: NonEmptyStr
     capital_snapshot_id: NonEmptyStr
@@ -201,6 +202,36 @@ class DecisionSealBinding(CanonicalModel):
     def validate_identity(self) -> Self:
         if self.family_id == self.economic_lineage_id:
             raise ValueError("family_id must remain distinct from economic_lineage_id")
+
+        command = self.publish_command
+        decision = command.decision
+        capital = decision.capital_snapshot
+        authorization = command.authorization
+        plan = decision.plan_evidence
+        expected_fields = {
+            "publish_command_content_hash": command.content_hash(),
+            "portfolio_id": plan.portfolio_id,
+            "capital_snapshot_id": capital.capital_snapshot_id,
+            "capital_version": capital.capital_version,
+            "capital_stream_version": capital.stream_version,
+            "capital_payload_content_hash": capital.payload_content_hash,
+            "target_portfolio_policy_fingerprint": (
+                decision.target_portfolio_policy_fingerprint
+            ),
+            "capital_authorization_id": authorization.capital_authorization_id,
+            "authorization_version": authorization.authorization_version,
+            "evidence_set_merkle_root": authorization.evidence_set_merkle_root,
+            "family_id": authorization.family_id,
+            "economic_lineage_id": authorization.economic_lineage_id,
+            "mode": authorization.mode,
+            "authority_epoch": decision.authority_epoch,
+            "risk_epoch": decision.risk_epoch,
+        }
+        for field_name, expected in expected_fields.items():
+            if getattr(self, field_name) != expected:
+                raise ValueError(
+                    f"command binding {field_name} must match embedded publish command"
+                )
         return self
 
     @classmethod
@@ -216,6 +247,7 @@ class DecisionSealBinding(CanonicalModel):
         authorization = validated.authorization
         plan = decision.plan_evidence
         return cls(
+            publish_command=validated,
             publish_command_content_hash=validated.content_hash(),
             portfolio_id=plan.portfolio_id,
             capital_snapshot_id=capital.capital_snapshot_id,
@@ -313,6 +345,44 @@ class DecisionSeal(_DecisionProjection):
         )
         if not binding_matches:
             raise ValueError("command binding must match the DecisionSeal projection")
+
+        command = self.command_binding.publish_command
+        decision = command.decision
+        plan = decision.plan_evidence
+        authorization = command.authorization
+        expected_fields = {
+            "subject_scope": plan.subject_scope,
+            "subject_producer": plan.subject_producer,
+            "family_id": plan.family_id,
+            "strategy_semver": plan.strategy_semver,
+            "behavior_fingerprint": plan.behavior_fingerprint,
+            "policy_epoch": plan.policy_epoch,
+            "execution_version": plan.execution_version,
+            "cost_version": plan.cost_version,
+            "effective_at": plan.effective_at,
+            "observed_at": plan.observed_at,
+            "available_at": plan.available_at,
+            "mode": plan.mode,
+            "schema_major": plan.schema_major,
+            "portfolio_id": plan.portfolio_id,
+            "signal_session": plan.signal_session,
+            "economic_lineage_id": plan.economic_lineage_id,
+            "snapshot_id": plan.snapshot_id,
+            "evidence_set_merkle_root": decision.evidence_set_merkle_root,
+            "authority_epoch": decision.authority_epoch,
+            "risk_epoch": decision.risk_epoch,
+            "order_lines": decision.order_lines,
+            "created_at": decision.created_at,
+            "deadline": decision.deadline,
+            "idempotency_key": decision.idempotency_key,
+            "capital_authorization_id": authorization.capital_authorization_id,
+            "authorization_version": authorization.authorization_version,
+        }
+        for field_name, expected in expected_fields.items():
+            if getattr(self, field_name) != expected:
+                raise ValueError(
+                    f"DecisionSeal {field_name} must match embedded publish command"
+                )
         return self
 
     @classmethod

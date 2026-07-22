@@ -8,6 +8,8 @@ from base64 import b64encode
 import hashlib
 from typing import Any
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import pytest
 from pydantic import ValidationError
 
@@ -161,6 +163,69 @@ def _seal(api: Any, command: Any | None = None, **overrides: Any) -> Any:
     )
 
 
+def _signed_seal_envelope(api: Any, payload: bytes) -> tuple[Any, Any, Any]:
+    from src.screening.offensive.v3 import trust
+
+    private_key = Ed25519PrivateKey.generate()
+    public_key = b64encode(
+        private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+    ).decode("ascii")
+    required = trust.Capability(
+        artifact=trust.ArtifactKind.DECISION_SEAL,
+        namespace="decision.live",
+        mode=api.ExecutionMode.DAILY_BAR_PROXY,
+        schema_major=1,
+        capability_version="growth-kernel.v1",
+        scope="portfolio:paper-v3",
+        valid_from=datetime(2026, 7, 18, 8, 0, tzinfo=UTC),
+        valid_until=datetime(2026, 7, 20, 8, 0, tzinfo=UTC),
+        revoked_at=None,
+    )
+    issuer = trust.TrustedIssuer(
+        issuer_id="growth-kernel.service",
+        key_id="growth-kernel-key-2026-07",
+        issuer_kind=trust.IssuerKind.GROWTH_KERNEL,
+        public_key=public_key,
+        valid_from=datetime(2026, 7, 18, 8, 0, tzinfo=UTC),
+        valid_until=datetime(2026, 7, 20, 8, 0, tzinfo=UTC),
+        revoked_at=None,
+        capabilities=(required,),
+    )
+    payload_hash = hashlib.sha256(payload).hexdigest()
+    protected = api.canonical_json_bytes(
+        {
+            "artifact": required.artifact,
+            "capability_scope": required.scope,
+            "capability_version": required.capability_version,
+            "issuer_id": issuer.issuer_id,
+            "key_id": issuer.key_id,
+            "mode": required.mode,
+            "namespace": required.namespace,
+            "payload": b64encode(payload).decode("ascii"),
+            "payload_hash": payload_hash,
+            "schema_major": required.schema_major,
+        }
+    )
+    signed = trust.SignedEnvelope(
+        issuer_id=issuer.issuer_id,
+        key_id=issuer.key_id,
+        schema_major=required.schema_major,
+        artifact=required.artifact,
+        namespace=required.namespace,
+        mode=required.mode,
+        capability_version=required.capability_version,
+        capability_scope=required.scope,
+        payload_hash=payload_hash,
+        payload=payload,
+        signature=b64encode(private_key.sign(protected)).decode("ascii"),
+    )
+    verifier = trust.CapabilityVerifier(trust.TrustedRegistry(issuers=(issuer,)))
+    return signed, verifier, required
+
+
 def test_seal_binding_preserves_exact_publish_command_truth() -> None:
     api = _api()
     command = _command(api)
@@ -183,6 +248,96 @@ def test_seal_binding_preserves_exact_publish_command_truth() -> None:
     assert binding.mode is api.ExecutionMode.DAILY_BAR_PROXY
     assert binding.authority_epoch == 3
     assert binding.risk_epoch == 8
+
+
+def test_seal_binding_contains_the_complete_publish_command() -> None:
+    api = _api()
+    command = _command(api)
+
+    binding = _seal(api, command).command_binding
+
+    assert binding.publish_command == command
+    assert binding.publish_command_content_hash == binding.publish_command.content_hash()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("publish_command_content_hash", "2" * 64),
+        ("portfolio_id", "other-portfolio"),
+        ("capital_snapshot_id", "capital-020"),
+        ("capital_version", 20),
+        ("capital_stream_version", 30),
+        ("capital_payload_content_hash", "2" * 64),
+        ("target_portfolio_policy_fingerprint", "2" * 64),
+        ("capital_authorization_id", "auth-002"),
+        ("authorization_version", 5),
+        ("evidence_set_merkle_root", "2" * 64),
+        ("family_id", "other.family"),
+        ("economic_lineage_id", "other-lineage"),
+        ("mode", "manual_confirmed"),
+        ("authority_epoch", 4),
+        ("risk_epoch", 9),
+    ],
+)
+def test_binding_rejects_every_flat_field_drift(field: str, value: Any) -> None:
+    api = _api()
+    raw = _seal(api).command_binding.model_dump(mode="python", round_trip=True)
+    raw[field] = (
+        api.ExecutionMode.MANUAL_CONFIRMED if field == "mode" else value
+    )
+
+    with pytest.raises(ValidationError, match="command binding|publish command"):
+        api.DecisionSealBinding.model_validate(raw, strict=True)
+
+
+@pytest.mark.parametrize(
+    "drift",
+    [
+        "order_quantity",
+        "order_price",
+        "snapshot",
+        "deadline",
+        "logical_key",
+        "policy",
+        "capital",
+    ],
+)
+def test_validly_signed_schema_drift_cannot_escape_embedded_command(
+    drift: str,
+) -> None:
+    api = _api()
+    raw = _seal(api).model_dump(mode="python", round_trip=True)
+    if drift == "order_quantity":
+        raw["order_lines"][0]["sealed_quantity"] = 200
+        raw["order_lines"][0]["worst_case_cash_reserve"] = Decimal("2105")
+    elif drift == "order_price":
+        raw["order_lines"][0]["limit_price"] = Decimal("11")
+        raw["order_lines"][0]["worst_case_price"] = Decimal("11")
+        raw["order_lines"][0]["worst_case_cash_reserve"] = Decimal("1105")
+    elif drift == "snapshot":
+        raw["snapshot_id"] = "snapshot-002"
+    elif drift == "deadline":
+        raw["deadline"] = datetime(2026, 7, 19, 8, 21, tzinfo=UTC)
+    elif drift == "logical_key":
+        raw["signal_session"] = date(2026, 7, 18)
+        raw["idempotency_key"]["signal_session"] = date(2026, 7, 18)
+    elif drift == "policy":
+        raw["policy_epoch"] = 4
+    else:
+        raw["command_binding"]["capital_version"] = 20
+
+    signed, verifier, required = _signed_seal_envelope(
+        api,
+        api.canonical_json_bytes(raw),
+    )
+    assert verifier.verify(
+        signed,
+        required,
+        verification_time=NOW,
+    ).issuer_id == "growth-kernel.service"
+    with pytest.raises(ValidationError, match="command binding|publish command"):
+        api.DecisionSeal.model_validate_json(signed.payload, strict=True)
 
 
 @pytest.mark.parametrize(
@@ -451,3 +606,63 @@ def test_capital_authorization_binding_keeps_family_and_lineage_distinct() -> No
             family_id="btst-economic-lineage",
             economic_lineage_id="btst-economic-lineage",
         )
+
+
+@pytest.mark.parametrize("method", ["model_copy", "model_construct"])
+@pytest.mark.parametrize(
+    "serializer",
+    [
+        lambda api, model: model.canonical_bytes(),
+        lambda api, model: model.content_hash(),
+        lambda api, model: api.canonical_json_bytes(model),
+        lambda api, model: api.content_hash(model),
+    ],
+)
+def test_canonical_hashing_rejects_unchecked_top_level_models(
+    method: str,
+    serializer: Any,
+) -> None:
+    api = _api()
+    poisoned = _unchecked_mutation(
+        _plan(api),
+        method,
+        raw_target_fraction="0.02",
+    )
+
+    with pytest.raises(ValidationError):
+        serializer(api, poisoned)
+
+
+@pytest.mark.parametrize("method", ["model_copy", "model_construct"])
+@pytest.mark.parametrize(
+    "serializer",
+    [
+        lambda api, model: model.canonical_bytes(),
+        lambda api, model: model.content_hash(),
+        lambda api, model: api.canonical_json_bytes(model),
+        lambda api, model: api.content_hash(model),
+    ],
+)
+def test_canonical_hashing_rejects_unchecked_nested_models(
+    method: str,
+    serializer: Any,
+) -> None:
+    api = _api()
+    poisoned_line = _unchecked_mutation(
+        _order_line(api),
+        method,
+        sealed_quantity="100",
+    )
+    poisoned_decision = _unchecked_mutation(
+        _decision(api),
+        method,
+        order_lines=(poisoned_line,),
+    )
+    poisoned_command = _unchecked_mutation(
+        _command(api),
+        method,
+        decision=poisoned_decision,
+    )
+
+    with pytest.raises(ValidationError):
+        serializer(api, poisoned_command)

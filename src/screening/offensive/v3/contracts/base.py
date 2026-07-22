@@ -124,7 +124,23 @@ def _canonical_value(value: Any) -> Any:
     if isinstance(value, Enum):
         return _canonical_value(value.value)
     if isinstance(value, BaseModel):
-        return _canonical_value(value.model_dump(mode="python", exclude_none=False))
+        validated = type(value).model_validate(
+            value.model_dump(
+                mode="python",
+                round_trip=True,
+                exclude_none=False,
+                warnings="none",
+            ),
+            strict=True,
+        )
+        return _canonical_value(
+            validated.model_dump(
+                mode="python",
+                round_trip=True,
+                exclude_none=False,
+                warnings="none",
+            )
+        )
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise TypeError("canonical JSON object keys must be strings")
@@ -164,7 +180,7 @@ class CanonicalModel(BaseModel):
     )
 
     def canonical_bytes(self) -> bytes:
-        return canonical_json_bytes(self.model_dump(mode="python", exclude_none=False))
+        return canonical_json_bytes(self)
 
     def content_hash(self) -> str:
-        return content_hash(self.model_dump(mode="python", exclude_none=False))
+        return content_hash(self)

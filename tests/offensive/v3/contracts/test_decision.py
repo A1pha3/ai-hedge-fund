@@ -99,48 +99,75 @@ def _order_line(**overrides):
     return payload
 
 
-def _seal(**overrides):
-    _, _, _, _, logical_key, _ = _contracts()
-    payload = _envelope_fields(evidence_id="seal-001-r1") | {
-        "decision_kind": "decision_seal",
-        "seal_id": "seal-001-r1",
-        "active_seal_id": "seal-001-r1",
-        "seal_revision": 1,
-        "portfolio_id": "paper-v3",
-        "signal_session": date(2026, 7, 19),
-        "economic_lineage_id": "btst-economic-lineage",
-        "snapshot_id": "snapshot-001",
-        "capital_authorization_id": "auth-001",
-        "authorization_version": 4,
-        "command_binding": {
-            "publish_command_content_hash": "d" * 64,
-            "portfolio_id": "paper-v3",
-            "capital_snapshot_id": "capital-019",
-            "capital_version": 19,
-            "capital_stream_version": 29,
-            "capital_payload_content_hash": HASH,
-            "target_portfolio_policy_fingerprint": "1" * 64,
-            "capital_authorization_id": "auth-001",
-            "authorization_version": 4,
-            "evidence_set_merkle_root": HASH,
-            "family_id": "btst.limit-up-breakout",
-            "economic_lineage_id": "btst-economic-lineage",
-            "mode": _envelope_fields()["mode"],
-            "authority_epoch": 3,
-            "risk_epoch": 8,
-        },
+def _publish_command(*, plan_overrides=None, decision_overrides=None):
+    from src.screening.offensive.v3.contracts.capital import CapitalSnapshot
+    from src.screening.offensive.v3.contracts.decision import (
+        CapitalAuthorizationBinding,
+        DecisionInput,
+        DecisionLogicalKey,
+        PlanEvidence,
+        PublishDecisionCommand,
+        SealedOrderLine,
+    )
+
+    plan = PlanEvidence.model_validate(_plan(**(plan_overrides or {})))
+    decision_values = {
+        "plan_evidence": plan,
+        "capital_snapshot": CapitalSnapshot(
+            capital_snapshot_id="capital-019",
+            portfolio_id="paper-v3",
+            authority_epoch=3,
+            risk_epoch=8,
+            capital_version=19,
+            stream_version=29,
+            mode=plan.mode,
+            as_of=datetime(2026, 7, 19, 8, 0, tzinfo=UTC),
+            cash=Decimal("50000"),
+            nav=Decimal("100000"),
+            gross_exposure=Decimal("0"),
+            high_water_mark=Decimal("100000"),
+            positions=(),
+            payload_content_hash=HASH,
+        ),
+        "target_portfolio_policy_fingerprint": "1" * 64,
         "evidence_set_merkle_root": HASH,
         "authority_epoch": 3,
         "risk_epoch": 8,
-        "order_lines": (_order_line(),),
+        "order_lines": (SealedOrderLine.model_validate(_order_line()),),
         "created_at": datetime(2026, 7, 19, 8, 10, tzinfo=UTC),
         "deadline": datetime(2026, 7, 19, 8, 20, tzinfo=UTC),
-        "idempotency_key": logical_key(
+        "idempotency_key": DecisionLogicalKey(
             portfolio_id="paper-v3",
             signal_session=date(2026, 7, 19),
             authority_epoch=3,
         ),
     }
+    decision_values.update(decision_overrides or {})
+    return PublishDecisionCommand(
+        decision=DecisionInput(**decision_values),
+        authorization=CapitalAuthorizationBinding(
+            capital_authorization_id="auth-001",
+            authorization_version=4,
+            evidence_set_merkle_root=HASH,
+            economic_lineage_id="btst-economic-lineage",
+            family_id="btst.limit-up-breakout",
+            mode=plan.mode,
+            target_portfolio_policy_fingerprint="1" * 64,
+        ),
+    )
+
+
+def _seal(command=None, **overrides):
+    from src.screening.offensive.v3.contracts.decision import DecisionSeal
+
+    payload = DecisionSeal.from_command(
+        command or _publish_command(),
+        evidence_id="seal-001-r1",
+        seal_id="seal-001-r1",
+        seal_revision=1,
+        source_authority="growth-kernel",
+        payload_content_hash=HASH,
+    ).model_dump(mode="python", round_trip=True)
     payload.update(overrides)
     return payload
 
@@ -363,9 +390,15 @@ def test_decision_projection_cannot_precede_evidence_availability(
     model = seal if payload_factory is _seal else shadow
     created = datetime(2026, 7, 19, 8, 10, tzinfo=UTC)
 
-    assert model.model_validate(
-        payload_factory(available_at=created, created_at=created)
-    ).created_at == created
+    if payload_factory is _seal:
+        command = _publish_command(
+            plan_overrides={"available_at": created},
+            decision_overrides={"created_at": created},
+        )
+        valid_payload = _seal(command=command)
+    else:
+        valid_payload = payload_factory(available_at=created, created_at=created)
+    assert model.model_validate(valid_payload).created_at == created
     with pytest.raises(ValidationError, match="available_at|created_at"):
         model.model_validate(
             payload_factory(
@@ -427,5 +460,5 @@ def test_serialized_seal_hash_is_stable_across_processes() -> None:
     assert (
         hashes[0]
         == hashes[1]
-        == "e1ed11871df00c9785fffcf1d51eb34648e31e5de02965de522b4ed70cfecc4d"
+        == "0c7223083c8a92c5aaa53cc34c20774e31b9271aaaa1d5c587672652f2753dfa"
     )
