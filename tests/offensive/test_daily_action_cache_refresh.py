@@ -1536,7 +1536,10 @@ def _batch_flow_frame() -> pd.DataFrame:
 
 def test_fund_flow_prefetched_skips_network_fetch(tmp_path, monkeypatch):
     """批量预取命中的票: 不调 fetch_fn、不 rate-limit 等待; 未命中票回落逐票。"""
+    from datetime import date
+
     from src.screening.offensive import cache_refresh as cr
+    from src.screening.offensive.cache_readiness import SuspensionEvidence
     from src.screening.offensive.cache_refresh import refresh_fund_flow_cache
 
     fetched: list[str] = []
@@ -1564,6 +1567,10 @@ def test_fund_flow_prefetched_skips_network_fetch(tmp_path, monkeypatch):
         fetch_fn=fake_fetch,
         rate_limit_sec=5.0,  # 若 prefetched 票错误地走网络路径, sleep 会被记录
         prefetched_frames={"000001": _batch_flow_frame()},
+        suspension_evidence=SuspensionEvidence.available(
+            date(2026, 7, 13),
+            set(),
+        ),
     )
 
     # 000001 走预取 (无网络), 000002/000003 回落逐票; sleep 只发生在非末票的网络拉取后
@@ -1730,7 +1737,10 @@ def test_fund_flow_rate_limit_survives_fetch_exception(tmp_path, monkeypatch):
     修复前 fetched_via_network 在 fetch_fn 返回后才置位 — 异常路径丢失退避,
     持续故障时重试循环会全速 hammer API。
     """
+    from datetime import date
+
     from src.screening.offensive import cache_refresh as cr
+    from src.screening.offensive.cache_readiness import SuspensionEvidence
     from src.screening.offensive.cache_refresh import refresh_fund_flow_cache
 
     sleeps: list[float] = []
@@ -1745,6 +1755,10 @@ def test_fund_flow_rate_limit_survives_fetch_exception(tmp_path, monkeypatch):
         fund_flow_cache_dir=tmp_path / "flow",
         fetch_fn=raising_fetch,
         rate_limit_sec=5.0,
+        suspension_evidence=SuspensionEvidence.available(
+            date(2026, 7, 13),
+            set(),
+        ),
     )
 
     assert stats.fund_flow_failed == 3
