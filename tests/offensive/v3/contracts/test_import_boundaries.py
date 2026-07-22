@@ -127,17 +127,53 @@ def _scan_contract_imports(root: Path) -> list[str]:
 
 
 def _annotation_names(annotation: ast.expr) -> set[str]:
-    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
-        try:
-            annotation = ast.parse(annotation.value, mode="eval").body
-        except SyntaxError:
-            return {annotation.value}
     names: set[str] = set()
-    for node in ast.walk(annotation):
+
+    def terminal_name(node: ast.expr) -> str | None:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        return None
+
+    def collect_type_position(node: ast.AST) -> None:
+        if isinstance(node, ast.Constant):
+            if not isinstance(node.value, str):
+                return
+            try:
+                parsed = ast.parse(node.value, mode="eval").body
+            except SyntaxError:
+                return
+            collect_type_position(parsed)
+            return
         if isinstance(node, ast.Name):
             names.add(node.id)
-        elif isinstance(node, ast.Attribute):
+            return
+        if isinstance(node, ast.Attribute):
+            collect_type_position(node.value)
             names.add(node.attr)
+            return
+        if isinstance(node, ast.Subscript):
+            collect_type_position(node.value)
+            arguments = (
+                tuple(node.slice.elts)
+                if isinstance(node.slice, ast.Tuple)
+                else (node.slice,)
+            )
+            constructor = terminal_name(node.value)
+            if constructor == "Literal":
+                return
+            if constructor == "Annotated":
+                if arguments:
+                    collect_type_position(arguments[0])
+                return
+            for argument in arguments:
+                collect_type_position(argument)
+            return
+        for child in ast.iter_child_nodes(node):
+            collect_type_position(child)
+
+    collect_type_position(annotation)
     return names
 
 
@@ -274,6 +310,37 @@ class BadPort:
     ]
     names = set().union(*(_annotation_names(annotation) for annotation in annotations))
     assert {"DataFrame", "list"} <= names
+
+
+def test_annotation_scanner_parses_only_nested_forward_reference_type_positions() -> None:
+    source = """
+class NestedPort:
+    def tuple_forward(self, value: tuple['list[int]', ...]) -> None: ...
+    def optional_forward(self, value: typing.Optional['pandas.DataFrame']) -> None: ...
+    def literal_value(self, value: Literal['list']) -> None: ...
+    def annotated_metadata(self, value: Annotated[str, 'pandas.DataFrame']) -> None: ...
+    def annotated_nested(
+        self,
+        value: typing.Annotated[tuple['list[int]', ...], 'pandas.DataFrame'],
+    ) -> None: ...
+"""
+    tree = ast.parse(source)
+    annotations = {
+        node.name: next(
+            argument.annotation
+            for argument in node.args.args
+            if argument.arg == "value"
+        )
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+    }
+
+    assert "list" in _annotation_names(annotations["tuple_forward"])
+    assert "DataFrame" in _annotation_names(annotations["optional_forward"])
+    assert "list" not in _annotation_names(annotations["literal_value"])
+    assert "DataFrame" not in _annotation_names(annotations["annotated_metadata"])
+    assert "list" in _annotation_names(annotations["annotated_nested"])
+    assert "DataFrame" not in _annotation_names(annotations["annotated_nested"])
 
 
 def test_ports_expose_no_forbidden_annotations_or_method_implementation() -> None:
