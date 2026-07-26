@@ -66,8 +66,11 @@ class CapitalAuthorizationEnvelope(CanonicalModel):
         if self.mode is ExecutionMode.BROKER_CONFIRMED:
             if self.broker_account_id is None or self.broker_account_fingerprint is None:
                 raise ValueError("broker-confirmed envelope requires broker account binding")
+        elif self.mode is ExecutionMode.MANUAL_CONFIRMED:
+            if self.broker_account_id is None or self.broker_account_fingerprint is not None:
+                raise ValueError("manual-confirmed envelope requires account and no fingerprint")
         elif self.broker_account_id is not None or self.broker_account_fingerprint is not None:
-            raise ValueError("non-broker envelope cannot claim broker binding")
+            raise ValueError("proxy envelope cannot claim broker binding")
         if self.expires_at <= self.issued_at or self.evidence_as_of > self.issued_at:
             raise ValueError("authorization time order is invalid")
         if len(self.research_program_ids) != len(set(self.research_program_ids)):
@@ -91,9 +94,13 @@ class CapitalAuthorizationEnvelope(CanonicalModel):
         if self.exploration_aggregate_gross_cap > two_percent or exploration_cap > two_percent:
             raise ValueError("exploration aggregate gross cap cannot exceed 2%")
         if self.authorization_kind is AuthorizationKind.EDGE:
+            if any(value is not None for value in (self.recovery_inherited_risk_version, self.recovery_open_pending_risk_version, self.recovery_stage_program_loss_consumption_version, self.risk_epoch_started_hash, self.recovery_manifest_hash)):
+                raise ValueError("EDGE cannot carry recovery-only fields")
             if exploration or self.exploration_aggregate_gross_cap != Decimal("0") or self.issuer_capability != "authorizer.edge.envelope.v1":
                 raise ValueError("EDGE envelope requires only edge grants and authorizer capability")
         elif self.authorization_kind is AuthorizationKind.EXPLORATION:
+            if any(value is not None for value in (self.recovery_inherited_risk_version, self.recovery_open_pending_risk_version, self.recovery_stage_program_loss_consumption_version, self.risk_epoch_started_hash, self.recovery_manifest_hash)):
+                raise ValueError("EXPLORATION cannot carry recovery-only fields")
             if self.mode is not ExecutionMode.BROKER_CONFIRMED or not exploration or self.issuer_capability != "governance.exploration.envelope.v1":
                 raise ValueError("EXPLORATION requires broker mode, exploration grant, governance capability")
             if self.exploration_aggregate_gross_cap != exploration_cap:

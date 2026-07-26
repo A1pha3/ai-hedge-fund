@@ -11,7 +11,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, Strict, model_validator
+from pydantic import Field, Strict, field_validator, model_validator
 
 from .base import CanonicalModel, ExecutionMode, MoneyCents, SchemaVersion, Sha256, UtcInstant
 from .evidence import NonEmptyStr
@@ -31,6 +31,23 @@ def _capability(value: str, expected: str) -> None:
 def _unique(values: tuple[str, ...], label: str) -> None:
     if not values or len(values) != len(set(values)):
         raise ValueError(f"{label} must be nonempty and unique")
+
+
+def _validate_account_mode(
+    mode: ExecutionMode,
+    account_id: str | None,
+    account_fingerprint: str | None,
+) -> None:
+    if mode is ExecutionMode.RESEARCH_RECONSTRUCTION:
+        raise ValueError("research mode cannot activate capital governance")
+    if mode is ExecutionMode.DAILY_BAR_PROXY:
+        if account_id is not None or account_fingerprint is not None:
+            raise ValueError("proxy mode cannot bind a real broker account")
+    elif mode is ExecutionMode.MANUAL_CONFIRMED:
+        if account_id is None or account_fingerprint is not None:
+            raise ValueError("manual mode requires account and no broker fingerprint")
+    elif account_id is None or account_fingerprint is None:
+        raise ValueError("broker mode requires account and fingerprint")
 
 
 class TrustBundle(CanonicalModel):
@@ -58,7 +75,8 @@ class TrustBundle(CanonicalModel):
 
 class PolicyActivation(CanonicalModel):
     portfolio_id: NonEmptyStr
-    broker_account_id: NonEmptyStr
+    broker_account_id: NonEmptyStr | None = None
+    broker_account_fingerprint: Sha256 | None = None
     mode: ExecutionMode
     policy_snapshot_hash: Sha256
     predecessor_policy_activation_hash: Sha256
@@ -76,8 +94,7 @@ class PolicyActivation(CanonicalModel):
     @model_validator(mode="after")
     def validate_candidate(self) -> Self:
         _capability(self.issuer_capability, "governance.policy.activation.v1")
-        if self.mode is ExecutionMode.RESEARCH_RECONSTRUCTION:
-            raise ValueError("research policy activation cannot authorize capital")
+        _validate_account_mode(self.mode, self.broker_account_id, self.broker_account_fingerprint)
         if self.expires_at <= self.effective_from:
             raise ValueError("expires_at must be after effective_from")
         return self
@@ -85,7 +102,8 @@ class PolicyActivation(CanonicalModel):
 
 class RiskEpochStarted(CanonicalModel):
     portfolio_id: NonEmptyStr
-    broker_account_id: NonEmptyStr
+    broker_account_id: NonEmptyStr | None = None
+    broker_account_fingerprint: Sha256 | None = None
     mode: ExecutionMode
     predecessor_risk_epoch_hash: Sha256
     predecessor_authority_epoch_hash: Sha256
@@ -102,8 +120,7 @@ class RiskEpochStarted(CanonicalModel):
     @model_validator(mode="after")
     def validate_candidate(self) -> Self:
         _capability(self.issuer_capability, "governance.risk.epoch.start.v1")
-        if self.mode is ExecutionMode.RESEARCH_RECONSTRUCTION:
-            raise ValueError("research cannot start a capital risk epoch")
+        _validate_account_mode(self.mode, self.broker_account_id, self.broker_account_fingerprint)
         return self
 
 
@@ -191,17 +208,63 @@ class AuthorizationLifecycle(StrEnum):
 
 
 class AuthorizationStatus(CanonicalModel):
-    portfolio_id: NonEmptyStr; authorization_id: NonEmptyStr; authorization_version: PositiveInt; authority_epoch: PositiveInt; risk_epoch: PositiveInt
-    status_version: PositiveInt; status: AuthorizationLifecycle; entry_fence_version: NonNegativeInt; as_of: UtcInstant; schema_major: SchemaVersion
+    portfolio_id: NonEmptyStr
+    broker_account_id: NonEmptyStr | None = None
+    broker_account_fingerprint: Sha256 | None = None
+    mode: ExecutionMode
+    authorization_id: NonEmptyStr
+    authorization_version: PositiveInt
+    authorization_envelope_hash: Sha256
+    evidence_set_merkle_root: Sha256
+    policy_activation_hash: Sha256
+    trust_bundle_hash: Sha256
+    registry_epoch: PositiveInt
+    policy_epoch: PositiveInt
+    authority_epoch: PositiveInt
+    risk_epoch: PositiveInt
+    status_version: PositiveInt
+    predecessor_status_hash: Sha256
+    status: AuthorizationLifecycle
+    entry_fence_version: NonNegativeInt
+    as_of: UtcInstant
+    schema_major: SchemaVersion
+
+    @model_validator(mode="after")
+    def validate_context(self) -> Self:
+        _validate_account_mode(self.mode, self.broker_account_id, self.broker_account_fingerprint)
+        return self
 
 
 class EntryFenceRaised(CanonicalModel):
-    portfolio_id: NonEmptyStr; fence_version: PositiveInt; predecessor_fence_hash: Sha256; reason: NonEmptyStr; raised_at: UtcInstant
-    affected_authorization_id: NonEmptyStr | None; affected_evidence_set_merkle_root: Sha256 | None; issuer_id: NonEmptyStr; issuer_capability: NonEmptyStr; schema_major: SchemaVersion
+    fence_id: NonEmptyStr
+    portfolio_id: NonEmptyStr
+    broker_account_id: NonEmptyStr | None = None
+    broker_account_fingerprint: Sha256 | None = None
+    mode: ExecutionMode
+    fence_version: PositiveInt
+    predecessor_fence_hash: Sha256
+    authority_epoch: PositiveInt
+    risk_epoch: PositiveInt
+    authorization_status_version: PositiveInt
+    reason: NonEmptyStr
+    cause_revision_id: NonEmptyStr
+    cause_revision_hash: Sha256
+    raised_at: UtcInstant
+    affected_authorization_id: NonEmptyStr | None
+    affected_authorization_version: PositiveInt | None
+    affected_authorization_envelope_hash: Sha256 | None
+    affected_evidence_set_merkle_root: Sha256 | None
+    issuer_id: NonEmptyStr
+    issuer_capability: NonEmptyStr
+    schema_major: SchemaVersion
 
     @model_validator(mode="after")
     def validate_fence(self) -> Self:
         _capability(self.issuer_capability, "gateway.entry.fence.raise.v1")
+        _validate_account_mode(self.mode, self.broker_account_id, self.broker_account_fingerprint)
+        affected = (self.affected_authorization_id, self.affected_authorization_version, self.affected_authorization_envelope_hash, self.affected_evidence_set_merkle_root)
+        if any(value is None for value in affected) and any(value is not None for value in affected):
+            raise ValueError("affected authorization fields must be all-or-none")
         return self
 
 
