@@ -1,0 +1,9 @@
+{
+  "schema_major": 1,
+  "payload": {
+    "a": 2,
+    "b": "1"
+  },
+  "canonical_json": "{\"a\":2,\"b\":\"1\"}",
+  "content_hash": "8f676f3bfacd6276f77d41ea1172e2add1029c79f6fced531f045f4b436a26ab"
+}

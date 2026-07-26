@@ -8,7 +8,6 @@ from decimal import Decimal
 from enum import Enum, StrEnum
 import hashlib
 import json
-import math
 from typing import Annotated, Any, TypeAlias
 
 from pydantic import (
@@ -16,8 +15,10 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Strict,
     StringConstraints,
     TypeAdapter,
+    field_validator,
 )
 
 
@@ -73,6 +74,32 @@ UtcInstant: TypeAlias = Annotated[
 UtcInstantAdapter = TypeAdapter(UtcInstant, config=ConfigDict(strict=True))
 
 
+MoneyCents: TypeAlias = Annotated[int, Strict()]
+"""An exact integer count of the smallest monetary unit."""
+
+QuantityUnits: TypeAlias = Annotated[int, Strict()]
+"""An exact integer count of a domain quantity's smallest unit."""
+
+UnitQuanta: TypeAlias = Annotated[int, Strict()]
+"""An exact integer count of issued or redeemed unit quanta."""
+
+
+def _validate_schema_version(value: int) -> int:
+    if value != 2:
+        raise ValueError("unsupported schema major: expected 2")
+    return value
+
+
+SchemaVersion: TypeAlias = Annotated[
+    int,
+    Strict(),
+    AfterValidator(_validate_schema_version),
+]
+"""The only Revision 2 schema major accepted by new domain contracts."""
+
+SchemaVersionAdapter = TypeAdapter(SchemaVersion)
+
+
 Sha256: TypeAlias = Annotated[
     str,
     StringConstraints(pattern=r"^[0-9a-f]{64}$"),
@@ -111,9 +138,7 @@ def _canonical_value(value: Any) -> Any:
     if value is None or isinstance(value, (str, bool, int)):
         return value
     if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError("canonical JSON requires finite float values")
-        return value
+        raise ValueError("canonical JSON forbids float values")
     if isinstance(value, Decimal):
         return _normalized_decimal(value)
     if isinstance(value, datetime):
@@ -169,6 +194,23 @@ def content_hash(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
 
 
+def domain_hash(domain: str, schema_major: int, payload: Any) -> str:
+    """Hash a Revision 2 payload in one explicit domain-separated envelope."""
+
+    if not isinstance(domain, str) or not domain or domain.strip() != domain:
+        raise ValueError("domain must be nonempty and have no surrounding whitespace")
+    schema_version = SchemaVersionAdapter.validate_python(schema_major)
+    return hashlib.sha256(
+        canonical_json_bytes(
+            {
+                "domain": domain,
+                "schema_major": schema_version,
+                "payload": payload,
+            }
+        )
+    ).hexdigest()
+
+
 class CanonicalModel(BaseModel):
     """Base model for immutable, strict, canonically hashable contracts."""
 
@@ -184,3 +226,17 @@ class CanonicalModel(BaseModel):
 
     def content_hash(self) -> str:
         return content_hash(self)
+
+
+class RationalQuantity(CanonicalModel):
+    """A minimal exact rational quantity for later corporate-action contracts."""
+
+    numerator: QuantityUnits
+    denominator: QuantityUnits
+
+    @field_validator("denominator")
+    @classmethod
+    def validate_positive_denominator(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("denominator must be greater than zero")
+        return value

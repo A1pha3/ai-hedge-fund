@@ -88,12 +88,11 @@ def test_canonical_json_rejects_non_finite_decimals() -> None:
         canonical_json_bytes({"value": Decimal("Infinity")})
 
 
-def test_canonical_json_handles_finite_and_non_finite_floats() -> None:
+def test_canonical_json_rejects_all_floats() -> None:
     from src.screening.offensive.v3.contracts.base import canonical_json_bytes
 
-    assert canonical_json_bytes({"value": 1.25}) == b'{"value":1.25}'
-    for value in (nan, inf, -inf):
-        with pytest.raises(ValueError, match="finite"):
+    for value in (1.25, nan, inf, -inf):
+        with pytest.raises(ValueError, match="float"):
             canonical_json_bytes({"value": value})
 
 
