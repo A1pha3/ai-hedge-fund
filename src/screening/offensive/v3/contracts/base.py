@@ -76,13 +76,31 @@ UtcInstant: TypeAlias = Annotated[
 UtcInstantAdapter = TypeAdapter(UtcInstant, config=ConfigDict(strict=True))
 
 
-MoneyCents: TypeAlias = Annotated[int, Strict()]
+def _validate_exact_integer(value: Any) -> Any:
+    if type(value) is not int:
+        raise ValueError("exact integer values must use the native int type")
+    return value
+
+
+MoneyCents: TypeAlias = Annotated[
+    int,
+    BeforeValidator(_validate_exact_integer),
+    Strict(),
+]
 """An exact integer count of the smallest monetary unit."""
 
-QuantityUnits: TypeAlias = Annotated[int, Strict()]
+QuantityUnits: TypeAlias = Annotated[
+    int,
+    BeforeValidator(_validate_exact_integer),
+    Strict(),
+]
 """An exact integer count of a domain quantity's smallest unit."""
 
-UnitQuanta: TypeAlias = Annotated[int, Strict()]
+UnitQuanta: TypeAlias = Annotated[
+    int,
+    BeforeValidator(_validate_exact_integer),
+    Strict(),
+]
 """An exact integer count of issued or redeemed unit quanta."""
 
 
@@ -94,6 +112,7 @@ def _validate_schema_version(value: int) -> int:
 
 SchemaVersion: TypeAlias = Annotated[
     int,
+    BeforeValidator(_validate_exact_integer),
     Strict(),
     AfterValidator(_validate_schema_version),
 ]

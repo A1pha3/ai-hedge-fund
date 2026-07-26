@@ -2,11 +2,20 @@
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from enum import IntEnum
 import json
 from pathlib import Path
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
+
+
+class _IntEnumValue(IntEnum):
+    TWO = 2
+
+
+class _IntSubclass(int):
+    pass
 
 
 def test_canonical_json_rejects_persisted_floats_at_any_depth() -> None:
@@ -98,6 +107,26 @@ def test_exact_integer_primitives_reject_boolean_and_float_values() -> None:
         for invalid in (True, 1.0):
             with pytest.raises(ValidationError):
                 adapter.validate_python(invalid)
+
+
+@pytest.mark.parametrize("invalid", [_IntEnumValue.TWO, _IntSubclass(2)])
+def test_exact_integer_primitives_reject_all_integer_subclasses(invalid: int) -> None:
+    from src.screening.offensive.v3.contracts.base import (
+        MoneyCents,
+        QuantityUnits,
+        RationalQuantity,
+        SchemaVersion,
+        UnitQuanta,
+    )
+
+    for primitive in (MoneyCents, QuantityUnits, UnitQuanta, SchemaVersion):
+        with pytest.raises(ValidationError):
+            TypeAdapter(primitive).validate_python(invalid)
+
+    with pytest.raises(ValidationError):
+        RationalQuantity(numerator=invalid, denominator=2)
+    with pytest.raises(ValidationError):
+        RationalQuantity(numerator=2, denominator=invalid)
 
 
 def test_same_payload_has_different_domain_hashes() -> None:
