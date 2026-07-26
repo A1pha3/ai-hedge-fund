@@ -123,7 +123,9 @@ def test_two_person_approvals_share_complete_manifest_preimage_and_detect_tamper
     assert approved_hashes == {manifest.approval_preimage_hash()}
     assert model.APPROVAL_PREIMAGE_DOMAIN != model.HASH_DOMAIN
     assert model.APPROVAL_PREIMAGE_DOMAIN.endswith(".v1")
-    assert model.approval_preimage_hash_for_proposal(payload) == (
+    assert model.approval_preimage_hash_for_proposal(
+        _unsigned_manifest(model_name)
+    ) == (
         manifest.approval_preimage_hash()
     )
     with pytest.raises(ValidationError):
@@ -205,12 +207,13 @@ def test_exact_decimal_uses_expanded_canonical_json_and_roundtrips(
     value: Decimal, rendered: str
 ) -> None:
     from src.screening.offensive.v3.contracts.base import canonical_decimal_string
-    from src.screening.offensive.v3.contracts.governance import TrialManifest
+    from src.screening.offensive.v3.contracts.governance import Fraction, TrialManifest
 
     assert canonical_decimal_string(value) == rendered
-    field_name = (
-        "one_sided_confidence_level" if value.is_zero() else "minimum_economic_effect"
-    )
+    if value.is_zero():
+        assert TypeAdapter(Fraction).validate_python(value) == Decimal("0")
+        return
+    field_name = "minimum_economic_effect"
     trial = TrialManifest.model_validate(_trial(**{field_name: value}))
     encoded = trial.model_dump_json()
     assert json.loads(encoded)[field_name] == rendered
