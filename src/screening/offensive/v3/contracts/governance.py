@@ -14,8 +14,10 @@ from typing import Annotated, Any, ClassVar, Literal, Self
 
 from pydantic import (
     BeforeValidator,
+    ConfigDict,
     Field,
     PlainSerializer,
+    TypeAdapter,
     ValidationInfo,
     WithJsonSchema,
     model_validator,
@@ -67,6 +69,10 @@ ExactDecimal = Annotated[
     WithJsonSchema({"type": "string", "pattern": r"^-?(0|[1-9]\d*)(\.\d+)?$"}),
 ]
 Fraction = Annotated[ExactDecimal, Field(ge=Decimal("0"), le=Decimal("1"))]
+ConfidenceLevel = Annotated[
+    ExactDecimal,
+    Field(gt=Decimal("0"), lt=Decimal("1")),
+]
 PositiveDecimal = Annotated[ExactDecimal, Field(gt=Decimal("0"))]
 
 
@@ -241,7 +247,7 @@ class TrialManifest(GovernedArtifact):
     capacity_policy: NonEmptyStr
     tail_risk_policy: NonEmptyStr
     estimator: NonEmptyStr
-    one_sided_confidence_level: Fraction
+    one_sided_confidence_level: ConfidenceLevel
     bootstrap_method: NonEmptyStr
     bootstrap_repetitions: PositiveInt
     bootstrap_seed: NonNegativeInt
@@ -297,7 +303,7 @@ class StatisticalAnalysisPlan(GovernedArtifact):
     baseline_portfolio_policy_fingerprint: Sha256
     target_portfolio_policy_fingerprint: Sha256
     execution_mode: ExecutionMode
-    one_sided_confidence_level: Fraction
+    one_sided_confidence_level: ConfidenceLevel
     bootstrap_method: NonEmptyStr
     repetitions: PositiveInt
     seed: NonNegativeInt
@@ -493,7 +499,9 @@ class AuthorizationStatus(GovernedArtifact):
             <= self.activated_at
             < self.authorization_expires_at
         ):
-            raise ValueError("authorization activation must be inside envelope validity")
+            raise ValueError(
+                "authorization activation must be inside envelope validity"
+            )
         if not self.activated_at <= self.status_effective_at <= self.as_of:
             raise ValueError(
                 "authorization status times must follow activation and observation"
@@ -563,9 +571,7 @@ class EntryFenceRaised(GovernedArtifact):
 
     @model_validator(mode="after")
     def validate_fence(self) -> Self:
-        _capability(
-            self.issuer_capability, "dependency-tracker.entry-fence.raise.v1"
-        )
+        _capability(self.issuer_capability, "dependency-tracker.entry-fence.raise.v1")
         _validate_account_mode(
             self.mode, self.broker_account_id, self.broker_account_fingerprint
         )
@@ -639,6 +645,7 @@ class ApprovalAttestationBinding(GovernedArtifact):
 
 class _TwoPersonOneShotManifest(GovernedArtifact):
     APPROVAL_PREIMAGE_DOMAIN: ClassVar[str]
+    APPROVAL_SCOPE: ClassVar[str]
 
     manifest_id: NonEmptyStr
     portfolio_id: NonEmptyStr
@@ -652,31 +659,113 @@ class _TwoPersonOneShotManifest(GovernedArtifact):
     schema_major: SchemaVersion
 
     @classmethod
-    def approval_preimage_hash_for_proposal(
-        cls, proposal: Mapping[str, Any]
+    def _unchecked_approval_preimage_hash_for_payload(
+        cls, payload: Mapping[str, Any]
     ) -> str:
-        payload = {
-            key: value
-            for key, value in proposal.items()
-            if key != "approval_attestations"
-        }
         return domain_hash(
             cls.APPROVAL_PREIMAGE_DOMAIN,
-            payload.get("schema_major"),
+            payload["schema_major"],
             payload,
         )
 
+    def _unchecked_approval_preimage_hash(self) -> str:
+        payload = self.model_dump(
+            mode="python",
+            round_trip=True,
+            exclude={"approval_attestations"},
+            warnings="none",
+        )
+        return self._unchecked_approval_preimage_hash_for_payload(payload)
+
+    @classmethod
+    def _proposal_validation_attestations(
+        cls, proposal: Mapping[str, Any], approved_preimage_hash: str
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        common = {
+            "approved_manifest_preimage_hash": approved_preimage_hash,
+            "approval_capability": "governance.manifest.approve.v1",
+            "approval_scope": cls.APPROVAL_SCOPE,
+            "approved_at": proposal.get("issued_at"),
+            "schema_major": proposal.get("schema_major"),
+        }
+        return (
+            common
+            | {
+                "approver_id": "proposal-validator-1",
+                "key_id": "proposal-validator-key-1",
+                "approval_artifact_hash": "1" * 64,
+            },
+            common
+            | {
+                "approver_id": "proposal-validator-2",
+                "key_id": "proposal-validator-key-2",
+                "approval_artifact_hash": "2" * 64,
+            },
+        )
+
+    @classmethod
+    def _raise_invalid_proposal(cls, proposal: Mapping[str, Any]) -> None:
+        invalid = dict(proposal)
+        invalid["__invalid_unsigned_proposal__"] = True
+        cls.model_validate(invalid, strict=True)
+        raise AssertionError("invalid unsigned proposal unexpectedly validated")
+
+    @classmethod
+    def _strictly_validate_unsigned_fields(
+        cls, proposal: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        validated: dict[str, Any] = {}
+        for name, field in cls.model_fields.items():
+            if name == "approval_attestations":
+                continue
+            annotation = (
+                Annotated[field.annotation, *field.metadata]
+                if field.metadata
+                else field.annotation
+            )
+            validated[name] = TypeAdapter(
+                annotation, config=ConfigDict(strict=True)
+            ).validate_python(proposal[name], strict=True)
+        return validated
+
+    @classmethod
+    def approval_preimage_hash_for_proposal(cls, proposal: Mapping[str, Any]) -> str:
+        """Hash an exact unsigned proposal only after full manifest validation."""
+
+        if not isinstance(proposal, Mapping):
+            cls.model_validate({"__invalid_unsigned_proposal__": proposal}, strict=True)
+            raise AssertionError("non-mapping proposal unexpectedly validated")
+        payload = dict(proposal)
+        expected_keys = set(cls.model_fields) - {"approval_attestations"}
+        if set(payload) != expected_keys:
+            cls._raise_invalid_proposal(payload)
+        validated_payload = cls._strictly_validate_unsigned_fields(payload)
+        approved_preimage_hash = cls._unchecked_approval_preimage_hash_for_payload(
+            validated_payload
+        )
+        validated = cls.model_validate(
+            validated_payload
+            | {
+                "approval_attestations": cls._proposal_validation_attestations(
+                    validated_payload, approved_preimage_hash
+                )
+            },
+            strict=True,
+        )
+        return validated._unchecked_approval_preimage_hash()
+
     def approval_preimage_hash(self) -> str:
-        return self.approval_preimage_hash_for_proposal(
+        validated = type(self).model_validate(
             self.model_dump(
                 mode="python",
                 round_trip=True,
-                exclude={"approval_attestations"},
                 warnings="none",
-            )
+            ),
+            strict=True,
         )
+        return validated._unchecked_approval_preimage_hash()
 
-    def _validate_common(self, expected: str, approval_scope: str) -> None:
+    def _validate_common(self, expected: str) -> None:
         _capability(self.issuer_capability, expected)
         approvals = self.approval_attestations
         if (
@@ -702,7 +791,7 @@ class _TwoPersonOneShotManifest(GovernedArtifact):
         if approvals != expected_order:
             raise ValueError("approval attestations must use canonical order")
         if any(
-            approval.approval_scope != approval_scope
+            approval.approval_scope != self.APPROVAL_SCOPE
             or approval.approved_at > self.issued_at
             for approval in approvals
         ):
@@ -710,7 +799,7 @@ class _TwoPersonOneShotManifest(GovernedArtifact):
         approved_hashes = {
             approval.approved_manifest_preimage_hash for approval in approvals
         }
-        if approved_hashes != {self.approval_preimage_hash()}:
+        if approved_hashes != {self._unchecked_approval_preimage_hash()}:
             raise ValueError("approvals must share the complete manifest preimage hash")
         if self.expires_at <= self.issued_at:
             raise ValueError("expires_at must be after issued_at")
@@ -719,9 +808,9 @@ class _TwoPersonOneShotManifest(GovernedArtifact):
 class MigrationApprovalManifest(_TwoPersonOneShotManifest):
     HASH_DOMAIN = "ai-hedge-fund.v3.governance.migration-approval-manifest.v1"
     APPROVAL_PREIMAGE_DOMAIN = (
-        "ai-hedge-fund.v3.governance.migration-approval-manifest."
-        "approval-preimage.v1"
+        "ai-hedge-fund.v3.governance.migration-approval-manifest.approval-preimage.v1"
     )
+    APPROVAL_SCOPE = "MIGRATION_APPROVAL_MANIFEST"
 
     source_portfolio_id: NonEmptyStr
     target_portfolio_id: NonEmptyStr
@@ -779,9 +868,7 @@ class MigrationApprovalManifest(_TwoPersonOneShotManifest):
 
     @model_validator(mode="after")
     def validate_manifest(self) -> Self:
-        self._validate_common(
-            "governance.migration.approval.v1", "MIGRATION_APPROVAL_MANIFEST"
-        )
+        self._validate_common("governance.migration.approval.v1")
         if self.target_portfolio_id != self.portfolio_id:
             raise ValueError("target portfolio must match portfolio_id")
         if self.target_broker_account_id != self.broker_account_id:
@@ -802,9 +889,9 @@ class MigrationApprovalManifest(_TwoPersonOneShotManifest):
 class BrokerEnablementManifest(_TwoPersonOneShotManifest):
     HASH_DOMAIN = "ai-hedge-fund.v3.governance.broker-enablement-manifest.v1"
     APPROVAL_PREIMAGE_DOMAIN = (
-        "ai-hedge-fund.v3.governance.broker-enablement-manifest."
-        "approval-preimage.v1"
+        "ai-hedge-fund.v3.governance.broker-enablement-manifest.approval-preimage.v1"
     )
+    APPROVAL_SCOPE = "BROKER_ENABLEMENT_MANIFEST"
 
     broker_account_fingerprint: Sha256
     broker_environment_fingerprint: Sha256
@@ -820,18 +907,16 @@ class BrokerEnablementManifest(_TwoPersonOneShotManifest):
 
     @model_validator(mode="after")
     def validate_manifest(self) -> Self:
-        self._validate_common(
-            "governance.broker.enablement.v1", "BROKER_ENABLEMENT_MANIFEST"
-        )
+        self._validate_common("governance.broker.enablement.v1")
         return self
 
 
 class DisasterRecoveryManifest(_TwoPersonOneShotManifest):
     HASH_DOMAIN = "ai-hedge-fund.v3.governance.disaster-recovery-manifest.v1"
     APPROVAL_PREIMAGE_DOMAIN = (
-        "ai-hedge-fund.v3.governance.disaster-recovery-manifest."
-        "approval-preimage.v1"
+        "ai-hedge-fund.v3.governance.disaster-recovery-manifest.approval-preimage.v1"
     )
+    APPROVAL_SCOPE = "DISASTER_RECOVERY_MANIFEST"
 
     broker_account_fingerprint: Sha256
     trust_bundle_hash: Sha256
@@ -858,9 +943,7 @@ class DisasterRecoveryManifest(_TwoPersonOneShotManifest):
 
     @model_validator(mode="after")
     def validate_manifest(self) -> Self:
-        self._validate_common(
-            "governance.disaster.recovery.v1", "DISASTER_RECOVERY_MANIFEST"
-        )
+        self._validate_common("governance.disaster.recovery.v1")
         if not self.reconcile_before_entry:
             raise ValueError("disaster recovery must reconcile before entry")
         return self
@@ -871,6 +954,7 @@ __all__ = [
     "AuthorizationLifecycle",
     "AuthorizationStatus",
     "BrokerEnablementManifest",
+    "ConfidenceLevel",
     "DisasterRecoveryManifest",
     "EntryFenceAcknowledgement",
     "EntryFenceRaised",

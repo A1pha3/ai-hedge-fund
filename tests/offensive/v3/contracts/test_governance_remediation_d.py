@@ -45,7 +45,7 @@ def test_poisoned_manifest_instances_cannot_emit_any_public_digest(
             poisoned.approval_preimage_hash()
 
 
-def test_public_unsigned_preimage_rejects_attestations_extra_and_missing_fields() -> None:
+def test_public_unsigned_preimage_rejects_non_unsigned_shapes() -> None:
     from src.screening.offensive.v3.contracts.governance import (
         MigrationApprovalManifest,
     )
@@ -54,9 +54,10 @@ def test_public_unsigned_preimage_rejects_attestations_extra_and_missing_fields(
     valid = MigrationApprovalManifest.model_validate(
         _approved_manifest("MigrationApprovalManifest")
     )
-    assert MigrationApprovalManifest.approval_preimage_hash_for_proposal(
-        unsigned
-    ) == valid.approval_preimage_hash()
+    assert (
+        MigrationApprovalManifest.approval_preimage_hash_for_proposal(unsigned)
+        == valid.approval_preimage_hash()
+    )
 
     with_attestations = valid.model_dump(mode="python", round_trip=True)
     extra = unsigned | {"unexpected": "field"}
@@ -65,6 +66,30 @@ def test_public_unsigned_preimage_rejects_attestations_extra_and_missing_fields(
     for poisoned in (with_attestations, extra, missing):
         with pytest.raises(ValidationError):
             MigrationApprovalManifest.approval_preimage_hash_for_proposal(poisoned)
+
+
+def test_public_unsigned_preimage_strictly_validates_fields_before_hashing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.screening.offensive.v3.contracts import governance
+
+    proposal = _unsigned_manifest("MigrationApprovalManifest") | {
+        "source_schema_major": 1,
+    }
+    observed_payloads: list[object] = []
+    original_domain_hash = governance.domain_hash
+
+    def observe_preimage_hash(domain: str, schema_major: int, payload: object) -> str:
+        if domain == governance.MigrationApprovalManifest.APPROVAL_PREIMAGE_DOMAIN:
+            observed_payloads.append(payload)
+        return original_domain_hash(domain, schema_major, payload)
+
+    monkeypatch.setattr(governance, "domain_hash", observe_preimage_hash)
+    with pytest.raises(ValidationError):
+        governance.MigrationApprovalManifest.approval_preimage_hash_for_proposal(
+            proposal
+        )
+    assert observed_payloads == []
 
 
 @pytest.mark.parametrize(
@@ -146,7 +171,7 @@ def test_confidence_level_is_strictly_inside_zero_and_one_in_python_and_json(
             model_type.model_validate_json(json.dumps(poisoned))
 
 
-def test_fraction_keeps_closed_endpoints_while_confidence_is_publicly_exported() -> None:
+def test_fraction_keeps_endpoints_while_confidence_is_exported() -> None:
     from src.screening.offensive.v3 import contracts
     from src.screening.offensive.v3.contracts import governance
     from src.screening.offensive.v3.contracts.governance import (

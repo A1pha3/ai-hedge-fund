@@ -125,9 +125,7 @@ def test_two_person_approvals_share_complete_manifest_preimage_and_detect_tamper
     assert model.APPROVAL_PREIMAGE_DOMAIN.endswith(".v1")
     assert model.approval_preimage_hash_for_proposal(
         _unsigned_manifest(model_name)
-    ) == (
-        manifest.approval_preimage_hash()
-    )
+    ) == (manifest.approval_preimage_hash())
     with pytest.raises(ValidationError):
         model.model_validate(payload | {tampered_field: tampered_value})
 
@@ -155,7 +153,7 @@ def test_two_person_approvals_require_distinct_people_keys_and_artifacts() -> No
             )
 
 
-def test_exploration_grants_bind_declared_trial_but_edge_trial_stays_independent() -> None:
+def test_exploration_grants_bind_trial_while_edge_trial_stays_independent() -> None:
     from src.screening.offensive.v3.contracts.authorization import (
         AuthorizationKind,
         CapitalAuthorizationEnvelope,
@@ -170,17 +168,13 @@ def test_exploration_grants_bind_declared_trial_but_edge_trial_stays_independent
         portfolio_gross_cap=Decimal("0.02"),
         **_exploration_controls(),
     )
-    assert CapitalAuthorizationEnvelope.model_validate(payload).exploration_trial_id == (
-        "explore-trial"
-    )
+    assert CapitalAuthorizationEnvelope.model_validate(
+        payload
+    ).exploration_trial_id == ("explore-trial")
     with pytest.raises(ValidationError):
         CapitalAuthorizationEnvelope.model_validate(
             payload
-            | {
-                "lineage_grants": (
-                    exploration | {"trial_id": "different-trial"},
-                )
-            }
+            | {"lineage_grants": (exploration | {"trial_id": "different-trial"},)}
         )
 
     edge = _grant(grant_id="edge", lineage_gross_cap=Decimal("0.01"))
@@ -189,9 +183,9 @@ def test_exploration_grants_bind_declared_trial_but_edge_trial_stays_independent
         "portfolio_gross_cap": Decimal("0.02"),
         **_predecessor(),
     }
-    assert CapitalAuthorizationEnvelope.model_validate(mixed).lineage_grants[0].trial_id == (
-        "trial-1"
-    )
+    assert CapitalAuthorizationEnvelope.model_validate(mixed).lineage_grants[
+        0
+    ].trial_id == ("trial-1")
 
 
 @pytest.mark.parametrize(
@@ -272,7 +266,10 @@ def test_authorization_lifecycle_is_exported_consistently() -> None:
     assert "AuthorizationLifecycle" in governance.__all__
     assert contracts.AuthorizationLifecycle is governance.AuthorizationLifecycle
     assert set(governance.__all__) <= set(contracts.__all__)
-    assert all(getattr(contracts, name) is getattr(governance, name) for name in governance.__all__)
+    assert all(
+        getattr(contracts, name) is getattr(governance, name)
+        for name in governance.__all__
+    )
 
 
 @pytest.mark.parametrize(
@@ -299,17 +296,16 @@ def test_migration_accepts_only_native_exact_v2_to_v3(
         "source_schema_major": source_schema_major,
         "target_schema_major": target_schema_major,
     }
-    payload = (
-        _approved_manifest("MigrationApprovalManifest")
-        | {
-            "source_schema_major": source_schema_major,
-            "target_schema_major": target_schema_major,
-        }
-        if type(source_schema_major) is float or type(target_schema_major) is float
-        else _approve_proposal("MigrationApprovalManifest", proposal)
-    )
     with pytest.raises(ValidationError):
-        MigrationApprovalManifest.model_validate(payload)
+        MigrationApprovalManifest.approval_preimage_hash_for_proposal(proposal)
+    with pytest.raises(ValidationError):
+        MigrationApprovalManifest.model_validate(
+            _approved_manifest("MigrationApprovalManifest")
+            | {
+                "source_schema_major": source_schema_major,
+                "target_schema_major": target_schema_major,
+            }
+        )
 
 
 @pytest.mark.parametrize(("source_epoch", "target_epoch"), [(8, 8), (8, 7)])
