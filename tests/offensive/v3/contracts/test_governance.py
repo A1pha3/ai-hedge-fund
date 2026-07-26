@@ -14,29 +14,63 @@ NOW = datetime(2026, 7, 19, 8, tzinfo=UTC)
 
 def _governance():
     from src.screening.offensive.v3.contracts import governance
+
     return governance
 
 
 def _trial(**overrides):
     from src.screening.offensive.v3.contracts.base import ExecutionMode
+
     payload = {
-        "family_id": "btst-family", "economic_lineage_id": "btst-lineage", "research_program_id": "program-1", "trial_id": "trial-1",
-        "baseline_portfolio_policy_fingerprint": HASH, "target_portfolio_policy_fingerprint": HASH,
-        "trust_bundle_hash": HASH, "registry_epoch": 2, "baseline_policy_activation_hash": HASH,
-        "target_policy_snapshot_registration_hash": HASH, "attempt_ledger_checkpoint_before_trial": HASH,
-        "attempt_budget_reservation_id": "attempt-1", "statistical_governance_policy_version": "gov-v1",
-        "champion_behavior_fingerprint": HASH, "challenger_behavior_fingerprint": HASH, "primary_metric": "log_growth",
-        "minimum_economic_effect": Decimal("0.001"), "weight_selection_rule": "frozen",
-        "trial_manifest_sealed_at": NOW, "enrollment_start": NOW + timedelta(days=1), "enrollment_end": NOW + timedelta(days=10),
-        "followup_finality_date": NOW + timedelta(days=20), "fixed_assessment_date": NOW + timedelta(days=21),
-        "execution_version": "t1-open", "cost_version": "cost-v1", "execution_mode": ExecutionMode.BROKER_CONFIRMED,
-        "benchmark_definition": "cash", "capacity_policy": "cap-v1", "tail_risk_policy": "tail-v1", "estimator": "frozen",
-        "one_sided_confidence_level": Decimal("0.95"), "bootstrap_method": "moving", "bootstrap_repetitions": 1000,
-        "bootstrap_seed": 7, "block_rule": "max-40", "ess_definition": "decision-day", "missing_censoring_itt_rule": "include",
-        "fold_boundaries": ("2026-Q3",), "purge_embargo": "t+10", "promotion_boolean_expression": "all_gates",
-        "multiplicity_policy": "alpha-spending", "broker_experiment_design": "clustered", "canonical_outcome_counting_rule": "plan-line",
-        "stage_loss_measurement_basis": "mark-to-market", "issuer_id": "governance", "issuer_capability": "governance.trial.manifest.v1",
-        "issued_at": NOW, "expires_at": NOW + timedelta(days=30), "schema_major": 2,
+        "family_id": "btst-family",
+        "economic_lineage_id": "btst-lineage",
+        "research_program_id": "program-1",
+        "trial_id": "trial-1",
+        "baseline_portfolio_policy_fingerprint": HASH,
+        "target_portfolio_policy_fingerprint": HASH,
+        "trust_bundle_hash": HASH,
+        "registry_epoch": 2,
+        "baseline_policy_activation_hash": HASH,
+        "target_policy_snapshot_registration_hash": HASH,
+        "attempt_ledger_checkpoint_before_trial": HASH,
+        "attempt_budget_reservation_id": "attempt-1",
+        "statistical_governance_policy_version": "gov-v1",
+        "champion_behavior_fingerprint": HASH,
+        "challenger_behavior_fingerprint": HASH,
+        "primary_metric": "log_growth",
+        "minimum_economic_effect": Decimal("0.001"),
+        "weight_selection_rule": "frozen",
+        "trial_manifest_sealed_at": NOW,
+        "enrollment_start": NOW + timedelta(days=1),
+        "enrollment_end": NOW + timedelta(days=10),
+        "followup_finality_date": NOW + timedelta(days=20),
+        "fixed_assessment_date": NOW + timedelta(days=21),
+        "execution_version": "t1-open",
+        "cost_version": "cost-v1",
+        "execution_mode": ExecutionMode.BROKER_CONFIRMED,
+        "benchmark_definition": "cash",
+        "capacity_policy": "cap-v1",
+        "tail_risk_policy": "tail-v1",
+        "estimator": "frozen",
+        "one_sided_confidence_level": Decimal("0.95"),
+        "bootstrap_method": "moving",
+        "bootstrap_repetitions": 1000,
+        "bootstrap_seed": 7,
+        "block_rule": "max-40",
+        "ess_definition": "decision-day",
+        "missing_censoring_itt_rule": "include",
+        "fold_boundaries": ("2026-Q3",),
+        "purge_embargo": "t+10",
+        "promotion_boolean_expression": "all_gates",
+        "multiplicity_policy": "alpha-spending",
+        "broker_experiment_design": "clustered",
+        "canonical_outcome_counting_rule": "plan-line",
+        "stage_loss_measurement_basis": "mark-to-market",
+        "issuer_id": "governance",
+        "issuer_capability": "governance.trial.manifest.v1",
+        "issued_at": NOW,
+        "expires_at": NOW + timedelta(days=30),
+        "schema_major": 2,
     }
     return payload | overrides
 
@@ -44,95 +78,155 @@ def _trial(**overrides):
 def test_trust_activation_and_recovery_are_candidates_with_epochs_and_predecessors():
     g = _governance()
     from src.screening.offensive.v3.contracts.base import ExecutionMode
-    bundle = g.TrustBundle.model_validate({"registry_epoch": 2, "predecessor_bundle_hash": HASH, "root_hash": HASH, "root_key_id": "root-1", "trusted_issuer_registry_hash": HASH, "issued_at": NOW, "expires_at": NOW + timedelta(days=1), "revoked_at": None, "issuer_id": "root", "issuer_capability": "root.trust.bundle.v1", "schema_major": 2})
+
+    bundle = g.TrustBundle.model_validate(
+        {
+            "registry_epoch": 2,
+            "predecessor_bundle_hash": HASH,
+            "root_hash": HASH,
+            "root_key_id": "root-1",
+            "trusted_issuer_registry_hash": HASH,
+            "issued_at": NOW,
+            "expires_at": NOW + timedelta(days=1),
+            "revoked_at": None,
+            "issuer_id": "root",
+            "issuer_capability": "root.trust.bundle.v1",
+            "schema_major": 2,
+        }
+    )
     assert bundle.registry_epoch == 2
-    with pytest.raises(ValidationError): g.TrustBundle.model_validate(bundle.model_dump() | {"registry_epoch": 0})
-    activation = {"portfolio_id": "portfolio-1", "broker_account_id": "account-1", "broker_account_fingerprint": HASH, "mode": ExecutionMode.BROKER_CONFIRMED, "policy_snapshot_hash": HASH, "predecessor_policy_activation_hash": HASH, "trust_bundle_hash": HASH, "registry_epoch": 2, "policy_epoch": 2, "authority_epoch": 2, "risk_epoch": 2, "effective_from": NOW, "expires_at": NOW + timedelta(days=1), "issuer_id": "governance", "issuer_capability": "governance.policy.activation.v1", "schema_major": 2}
+    with pytest.raises(ValidationError):
+        g.TrustBundle.model_validate(bundle.model_dump() | {"registry_epoch": 0})
+    activation = {
+        "portfolio_id": "portfolio-1",
+        "broker_account_id": "account-1",
+        "broker_account_fingerprint": HASH,
+        "mode": ExecutionMode.BROKER_CONFIRMED,
+        "policy_snapshot_hash": HASH,
+        "predecessor_policy_activation_hash": HASH,
+        "trust_bundle_hash": HASH,
+        "registry_epoch": 2,
+        "policy_epoch": 2,
+        "authority_epoch": 2,
+        "risk_epoch": 2,
+        "effective_from": NOW,
+        "expires_at": NOW + timedelta(days=1),
+        "issuer_id": "governance",
+        "issuer_capability": "governance.policy.activation.v1",
+        "schema_major": 2,
+    }
     assert g.PolicyActivation.model_validate(activation).portfolio_id == "portfolio-1"
-    with pytest.raises(ValidationError): g.PolicyActivation.model_validate({"policy_version": 1})
-    recovery = {"portfolio_id": "portfolio-1", "broker_account_id": "account-1", "broker_account_fingerprint": HASH, "mode": ExecutionMode.BROKER_CONFIRMED, "predecessor_risk_epoch_hash": HASH, "predecessor_authority_epoch_hash": HASH, "risk_epoch": 3, "authority_epoch": 3, "audited_capital_snapshot_id": "capital-1", "audited_capital_snapshot_hash": HASH, "inherited_risk_hash": HASH, "issued_at": NOW, "issuer_id": "governance", "issuer_capability": "governance.risk.epoch.start.v1", "schema_major": 2}
+    with pytest.raises(ValidationError):
+        g.PolicyActivation.model_validate({"policy_version": 1})
+    recovery = {
+        "portfolio_id": "portfolio-1",
+        "broker_account_id": "account-1",
+        "broker_account_fingerprint": HASH,
+        "mode": ExecutionMode.BROKER_CONFIRMED,
+        "predecessor_risk_epoch_hash": HASH,
+        "predecessor_authority_epoch_hash": HASH,
+        "risk_epoch": 3,
+        "authority_epoch": 3,
+        "audited_capital_snapshot_id": "capital-1",
+        "audited_capital_snapshot_hash": HASH,
+        "inherited_risk_hash": HASH,
+        "issued_at": NOW,
+        "issuer_id": "governance",
+        "issuer_capability": "governance.risk.epoch.start.v1",
+        "schema_major": 2,
+    }
     assert g.RiskEpochStarted.model_validate(recovery).risk_epoch == 3
-    with pytest.raises(ValidationError): g.PolicyActivation.model_validate(activation | {"expires_at": NOW})
-    with pytest.raises(ValidationError): g.RiskEpochStarted.model_validate(recovery | {"risk_epoch": False})
+    with pytest.raises(ValidationError):
+        g.PolicyActivation.model_validate(activation | {"expires_at": NOW})
+    with pytest.raises(ValidationError):
+        g.RiskEpochStarted.model_validate(recovery | {"risk_epoch": False})
 
 
 def test_trial_sap_and_stage_are_frozen_pre_signal_content():
     g = _governance()
     from src.screening.offensive.v3.contracts.base import ExecutionMode
+
     trial = g.TrialManifest.model_validate(_trial())
     assert trial.trial_manifest_sealed_at < trial.enrollment_start
-    with pytest.raises(ValidationError): g.TrialManifest.model_validate(_trial(enrollment_start=NOW))
-    sap = {"sap_id": "sap-1", "trial_manifest_hash": HASH, "research_program_id": "program-1", "economic_lineage_id": "btst-lineage", "primary_metric": "log_growth", "one_sided_confidence_level": Decimal("0.95"), "bootstrap_method": "moving", "repetitions": 1000, "seed": 7, "block_rule": "40", "multiplicity_policy": "alpha", "alpha_or_evalue_budget_consumption_id": "alpha-1", "sealed_at": NOW, "issuer_id": "governance", "issuer_capability": "governance.sap.v1", "schema_major": 2}
+    with pytest.raises(ValidationError):
+        g.TrialManifest.model_validate(_trial(enrollment_start=NOW))
+    sap = {
+        "sap_id": "sap-1",
+        "trial_manifest_hash": HASH,
+        "research_program_id": "program-1",
+        "economic_lineage_id": "btst-lineage",
+        "primary_metric": "log_growth",
+        "one_sided_confidence_level": Decimal("0.95"),
+        "bootstrap_method": "moving",
+        "repetitions": 1000,
+        "seed": 7,
+        "block_rule": "40",
+        "multiplicity_policy": "alpha",
+        "alpha_or_evalue_budget_consumption_id": "alpha-1",
+        "sealed_at": NOW,
+        "issuer_id": "governance",
+        "issuer_capability": "governance.sap.v1",
+        "schema_major": 2,
+    }
     assert g.StatisticalAnalysisPlan.model_validate(sap).sap_id == "sap-1"
-    stage = {"stage_id": "stage-1", "trial_manifest_hash": HASH, "statistical_analysis_plan_hash": HASH, "research_program_id": "program-1", "economic_lineage_id": "btst-lineage", "baseline_portfolio_policy_fingerprint": HASH, "target_portfolio_policy_fingerprint": HASH, "execution_version": "t1-open", "cost_version": "cost-v1", "governance_policy_version": "gov-v1", "execution_mode": ExecutionMode.BROKER_CONFIRMED, "stage_sample_reservation_id": "reserve-1", "alpha_sample_consumption_id": "alpha-1", "alpha_or_evalue_budget_consumption_id": "alpha-e-1", "attempt_ledger_checkpoint_hash": HASH, "stage_loss_budget_id": "stage-loss-1", "stage_loss_version": 1, "enrollment_start": NOW + timedelta(days=1), "followup_finality_date": NOW + timedelta(days=20), "fixed_assessment_date": NOW + timedelta(days=21), "maximum_loss_budget_cents": 100, "promotion_boolean_expression": "all", "issued_at": NOW, "issuer_id": "governance", "issuer_capability": "governance.stage.manifest.v1", "schema_major": 2}
+    stage = {
+        "stage_id": "stage-1",
+        "trial_manifest_hash": HASH,
+        "statistical_analysis_plan_hash": HASH,
+        "research_program_id": "program-1",
+        "economic_lineage_id": "btst-lineage",
+        "baseline_portfolio_policy_fingerprint": HASH,
+        "target_portfolio_policy_fingerprint": HASH,
+        "execution_version": "t1-open",
+        "cost_version": "cost-v1",
+        "governance_policy_version": "gov-v1",
+        "execution_mode": ExecutionMode.BROKER_CONFIRMED,
+        "stage_sample_reservation_id": "reserve-1",
+        "alpha_sample_consumption_id": "alpha-1",
+        "alpha_or_evalue_budget_consumption_id": "alpha-e-1",
+        "attempt_ledger_checkpoint_hash": HASH,
+        "stage_loss_budget_id": "stage-loss-1",
+        "stage_loss_version": 1,
+        "enrollment_start": NOW + timedelta(days=1),
+        "followup_finality_date": NOW + timedelta(days=20),
+        "fixed_assessment_date": NOW + timedelta(days=21),
+        "maximum_loss_budget_cents": 100,
+        "promotion_boolean_expression": "all",
+        "issued_at": NOW,
+        "issuer_id": "governance",
+        "issuer_capability": "governance.stage.manifest.v1",
+        "schema_major": 2,
+    }
     assert g.StageManifest.model_validate(stage).maximum_loss_budget_cents == 100
 
 
 def test_exploration_recovery_and_budget_cross_constraints_fail_closed():
-    from src.screening.offensive.v3.contracts.authorization import CapitalAuthorizationEnvelope
+    from src.screening.offensive.v3.contracts.authorization import (
+        CapitalAuthorizationEnvelope,
+    )
     from src.screening.offensive.v3.contracts.authorization import AuthorizationKind
     from src.screening.offensive.v3.contracts.governance import GrantKind
-    exploration = _envelope(authorization_kind=AuthorizationKind.EXPLORATION, issuer_capability="governance.exploration.envelope.v1", lineage_grants=(_grant(grant_kind=GrantKind.EXPLORATION),), exploration_aggregate_gross_cap=Decimal("0.02"), portfolio_gross_cap=Decimal("0.02"))
-    assert CapitalAuthorizationEnvelope.model_validate(exploration).authorization_kind.value == "EXPLORATION"
-    for override in ({"mode": "manual_confirmed"}, {"exploration_aggregate_gross_cap": Decimal("0.021")}, {"portfolio_gross_cap": Decimal("0.03")}):
-        with pytest.raises(ValidationError): CapitalAuthorizationEnvelope.model_validate(exploration | override)
-    recovery = _envelope(authorization_kind=AuthorizationKind.RECOVERY, issuer_capability="governance.recovery.envelope.v1", portfolio_gross_cap=Decimal("0.02"), recovery_inherited_risk_version=2, recovery_open_pending_risk_version=2, recovery_stage_program_loss_consumption_version=2, risk_epoch_started_hash=HASH, recovery_manifest_hash=HASH)
-    assert CapitalAuthorizationEnvelope.model_validate(recovery).authorization_kind.value == "RECOVERY"
-    with pytest.raises(ValidationError): CapitalAuthorizationEnvelope.model_validate(recovery | {"lineage_grants": (_grant(grant_kind=GrantKind.EXPLORATION),)})
 
-
-def test_exploration_caps_include_existing_edge_and_recovery_requires_edge_only_grants():
-    from src.screening.offensive.v3.contracts.authorization import CapitalAuthorizationEnvelope
-    from src.screening.offensive.v3.contracts.authorization import AuthorizationKind
-    from src.screening.offensive.v3.contracts.governance import GrantKind
-    edge = _grant(grant_id="edge", lineage_gross_cap=Decimal("0.02"))
-    exploration = _grant(grant_id="explore", grant_kind=GrantKind.EXPLORATION, lineage_gross_cap=Decimal("0.01"))
-    payload = _envelope(
+    exploration = _envelope(
         authorization_kind=AuthorizationKind.EXPLORATION,
         issuer_capability="governance.exploration.envelope.v1",
-        lineage_grants=(edge, exploration),
-        exploration_aggregate_gross_cap=Decimal("0.01"),
+        lineage_grants=(_grant(grant_kind=GrantKind.EXPLORATION),),
+        exploration_aggregate_gross_cap=Decimal("0.02"),
         portfolio_gross_cap=Decimal("0.02"),
     )
-    assert CapitalAuthorizationEnvelope.model_validate(payload).lineage_grants[0].grant_kind.value == "EDGE"
-    with pytest.raises(ValidationError):
-        CapitalAuthorizationEnvelope.model_validate(payload | {"exploration_aggregate_gross_cap": Decimal("0.005")})
-    recovery = _envelope(
-        authorization_kind=AuthorizationKind.RECOVERY, issuer_capability="governance.recovery.envelope.v1",
-        portfolio_gross_cap=Decimal("0.02"), recovery_inherited_risk_version=2,
-        recovery_open_pending_risk_version=2, recovery_stage_program_loss_consumption_version=2,
-        risk_epoch_started_hash=HASH, recovery_manifest_hash=HASH,
+    assert (
+        CapitalAuthorizationEnvelope.model_validate(
+            exploration
+        ).authorization_kind.value
+        == "EXPLORATION"
     )
-    with pytest.raises(ValidationError):
-        CapitalAuthorizationEnvelope.model_validate(recovery | {"recovery_inherited_risk_version": None})
-
-
-def test_envelope_cross_caps_are_fail_closed_without_overconstraining_existing_edge():
-    from src.screening.offensive.v3.contracts.authorization import AuthorizationKind, CapitalAuthorizationEnvelope
-    from src.screening.offensive.v3.contracts.governance import GrantKind
-    edge = _grant(grant_id="edge", lineage_gross_cap=Decimal("0.05"), capital_tier=5)
-    exploration = _grant(grant_id="explore", grant_kind=GrantKind.EXPLORATION, lineage_gross_cap=Decimal("0.02"))
-    payload = _envelope(authorization_kind=AuthorizationKind.EXPLORATION, issuer_capability="governance.exploration.envelope.v1", lineage_grants=(edge, exploration), portfolio_gross_cap=Decimal("0.07"), exploration_aggregate_gross_cap=Decimal("0.02"))
-    assert CapitalAuthorizationEnvelope.model_validate(payload).portfolio_gross_cap == Decimal("0.07")
-    for override in ({"exploration_aggregate_gross_cap": Decimal("0.01")}, {"lineage_grants": (_grant(lineage_gross_cap=Decimal("0.03")),)}, {"authorization_kind": AuthorizationKind.EDGE, "exploration_aggregate_gross_cap": Decimal("0.01")}):
-        with pytest.raises(ValidationError): CapitalAuthorizationEnvelope.model_validate(payload | override)
-
-
-def test_real_capital_modes_have_exact_account_binding_rules():
-    from src.screening.offensive.v3.contracts.authorization import CapitalAuthorizationEnvelope
-    from src.screening.offensive.v3.contracts.base import ExecutionMode
-    payload = _envelope()
-    assert CapitalAuthorizationEnvelope.model_validate(payload | {"mode": ExecutionMode.MANUAL_CONFIRMED, "broker_account_fingerprint": None}).broker_account_id == "account-1"
     for override in (
-        {"mode": ExecutionMode.DAILY_BAR_PROXY, "broker_account_id": "account-1", "broker_account_fingerprint": None},
-        {"mode": ExecutionMode.MANUAL_CONFIRMED, "broker_account_id": None, "broker_account_fingerprint": None},
-        {"mode": ExecutionMode.MANUAL_CONFIRMED, "broker_account_fingerprint": HASH},
+        {"mode": "manual_confirmed"},
+        {"exploration_aggregate_gross_cap": Decimal("0.021")},
+        {"portfolio_gross_cap": Decimal("0.03")},
     ):
-        with pytest.raises(ValidationError): CapitalAuthorizationEnvelope.model_validate(payload | override)
-
-
-def test_recovery_fields_are_required_only_for_recovery():
-    from src.screening.offensive.v3.contracts.authorization import AuthorizationKind, CapitalAuthorizationEnvelope
+        with pytest.raises(ValidationError):
+            CapitalAuthorizationEnvelope.model_validate(exploration | override)
     recovery = _envelope(
         authorization_kind=AuthorizationKind.RECOVERY,
         issuer_capability="governance.recovery.envelope.v1",
@@ -143,38 +237,336 @@ def test_recovery_fields_are_required_only_for_recovery():
         risk_epoch_started_hash=HASH,
         recovery_manifest_hash=HASH,
     )
-    assert CapitalAuthorizationEnvelope.model_validate(recovery).risk_epoch_started_hash == HASH
-    with pytest.raises(ValidationError): CapitalAuthorizationEnvelope.model_validate(_envelope(risk_epoch_started_hash=HASH))
-    with pytest.raises(ValidationError): CapitalAuthorizationEnvelope.model_validate(recovery | {"risk_epoch_started_hash": None})
+    assert (
+        CapitalAuthorizationEnvelope.model_validate(recovery).authorization_kind.value
+        == "RECOVERY"
+    )
+    with pytest.raises(ValidationError):
+        CapitalAuthorizationEnvelope.model_validate(
+            recovery | {"lineage_grants": (_grant(grant_kind=GrantKind.EXPLORATION),)}
+        )
+
+
+def test_exploration_caps_include_existing_edge_and_recovery_requires_edge_only_grants():
+    from src.screening.offensive.v3.contracts.authorization import (
+        CapitalAuthorizationEnvelope,
+    )
+    from src.screening.offensive.v3.contracts.authorization import AuthorizationKind
+    from src.screening.offensive.v3.contracts.governance import GrantKind
+
+    edge = _grant(grant_id="edge", lineage_gross_cap=Decimal("0.02"))
+    exploration = _grant(
+        grant_id="explore",
+        grant_kind=GrantKind.EXPLORATION,
+        lineage_gross_cap=Decimal("0.01"),
+    )
+    payload = _envelope(
+        authorization_kind=AuthorizationKind.EXPLORATION,
+        issuer_capability="governance.exploration.envelope.v1",
+        lineage_grants=(edge, exploration),
+        exploration_aggregate_gross_cap=Decimal("0.01"),
+        portfolio_gross_cap=Decimal("0.02"),
+    )
+    assert (
+        CapitalAuthorizationEnvelope.model_validate(payload)
+        .lineage_grants[0]
+        .grant_kind.value
+        == "EDGE"
+    )
+    with pytest.raises(ValidationError):
+        CapitalAuthorizationEnvelope.model_validate(
+            payload | {"exploration_aggregate_gross_cap": Decimal("0.005")}
+        )
+    recovery = _envelope(
+        authorization_kind=AuthorizationKind.RECOVERY,
+        issuer_capability="governance.recovery.envelope.v1",
+        portfolio_gross_cap=Decimal("0.02"),
+        recovery_inherited_risk_version=2,
+        recovery_open_pending_risk_version=2,
+        recovery_stage_program_loss_consumption_version=2,
+        risk_epoch_started_hash=HASH,
+        recovery_manifest_hash=HASH,
+    )
+    with pytest.raises(ValidationError):
+        CapitalAuthorizationEnvelope.model_validate(
+            recovery | {"recovery_inherited_risk_version": None}
+        )
+
+
+def test_envelope_cross_caps_are_fail_closed_without_overconstraining_existing_edge():
+    from src.screening.offensive.v3.contracts.authorization import (
+        AuthorizationKind,
+        CapitalAuthorizationEnvelope,
+    )
+    from src.screening.offensive.v3.contracts.governance import GrantKind
+
+    edge = _grant(grant_id="edge", lineage_gross_cap=Decimal("0.05"), capital_tier=5)
+    exploration = _grant(
+        grant_id="explore",
+        grant_kind=GrantKind.EXPLORATION,
+        lineage_gross_cap=Decimal("0.02"),
+    )
+    payload = _envelope(
+        authorization_kind=AuthorizationKind.EXPLORATION,
+        issuer_capability="governance.exploration.envelope.v1",
+        lineage_grants=(edge, exploration),
+        portfolio_gross_cap=Decimal("0.07"),
+        exploration_aggregate_gross_cap=Decimal("0.02"),
+    )
+    assert CapitalAuthorizationEnvelope.model_validate(
+        payload
+    ).portfolio_gross_cap == Decimal("0.07")
+    for override in (
+        {"exploration_aggregate_gross_cap": Decimal("0.01")},
+        {"lineage_grants": (_grant(lineage_gross_cap=Decimal("0.03")),)},
+        {
+            "authorization_kind": AuthorizationKind.EDGE,
+            "exploration_aggregate_gross_cap": Decimal("0.01"),
+        },
+    ):
+        with pytest.raises(ValidationError):
+            CapitalAuthorizationEnvelope.model_validate(payload | override)
+
+
+def test_real_capital_modes_have_exact_account_binding_rules():
+    from src.screening.offensive.v3.contracts.authorization import (
+        CapitalAuthorizationEnvelope,
+    )
+    from src.screening.offensive.v3.contracts.base import ExecutionMode
+
+    payload = _envelope()
+    assert (
+        CapitalAuthorizationEnvelope.model_validate(
+            payload
+            | {
+                "mode": ExecutionMode.MANUAL_CONFIRMED,
+                "broker_account_fingerprint": None,
+            }
+        ).broker_account_id
+        == "account-1"
+    )
+    for override in (
+        {
+            "mode": ExecutionMode.DAILY_BAR_PROXY,
+            "broker_account_id": "account-1",
+            "broker_account_fingerprint": None,
+        },
+        {
+            "mode": ExecutionMode.MANUAL_CONFIRMED,
+            "broker_account_id": None,
+            "broker_account_fingerprint": None,
+        },
+        {"mode": ExecutionMode.MANUAL_CONFIRMED, "broker_account_fingerprint": HASH},
+    ):
+        with pytest.raises(ValidationError):
+            CapitalAuthorizationEnvelope.model_validate(payload | override)
+
+
+def test_recovery_fields_are_required_only_for_recovery():
+    from src.screening.offensive.v3.contracts.authorization import (
+        AuthorizationKind,
+        CapitalAuthorizationEnvelope,
+    )
+
+    recovery = _envelope(
+        authorization_kind=AuthorizationKind.RECOVERY,
+        issuer_capability="governance.recovery.envelope.v1",
+        portfolio_gross_cap=Decimal("0.02"),
+        recovery_inherited_risk_version=2,
+        recovery_open_pending_risk_version=2,
+        recovery_stage_program_loss_consumption_version=2,
+        risk_epoch_started_hash=HASH,
+        recovery_manifest_hash=HASH,
+    )
+    assert (
+        CapitalAuthorizationEnvelope.model_validate(recovery).risk_epoch_started_hash
+        == HASH
+    )
+    with pytest.raises(ValidationError):
+        CapitalAuthorizationEnvelope.model_validate(
+            _envelope(risk_epoch_started_hash=HASH)
+        )
+    with pytest.raises(ValidationError):
+        CapitalAuthorizationEnvelope.model_validate(
+            recovery | {"risk_epoch_started_hash": None}
+        )
 
 
 def test_authorization_status_and_entry_fence_are_strict_monotonic_candidates():
     g = _governance()
     from src.screening.offensive.v3.contracts.base import ExecutionMode
-    status = g.AuthorizationStatus.model_validate({"portfolio_id": "portfolio-1", "broker_account_id": "account-1", "broker_account_fingerprint": HASH, "mode": ExecutionMode.BROKER_CONFIRMED, "authorization_id": "a-1", "authorization_version": 2, "authorization_envelope_hash": HASH, "evidence_set_merkle_root": HASH, "policy_activation_hash": HASH, "trust_bundle_hash": HASH, "registry_epoch": 2, "policy_epoch": 2, "authority_epoch": 2, "risk_epoch": 2, "status_version": 3, "predecessor_status_hash": HASH, "status": g.AuthorizationLifecycle.REVALIDATION_REQUIRED, "entry_fence_version": 4, "as_of": NOW, "schema_major": 2})
+
+    status = g.AuthorizationStatus.model_validate(
+        {
+            "portfolio_id": "portfolio-1",
+            "broker_account_id": "account-1",
+            "broker_account_fingerprint": HASH,
+            "mode": ExecutionMode.BROKER_CONFIRMED,
+            "authorization_id": "a-1",
+            "authorization_version": 2,
+            "authorization_envelope_hash": HASH,
+            "evidence_set_merkle_root": HASH,
+            "policy_activation_hash": HASH,
+            "trust_bundle_hash": HASH,
+            "registry_epoch": 2,
+            "policy_epoch": 2,
+            "authority_epoch": 2,
+            "risk_epoch": 2,
+            "status_version": 3,
+            "predecessor_status_hash": HASH,
+            "status": g.AuthorizationLifecycle.REVALIDATION_REQUIRED,
+            "entry_fence_version": 4,
+            "as_of": NOW,
+            "schema_major": 2,
+        }
+    )
     assert status.entry_fence_version == 4
-    fence = g.EntryFenceRaised.model_validate({"fence_id": "fence-1", "portfolio_id": "portfolio-1", "broker_account_id": "account-1", "broker_account_fingerprint": HASH, "mode": ExecutionMode.BROKER_CONFIRMED, "fence_version": 4, "predecessor_fence_hash": HASH, "authority_epoch": 2, "risk_epoch": 2, "authorization_status_version": 3, "reason": "evidence-revision", "cause_revision_id": "revision-1", "cause_revision_hash": HASH, "raised_at": NOW, "affected_authorization_id": "a-1", "affected_authorization_version": 2, "affected_authorization_envelope_hash": HASH, "affected_evidence_set_merkle_root": HASH, "issuer_id": "gateway", "issuer_capability": "gateway.entry.fence.raise.v1", "schema_major": 2})
+    fence = g.EntryFenceRaised.model_validate(
+        {
+            "fence_id": "fence-1",
+            "portfolio_id": "portfolio-1",
+            "broker_account_id": "account-1",
+            "broker_account_fingerprint": HASH,
+            "mode": ExecutionMode.BROKER_CONFIRMED,
+            "fence_version": 4,
+            "predecessor_fence_hash": HASH,
+            "authority_epoch": 2,
+            "risk_epoch": 2,
+            "authorization_status_version": 3,
+            "reason": "evidence-revision",
+            "cause_revision_id": "revision-1",
+            "cause_revision_hash": HASH,
+            "raised_at": NOW,
+            "affected_authorization_id": "a-1",
+            "affected_authorization_version": 2,
+            "affected_authorization_envelope_hash": HASH,
+            "affected_evidence_set_merkle_root": HASH,
+            "issuer_id": "gateway",
+            "issuer_capability": "gateway.entry.fence.raise.v1",
+            "schema_major": 2,
+        }
+    )
     assert fence.fence_version == 4
-    with pytest.raises(ValidationError): g.EntryFenceRaised.model_validate(fence.model_dump() | {"unexpected": "field"})
-    with pytest.raises(ValidationError): g.EntryFenceRaised.model_validate(fence.model_dump() | {"issuer_capability": "governance.policy.activation.v1"})
+    with pytest.raises(ValidationError):
+        g.EntryFenceRaised.model_validate(fence.model_dump() | {"unexpected": "field"})
+    with pytest.raises(ValidationError):
+        g.EntryFenceRaised.model_validate(
+            fence.model_dump()
+            | {"issuer_capability": "governance.policy.activation.v1"}
+        )
 
 
 def test_trust_bundle_rejects_bad_time_revocation_and_non_native_epoch():
     g = _governance()
-    payload = {"registry_epoch": 2, "predecessor_bundle_hash": HASH, "root_hash": HASH, "root_key_id": "root-1", "trusted_issuer_registry_hash": HASH, "issued_at": NOW, "expires_at": NOW + timedelta(days=1), "revoked_at": None, "issuer_id": "root", "issuer_capability": "root.trust.bundle.v1", "schema_major": 2}
-    for override in ({"expires_at": NOW}, {"revoked_at": NOW - timedelta(seconds=1)}, {"registry_epoch": True}, {"registry_epoch": 2.0}):
-        with pytest.raises(ValidationError): g.TrustBundle.model_validate(payload | override)
+    payload = {
+        "registry_epoch": 2,
+        "predecessor_bundle_hash": HASH,
+        "root_hash": HASH,
+        "root_key_id": "root-1",
+        "trusted_issuer_registry_hash": HASH,
+        "issued_at": NOW,
+        "expires_at": NOW + timedelta(days=1),
+        "revoked_at": None,
+        "issuer_id": "root",
+        "issuer_capability": "root.trust.bundle.v1",
+        "schema_major": 2,
+    }
+    for override in (
+        {"expires_at": NOW},
+        {"revoked_at": NOW - timedelta(seconds=1)},
+        {"registry_epoch": True},
+        {"registry_epoch": 2.0},
+    ):
+        with pytest.raises(ValidationError):
+            g.TrustBundle.model_validate(payload | override)
 
 
-@pytest.mark.parametrize(("name", "capability"), [("MigrationApprovalManifest", "governance.migration.approval.v1"), ("BrokerEnablementManifest", "governance.broker.enablement.v1"), ("DisasterRecoveryManifest", "governance.disaster.recovery.v1")])
-def test_sensitive_manifests_require_distinct_capability_and_two_approvers(name, capability):
-    g = _governance(); cls = getattr(g, name)
-    payload = {"manifest_id": name, "portfolio_id": "portfolio-1", "broker_account_id": "account-1", "issued_at": NOW, "expires_at": NOW + timedelta(hours=1), "one_shot": True, "approver_ids": ("alice", "bob"), "issuer_id": "governance", "issuer_capability": capability, "schema_major": 2}
-    if name == "MigrationApprovalManifest": payload |= {"source_portfolio_id": "v2", "target_portfolio_id": "portfolio-1", "source_writer_id": "v2-writer", "target_writer_id": "v3-writer", "migration_program_hash": HASH, "conservation_formula_hash": HASH, "live_order_adoption_hash": HASH, "credential_fencing_hash": HASH, "rollback_dr_hash": HASH}
-    elif name == "BrokerEnablementManifest": payload |= {"broker_account_fingerprint": HASH, "trusted_clock_hash": HASH, "raw_envelope_policy_hash": HASH, "pagination_cursor_retention_hash": HASH, "client_order_idempotency_hash": HASH, "auction_tif_cutoff_hash": HASH, "exit_rate_limit_hash": HASH, "credential_session_network_fencing_hash": HASH}
-    else: payload |= {"backup_root_hash": HASH, "durable_cursor": "cursor-1", "target_writer_id": "recovery-writer", "recovery_epoch": 2, "fencing_epoch": 2, "reconcile_before_entry": True}
+@pytest.mark.parametrize(
+    ("name", "capability"),
+    [
+        ("MigrationApprovalManifest", "governance.migration.approval.v1"),
+        ("BrokerEnablementManifest", "governance.broker.enablement.v1"),
+        ("DisasterRecoveryManifest", "governance.disaster.recovery.v1"),
+    ],
+)
+def test_sensitive_manifests_require_distinct_capability_and_two_approvers(
+    name, capability
+):
+    g = _governance()
+    cls = getattr(g, name)
+    payload = {
+        "manifest_id": name,
+        "portfolio_id": "portfolio-1",
+        "broker_account_id": "account-1",
+        "issued_at": NOW,
+        "expires_at": NOW + timedelta(hours=1),
+        "one_shot": True,
+        "approver_ids": ("alice", "bob"),
+        "issuer_id": "governance",
+        "issuer_capability": capability,
+        "schema_major": 2,
+    }
+    if name == "MigrationApprovalManifest":
+        payload |= {
+            "source_portfolio_id": "v2",
+            "target_portfolio_id": "portfolio-1",
+            "source_broker_account_id": "v2-account",
+            "target_broker_account_id": "account-1",
+            "source_schema_major": 2,
+            "target_schema_major": 2,
+            "source_writer_id": "v2-writer",
+            "target_writer_id": "v3-writer",
+            "migration_program_hash": HASH,
+            "allowed_from": NOW,
+            "allowed_until": NOW + timedelta(minutes=30),
+            "source_state_root_hash": HASH,
+            "target_state_root_hash": HASH,
+            "source_stream_version": 1,
+            "target_import_version": 1,
+            "shared_inbox_cursor": "shared-1",
+            "handoff_cursor": "handoff-1",
+            "conservation_formula_hash": HASH,
+            "live_order_adoption_hash": HASH,
+            "credential_fencing_hash": HASH,
+            "writer_fencing_epoch": 1,
+            "rollback_dr_hash": HASH,
+        }
+    elif name == "BrokerEnablementManifest":
+        payload |= {
+            "broker_account_fingerprint": HASH,
+            "broker_environment_fingerprint": HASH,
+            "trusted_clock_hash": HASH,
+            "authenticated_raw_envelope_hash": HASH,
+            "pagination_cursor_retention_hash": HASH,
+            "client_order_idempotency_hash": HASH,
+            "auction_tif_cutoff_hash": HASH,
+            "exit_rate_limit_hash": HASH,
+            "credential_session_network_fencing_hash": HASH,
+        }
+    else:
+        payload |= {
+            "broker_account_fingerprint": HASH,
+            "backup_root_hash": HASH,
+            "durable_inbox_cursor": "inbox-1",
+            "durable_outbox_cursor": "outbox-1",
+            "broker_cursor": "broker-1",
+            "source_writer_id": "source-writer",
+            "target_writer_id": "recovery-writer",
+            "recovery_epoch": 2,
+            "fencing_epoch": 2,
+            "reconciliation_proof_hash": HASH,
+            "reconcile_before_entry": True,
+        }
     assert cls.model_validate(payload).issuer_capability == capability
-    with pytest.raises(ValidationError): cls.model_validate(payload | {"issuer_capability": "governance.other.v1"})
-    with pytest.raises(ValidationError): cls.model_validate(payload | {"approver_ids": ("alice",)})
-    for override in ({"expires_at": NOW}, {"one_shot": False}, {"approver_ids": ("alice", "alice")}, {"extra_field": True}):
-        with pytest.raises(ValidationError): cls.model_validate(payload | override)
+    with pytest.raises(ValidationError):
+        cls.model_validate(payload | {"issuer_capability": "governance.other.v1"})
+    with pytest.raises(ValidationError):
+        cls.model_validate(payload | {"approver_ids": ("alice",)})
+    for override in (
+        {"expires_at": NOW},
+        {"one_shot": False},
+        {"approver_ids": ("alice", "alice")},
+        {"extra_field": True},
+    ):
+        with pytest.raises(ValidationError):
+            cls.model_validate(payload | override)
