@@ -1,12 +1,13 @@
 {
   "ApprovalAttestationBinding": {
-    "artifact_hash": "4b127249a4a662d114c4eda5e5221a88bd0ed9e1b6de0a1bfaf67859a1c20e9b",
+    "artifact_hash": "73b662d563e0725d122db04eaaa4f495939c1c6e5671f91a8e862ac8810cb48e",
     "hash_domain": "ai-hedge-fund.v3.governance.approval-attestation-binding.v1",
     "payload": {
       "approval_artifact_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "approval_capability": "governance.manifest.approve.v1",
       "approval_scope": "MIGRATION_APPROVAL_MANIFEST",
       "approved_at": "2026-07-19T07:58:00Z",
+      "approved_manifest_preimage_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "approver_id": "alice",
       "key_id": "alice-key",
       "schema_major": 2
@@ -47,7 +48,9 @@
     }
   },
   "BrokerEnablementManifest": {
-    "artifact_hash": "d7e19782c2b3c5e5147ad8e8624d7edea91503b25c6e89376320ac376dc0eaf6",
+    "approval_preimage_domain": "ai-hedge-fund.v3.governance.broker-enablement-manifest.approval-preimage.v1",
+    "approval_preimage_hash": "8a9526f1b0a6dbba9ee4961faa8a347cf0e0c50ec42b9277dcb681eea9ddbc3f",
+    "artifact_hash": "7557f2a7eca10186359468ac59718553ce7db00cf077e6855d5a4d251ebb60fa",
     "hash_domain": "ai-hedge-fund.v3.governance.broker-enablement-manifest.v1",
     "payload": {
       "approval_attestations": [
@@ -56,6 +59,7 @@
           "approval_capability": "governance.manifest.approve.v1",
           "approval_scope": "BROKER_ENABLEMENT_MANIFEST",
           "approved_at": "2026-07-19T07:58:00Z",
+          "approved_manifest_preimage_hash": "8a9526f1b0a6dbba9ee4961faa8a347cf0e0c50ec42b9277dcb681eea9ddbc3f",
           "approver_id": "alice",
           "key_id": "alice-key",
           "schema_major": 2
@@ -65,6 +69,7 @@
           "approval_capability": "governance.manifest.approve.v1",
           "approval_scope": "BROKER_ENABLEMENT_MANIFEST",
           "approved_at": "2026-07-19T07:59:00Z",
+          "approved_manifest_preimage_hash": "8a9526f1b0a6dbba9ee4961faa8a347cf0e0c50ec42b9277dcb681eea9ddbc3f",
           "approver_id": "bob",
           "key_id": "bob-key",
           "schema_major": 2
@@ -194,7 +199,9 @@
     }
   },
   "DisasterRecoveryManifest": {
-    "artifact_hash": "3f5ef32a8b7ad051c5b021349419f6314f795dcb3f5f72957109090a4c7f90e0",
+    "approval_preimage_domain": "ai-hedge-fund.v3.governance.disaster-recovery-manifest.approval-preimage.v1",
+    "approval_preimage_hash": "a29fda7c70b2f781865a6bc1d378dd1910e9a36da602384cbc05077706ef8758",
+    "artifact_hash": "2ab9e5cf7f49481e7b81951a89cfb0f6dd9ad12bcf38915f1bac2d068779f745",
     "hash_domain": "ai-hedge-fund.v3.governance.disaster-recovery-manifest.v1",
     "payload": {
       "approval_attestations": [
@@ -203,6 +210,7 @@
           "approval_capability": "governance.manifest.approve.v1",
           "approval_scope": "DISASTER_RECOVERY_MANIFEST",
           "approved_at": "2026-07-19T07:58:00Z",
+          "approved_manifest_preimage_hash": "a29fda7c70b2f781865a6bc1d378dd1910e9a36da602384cbc05077706ef8758",
           "approver_id": "alice",
           "key_id": "alice-key",
           "schema_major": 2
@@ -212,6 +220,7 @@
           "approval_capability": "governance.manifest.approve.v1",
           "approval_scope": "DISASTER_RECOVERY_MANIFEST",
           "approved_at": "2026-07-19T07:59:00Z",
+          "approved_manifest_preimage_hash": "a29fda7c70b2f781865a6bc1d378dd1910e9a36da602384cbc05077706ef8758",
           "approver_id": "bob",
           "key_id": "bob-key",
           "schema_major": 2
@@ -251,7 +260,7 @@
     }
   },
   "EntryFenceAcknowledgement": {
-    "artifact_hash": "37d4b7c0ea7d427c3e7a833772c5758f881523eef23b807ecf98a96b16580034",
+    "artifact_hash": "1708ccb7cd4b7d239d7c1224c7a12f89809c7eeef2a76d6c42d4ea24f1be2ad6",
     "hash_domain": "ai-hedge-fund.v3.governance.entry-fence-acknowledgement.v1",
     "payload": {
       "acknowledgement_id": "fence-ack-1",
@@ -263,6 +272,7 @@
       "durably_acknowledged_at": "2026-07-19T08:00:01Z",
       "entry_fence_hash": "31d0499a0785f4073aa4ba3de84b923deb696600183bc33189edc5aebddb80fc",
       "fence_id": "fence-1",
+      "fence_raised_at": "2026-07-19T08:00:00Z",
       "fence_version": 4,
       "gateway_fencing_epoch": 9,
       "gateway_writer_id": "capital-gateway-writer",
@@ -343,7 +353,9 @@
     }
   },
   "MigrationApprovalManifest": {
-    "artifact_hash": "85c7eceb08f5e5699c3a35d3c0ebe396ea90ed67afed03ec7fc3421f681ebbf8",
+    "approval_preimage_domain": "ai-hedge-fund.v3.governance.migration-approval-manifest.approval-preimage.v1",
+    "approval_preimage_hash": "eb7c310bd4078a44cae3766a650e66e28f6373fd72b196e02179d5720b5cef71",
+    "artifact_hash": "15fd094f67410409d1a2411e3b5f5040e4407bc4c0dc94545340998b4bd3d0a7",
     "hash_domain": "ai-hedge-fund.v3.governance.migration-approval-manifest.v1",
     "payload": {
       "allowed_from": "2026-07-19T08:00:00Z",
@@ -354,6 +366,7 @@
           "approval_capability": "governance.manifest.approve.v1",
           "approval_scope": "MIGRATION_APPROVAL_MANIFEST",
           "approved_at": "2026-07-19T07:58:00Z",
+          "approved_manifest_preimage_hash": "eb7c310bd4078a44cae3766a650e66e28f6373fd72b196e02179d5720b5cef71",
           "approver_id": "alice",
           "key_id": "alice-key",
           "schema_major": 2
@@ -363,6 +376,7 @@
           "approval_capability": "governance.manifest.approve.v1",
           "approval_scope": "MIGRATION_APPROVAL_MANIFEST",
           "approved_at": "2026-07-19T07:59:00Z",
+          "approved_manifest_preimage_hash": "eb7c310bd4078a44cae3766a650e66e28f6373fd72b196e02179d5720b5cef71",
           "approver_id": "bob",
           "key_id": "bob-key",
           "schema_major": 2
@@ -558,7 +572,7 @@
     }
   },
   "TrialManifest": {
-    "artifact_hash": "a54e6ecb4695e4f7db8aef79d0cb1a80b55a59146dc0bf405ff200e5107cddb0",
+    "artifact_hash": "f392e9bd2ed7e1c58a51f7097782a928f3e4372d2b2d1cf4fba646afa21a5926",
     "hash_domain": "ai-hedge-fund.v3.governance.trial-manifest.v1",
     "payload": {
       "attempt_budget_reservation_id": "attempt-1",
@@ -593,7 +607,7 @@
       "issued_at": "2026-07-19T08:00:00Z",
       "issuer_capability": "governance.trial.manifest.v1",
       "issuer_id": "governance",
-      "minimum_economic_effect": "0.001",
+      "minimum_economic_effect": "0.0000001",
       "missing_censoring_itt_rule": "include",
       "multiplicity_policy": "alpha-spending",
       "one_sided_confidence_level": "0.95",

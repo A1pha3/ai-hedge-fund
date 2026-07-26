@@ -33,8 +33,9 @@ from test_governance import HASH, NOW, _trial
 from test_governance_remediation_b import (
     _approval_attestations,
     _authorization_status,
+    _broker_manifest,
+    _dr_manifest,
     _entry_fence,
-    _manifest_common,
     _migration_manifest,
 )
 
@@ -179,6 +180,7 @@ def task2_hash_exemplars() -> dict[str, object]:
             "risk_epoch": fence.risk_epoch,
             "authorization_status_hash": fence.predecessor_authorization_status_hash,
             "authorization_status_version": fence.authorization_status_version,
+            "fence_raised_at": fence.raised_at,
             "durably_acknowledged_at": NOW + timedelta(seconds=1),
             "gateway_writer_id": "capital-gateway-writer",
             "gateway_writer_version": 7,
@@ -188,53 +190,8 @@ def task2_hash_exemplars() -> dict[str, object]:
             "schema_major": 2,
         }
     )
-    broker = BrokerEnablementManifest.model_validate(
-        _manifest_common(
-            "BROKER_ENABLEMENT_MANIFEST", "governance.broker.enablement.v1"
-        )
-        | {
-            "broker_account_fingerprint": HASH,
-            "broker_environment_fingerprint": HASH,
-            "base_currency": "CNY",
-            "currency_definition_fingerprint": HASH,
-            "trusted_clock_hash": HASH,
-            "authenticated_raw_envelope_hash": HASH,
-            "pagination_cursor_retention_hash": HASH,
-            "client_order_idempotency_hash": HASH,
-            "auction_tif_cutoff_hash": HASH,
-            "exit_rate_limit_hash": HASH,
-            "credential_session_network_fencing_hash": HASH,
-        }
-    )
-    dr = DisasterRecoveryManifest.model_validate(
-        _manifest_common(
-            "DISASTER_RECOVERY_MANIFEST", "governance.disaster.recovery.v1"
-        )
-        | {
-            "broker_account_fingerprint": HASH,
-            "trust_bundle_hash": HASH,
-            "registry_epoch": 2,
-            "policy_activation_hash": HASH,
-            "policy_epoch": 2,
-            "authority_epoch": 2,
-            "risk_epoch": 2,
-            "authorization_status_hash": HASH,
-            "authorization_status_version": 4,
-            "entry_fence_hash": HASH,
-            "entry_fence_version": 5,
-            "backup_root_hash": HASH,
-            "durable_inbox_cursor": "inbox-1",
-            "durable_outbox_cursor": "outbox-1",
-            "broker_cursor": "broker-1",
-            "durable_cursor_proof_hash": HASH,
-            "source_writer_id": "source-writer",
-            "target_writer_id": "recovery-writer",
-            "recovery_epoch": 2,
-            "fencing_epoch": 2,
-            "reconciliation_proof_hash": HASH,
-            "reconcile_before_entry": True,
-        }
-    )
+    broker = BrokerEnablementManifest.model_validate(_broker_manifest())
+    dr = DisasterRecoveryManifest.model_validate(_dr_manifest())
     envelope_payload = _envelope()
     return {
         "ApprovalAttestationBinding": ApprovalAttestationBinding.model_validate(
@@ -261,6 +218,8 @@ def task2_hash_exemplars() -> dict[str, object]:
         "RiskEpochStarted": risk_epoch,
         "StageManifest": stage,
         "StatisticalAnalysisPlan": sap,
-        "TrialManifest": TrialManifest.model_validate(_trial()),
+        "TrialManifest": TrialManifest.model_validate(
+            _trial(minimum_economic_effect=Decimal("0.0000001"))
+        ),
         "TrustBundle": trust,
     }

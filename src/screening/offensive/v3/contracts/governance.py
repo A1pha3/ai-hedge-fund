@@ -6,14 +6,16 @@ policy, trust registry, broker, writer, or authorization.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from decimal import Decimal
 from enum import StrEnum
 import re
-from typing import Annotated, ClassVar, Literal, Self
+from typing import Annotated, Any, ClassVar, Literal, Self
 
 from pydantic import (
     BeforeValidator,
     Field,
+    PlainSerializer,
     ValidationInfo,
     WithJsonSchema,
     model_validator,
@@ -27,6 +29,7 @@ from .base import (
     SchemaVersion,
     Sha256,
     UtcInstant,
+    canonical_decimal_string,
     domain_hash,
 )
 from .evidence import NonEmptyStr
@@ -34,6 +37,8 @@ from .evidence import NonEmptyStr
 PositiveInt = Annotated[ExactInteger, Field(ge=1)]
 NonNegativeInt = Annotated[ExactInteger, Field(ge=0)]
 PositiveCents = Annotated[MoneyCents, Field(gt=0)]
+SourceStateSchemaMajor = Annotated[ExactInteger, Field(ge=2, le=2)]
+TargetStateSchemaMajor = Annotated[ExactInteger, Field(ge=3, le=3)]
 
 
 def _validate_exact_decimal(value: object, info: ValidationInfo) -> Decimal:
@@ -58,6 +63,7 @@ def _validate_exact_decimal(value: object, info: ValidationInfo) -> Decimal:
 ExactDecimal = Annotated[
     Decimal,
     BeforeValidator(_validate_exact_decimal),
+    PlainSerializer(canonical_decimal_string, return_type=str, when_used="json"),
     WithJsonSchema({"type": "string", "pattern": r"^-?(0|[1-9]\d*)(\.\d+)?$"}),
 ]
 Fraction = Annotated[ExactDecimal, Field(ge=Decimal("0"), le=Decimal("1"))]
@@ -591,6 +597,7 @@ class EntryFenceAcknowledgement(GovernedArtifact):
     risk_epoch: PositiveInt
     authorization_status_hash: Sha256
     authorization_status_version: PositiveInt
+    fence_raised_at: UtcInstant
     durably_acknowledged_at: UtcInstant
     gateway_writer_id: NonEmptyStr
     gateway_writer_version: PositiveInt
@@ -608,6 +615,8 @@ class EntryFenceAcknowledgement(GovernedArtifact):
         _validate_account_mode(
             self.mode, self.broker_account_id, self.broker_account_fingerprint
         )
+        if self.durably_acknowledged_at < self.fence_raised_at:
+            raise ValueError("durable fence acknowledgement cannot predate fence raise")
         return self
 
 
@@ -617,6 +626,7 @@ class ApprovalAttestationBinding(GovernedArtifact):
     approver_id: NonEmptyStr
     key_id: NonEmptyStr
     approval_artifact_hash: Sha256
+    approved_manifest_preimage_hash: Sha256
     approval_capability: Literal["governance.manifest.approve.v1"]
     approval_scope: Literal[
         "MIGRATION_APPROVAL_MANIFEST",
@@ -628,6 +638,8 @@ class ApprovalAttestationBinding(GovernedArtifact):
 
 
 class _TwoPersonOneShotManifest(GovernedArtifact):
+    APPROVAL_PREIMAGE_DOMAIN: ClassVar[str]
+
     manifest_id: NonEmptyStr
     portfolio_id: NonEmptyStr
     broker_account_id: NonEmptyStr
@@ -639,6 +651,31 @@ class _TwoPersonOneShotManifest(GovernedArtifact):
     issuer_capability: NonEmptyStr
     schema_major: SchemaVersion
 
+    @classmethod
+    def approval_preimage_hash_for_proposal(
+        cls, proposal: Mapping[str, Any]
+    ) -> str:
+        payload = {
+            key: value
+            for key, value in proposal.items()
+            if key != "approval_attestations"
+        }
+        return domain_hash(
+            cls.APPROVAL_PREIMAGE_DOMAIN,
+            payload.get("schema_major"),
+            payload,
+        )
+
+    def approval_preimage_hash(self) -> str:
+        return self.approval_preimage_hash_for_proposal(
+            self.model_dump(
+                mode="python",
+                round_trip=True,
+                exclude={"approval_attestations"},
+                warnings="none",
+            )
+        )
+
     def _validate_common(self, expected: str, approval_scope: str) -> None:
         _capability(self.issuer_capability, expected)
         approvals = self.approval_attestations
@@ -646,6 +683,7 @@ class _TwoPersonOneShotManifest(GovernedArtifact):
             not self.one_shot
             or len(approvals) != 2
             or len({approval.approver_id for approval in approvals}) != 2
+            or len({approval.key_id for approval in approvals}) != 2
             or len({approval.approval_artifact_hash for approval in approvals}) != 2
         ):
             raise ValueError(
@@ -669,19 +707,28 @@ class _TwoPersonOneShotManifest(GovernedArtifact):
             for approval in approvals
         ):
             raise ValueError("approval scope and approval time must bind the manifest")
+        approved_hashes = {
+            approval.approved_manifest_preimage_hash for approval in approvals
+        }
+        if approved_hashes != {self.approval_preimage_hash()}:
+            raise ValueError("approvals must share the complete manifest preimage hash")
         if self.expires_at <= self.issued_at:
             raise ValueError("expires_at must be after issued_at")
 
 
 class MigrationApprovalManifest(_TwoPersonOneShotManifest):
     HASH_DOMAIN = "ai-hedge-fund.v3.governance.migration-approval-manifest.v1"
+    APPROVAL_PREIMAGE_DOMAIN = (
+        "ai-hedge-fund.v3.governance.migration-approval-manifest."
+        "approval-preimage.v1"
+    )
 
     source_portfolio_id: NonEmptyStr
     target_portfolio_id: NonEmptyStr
     source_broker_account_id: NonEmptyStr
     target_broker_account_id: NonEmptyStr
-    source_schema_major: PositiveInt
-    target_schema_major: PositiveInt
+    source_schema_major: SourceStateSchemaMajor
+    target_schema_major: TargetStateSchemaMajor
     source_writer_id: NonEmptyStr
     target_writer_id: NonEmptyStr
     migration_program_hash: Sha256
@@ -741,6 +788,8 @@ class MigrationApprovalManifest(_TwoPersonOneShotManifest):
             raise ValueError("target account must match broker_account_id")
         if self.target_schema_major <= self.source_schema_major:
             raise ValueError("target schema major must advance source schema major")
+        if self.target_writer_fencing_epoch <= self.source_writer_fencing_epoch:
+            raise ValueError("target writer fencing epoch must advance source writer")
         if not (
             self.issued_at <= self.allowed_from < self.allowed_until <= self.expires_at
         ):
@@ -752,6 +801,10 @@ class MigrationApprovalManifest(_TwoPersonOneShotManifest):
 
 class BrokerEnablementManifest(_TwoPersonOneShotManifest):
     HASH_DOMAIN = "ai-hedge-fund.v3.governance.broker-enablement-manifest.v1"
+    APPROVAL_PREIMAGE_DOMAIN = (
+        "ai-hedge-fund.v3.governance.broker-enablement-manifest."
+        "approval-preimage.v1"
+    )
 
     broker_account_fingerprint: Sha256
     broker_environment_fingerprint: Sha256
@@ -775,6 +828,10 @@ class BrokerEnablementManifest(_TwoPersonOneShotManifest):
 
 class DisasterRecoveryManifest(_TwoPersonOneShotManifest):
     HASH_DOMAIN = "ai-hedge-fund.v3.governance.disaster-recovery-manifest.v1"
+    APPROVAL_PREIMAGE_DOMAIN = (
+        "ai-hedge-fund.v3.governance.disaster-recovery-manifest."
+        "approval-preimage.v1"
+    )
 
     broker_account_fingerprint: Sha256
     trust_bundle_hash: Sha256
@@ -811,6 +868,7 @@ class DisasterRecoveryManifest(_TwoPersonOneShotManifest):
 
 __all__ = [
     "ApprovalAttestationBinding",
+    "AuthorizationLifecycle",
     "AuthorizationStatus",
     "BrokerEnablementManifest",
     "DisasterRecoveryManifest",

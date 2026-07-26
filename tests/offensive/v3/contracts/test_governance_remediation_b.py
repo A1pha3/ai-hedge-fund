@@ -15,12 +15,15 @@ HASH_B = "b" * 64
 HASH_C = "c" * 64
 
 
-def _approval_attestations(scope: str) -> tuple[dict[str, object], ...]:
+def _approval_attestations(
+    scope: str, approved_manifest_preimage_hash: str = HASH
+) -> tuple[dict[str, object], ...]:
     return (
         {
             "approver_id": "alice",
             "key_id": "alice-key",
             "approval_artifact_hash": HASH_B,
+            "approved_manifest_preimage_hash": approved_manifest_preimage_hash,
             "approval_capability": "governance.manifest.approve.v1",
             "approval_scope": scope,
             "approved_at": NOW - timedelta(minutes=2),
@@ -30,6 +33,7 @@ def _approval_attestations(scope: str) -> tuple[dict[str, object], ...]:
             "approver_id": "bob",
             "key_id": "bob-key",
             "approval_artifact_hash": HASH_C,
+            "approved_manifest_preimage_hash": approved_manifest_preimage_hash,
             "approval_capability": "governance.manifest.approve.v1",
             "approval_scope": scope,
             "approved_at": NOW - timedelta(minutes=1),
@@ -46,15 +50,26 @@ def _manifest_common(scope: str, capability: str) -> dict[str, object]:
         "issued_at": NOW,
         "expires_at": NOW + timedelta(hours=1),
         "one_shot": True,
-        "approval_attestations": _approval_attestations(scope),
         "issuer_id": "governance",
         "issuer_capability": capability,
         "schema_major": 2,
     }
 
 
+def _approve_manifest(
+    model_name: str, scope: str, proposal: dict[str, object]
+) -> dict[str, object]:
+    from src.screening.offensive.v3.contracts import governance
+
+    model = getattr(governance, model_name)
+    approved_hash = model.approval_preimage_hash_for_proposal(proposal)
+    return proposal | {
+        "approval_attestations": _approval_attestations(scope, approved_hash)
+    }
+
+
 def _migration_manifest() -> dict[str, object]:
-    return _manifest_common(
+    proposal = _manifest_common(
         "MIGRATION_APPROVAL_MANIFEST", "governance.migration.approval.v1"
     ) | {
         "source_portfolio_id": "legacy-portfolio",
@@ -111,6 +126,62 @@ def _migration_manifest() -> dict[str, object]:
         "credential_fencing_hash": HASH,
         "rollback_dr_hash": HASH,
     }
+    return _approve_manifest(
+        "MigrationApprovalManifest", "MIGRATION_APPROVAL_MANIFEST", proposal
+    )
+
+
+def _broker_manifest() -> dict[str, object]:
+    proposal = _manifest_common(
+        "BROKER_ENABLEMENT_MANIFEST", "governance.broker.enablement.v1"
+    ) | {
+        "broker_account_fingerprint": HASH,
+        "broker_environment_fingerprint": HASH,
+        "base_currency": "CNY",
+        "currency_definition_fingerprint": HASH,
+        "trusted_clock_hash": HASH,
+        "authenticated_raw_envelope_hash": HASH,
+        "pagination_cursor_retention_hash": HASH,
+        "client_order_idempotency_hash": HASH,
+        "auction_tif_cutoff_hash": HASH,
+        "exit_rate_limit_hash": HASH,
+        "credential_session_network_fencing_hash": HASH,
+    }
+    return _approve_manifest(
+        "BrokerEnablementManifest", "BROKER_ENABLEMENT_MANIFEST", proposal
+    )
+
+
+def _dr_manifest() -> dict[str, object]:
+    proposal = _manifest_common(
+        "DISASTER_RECOVERY_MANIFEST", "governance.disaster.recovery.v1"
+    ) | {
+        "broker_account_fingerprint": HASH,
+        "trust_bundle_hash": HASH,
+        "registry_epoch": 2,
+        "policy_activation_hash": HASH,
+        "policy_epoch": 2,
+        "authority_epoch": 2,
+        "risk_epoch": 2,
+        "authorization_status_hash": HASH,
+        "authorization_status_version": 4,
+        "entry_fence_hash": HASH,
+        "entry_fence_version": 5,
+        "backup_root_hash": HASH,
+        "durable_inbox_cursor": "inbox-1",
+        "durable_outbox_cursor": "outbox-1",
+        "broker_cursor": "broker-1",
+        "durable_cursor_proof_hash": HASH,
+        "source_writer_id": "source-writer",
+        "target_writer_id": "recovery-writer",
+        "recovery_epoch": 2,
+        "fencing_epoch": 2,
+        "reconciliation_proof_hash": HASH,
+        "reconcile_before_entry": True,
+    }
+    return _approve_manifest(
+        "DisasterRecoveryManifest", "DISASTER_RECOVERY_MANIFEST", proposal
+    )
 
 
 def _authorization_status(**overrides: object) -> dict[str, object]:
@@ -295,6 +366,7 @@ def test_entry_fence_request_and_gateway_ack_are_distinct_capabilities() -> None
         "risk_epoch": fence.risk_epoch,
         "authorization_status_hash": fence.predecessor_authorization_status_hash,
         "authorization_status_version": fence.authorization_status_version,
+        "fence_raised_at": fence.raised_at,
         "durably_acknowledged_at": NOW + timedelta(seconds=1),
         "gateway_writer_id": "capital-gateway-writer",
         "gateway_writer_version": 7,
@@ -389,53 +461,14 @@ def test_broker_and_dr_manifests_bind_currency_governance_and_cursor_proof() -> 
         DisasterRecoveryManifest,
     )
 
-    broker = _manifest_common(
-        "BROKER_ENABLEMENT_MANIFEST", "governance.broker.enablement.v1"
-    ) | {
-        "broker_account_fingerprint": HASH,
-        "broker_environment_fingerprint": HASH,
-        "base_currency": "CNY",
-        "currency_definition_fingerprint": HASH,
-        "trusted_clock_hash": HASH,
-        "authenticated_raw_envelope_hash": HASH,
-        "pagination_cursor_retention_hash": HASH,
-        "client_order_idempotency_hash": HASH,
-        "auction_tif_cutoff_hash": HASH,
-        "exit_rate_limit_hash": HASH,
-        "credential_session_network_fencing_hash": HASH,
-    }
+    broker = _broker_manifest()
     assert BrokerEnablementManifest.model_validate(broker).base_currency == "CNY"
     with pytest.raises(ValidationError):
         poisoned = dict(broker)
         poisoned.pop("currency_definition_fingerprint")
         BrokerEnablementManifest.model_validate(poisoned)
 
-    dr = _manifest_common(
-        "DISASTER_RECOVERY_MANIFEST", "governance.disaster.recovery.v1"
-    ) | {
-        "broker_account_fingerprint": HASH,
-        "trust_bundle_hash": HASH,
-        "registry_epoch": 2,
-        "policy_activation_hash": HASH,
-        "policy_epoch": 2,
-        "authority_epoch": 2,
-        "risk_epoch": 2,
-        "authorization_status_hash": HASH,
-        "authorization_status_version": 4,
-        "entry_fence_hash": HASH,
-        "entry_fence_version": 5,
-        "backup_root_hash": HASH,
-        "durable_inbox_cursor": "inbox-1",
-        "durable_outbox_cursor": "outbox-1",
-        "broker_cursor": "broker-1",
-        "durable_cursor_proof_hash": HASH,
-        "source_writer_id": "source-writer",
-        "target_writer_id": "recovery-writer",
-        "recovery_epoch": 2,
-        "fencing_epoch": 2,
-        "reconciliation_proof_hash": HASH,
-        "reconcile_before_entry": True,
-    }
+    dr = _dr_manifest()
     assert DisasterRecoveryManifest.model_validate(dr).durable_cursor_proof_hash == HASH
     with pytest.raises(ValidationError):
         poisoned = dict(dr)
@@ -447,25 +480,7 @@ def test_broker_and_dr_manifests_bind_currency_governance_and_cursor_proof() -> 
     ("model_name", "payload"),
     [
         ("MigrationApprovalManifest", _migration_manifest()),
-        (
-            "BrokerEnablementManifest",
-            _manifest_common(
-                "BROKER_ENABLEMENT_MANIFEST", "governance.broker.enablement.v1"
-            )
-            | {
-                "broker_account_fingerprint": HASH,
-                "broker_environment_fingerprint": HASH,
-                "base_currency": "CNY",
-                "currency_definition_fingerprint": HASH,
-                "trusted_clock_hash": HASH,
-                "authenticated_raw_envelope_hash": HASH,
-                "pagination_cursor_retention_hash": HASH,
-                "client_order_idempotency_hash": HASH,
-                "auction_tif_cutoff_hash": HASH,
-                "exit_rate_limit_hash": HASH,
-                "credential_session_network_fencing_hash": HASH,
-            },
-        ),
+        ("BrokerEnablementManifest", _broker_manifest()),
     ],
 )
 def test_sensitive_manifests_require_signed_distinct_canonical_approvals(

@@ -118,6 +118,7 @@ def _exploration_grant(**overrides):
         attempt_ledger_checkpoint_hash="d" * 64,
         alpha_or_evalue_budget_consumption_id="explore-alpha",
         alpha_sample_consumption_id="explore-sample",
+        trial_id="explore-trial",
     )
     return payload | overrides
 
@@ -573,50 +574,19 @@ def test_sensitive_manifests_require_distinct_capability_and_two_attestations(
     name, capability
 ):
     g = _governance()
-    from test_governance_remediation_b import _manifest_common, _migration_manifest
+    from test_governance_remediation_b import (
+        _broker_manifest,
+        _dr_manifest,
+        _migration_manifest,
+    )
 
     cls = getattr(g, name)
     if name == "MigrationApprovalManifest":
         payload = _migration_manifest()
     elif name == "BrokerEnablementManifest":
-        payload = _manifest_common("BROKER_ENABLEMENT_MANIFEST", capability) | {
-            "broker_account_fingerprint": HASH,
-            "broker_environment_fingerprint": HASH,
-            "base_currency": "CNY",
-            "currency_definition_fingerprint": HASH,
-            "trusted_clock_hash": HASH,
-            "authenticated_raw_envelope_hash": HASH,
-            "pagination_cursor_retention_hash": HASH,
-            "client_order_idempotency_hash": HASH,
-            "auction_tif_cutoff_hash": HASH,
-            "exit_rate_limit_hash": HASH,
-            "credential_session_network_fencing_hash": HASH,
-        }
+        payload = _broker_manifest()
     else:
-        payload = _manifest_common("DISASTER_RECOVERY_MANIFEST", capability) | {
-            "broker_account_fingerprint": HASH,
-            "trust_bundle_hash": HASH,
-            "registry_epoch": 2,
-            "policy_activation_hash": HASH,
-            "policy_epoch": 2,
-            "authority_epoch": 2,
-            "risk_epoch": 2,
-            "authorization_status_hash": HASH,
-            "authorization_status_version": 4,
-            "entry_fence_hash": HASH,
-            "entry_fence_version": 5,
-            "backup_root_hash": HASH,
-            "durable_inbox_cursor": "inbox-1",
-            "durable_outbox_cursor": "outbox-1",
-            "broker_cursor": "broker-1",
-            "durable_cursor_proof_hash": HASH,
-            "source_writer_id": "source-writer",
-            "target_writer_id": "recovery-writer",
-            "recovery_epoch": 2,
-            "fencing_epoch": 2,
-            "reconciliation_proof_hash": HASH,
-            "reconcile_before_entry": True,
-        }
+        payload = _dr_manifest()
     assert cls.model_validate(payload).issuer_capability == capability
     with pytest.raises(ValidationError):
         cls.model_validate(payload | {"issuer_capability": "governance.other.v1"})

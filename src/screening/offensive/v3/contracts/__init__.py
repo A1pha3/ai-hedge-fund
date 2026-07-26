@@ -12,6 +12,7 @@ from .governance import (
     DisasterRecoveryManifest,
     EntryFenceAcknowledgement,
     EntryFenceRaised,
+    Fraction,
     GrantKind,
     LineageGrant,
     MigrationApprovalManifest,
@@ -38,6 +39,7 @@ from .base import (
     UnitQuanta,
     UtcInstant,
     canonical_json_bytes,
+    canonical_decimal_string,
     content_hash,
     domain_hash,
 )
@@ -133,6 +135,7 @@ __all__ = [
     "EconomicLegDirection",
     "ExecutionMode",
     "ExecutionPermit",
+    "Fraction",
     "GrantKind",
     "LineageGrant",
     "MigrationApprovalManifest",
@@ -183,6 +186,7 @@ __all__ = [
     "OrderSnapshot",
     "OrderState",
     "canonical_json_bytes",
+    "canonical_decimal_string",
     "content_hash",
     "domain_hash",
 ]

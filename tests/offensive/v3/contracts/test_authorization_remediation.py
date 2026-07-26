@@ -294,6 +294,7 @@ def test_exploration_and_recovery_bind_predecessor_and_shared_budget() -> None:
         attempt_ledger_checkpoint_hash="e" * 64,
         alpha_or_evalue_budget_consumption_id="explore-alpha",
         alpha_sample_consumption_id="explore-sample",
+        trial_id="explore-trial",
     )
     predecessor = {
         "predecessor_active_authorization_id": "previous-1",

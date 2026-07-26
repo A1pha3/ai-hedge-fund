@@ -125,7 +125,9 @@ Sha256: TypeAlias = Annotated[
 Sha256Adapter = TypeAdapter(Sha256, config=ConfigDict(strict=True))
 
 
-def _normalized_decimal(value: Decimal) -> str:
+def canonical_decimal_string(value: Decimal) -> str:
+    """Render a finite Decimal without exponent notation or redundant zeros."""
+
     if not value.is_finite():
         raise ValueError("canonical JSON requires finite Decimal values")
     if value.is_zero():
@@ -156,7 +158,7 @@ def _canonical_value(value: Any) -> Any:
     if isinstance(value, float):
         raise ValueError("canonical JSON forbids float values")
     if isinstance(value, Decimal):
-        return _normalized_decimal(value)
+        return canonical_decimal_string(value)
     if isinstance(value, datetime):
         utc_value = _validate_utc(value)
         return utc_value.isoformat().replace("+00:00", "Z")

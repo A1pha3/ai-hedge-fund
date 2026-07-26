@@ -292,6 +292,10 @@ class CapitalAuthorizationEnvelope(GovernedArtifact):
                 for grant in exploration
             ):
                 raise ValueError("exploration grants must share envelope loss budget")
+            if any(
+                grant.trial_id != self.exploration_trial_id for grant in exploration
+            ):
+                raise ValueError("exploration grants must bind the declared trial")
             edge_grants = [
                 grant
                 for grant in self.lineage_grants
