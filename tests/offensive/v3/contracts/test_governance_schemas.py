@@ -67,4 +67,3 @@ def test_task2_schemas_are_closed_object_contracts() -> None:
     for schema in snapshot.values():
         assert schema["additionalProperties"] is False
         assert "schema_major" in schema["required"]
-
