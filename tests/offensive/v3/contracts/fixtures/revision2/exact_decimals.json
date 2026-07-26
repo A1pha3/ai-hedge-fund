@@ -1,0 +1,12 @@
+[
+  {
+    "decimal_input": "0.0000001",
+    "rendered": "0.0000001",
+    "trial_artifact_hash": "f392e9bd2ed7e1c58a51f7097782a928f3e4372d2b2d1cf4fba646afa21a5926"
+  },
+  {
+    "decimal_input": "1E+3",
+    "rendered": "1000",
+    "trial_artifact_hash": "abd613df6c543a74e2e41e1fef226fa3236825d3b7f5bc7e999f76bb6b88e342"
+  }
+]
