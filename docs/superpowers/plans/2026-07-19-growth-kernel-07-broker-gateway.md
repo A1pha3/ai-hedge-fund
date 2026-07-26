@@ -1,116 +1,120 @@
-# Optional Broker Gateway Implementation Plan
+# Optional Broker Gateway, Reconciliation, and Disaster Recovery Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在前六个子项目已稳定且获得单独批准后，实现唯一持有 broker credential 的权威 gateway，正确处理 permit/fencing、transactional outbox、累计成交、部分成交、撤单、乱序回报、费用、bust/correction、对账和 writer handoff。
+**Goal:** 在 Plan 01–06 全部验收且获得独立批准后，实现唯一持有 broker credential/network egress 的 adapter worker，证明账户/协议完整性，正确处理 `SEND_CLAIMED`、同 ID 重试、累计成交、部分成交、撤单、乱序/截断、费用、bust/correction、对账、writer handoff 和灾备；首次真实资本只通过新的 BROKER_CONFIRMED 2% exploration 启动。
 
-**Architecture:** Gateway 是独立 service principal 和唯一 broker writer。它在提交前原子重验 active seal、authorization revision、capital/risk version、permit nonce 和 fencing epoch，再把 order intent 与 outbox 同事务持久化。Adapter 只翻译 broker 协议；所有回报先规范化成稳定 execution revision，再由资本台账幂等消费。
+**Architecture:** Capital Gateway 继续是 entry/capital 唯一权威；broker adapter 不修改授权、seal、reserve 或资本，只发送已经在 Gateway 取得 `SEND_CLAIMED` 的不可变命令，并把所有 authenticated raw response 先写 durable broker inbox。Normalizer 把外部状态映射为 execution revisions，Plan 02 再幂等入账。Gateway-owned lifecycle scheduler 对 entry/exit/cancel/query/reconcile 使用独立队列与限流预算。无法证明的 broker 语义保持 unknown/no-entry。
 
-**Tech Stack:** FastAPI/UDS、httpx、Plan 01–06、broker-specific SDK（选定券商后才加入）、SQLite outbox/inbox、pytest stateful/fault injection。
+**Tech Stack:** FastAPI/UDS、httpx、Plan 01–06、SQLite outbox/inbox、选定券商的固定 SDK/API 版本、pytest stateful/fault injection。
 
 ## Global Constraints
 
-- 本计划默认不执行；选择券商、账户类型、API sandbox 与合规要求后必须补充 adapter-specific threat model。
-- CLI/Agent/producer 不持有 broker credential、gateway signing key 或 ledger write DSN。
-- 没有完整 broker receipt/ACK 就不能称 broker fill；本地 outbox 时间不等于 broker 接收时间。
-- `client_order_id`、`broker_order_id`、`broker_execution_id` 和 `(execution_id, revision)` 分别唯一。
-- 累计成交只按 `new_cum - last_cum` 入账；未解释回退立即 `RECONCILIATION_HALT`。
-- broker-live 不能复用 proxy/manual fill；人工事件只能关联和差额更正，不能搬运。
+- 默认生产 adapter 为 disabled；在选定券商、账户环境、API 版本、合规和 sandbox/小额实测完成前，`BROKER_CONFIRMED` startup 必须失败。
+- CLI/Agent/producer/Governance/Authorizer 不持有 broker credential、adapter key、network egress 或 Capital Gateway writable DSN。
+- broker account ID、环境、币种、endpoint/certificate fingerprint 必须与 portfolio binding 精确相等。
+- 没有 authenticated broker receipt/ACK 不能称 broker accepted/fill；本地 outbox/send time 不是 broker time。
+- 只有经能力测试证明账户/交易日作用域内 client ID 幂等，才允许截止前同 `client_order_id` 重试；绝不生成新 ID 猜测重发。
+- 查询必须证明分页完整、cursor 连续和历史 retention 覆盖；截断/回退/最近 N 条响应都是 unknown。
+- 累计成交只按 `new_cumulative - last_cumulative` 入账；非显式 bust 的回退锁存 reconciliation halt。
+- broker-live 不复用 proxy/manual fill 或晋级样本；真实但未关联事实先入 AccountCapitalTruth 并 halt，不得丢弃。
 
 ---
 
 ## File Structure
 
 - Create `src/screening/offensive/v3/broker/ports.py`
-- Create `src/screening/offensive/v3/broker/gateway.py`
-- Create `src/screening/offensive/v3/broker/outbox.py`
+- Create `src/screening/offensive/v3/broker/capabilities.py`
+- Create `src/screening/offensive/v3/broker/raw_inbox.py`
+- Create `src/screening/offensive/v3/broker/dispatcher.py`
 - Create `src/screening/offensive/v3/broker/normalizer.py`
 - Create `src/screening/offensive/v3/broker/reconcile.py`
 - Create `src/screening/offensive/v3/broker/handoff.py`
-- Create `src/screening/offensive/v3/broker/adapters/production.py` only after broker selection; this stable module implements the selected vendor port
+- Create `src/screening/offensive/v3/broker/disaster_recovery.py`
+- Create `src/screening/offensive/v3/broker/adapters/production.py`
+- Create `scripts/v3_broker_certify.py`
 - Create `config/services/v3/broker-gateway.example.toml`
 - Create `docs/runbooks/v3-broker-gateway.md`
 - Create tests under `tests/offensive/v3/broker/`
 
-### Task 1: Broker-neutral port and protocol fixtures
+### Task 1: Broker-neutral port, authenticated envelopes, and deterministic fake
 
-**Interfaces:** Produces `BrokerPort.submit/cancel/query_orders/query_executions/query_cash_positions`, receipt/event models and deterministic fake broker.
+**Interfaces:** Produces `BrokerPort.submit/cancel/query_*`, `BrokerRawEnvelope`, stable order/execution/fee revision contracts and `DeterministicFakeBroker`.
 
-- [ ] **Step 1: Write failing contract tests** for unique IDs, timestamps, cumulative fields, partial/cancel/reject states, fee revisions and malformed/unknown broker payload.
-- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/broker/test_ports.py -v`.
-- [ ] **Step 3: Implement broker-neutral Protocol and fake**; no production SDK dependency yet.
-- [ ] **Step 4: Verify GREEN**.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): define broker-neutral gateway port"`.
+- [ ] **Step 1: Write failing contract tests** in `test_ports.py` for client/broker order IDs, execution IDs/revisions, broker/source/received timestamps, cumulative fields, partial/cancel/reject/expire, fee revisions, unknown status and malformed authentication metadata.
+- [ ] **Step 2: Add raw-inbox tests** for content-addressed authenticated payload, source sequence, parser version, duplicate/conflict, durable-before-normalize and encrypted/redacted secret fields.
+- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/broker/test_{ports,raw_inbox}.py -v`.
+- [ ] **Step 4: Implement broker-neutral port/fake and a disabled `production.py`** that raises `BROKER_ADAPTER_NOT_CERTIFIED`; no vendor SDK or credential is added yet.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): define authenticated broker protocol boundary"`.
 
-### Task 2: Final permit, fencing, and submission gate
+### Task 2: Capability certification and BrokerEnablementManifest gate
 
-**Interfaces:** Produces `Gateway.submit_permitted_entry()` and `submit_due_exit()`.
+**Interfaces:** Produces signed `BrokerCapabilityProfile`, certification report/hash and `verify_broker_enablement()`.
 
-- [ ] **Step 1: Write adversarial tests** for shadow/manual/proxy seal, stale authorization revision, old active seal, wrong nonce, expired deadline, stale capital version, old fencing epoch, risk halt entry vs allowed exit and duplicate submit.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement one immediate transaction** validating `active_seal_id + revision + permit_nonce + fencing_epoch + authorization/version/Merkle root + capital_version`; persist order intent/client ID/outbox before any network send.
-- [ ] **Step 4: Verify GREEN** with two competing gateway processes; only current fencing epoch can create an outbox row.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): fence and persist broker submissions"`.
+- [ ] **Step 1: Write failing tests** for account/environment/currency/endpoint mismatch; unproven client-ID scope; duplicate create behavior; unsupported auction order type/TIF; ambiguous cutoff; partial/cancel/expiry/late-fill semantics; pagination/cursor/retention gaps and clock skew.
+- [ ] **Step 2: Implement** `scripts/v3_broker_certify.py` with read-only capability probes by default and an explicit signed approval requirement for any sandbox/order mutation. Store redacted raw envelopes and exact API/SDK/docs version hashes.
+- [ ] **Step 3: Make `production.py` load only one frozen capability profile** whose hash is bound by a valid `BrokerEnablementManifest`; any missing/unknown field keeps startup disabled.
+- [ ] **Step 4: Verify with** `uv run pytest tests/offensive/v3/broker/test_capabilities.py -v`.
+- [ ] **Step 5: Commit** with `git commit -m "feat(v3): certify broker semantics before enablement"`.
 
-### Task 3: Transactional outbox delivery and broker receipt deadlines
+### Task 3: SEND_CLAIMED dispatcher and ambiguous submission handling
 
-**Interfaces:** Produces `OutboxDispatcher.run_once()`, retry/backoff, broker receipt persistence and ambiguous-submission halt.
+**Interfaces:** Produces `BrokerDispatcher.run_once()` consuming immutable Gateway commands after Plan 04 `claim_send()`.
 
-- [ ] **Step 1: Write tests** for crash before send, after send before ACK commit, network timeout, duplicate client ID, broker accepted after local timeout, cutoff missed and retry after restart.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement at-least-once delivery with broker idempotency key**. If broker cannot guarantee idempotent create/query by client ID, ambiguous submission stops new risk until reconciliation; never submit a second fresh ID automatically.
-- [ ] **Step 4: Verify GREEN**.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): deliver broker orders through durable outbox"`.
+- [ ] **Step 1: Write adversarial tests** for shadow/proxy/manual input, stale seal/envelope/capital/risk/stage/fence, wrong account/env, expired permit/send/broker cutoff, duplicate dispatcher, crash before/after claim, network timeout and ACK persistence failure.
+- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/broker/test_dispatcher.py -v`.
+- [ ] **Step 3: Implement sequence**: request Gateway `SEND_CLAIMED` transition → send exact immutable payload with exact client ID → durably append raw receipt/timeout → report status to Gateway. No adapter-side precheck substitutes for Gateway transaction.
+- [ ] **Step 4: Recovery rule**: a claimed command without durable authenticated ACK becomes `SUBMISSION_AMBIGUOUS`. If certified idempotency and both send/cutoff deadlines remain valid, retry exact same ID/payload; otherwise query/cancel/reconcile only. New ID is forbidden.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): dispatch only claimed broker commands"`.
 
 ### Task 4: Push/poll normalization and execution revisions
 
 **Interfaces:** Produces `normalize_order_update()`, `apply_cumulative_execution()`, `apply_bust()` and `apply_correction()`.
 
-- [ ] **Step 1: Write stateful tests** permuting push/poll duplicate/late/out-of-order messages, cancel-late-fill, cumulative equal/increase/decrease, partial fee arrival, bust and corrected quantity/price。真实但无法关联本地 order 的 fill 必须先作为 `UNATTRIBUTED_RISK` 入账并 halt，不能丢弃。
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement delta normalization**. `BUSTED` appends inverse economics; `CORRECTED` appends bust-old then apply-new under increasing revision; no history deletion/state rollback. Unlinked broker economics use a stable broker execution ID, enter capital truth exactly once, and remain unattributed until reconciliation resolves them.
+- [ ] **Step 1: Write stateful tests** permuting duplicate/late/out-of-order push and poll, cancel-late-fill, equal/increasing/decreasing cumulative quantity, partial fee, bust, corrected quantity/price and unlinked execution.
+- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/broker/test_normalizer.py -v`.
+- [ ] **Step 3: Implement delta normalization**. Explicit bust appends inverse economics; correction appends bust-old then apply-new with increasing revision. Historical order state remains terminal while active economic projection may reopen position/ExitMandate.
+- [ ] **Step 4: Prove every message permutation** with the same canonical source revisions converges to identical capital/event count; negative impossible shares produce reconciliation halt, not clamp.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): normalize broker revisions exactly once"`.
 
-```python
-delta = update.cumulative_quantity - last.cumulative_quantity
-if delta < 0 and not update.is_explicit_bust:
-    raise ReconciliationHalt("unexplained cumulative execution rollback")
-```
+### Task 5: Complete paginated reconciliation of orders, fills, cash, positions, fees, and actions
 
-- [ ] **Step 4: Verify GREEN**: every event permutation yields identical final capital and event count after deduplication.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): normalize broker executions exactly once"`.
+**Interfaces:** Produces `Reconciler.capture_complete_snapshot()`, `compare()` and typed break/severity/action.
 
-### Task 5: Cash, position, fee, and corporate-action reconciliation
+- [ ] **Step 1: Write tests** for multi-page exact match, repeated/missing page, cursor rollback, retention too short, stale snapshot, timing-tolerant pending fee, unexplained cash/share, provisional action, manual link, unknown order and missing execution.
+- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/broker/test_reconcile.py -v`.
+- [ ] **Step 3: Implement completeness proof** binding query parameters, page count, cursors, broker as-of/received times and raw envelope roots. Tolerance is versioned per fact type; no generic monetary epsilon.
+- [ ] **Step 4: Material/unknown break** latches no-entry but persists external fact first. Confirmation links existing canonical fact or posts only delta; it never duplicates capital.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): reconcile complete broker history and capital"`.
 
-**Interfaces:** Produces `Reconciler.compare()` and typed breaks with severity/action.
+### Task 6: Durable entry/exit/cancel/query scheduling and rate isolation
 
-- [ ] **Step 1: Write tests** for exact match, timing-tolerant pending fee, unexplained cash/share, provisional corporate action, manual link, unknown order and stale broker snapshot.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement explicit tolerance policy** versioned by fact type, not generic monetary epsilon. Material/unknown mismatch latches halt; confirmation never duplicates economic event.
-- [ ] **Step 4: Verify GREEN**.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): reconcile broker and capital truth"`.
+**Interfaces:** Extends Plan 05 scheduler with broker work queues and certified auction timings.
 
-### Task 6: Gateway writer handoff
+- [ ] **Step 1: Write tests** for entry queue saturation, separate exit/query budget, CLI/process outage, restart leases, broker throttle, cutoff, partial exit, unknown sellable shares, suspend/limit, cancel race and correction-driven exit reopen.
+- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/broker/test_scheduler.py -v`.
+- [ ] **Step 3: Implement independent queues/rate buckets**. Exit cannot consume entry authorization and entry cannot exhaust exit/query capacity. Unknown quantity triggers query/reconcile and zero additional sell.
+- [ ] **Step 4: Run long simulated lifecycle** through T+1 entry and T+10 delayed exits with adapter restarts and rate-limit responses.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): schedule broker lifecycle without orphan exits"`.
 
-**Interfaces:** Produces `ACTIVE -> DRAINING -> BROKER_RECONCILED -> HANDOFF_COMPLETE` with monotonic authority epoch.
+### Task 7: Credential/session/network fencing and writer handoff
 
-- [ ] **Step 1: Write concurrency/failure tests** for live order, pending cancel, late fill, stale old writer, crash at each state and new writer early submission.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement handoff**. Old writer drains/reconciles; new writer receives new fencing epoch only after terminal/reconciled checkpoint. Old tokens remain permanently invalid.
-- [ ] **Step 4: Verify GREEN**.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): hand off broker writer without overlap"`.
+**Interfaces:** Produces `ACTIVE -> DRAINING -> BROKER_RECONCILED -> HANDOFF_COMPLETE` with monotonic authority/fencing epoch and external fence proof.
 
-### Task 7: Selected broker adapter and sandbox certification
+- [ ] **Step 1: Write failure tests** for live/ambiguous/cancel-pending order, late fill, stale old writer, rotated key, cached session, old socket/fd, retained network route and new writer early send.
+- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/broker/test_handoff.py -v`.
+- [ ] **Step 3: Implement handoff**: old worker stops entry and drains/reconciles; external credential/session is revoked; network policy removes old egress; new worker receives next fencing epoch only after proofs and cursor checkpoint. Old epoch remains permanently invalid.
+- [ ] **Step 4: If broker cannot revoke an old session**, require termination proof for the process/host holding it plus network-policy proof; otherwise handoff cannot complete and entry stays fenced.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): fence broker credentials sessions and writers"`.
 
-- [ ] Freeze vendor docs/version, auction cutoff semantics, rate limits, idempotency behavior, cumulative fill semantics, fees, corporate-action source and sandbox limitations in `docs/runbooks/v3-broker-gateway.md`.
-- [ ] Implement adapter mapping every vendor status to a typed broker-neutral state; unknown status must raise and halt, not map to filled/cancelled.
-- [ ] Add recorded, redacted protocol fixtures for partial fills, cancel races, rejects, corrections and reconnect.
-- [ ] Run broker sandbox certification; compare submitted/received timestamps and reject any path that cannot prove auction receipt before cutoff.
-- [ ] Commit adapter only after security review; do not include credentials or account identifiers.
+### Task 8: Disaster recovery and first BROKER_CONFIRMED exploration
 
-### Task 8: Production-readiness fault campaign and enablement
+**Interfaces:** Produces `DisasterRecoveryCoordinator.restore()` and a guarded broker activation checklist.
 
-- [ ] Run process kill, network partition, duplicate webhook, delayed poll, DB busy/full, clock skew, key rotation, broker restart and handoff tests.
-- [ ] Run:
+- [ ] **Step 1: Write DR tests** for stale/tampered backup, wrong account, missing outbox/inbox cursor, live/ambiguous order, lost credential, recovery epoch race and old writer resurrection.
+- [ ] **Step 2: Implement restore** requiring signed `DisasterRecoveryManifest`; verify backup root, raise recovery/fencing epoch, restore durable stores/cursors, query complete broker state, replay/reconcile and re-prove conservation. Before completion only exit/tightening is allowed.
+- [ ] **Step 3: Run production-readiness fault campaign**: process kill, network partition, duplicate webhook, delayed/truncated poll, DB busy/full, clock skew, key rotation, broker restart, handoff and DR.
+- [ ] **Step 4: Run complete checks**.
 
 ```bash
 uv run pytest tests/offensive/v3/broker/ -v
@@ -118,16 +122,15 @@ uv run pytest tests/offensive/v3/ tests/offensive/ -q
 git diff --check
 ```
 
-Expected: all pass; no unexplained capital difference and every ambiguous case halts new risk while exits/reconciliation continue.
+Expected: all pass; disabled adapter remains default; every ambiguity halts entry while exit/reconcile continues.
 
-- [ ] Obtain independent security, compliance, reconciliation and disaster-recovery approval.
-- [ ] Start with a separately signed one-shot `ExplorationAuthorization` at portfolio-wide 2%, never relabel proxy evidence as broker evidence.
-- [ ] Update `AGENTS.md` only after a real broker-confirmed end-to-end event and reconciliation prove the mode; until then retain “broker gateway not authoritative”.
+- [ ] **Step 5: Obtain independent security/compliance/reconciliation/DR approval**, then start a new BROKER_CONFIRMED Trial/Stage using a signed one-shot `EXPLORATION` envelope: exploration aggregate <=2%, and when no existing broker EDGE grant exists total portfolio gross <=2%. Expiry/assessment 后只 drain；任何未决 exploration 风险或法律 finality 缺口阻断重发，后续尝试必须重新消耗 Attempt/multiplicity/exploration budget，不能续期或改写为 edge。Proxy/manual evidence is prior only. Update `AGENTS.md` only after a real broker-confirmed round trip and reconciliation prove the mode.
 
 ## Completion Gate
 
-- [ ] Exactly one gateway epoch can send, and every broker order has one durable local intent.
-- [ ] Duplicate/late/out-of-order reports never duplicate capital.
-- [ ] Cumulative rollback, unknown status or unexplained reconciliation break halts new risk.
-- [ ] Bust/correction and company-action confirmation preserve append-only economics.
-- [ ] Broker 2% exploration uses new, non-reused evidence and an independent authorization.
+- [ ] Exactly one valid adapter epoch can send; every order has one durable Gateway claim and one immutable client ID.
+- [ ] Broker capability profile proves account binding, idempotency, auction TIF/cutoff, pagination/cursor/retention and clock semantics.
+- [ ] Duplicate/late/out-of-order/bust/correction never duplicates or hides capital; reopened risk recreates exit duty.
+- [ ] Old credential/session/process/network path cannot submit after handoff or DR.
+- [ ] Durable scheduler preserves exits under CLI/entry/service failure and independent rate limits.
+- [ ] First broker risk uses new broker-mode evidence and a complete 2% exploration envelope; no proxy/manual authorization is relabeled.

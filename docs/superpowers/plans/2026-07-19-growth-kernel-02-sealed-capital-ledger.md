@@ -1,21 +1,22 @@
-# V3 Sealed Capital Ledger Implementation Plan
+# V3 Account Capital Truth and Gateway Authority Store Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 建立独立、append-only、精确货币、可崩溃恢复的 v3 资本真相，覆盖现金、头寸、订单预留、费用、单位净值、外部资金流、公司行动、late correction 和 session checkpoint。
+**Goal:** 建立独立、append-only、精确、可崩溃恢复的 `AccountCapitalTruth` 与 Capital Gateway Authority Store，覆盖现金、头寸、reserve、订单经济投影、单位 NAV、外部 flow、公司行动、execution revision、stage loss、risk latch 和完整 `CapitalRiskSnapshot`。
 
-**Architecture:** SQLAlchemy Core + Alembic 管理独立 SQLite 数据库。`economic_events` 是不可变事件头，`economic_event_legs` 保存同一事实的多现金/证券/应收/应付/单位份额腿，二者共同构成唯一写入事实；当前状态由同事务投影表加速读取。任何更正追加新 revision/补偿事件，禁止 UPDATE/DELETE 经济历史。所有写命令带 idempotency key、expected stream version、issuer capability 与 authority epoch。
+**Architecture:** 一个真实 broker account 对应一个资本事实流；mode-pure 业绩是只读子投影，不能拆分经济事实。Gateway-owned SQLite 在同一事务追加 canonical economic event、更新资本/risk/stage 投影、递增版本并 tombstone 尚未取得 send claim 的 entry。历史只追加 revision/补偿事件，禁止 UPDATE/DELETE；Plan 04 再在同一 DB 上实现 active policy/envelope、seal/reserve 与 admission。
 
-**Tech Stack:** Python、SQLAlchemy 2 Core、Alembic、SQLite WAL、整数分/整数股、Hypothesis、pytest。
+**Tech Stack:** Python、SQLAlchemy 2 Core、Alembic、SQLite WAL、整数 money/quantity/unit quanta、Hypothesis、pytest。
 
 ## Global Constraints
 
-- Depends on Plan 01 contracts and ports.
-- 不迁移、不修改 v2；本计划数据库只建在 `tmp_path` 或显式 v3 dev path。
-- SQLite `REAL` 不得出现在 money、quantity、units、cost-basis 真相列；金额用整数分，证券数量用整数股，单位份额用 PolicySnapshot 冻结精度的整数 quanta。
-- 估值事件不能改变 cash/shares；头寸只能因 fill 或法律生效公司行动改变。
-- 所有外部 flow 使用 flow 前同一时点 unit NAV；无法定价时进入 suspense/memo。
-- 早于 session watermark 的普通生产写入失败；late correction 以当前 `recorded_at` 追加。
+- Depends on Plan 01 Revision 2 contracts/ports；本计划不读取 producer/evidence DB，不创建 broker order。
+- 所有数据库位于 pytest `tmp_path` 或显式 v3 dev path；不得迁移或修改 v2/production 数据。
+- money、price、quantity、units、basis、fee 禁止 SQLite `REAL`；有理权益存 numerator/denominator，所有舍入策略由版本化 policy 冻结。
+- 每个经济事实只有一个 canonical event；projection 可重建，事件历史技术上禁止 UPDATE/DELETE。
+- `AccountCapitalTruth` 汇集账户全部真实模式事实；performance projection 仍按 execution provenance 分池。
+- unknown/negative-impossible/reconciliation break 锁存 no-entry；不得 clamp、丢弃或用估值事件修正持仓。
+- 所有会影响可入场额度的 capital correction、stage loss 和 risk latch 与资本事实同一事务提交。
 
 ---
 
@@ -26,161 +27,114 @@
 - Create `src/screening/offensive/v3/storage/migrations/`
 - Create `src/screening/offensive/v3/capital/repository.py`
 - Create `src/screening/offensive/v3/capital/projector.py`
+- Create `src/screening/offensive/v3/capital/account_truth.py`
 - Create `src/screening/offensive/v3/capital/nav.py`
 - Create `src/screening/offensive/v3/capital/corporate_actions.py`
+- Create `src/screening/offensive/v3/capital/risk_snapshot.py`
+- Create `src/screening/offensive/v3/capital/stage_loss.py`
+- Create `src/screening/offensive/v3/capital/execution_revisions.py`
 - Create `src/screening/offensive/v3/capital/checkpoints.py`
+- Create `src/screening/offensive/v3/capital/verify.py`
 - Create tests under `tests/offensive/v3/capital/`
 
-### Task 1: Append-only schema and transaction kernel
+### Task 1: Append-only schema, account identity, and transaction kernel
 
-**Interfaces:** Consumes Plan 01 `CapitalEvent`, `EconomicLeg`, `CapabilityVerifier`. Produces `CapitalRepository.initialize()`, `append(command)`, `events()`, `stream_version()` and `CapitalConflict`.
+**Interfaces:** Produces `CapitalRepository.initialize()`, `append_atomic()`, `events()`, `stream_version()`, `capital_version()`, `AccountBinding`, `CapitalConflict` and a Gateway transaction context reusable by Plan 04.
 
-- [ ] **Step 1: Write failing schema/repository tests** proving exact schema version, WAL/foreign keys, unique `(portfolio_id, idempotency_key)`, stream compare-and-swap, immutable event rows and rollback on projector failure.
-
-```python
-def test_same_key_different_payload_is_zero_write(repo) -> None:
-    repo.append(command("k1", cash_delta_cents=100))
-    with pytest.raises(CapitalConflict):
-        repo.append(command("k1", cash_delta_cents=101))
-    assert repo.stream_version("p1") == 1
-    assert len(repo.events("p1")) == 1
-```
-
-- [ ] **Step 2: Verify RED**
-
-Run: `uv run pytest tests/offensive/v3/capital/test_{schema,repository}.py -v`
-
-Expected: imports fail.
-
-- [ ] **Step 3: Implement schema** with `ledger_meta`, `economic_events`, `event_revisions`, `capital_projection`, `positions`, `reserves`, `receivables`, `payables`, `session_checkpoints` and an SQLite trigger rejecting UPDATE/DELETE on event tables.
+- [ ] **Step 1: Write failing tests** in `test_schema.py` and `test_repository.py` for exact schema version, WAL/foreign keys, unique canonical/idempotency keys, account/environment/currency binding, stream CAS, payload conflict, rollback on projector failure and two-process contention.
+- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/capital/test_{schema,repository}.py -v`.
+- [ ] **Step 3: Implement** `account_capital_truth`, `economic_events`, `economic_event_legs`, `event_revisions`, `capital_projection`, `positions`, `reserves`, `receivables`, `payables`, `risk_latches`, `stage_loss_state`, `execution_revisions`, `session_checkpoints`, `entry_tombstones` and `gateway_meta`. Add triggers rejecting UPDATE/DELETE on immutable tables.
 
 ```python
-economic_events = Table(
-    "economic_events", metadata,
-    Column("portfolio_id", String, nullable=False),
-    Column("stream_version", Integer, nullable=False),
-    Column("economic_event_id", String, nullable=False),
-    Column("idempotency_key", String, nullable=False),
-    Column("payload_hash", String(64), nullable=False),
-    PrimaryKeyConstraint("portfolio_id", "stream_version"),
-    UniqueConstraint("portfolio_id", "economic_event_id"),
-    UniqueConstraint("portfolio_id", "idempotency_key"),
-)
-
-economic_event_legs = Table(
-    "economic_event_legs", metadata,
-    Column("economic_event_id", String, nullable=False),
-    Column("leg_index", Integer, nullable=False),
-    Column("asset_kind", String, nullable=False),
-    Column("asset_id", String, nullable=False),
-    Column("amount_cents", Integer),
-    Column("quantity", Integer),
-    PrimaryKeyConstraint("economic_event_id", "leg_index"),
-)
+def append_atomic(self, command: CapitalCommand) -> CapitalRiskSnapshot:
+    with self._db.begin_immediate() as tx:
+        tx.require_account_binding(command.account_binding)
+        tx.require_stream_version(command.expected_stream_version)
+        event = tx.insert_idempotent_event(command)
+        tx.apply_legs_and_projection(event)
+        tx.recompute_risk_and_stage_loss(command.as_of)
+        tx.tombstone_unclaimed_entries_if_versions_changed()
+        return tx.read_capital_risk_snapshot()
 ```
 
-- [ ] **Step 4: Verify GREEN**
+- [ ] **Step 4: Verify GREEN**, including injected crash after event insert and before projection update; transaction rollback leaves zero partial write.
+- [ ] **Step 5: Commit** with `git commit -m "feat(v3): create account capital authority store"`.
 
-Run: `uv run pytest tests/offensive/v3/capital/test_{schema,repository}.py -v`
+### Task 2: Fills, fees, reserves, positions, and exact conservation
 
-Expected: pass, including two-process contention test.
+**Interfaces:** Produces `reserve_entry()`, `release_reserve()`, `record_fill_revision()`, `record_fee_revision()`, `capital_risk_snapshot()` and `assert_conservation()`.
 
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/screening/offensive/v3/storage src/screening/offensive/v3/capital/repository.py tests/offensive/v3/capital
-git commit -m "feat(v3): create append-only capital event store"
-```
-
-### Task 2: Fills, fees, reserves, positions, and conservation
-
-**Interfaces:** Produces `record_fill()`, `record_fee()`, `reserve_cash()`, `release_reserve()`, `capital_snapshot()` and `assert_conservation()`.
-
-- [ ] **Step 1: Write failing property tests** for partial entry/exit fills, minimum commission per order, transfer/stamp tax effective dates, slippage diagnosis, live cancel reserve, late fill after cancel request and duplicate execution revisions.
+- [ ] **Step 1: Write property tests** for partial entry/exit fills, minimum commission per order, transfer/stamp tax versions, live/cancel-pending reserve, late fill, duplicate revision, unattributed fill and exact round-half-even policy.
 - [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/capital/test_fills_and_conservation.py -v`.
-- [ ] **Step 3: Implement one transaction per canonical fact**. A fill creates one gross cash event and one position delta; each fee creates a linked but distinct economic event. `record_fill` accepts integer `price_micros`, `quantity`, and exact fee cents; derived decimal display values are projections only.
+- [ ] **Step 3: Implement one fact/one event semantics**. A fill has integer price micros and quantity; gross cash and security legs are atomic. Fee revision is linked but distinct. `SUBMISSION_AMBIGUOUS` leaves worst-case reserve/live exposure in risk.
+- [ ] **Step 4: Verify GREEN**. Every generated sequence satisfies opening capital + external flows + economic P&L = closing assets − liabilities, with zero unexplained cents/shares/units.
+- [ ] **Step 5: Commit** with `git commit -m "feat(v3): conserve fills fees reserves and positions"`.
+
+### Task 3: Genesis units, external flows, NAV lifecycle, and insolvency
+
+**Interfaces:** Produces `initialize_genesis()`, `close_valuation()`, `request/price/settle_subscription()`, `request/price/settle_redemption()`, `start_risk_epoch()` and as-observed/restated-final projections.
+
+- [ ] **Step 1: Write failing tests** for one-time genesis, flow-before-price ordering, suspense cash, partial/full redemption, `pending_redeemed_units`, `ACTIVE -> TERMINATING -> TERMINATED`, cancellation rules, lifetime/active HWM, restatement links and NAV <= 0.
+- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/capital/test_nav_and_flows.py -v`.
+- [ ] **Step 3: Implement exact unit accounting**. Full redemption cannot erase units before liabilities/receivables/positions settle. Confirmed NAV <= 0 sets `INSOLVENT`; lifecycle log growth is represented by typed `NEGATIVE_INFINITY`, not float `-inf` persisted in SQLite. `RiskEpochStarted` never resets lifetime HWM/history.
+- [ ] **Step 4: Verify GREEN**, including deposits/redemptions that leave unit return unchanged at the pricing instant.
+- [ ] **Step 5: Commit** with `git commit -m "feat(v3): account units flows termination and insolvency"`.
+
+### Task 4: Corporate actions and successor lot/exit continuity
+
+**Interfaces:** Produces `record_entitlement()`, `settle_cash_in_lieu()`, `make_shares_tradable()`, `apply_split_merge()`, `convert_security()`, `settle_terminal_cash()` and `legal_write_off()`.
+
+- [ ] **Step 1: Write failing tests** for ex/pay/tradable dates, fractional rational entitlements, cash-in-lieu, split/merge basis, dividend correction, merger/conversion, delisting and successor security inheriting economic lot plus due exit.
+- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/capital/test_corporate_actions.py -v`.
+- [ ] **Step 3: Implement source-authority matrix** and stable economic fact/revision IDs. Confirmation changes only the unresolved delta; successor mapping never closes risk merely because the old ticker disappears.
+- [ ] **Step 4: Verify GREEN** with conservation before/after every generated corporate-action chain.
+- [ ] **Step 5: Commit** with `git commit -m "feat(v3): preserve corporate action and lot continuity"`.
+
+### Task 5: Complete CapitalRiskSnapshot, drawdown latch, and non-replenishable stage loss
+
+**Interfaces:** Produces `CapitalRiskSnapshotBuilder`, `StageLossEngine.charge()`, `RiskLatchService.evaluate()` and versioned program/lineage/stage/global exposure views.
+
+- [ ] **Step 1: Write failing tests** covering cash, reserve, open, pending, live leaves, exit pending, ambiguous, unattributed and inherited risk; per-lineage/program/stage/global sums; units/NAV/HWM/drawdown; mixed mode/account/currency; stale/unknown mark; 9.99/10/14.99/15% boundaries.
+- [ ] **Step 2: Add stage-loss tests** for fixed activation budget cents, mutually exclusive realized market loss/fees/unrealized/pending-stress charge, concurrent fills/marks, profits/rebounds not replenishing, relabel/epoch changes not resetting and permanent `STAGE_LOSS_HALTED`.
 
 ```python
-def record_fill(self, command: RecordFill) -> CapitalSnapshot:
-    gross_cents = round_half_even(command.price_micros * command.quantity, 10_000)
-    direction = 1 if command.side is Side.BUY else -1
-    legs = (
-        EconomicLeg.cash(amount_cents=-direction * gross_cents),
-        EconomicLeg.security(command.ticker, quantity=direction * command.quantity),
-    )
-    return self._append_atomic(command, legs)
-```
-
-- [ ] **Step 4: Verify GREEN and invariants**
-
-Run: `uv run pytest tests/offensive/v3/capital/test_fills_and_conservation.py -v`
-
-Expected: for every generated event sequence, opening capital + external flows + P&L equals closing assets/liabilities with zero unexplained cents or shares.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/screening/offensive/v3/capital tests/offensive/v3/capital/test_fills_and_conservation.py
-git commit -m "feat(v3): conserve fills fees reserves and positions"
-```
-
-### Task 3: Unit NAV, external flows, HWM, and drawdown epochs
-
-**Interfaces:** Produces `NavProjector.close_valuation()`, `request_subscription()`, `price_subscription()`, `request_redemption()`, `price_redemption()`, `settle_redemption()` and `start_risk_epoch()`.
-
-- [ ] **Step 1: Write failing tests** for flow-before-price ordering, suspense cash, memo withdrawal cancellation, payable settlement, lifetime vs active-epoch HWM and as-observed vs restated NAV.
-
-```python
-def test_deposit_does_not_create_return(repo) -> None:
-    before = repo.close_valuation(nav_cents=1_000_000, units_micros=1_000_000)
-    repo.apply_external_flow(SubscriptionPriced(cash_cents=500_000, unit_price_micros=1_000_000))
-    after = repo.capital_snapshot()
-    assert after.unit_price_micros == before.unit_price_micros
-    assert after.units_micros == 1_500_000
-```
-
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement exact flow ordering** and append-only restatement links; `RiskEpochStarted` records audited starting NAV but never changes lifetime HWM/history.
-- [ ] **Step 4: Verify GREEN** with `uv run pytest tests/offensive/v3/capital/test_nav_and_flows.py -v`.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): account unit nav flows and risk epochs"`.
-
-### Task 4: Corporate actions and economic-lot finality
-
-**Interfaces:** Produces `apply_dividend_receivable()`, `settle_dividend()`, `apply_share_receivable()`, `make_shares_tradable()`, `apply_split_merge()`, `convert_security()`, `settle_terminal_cash()` and `legal_write_off()`.
-
-- [ ] **Step 1: Write failing tests** for ex-date/pay-date separation, fractional entitlements, share receivable vs tradable quantity, split/merge basis, merger conversion, delisting cash, provisional→confirmed and correction without duplicate cash/shares.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement source-authority matrix and stable `economic_event_id`**. Confirmation links to provisional fact; only delta correction changes capital.
-- [ ] **Step 4: Verify GREEN** with `uv run pytest tests/offensive/v3/capital/test_corporate_actions.py -v`.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): model auditable corporate actions"`.
-
-### Task 5: Session checkpoints, late correction, and permit invalidation
-
-**Interfaces:** Produces `CheckpointService.advance()`, `append_late_correction()` and transactional `capital_version` increment callback.
-
-- [ ] **Step 1: Write failing tests** for all six phases, idempotent restart, phase regression, earlier `as_of`, same-phase stream version, late fee/dividend, and old permit invalidation.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement monotonic checkpoint state machine**. Late correction does not reopen old phase; it appends at current stream version, increments capital version, and emits an outbox notification consumed later by gateway/authorizer.
-
-```python
-PHASES = (
-    "CORPORATE_ACTIONS_APPLIED", "PREOPEN_RISK_LOCKED",
-    "ORDER_INTENTS_DURABLE", "OPEN_RECONCILED",
-    "CLOSE_VALUED", "SESSION_FINALIZED",
+instantaneous_charge_cents = (
+    realized_market_losses_ex_fees_cents
+    + cumulative_fees_and_taxes_cents
+    + max(0, -marked_unrealized_pnl_cents)
+    + incremental_pending_stress_beyond_mark_cents
 )
+stage_loss_consumed_cents_t = max(
+    stage_loss_consumed_cents_previous,
+    instantaneous_charge_cents,
+)
+if stage_loss_consumed_cents_t >= frozen_budget_cents:
+    latch = StageLossState.HALTED
 ```
 
-- [ ] **Step 4: Verify GREEN** with `uv run pytest tests/offensive/v3/capital/test_checkpoints.py -v`.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): checkpoint sessions and invalidate stale permits"`.
+四项必须互斥：realized loss 不含 fee/tax，pending stress 只含 mark 之外的增量逆风；无法归属的 charge 同时进入 `UNATTRIBUTED_RISK` 与最保守的 program/global budget。
 
-### Task 6: Read models, backups, and full ledger verification
+- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/capital/test_{risk_snapshot,stage_loss}.py -v`.
+- [ ] **Step 4: Implement in the capital transaction** used by fills/fees/marks/reserves; a version change atomically tombstones unclaimed entry. Missing exposure component returns typed unknown and blocks new risk.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): snapshot complete risk and latch stage loss"`.
 
-**Interfaces:** Produces immutable `CapitalSnapshot`, daily NAV projection, position/order/reserve views, `verify_ledger()` and consistent SQLite backup.
+### Task 6: Execution bust/correction, reopen, and negative-position halt
 
-- [ ] **Step 1: Write failing tests** that rebuild projections from events, compare backup hashes, detect projection tampering, reject unknown events and prove v2 paths unchanged.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement projector rebuild and verifier**; projection discrepancies halt new risk but never mutate event history automatically.
-- [ ] **Step 4: Run full checks**:
+**Interfaces:** Produces `apply_execution_revision()`, `apply_bust()`, `apply_correction()` and `ReopenedEconomicLot` notification for Plan 04 ExitMandate projection.
+
+- [ ] **Step 1: Write stateful tests** for fill -> exit -> closed -> bust, corrected quantity/price/fee, duplicate/out-of-order revisions, cancel-late-fill, unknown order and a correction that would create negative shares.
+- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/capital/test_execution_revisions.py -v`.
+- [ ] **Step 3: Implement compensating revisions**: never delete or rewrite terminal order/fill history; recompute active economic projection. A reopened positive lot emits durable reopen state; impossible negative quantity latches `RECONCILIATION_HALT` and preserves the discrepancy without clamping.
+- [ ] **Step 4: Verify GREEN**: all permutations with the same canonical revisions converge to identical capital and active lot state.
+- [ ] **Step 5: Commit** with `git commit -m "feat(v3): revise executions and reopen economic risk"`.
+
+### Task 7: Checkpoints, backups, rebuild, and full verification
+
+**Interfaces:** Produces `CheckpointService.advance()`, consistent backup manifest, `rebuild_projections()` and `verify_ledger()`.
+
+- [ ] **Step 1: Write tests** for monotonic session phases, restart, earlier `as_of`, late correction, backup root/cursor metadata, projection tampering, unknown event, disk-full and restore-to-new-path.
+- [ ] **Step 2: Implement checkpoint and backup** without advancing watermark on partial failure. Backup manifest binds account, schema, stream/capital/risk/stage versions, last durable inbox/outbox cursor and content root.
+- [ ] **Step 3: Run full checks**.
 
 ```bash
 uv run pytest tests/offensive/v3/capital/ -v
@@ -189,14 +143,16 @@ uv run python -m src.screening.offensive.v3.capital.verify --help
 git diff --check
 ```
 
-Expected: all pass; verifier prints `capital_conservation=PASS projection_rebuild=PASS`.
+Expected: all pass; help exits 0; fixture verifier reports `capital_conservation=PASS projection_rebuild=PASS`.
 
-- [ ] **Step 5: Update `AGENTS.md`** to state “v3 capital ledger implemented but not authoritative/not migrated”, then commit exact files.
+- [ ] **Step 4: Update `AGENTS.md`** to “v3 capital/authority store primitives implemented; not authoritative, no active policy/envelope/seal”.
+- [ ] **Step 5: Commit** scoped capital, migration, test and documentation files.
 
 ## Completion Gate
 
-- [ ] Every cent/share change has one canonical event and one source authority.
-- [ ] UPDATE/DELETE of economic history is technically blocked.
-- [ ] Corporate action and external flow tests preserve NAV and capital conservation.
-- [ ] Checkpoint restart and late correction are deterministic.
-- [ ] No Plan 02 code accepts producer candidates or creates orders.
+- [ ] Every cent/share/unit/entitlement change has one canonical source fact and append-only revision history.
+- [ ] `CapitalRiskSnapshot` includes every risk-bearing state and fails closed on any unknown component.
+- [ ] Stage loss, capital version, risk latch and unclaimed-entry tombstone update atomically.
+- [ ] Full redemption and insolvency preserve economic/legal obligations and lifetime history.
+- [ ] Bust/correction can reopen positions and downstream exit obligations; negative impossible state is never hidden.
+- [ ] No Plan 02 path accepts producer candidates, activates authorization, creates executable seal or sends orders.

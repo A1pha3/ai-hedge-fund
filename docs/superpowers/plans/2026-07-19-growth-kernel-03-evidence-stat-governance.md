@@ -1,22 +1,23 @@
-# PIT Evidence and Statistical Governance Implementation Plan
+# PIT Evidence, Statistical Governance, and Authorization Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把市场、信号、结果、试验、统计评估和资金授权变成可重验、双时态、不可重复消费的证据链，并确保 readiness、研究重建或多重试验不能伪造 edge。
+**Goal:** 把市场、信号、结果、试验、统计评估、全局多重性预算和授权候选变成可重验、受信时间轴、不可换 ID 重复消费的证据链；readiness、legacy 研究、partial fill 或 outcome revision 均不能伪造新 edge。
 
-**Architecture:** 内容寻址 blob 保存实际 payload，Evidence Store 保存信封、dependency revision 与 namespace；Outcome Finalizer 独立成熟经济结果；Trial/SAP、Attempt Ledger 和 EvidenceConsumptionLedger 在官方样本产生前封存。Authorizer 是独立 capability，只对完整组合政策签发限时授权，并在依赖更正时事务性吊销未来 entry permit。
+**Architecture:** 内容寻址 blob 保存原文；Evidence Store 追加自己控制的 `ingested_at`/`commit_sequence` 和 revision；Outcome Finalizer 从 Plan 02 资本投影生成 mode-pure 结果。Trial/SAP/Stage、Attempt reservation、expected-session spine 和 target `PolicySnapshot` registration 在信号前冻结。Authorizer 只签 `EDGE` envelope；Governance issuer 签 `EXPLORATION`/`RECOVERY` 候选。任何 correction 先取得 Capital Gateway 的 `EntryFenceRaised` durable ACK，再激活 evidence revision，不声称跨库事务。
 
-**Tech Stack:** Python、SQLAlchemy Core/SQLite、Pydantic contracts、pandas/numpy/scipy（统计计算）、pytest。
+**Tech Stack:** Python、SQLAlchemy Core/SQLite、Pydantic Revision 2 contracts、pandas/numpy/scipy、pytest。
 
 ## Global Constraints
 
-- Depends on Plan 01; consumes Plan 02 read-only capital projections for economic outcomes.
-- readiness 只能产生 SnapshotEvidence，不能生成 CapitalAuthorization。
-- 旧 journal、Phase 0、research reconstruction 只能标 `PRIOR/RESEARCH`，永不成为 promotion 样本。
-- 主要指标只用完整组合单位 NAV 的 excess daily log growth；单票收益、胜率、IC 只作诊断。
-- 官方 sample eligibility 由信号时点决定；缺失 session 自动成为 `NO_RUN`，不能删失。
-- 授权签发与 `alpha_sample_consumption_id` 消费必须在同一事务。
-- SQLite 不提供表级 ACL：每个 issuer 使用独立、由对应 service principal 拥有的 namespace DB；跨 authority 查询只消费签名复制品或窄只读 API，禁止多个 issuer 共享一个可写 evidence DB。
+- Depends on Plan 01；只读消费 Plan 02 economic/NAV projections。
+- readiness 只能形成 `SnapshotEvidence`，不能形成 edge assessment 或 authorization。
+- legacy journal/Phase 0/reconstruction 只能是 `PRIOR | RESEARCH_RECONSTRUCTION`，不可进入 primary promotion role。
+- 官方目标是完整组合单位 NAV 的 excess daily log growth；单票收益、胜率和 IC 只作诊断。
+- `provider_published_at` 来自源；`observed_at` 来自受信采集器；`ingested_at`、`commit_sequence`、active revision 只能由 Evidence Store 写。
+- official OOS 只消费 signal cutoff 前已 commit 的 evidence；读取 wall-clock 或事后 correction 不得改变历史决策输入。
+- 每个 issuer 拥有独立 writable namespace DB；跨 authority 只传签名不可变对象或窄 API。
+- envelope issuance 与本 authority 的 sample/attempt/multiplicity budget 消费同一事务；Capital Gateway activation 是后续独立 CAS。
 
 ---
 
@@ -25,129 +26,123 @@
 - Create `src/screening/offensive/v3/evidence/blob_store.py`
 - Create `src/screening/offensive/v3/evidence/repository.py`
 - Create `src/screening/offensive/v3/evidence/dependencies.py`
+- Create `src/screening/offensive/v3/evidence/session_spine.py`
 - Create `src/screening/offensive/v3/evidence/outcomes.py`
 - Create `src/screening/offensive/v3/evidence/trials.py`
+- Create `src/screening/offensive/v3/evidence/attempts.py`
 - Create `src/screening/offensive/v3/evidence/consumption.py`
+- Create `src/screening/offensive/v3/evidence/multiplicity.py`
 - Create `src/screening/offensive/v3/evidence/statistics.py`
 - Create `src/screening/offensive/v3/evidence/authorizer.py`
+- Create `src/screening/offensive/v3/governance/repository.py`
+- Create `src/screening/offensive/v3/governance/issuer.py`
 - Create `src/screening/offensive/v3/evidence/projections.py`
-- Create tests under `tests/offensive/v3/evidence/`
+- Create `scripts/v3_import_research_evidence.py`
+- Create tests under `tests/offensive/v3/evidence/` and `tests/offensive/v3/governance/`
 
-### Task 1: Content-addressed blob and bitemporal Evidence Store
+### Task 1: Content-addressed revisioned PIT Evidence Store
 
-**Interfaces:** Produces `BlobStore.put/get`, issuer-scoped `EvidenceRepository.publish/get/revise`, dependency Merkle roots and typed source states `SUCCESS_EMPTY | SUCCESS_NONEMPTY | FAILED | STALE`.
+**Interfaces:** Produces `BlobStore.put/get`, issuer-scoped `EvidenceRepository.publish/get/prepare_revision/activate_revision`, store commit sequence and dependency Merkle roots.
 
-- [ ] **Step 1: Write failing tests** for payload round trip, hash mismatch, secure file reads, duplicate idempotency, same ID/different payload conflict, effective/observed/available ordering, legal empty overriding stale and namespace capability checks.
+- [ ] **Step 1: Write failing tests** in `test_blob_store.py` and `test_repository.py` for payload round-trip/hash mismatch, secure file reads, duplicate/same-ID conflict, effective/published/observed/ingested/available ordering, trusted-clock stamp ownership, commit sequence monotonicity, revision/supersedes chain, legal empty overriding stale and issuer namespace.
 - [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_{blob_store,repository}.py -v`.
-- [ ] **Step 3: Implement atomic blob publication** and DB envelope transaction. Blob must be durable before envelope commit; orphan blobs are harmless and garbage-collected only after reachability audit.
+- [ ] **Step 3: Implement durable blob-before-envelope publication**. Orphan blob is safe; envelope without durable payload is impossible. Producer payload cannot set store-controlled timestamps/sequence/active revision.
 
 ```python
 def publish(self, signed: SignedEnvelope, payload: bytes) -> EvidenceRecord:
-    verified = self.verifier.verify(signed, required_capability(signed.kind))
-    if sha256(payload).hexdigest() != signed.payload_content_hash:
-        raise EvidenceConflict("payload hash mismatch")
-    blob_uri = self.blobs.put(payload)
-    return self._insert_idempotent(signed, blob_uri, verified)
+    verified = self.verifier.verify(signed, required_capability(signed.kind), self.clock.now())
+    self._require_payload_hash(signed, payload)
+    blob = self.blobs.put_durable(payload)
+    with self.db.begin_immediate() as tx:
+        return tx.insert_with_store_time_and_sequence(signed, blob, verified)
 ```
 
-- [ ] **Step 4: Verify GREEN**; rerun after process restart.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): persist bitemporal reproducible evidence"`.
+- [ ] **Step 4: Verify GREEN** after restart and concurrent publisher tests.
+- [ ] **Step 5: Commit** with `git commit -m "feat(v3): persist trusted revisioned evidence"`.
 
-### Task 2: Full signal funnel and expected-session spine
+### Task 2: Pre-sealed trial, target registration, and expected-session spine
 
-**Interfaces:** Produces `record_signal_funnel()`, `enroll_expected_sessions()`, `finalize_session_status()` and queries by producer/family/behavior/mode.
+**Interfaces:** Produces atomic `reserve_attempt_and_seal_trial()`, immutable target-policy registration, `enroll_expected_sessions()` and session revisions `RUN | NO_SIGNAL | BLOCKED | NO_RUN | DATA_UNKNOWN | SESSION_CANCELLED`.
 
-- [ ] **Step 1: Write failing tests** proving candidate/data_eligible/selected stages are distinct, all rejected candidates retain reasons, Auto carries `execution_authority=none` only in report projection, and missing daily runs become `NO_RUN` at finalization.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement immutable session spine** from official calendar before enrollment. Allowed statuses are exactly `RUN | NO_SIGNAL | BLOCKED | NO_RUN | DATA_UNKNOWN`; a later run may fill an unfinalized expected slot but cannot delete a finalized status.
-- [ ] **Step 4: Verify GREEN** with `uv run pytest tests/offensive/v3/evidence/test_signal_funnel.py -v`.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): retain complete signal and session funnel"`.
+- [ ] **Step 1: Write failing tests** for seal-before-signal cutoff, immutable economic lineage/program, exactly one champion/challenger, target `PolicySnapshot` registration that is explicitly non-executable, fixed assessment dates and calendar spine enrollment before observations.
+- [ ] **Step 2: Add tests** proving attempt reservation and Trial/SAP seal either both commit or neither; cancelled exchange sessions use a signed calendar revision and `SESSION_CANCELLED`, not deletion; finalized missing run becomes `NO_RUN`.
+- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_{trials,session_spine}.py -v`.
+- [ ] **Step 4: Implement one governance transaction** for attempt reservation + Trial/SAP/Stage seal + target registration. Activation types are rejected from this repository.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): seal trials targets and expected sessions"`.
 
-### Task 3: Outcome Finalizer and execution-mode separation
+### Task 3: Outcome Finalizer, plan-line identity, and mode-pure portfolio paths
 
-**Interfaces:** Consumes Plan 02 `economic_lot`/NAV read models. Produces `OutcomeFinalizer.finalize_due(as_of)` and `OutcomeEvidence` with finality/missing reasons.
+**Interfaces:** Produces `OutcomeFinalizer.finalize_due(as_of)` and `OutcomeEvidence` revisions tied to `plan_line_economic_contract_key` plus distinct decision-day evaluation units.
 
-- [ ] **Step 1: Write failing tests** for T+1/T+10 session ordinals, partial fills, EXIT_PENDING, fee/company-action finality, raw close exclusion, proxy/manual/broker namespace separation, correction revision and unavailable outcomes.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement finalizer**. Simple round-trip may expose diagnostic `R_net`; complex lots aggregate all cash flows. Official portfolio outcomes come from daily unit NAV, not candidate rows.
-- [ ] **Step 4: Verify GREEN** with `uv run pytest tests/offensive/v3/evidence/test_outcomes.py -v`.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): finalize execution-matched outcomes"`.
+- [ ] **Step 1: Write failing tests** for T+1/T+10 session ordinals, no-fill, partial fill, late fill, EXIT_PENDING, fee/company-action finality, raw close exclusion, proxy/manual/broker separation, bust/reopen and unavailable finality.
+- [ ] **Step 2: Add counting tests** proving all partial fills/fee revisions/corrections of one plan-line contract count as one mature outcome, while each pre-registered decision day contributes at most one governance evaluation unit; 150 outcomes and 60 decision days/ESS remain separate fields.
+- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_outcomes.py -v`.
+- [ ] **Step 4: Implement finalizer** from AccountCapitalTruth/read models. Official portfolio path uses daily unit NAV by mode projection; broker account economics remain complete even if an out-of-protocol trade is unattributed.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): finalize economic outcomes without sample inflation"`.
 
-### Task 4: Trial/SAP, Attempt Ledger, and sample consumption
+### Task 4: Attempt, dual-key evidence consumption, and global multiplicity ledgers
 
-**Interfaces:** Produces `seal_trial()`, `seal_stage()`, `record_attempt()`, `reserve_sample()`, `consume_sample()` and reuse matrix validation.
+**Interfaces:** Produces `AttemptLedger`, `EvidenceConsumptionLedger`, `GlobalMultiplicityBudgetLedger`, `reserve_evaluation_units()` and `consume_primary_promotion()`.
 
-- [ ] **Step 1: Write failing tests** for trial-before-signal, program/lineage identity, one champion + one challenger, failed/abandoned attempts consuming budget, fixed assessment dates, central governance floors and cross-lineage sample-repackaging rejection.
+- [ ] **Step 1: Write failing tests** for failed/abandoned attempt consumption, fixed plan, cross-lineage/program repackaging, concurrent reservations, outcome revision, partial fill and relabeled evaluation unit.
+- [ ] **Step 2: Create independent DB uniqueness constraints**:
 
-```python
-def test_primary_sample_cannot_be_repackaged(repo) -> None:
-    repo.consume(primary_consumption(evidence_id="e1", stage_id="s1"))
-    with pytest.raises(SampleReuseConflict):
-        repo.consume(primary_consumption(evidence_id="e1", stage_id="s2"))
+```text
+(research_program_id, evidence_id, PRIMARY_PROMOTION)
+(research_program_id, governance_minted_evaluation_unit_id, PRIMARY_PROMOTION)
 ```
 
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement DB uniqueness** on `(research_program_id, evidence_id, evaluation_unit, role=PRIMARY_PROMOTION)` and exact idempotency. Governance policy may be more conservative per trial, never looser.
-- [ ] **Step 4: Verify GREEN** with `uv run pytest tests/offensive/v3/evidence/test_{trials,consumption}.py -v`.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): seal trials attempts and evidence consumption"`.
+Do not collapse them into one four-column key.
 
-### Task 5: Continuous portfolio evaluator and conservative gates
+- [ ] **Step 3: Add global multiplicity tests** proving a new program/lineage/name cannot escape the governance-wide alpha/e-value budget; idempotent retry returns the original consumption, conflicting retry writes nothing.
+- [ ] **Step 4: Verify RED/GREEN** with `uv run pytest tests/offensive/v3/evidence/test_{attempts,consumption,multiplicity}.py -v`.
+- [ ] **Step 5: Commit** with `git commit -m "feat(v3): prevent evidence and evaluation-unit reuse"`.
+
+### Task 5: Continuous portfolio evaluator and conservative promotion gates
 
 **Interfaces:** Produces `PortfolioEvaluation`, `evaluate_frozen_policy()`, `evaluate_predictable_adaptive()`, `check_minimum_evidence()` and `check_tail_capacity()`.
 
-- [ ] **Step 1: Write deterministic tests** with fixed fixtures for excess log growth, paired champion/challenger days, ESS, chronological folds, MEE, 2× slippage, adverse window, MDD/CDaR/overshoot, capacity stress and pending finality.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement transparent initial estimator**: raw daily log excess mean + pre-registered one-sided 95% lower bound; block bootstrap only for complete continuous frozen-policy paired paths. Stateful tail metrics come from continuous replay, never stitched NAV blocks.
+- [ ] **Step 1: Write deterministic golden tests** for excess daily log growth, paired champion/challenger decision days, outcome count, decision-day count, ESS, chronological outer folds, MEE, one-sided 95% LCB, 2x slippage, adverse window, MDD/CDaR/overshoot, capacity and pending finality.
+- [ ] **Step 2: Add leakage tests** proving outer future windows never tune hyperparameters and official OOS checks store `ingested_at/commit_sequence <= signal cutoff`; post-cutoff revision is excluded from the original evaluation.
+- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_statistics.py -v`.
+- [ ] **Step 4: Implement transparent estimators**. Stateful tail metrics use continuous replay or complete per-scenario replay, never stitched independent return blocks. Minimum evidence checks 150 mature plan-line outcomes, 60 decision days, ESS >= 60, 80 tickers, 12 months and a complete adverse window as distinct predicates.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): evaluate conservative continuous portfolio evidence"`.
 
-```python
-def minimum_evidence_ok(s: EvidenceSummary, gate: GovernanceGate) -> bool:
-    return all((
-        s.mature_outcomes >= 150,
-        s.decision_days >= 60,
-        s.ess >= Decimal("60"),
-        s.distinct_tickers >= 80,
-        s.coverage_months >= 12,
-        s.adverse_window_complete,
-    ))
-```
+### Task 6: EDGE Authorizer and governed EXPLORATION/RECOVERY issuance
 
-- [ ] **Step 4: Verify GREEN and golden numbers** with `uv run pytest tests/offensive/v3/evidence/test_statistics.py -v`.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): evaluate conservative portfolio growth gates"`.
+**Interfaces:** Produces `Authorizer.assess_and_issue_edge()`, `GovernanceIssuer.issue_exploration()`, `issue_recovery()` and signed inactive `CapitalAuthorizationEnvelope` candidates.
 
-### Task 6: Authorizer, exploration governance, and dependency revalidation
+- [ ] **Step 1: Write adversarial tests** for stale/missing benchmark, mode/account/behavior/cost mismatch, below-MEE LCB, target worse than baseline, tail breach, reused sample/budget, multiple independent envelopes, exploration >2%, exploration renewal, first broker portfolio >2%, recovery ignoring inherited risk/loss and expired manifest.
+- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_authorizer.py tests/offensive/v3/governance/test_issuer.py -v`.
+- [ ] **Step 3: Implement separate issuer transactions**. Authorizer alone signs `EDGE`; Governance alone signs `EXPLORATION | RECOVERY`. `EXPLORATION` 强制 `BROKER_CONFIRMED` 且只声明受限证据采集，不声明 live edge；`RECOVERY` 引用既有 grants/assessments 和全部继承风险/loss versions，不制造新 grant。Each transaction consumes its local attempt/sample/global budget and signs one complete target portfolio envelope. Result remains inactive until Plan 04 Gateway CAS.
+- [ ] **Step 4: Add signer-failure test**: a failed external signer call leaves no consumption or issued envelope; a retry is deterministic.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): issue complete governed authorization envelopes"`.
 
-**Interfaces:** Produces `Authorizer.assess_and_issue()`, `GovernanceIssuer.issue_exploration()`, `DependencyTracker.revise()` and authorization states `ACTIVE | EDGE_REVALIDATION_REQUIRED | REVOKED | EXPIRED | DRAINING`.
+### Task 7: Fail-closed dependency correction and research-only import
 
-- [ ] **Step 1: Write adversarial tests** for missing benchmark, stale estimator, mode/lineage/version mismatch, below-MEE LCB, target worse than baseline, tail breach, repeated issuance, exploration >2%, exploration renewal, outstanding risk, combined program cap and evidence correction.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement issuance transaction**: lock assessment, attempt checkpoint and sample slot; re-evaluate frozen Trial/SAP; consume sample; persist authorization payload/hash; call isolated signer port; commit. On evidence revision, the same Authorizer transaction changes state、increments `capital_authorization_version` and appends a signed revocation outbox record；因为每个 permit 绑定旧 version，这次递增在逻辑上立即使全部未消费 permit 失效。Plan 04/07 gateway 在最终提交时同步重验 Authorizer 当前状态/version，Authorizer 不可用则零提交；本地 permit projection 随 revocation outbox 幂等收敛，不依赖跨 SQLite 分布式事务保证安全。
-- [ ] **Step 4: Verify GREEN** with `uv run pytest tests/offensive/v3/evidence/test_{authorizer,revalidation}.py -v`.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): gate and revalidate capital authorizations"`.
+**Interfaces:** Produces `DependencyTracker.prepare_correction()`, `EntryFenceClient.raise_and_wait_ack()`, `activate_corrected_revision()` and a dry-run-first legacy importer.
 
-### Task 7: Evidence projections, audit command, and compatibility import
-
-**Interfaces:** Produces read-only health/audit projections and a research-only importer for current setup log/panel/journal corrections.
-
-- [ ] **Step 1: Write tests** proving imported legacy evidence is forced to `RESEARCH_RECONSTRUCTION` or `PRIOR`, cannot acquire promotion role, records missing payload provenance and never mutates originals.
-- [ ] **Step 2: Implement** `scripts/v3_import_research_evidence.py` with `--dry-run` default and explicit destination under an isolated v3 research DB.
-- [ ] **Step 3: Verify**:
+- [ ] **Step 1: Write crash/race tests** for correction prepare, Gateway unavailable, fence ACK persisted, crash before revision activation, duplicate fence, old authorization status and concurrent entry attempt. Safety rule: revision is never active before durable fence ACK; fence-without-activation may overblock but never underblock.
+- [ ] **Step 2: Implement the protocol** using a Plan 04 port fake now; Plan 04 replaces it with the real Gateway. Do not hold an Evidence DB transaction open across network I/O and do not claim distributed atomicity.
+- [ ] **Step 3: Implement** `scripts/v3_import_research_evidence.py --dry-run` forcing imported material to `RESEARCH_RECONSTRUCTION | PRIOR`, retaining provenance gaps and `authorization_eligible=0`.
+- [ ] **Step 4: Run full checks**.
 
 ```bash
-uv run pytest tests/offensive/v3/evidence/ -v
+uv run pytest tests/offensive/v3/evidence/ tests/offensive/v3/governance/ -v
 uv run pytest tests/offensive/test_join_setup_outputs.py tests/offensive/test_setup_performance.py -q
 uv run python scripts/v3_import_research_evidence.py --dry-run
 git diff --check
 ```
 
-Expected: tests pass; command reports counts and `authorization_eligible=0`.
+Expected: all pass; importer mutates no source and reports `authorization_eligible=0`.
 
-- [ ] **Step 4: Update `AGENTS.md`** with implemented evidence roles and the explicit “no current edge authorization” status.
-- [ ] **Step 5: Commit** exact evidence, test, script and documentation files.
+- [ ] **Step 5: Update `AGENTS.md`** with implemented evidence/governance roles and “no active capital envelope” status, then commit scoped files.
 
 ## Completion Gate
 
-- [ ] Every evidence hash resolves to retained payload and parser/source metadata.
-- [ ] Every official session has an ITT status; missing pipeline runs cannot disappear.
-- [ ] Mode and behavior generations cannot share official promotion samples.
-- [ ] Authorization issuance and sample consumption are atomic and one-time.
-- [ ] Evidence correction immediately blocks future entry while preserving exits and historical audit.
+- [ ] Every evidence hash resolves to retained payload, source/parser metadata and trusted store time/sequence.
+- [ ] Every enrolled official session has an immutable status or signed cancellation revision.
+- [ ] Partial fill/correction cannot inflate outcome or decision-day counts.
+- [ ] Both primary-promotion unique keys and the global multiplicity budget are enforced under concurrency.
+- [ ] EDGE/EXPLORATION/RECOVERY issuer capabilities are distinct; every candidate envelope is a complete portfolio policy and inactive by default.
+- [ ] Correction activation always follows durable Gateway entry-fence ACK; exits remain unaffected.

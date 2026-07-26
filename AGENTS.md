@@ -15,28 +15,33 @@ uv run python src/main.py --daily-action   # 读缓存, ~3 秒, 输出次日 BUY
 - **`--daily-action`**：凸性 setup（BTST 涨停突破 T+10、OversoldBounce 超跌反弹 T+5）→ Kelly 仓位 → paper trading。**在当前 legacy 实现中与 `--auto` 是两套独立系统**，只共享缓存数据；目标态会共享不可变 Evidence Store/Outcome/Capital Truth 基础设施，但 producer namespace、edge 与评分永久独立。
 - 入口在 `src/cli/dispatcher.py`（命令分发），核心逻辑在 `src/screening/offensive/`。
 
-## 长期目标架构宪章（2026-07-19 已批准，尚未全部实现）
+## 长期目标架构宪章（Revision 2 于 2026-07-26 已批准，尚未全部实现）
 
 完整、唯一权威设计见 [`docs/superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md`](docs/superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md)。本节是所有 Agent 修改、实现或审阅相关代码时必须遵守的短约束；下文“当前状态”描述的是 legacy 现实，**不得据此声称目标架构已经上线**。若旧文档与该设计冲突，以该设计为准；实际行为仍以代码、版本化策略快照和可重验台账为准。
 
-1. **两个生产者保持独立**：`--auto` 与 BTST 不合并分数。目标态初期只有 BTST 可申请交易授权；`--auto`、OversoldBounce、regime、streak、composite 等均为 shadow/feature，未经新的前向证据不得影响准入、排序或仓位。
-2. **唯一经济目标**：优化扣除真实成本、约束和现金占用后的组合单位净值长期对数增长；固定可执行合约为 T0 收盘后决策、T+1 开盘买、T+10 开盘卖。胜率、赔率、IC 和单票收益只作诊断，不得替代组合路径证据。
-3. **四种执行模式永不混算**：`RESEARCH_RECONSTRUCTION`、`DAILY_BAR_PROXY`、`MANUAL_CONFIRMED`、`BROKER_CONFIRMED` 的成交、收益、NAV 和样本必须分开；当前手工/paper 工作流不得冒充 broker-live，人工确认不得写 broker namespace。
-4. **readiness 只证明数据，不证明 edge**：PIT 快照、策略盈利证据、资本/台账真相是三层独立事实。数据未知、估计过期、版本不匹配、执行不确定或证据不可重验时，禁止新增风险，但不得阻断真实退出。
-5. **唯一授权路径**：生产者只能提交候选，不能自报授权；独立 Authorizer 才能签发 `EdgeAuthorization`，首次 broker 2% 只能使用治理层限风险 `ExplorationAuthorization`。薄决策内核统一验证 `CapitalAuthorization`、组合约束和风险缩放，生成不可变 `DecisionSeal`。shadow 只能生成 gateway 永不接受的 `ShadowDecision`。任何 CLI、Agent 或策略不得绕过唯一 gateway/authoritative writer 直接写生产台账或经纪商。
-6. **决策与成交不可回填伪造**：必须满足 `T0 close finalized < Seal deadline < Permit deadline < gateway send deadline < broker auction cutoff`，并封存数量、限价和最坏现金占用；T+1 只能缩减或取消，不能看到开盘后增加。未成交、部分成交、撤单未确认、涨跌停/停牌不确定必须保持真实状态，禁止用日线高低价或事后价格补造成交。
-7. **风险约束作用一次且可审计**：回撤幅度小于 10% 不缩放，10%–15% 线性降至 0，达到 15% 锁存为 `RISK_HALTED` 并停止新仓；它是“停止增加风险”，不是最大亏损保证。恢复必须开启新 Risk/Authority Epoch，以 portfolio-wide 2% gross cap 重启且继承风险全部计入，永久保留全生命周期净值和高水位。
-8. **证据必须双时态且保存原文**：所有依赖记录 `effective_at`、`observed_at`、`available_at`、`mode`；决策只能消费 cutoff 前可用的数据。fingerprint 只校验一致性，不能替代发行者权限，也不能替代内容寻址的原始 payload 归档。
-9. **行为变化必须开启新证据世代**：策略语义、过滤、排序、仓位、成本、执行或数据口径改变时，更新 semver/behavior fingerprint/policy epoch，并在不可改名的 economic lineage/research program 下预注册一个 champion 与一个 challenger；failed/abandoned 尝试也进入全局 Attempt Ledger 和 multiplicity budget。变更前数据只能作先验或研究，不能伪装成新策略样本外证据。
-10. **资金与公司行动守恒**：权威台账以整数分/`Decimal` 记录现金流，按真实整手、最低佣金、税费、滑点和公司行动结算。每个经济事实只有一个 canonical event；分红应收、股份应收、可交易数量、拆并股、退市/换股必须显式建模，仓位只可由真实成交或法律上生效的公司行动消失。
-11. **完整组合路径决定晋级**：所有 walk-forward、压力测试和 challenger 比较必须保留重叠持仓、现金、延迟退出、公司行动、回撤状态和容量约束；外层未来窗口不可参与调参。状态型尾部风险只能用连续时间回放或每个情景完整重放，不能通过拼接独立收益块来声称安全。
-12. **先 shadow，后 canary，允许不交易**：v3 与 v2 分账，完成版本绑定、资本守恒和 CAS authority flip 后 v2 才只读；新内核先用 gateway 不可接受的 `ShadowDecision` 对账。BTST 的 2%→5%→最多 10% 以不可改名的 `economic_lineage_id` 为键，覆盖 open/pending/live/reserved 的组合级总风险，不是单票额度；所有并发首次探索合计最多 2% portfolio gross，且不可续期。每个 stage 另有盈利不可补回的累计 loss budget，触及即 `STAGE_LOSS_HALTED`、只退出。每级必须用不复用的新前向证据重新满足最低门。`--auto` 只有在独立前向证据通过后才可另行申请授权。保守绝对/增量 edge 未达最小经济效应或任一关键事实未知时，正确输出是 no-trade。
+1. **两个生产者保持独立**：`--auto` 与 BTST 不合并分数。目标态初期只有 BTST 可申请交易授权；`--auto`、OversoldBounce、regime、streak、composite 等均为 shadow/feature，未经新的同模式前向证据不得影响准入、排序或仓位。
+2. **唯一经济目标与固定合约**：优化扣除真实成本、约束和现金占用后的组合单位净值长期对数增长；可执行合约固定为 T0 收盘后决策、T+1 开盘买、T+10 开盘卖。胜率、赔率、IC 和单票收益只作诊断，不能替代完整组合路径证据。
+3. **执行模式分池，真实账户统一守恒**：`RESEARCH_RECONSTRUCTION`、`DAILY_BAR_PROXY`、`MANUAL_CONFIRMED`、`BROKER_CONFIRMED` 的业绩、NAV 和晋级样本永不混算；同一真实 broker account 的全部成交、费用、现金和公司行动必须进入唯一 `AccountCapitalTruth`，不能按模式拆掉真实资本事实。
+4. **三层事实独立**：PIT 数据 readiness、策略 edge 证据、资本/台账真相互不替代。未知、过期、版本不匹配、执行不确定或不可重验时禁止新增风险，但真实退出、公司行动、对账和补偿事件继续。
+5. **配置不是权限**：本地 JSON、环境变量、CLI 参数和未激活签名只是候选输入。只有 Governance Control Plane 签发并单调激活的 `TrustBundle`、`PolicyActivation`、Trial/SAP/Stage、授权及迁移/broker/灾备 manifest 才能改变权限；producer、CLI 和 Agent 不持有这些签发能力。
+6. **授权是完整组合包络**：每个 portfolio 同时最多一个 active `CapitalAuthorizationEnvelope`，kind 为 `EDGE | EXPLORATION | RECOVERY`，必须绑定账户、mode、policy/trust/authority/risk epoch、完整 target portfolio policy、`lineage_grants[]`、总 gross cap 和 stage/program loss budget。多个 lineage 不能机械叠加；含 exploration 时所有探索合计最多 2%，首次 broker 且无既有 EDGE 时整个 portfolio 也最多 2%。
+7. **唯一 entry 线性化域**：Growth Kernel 是纯函数，只输出完整 `PortfolioDecision` proposal；Capital Gateway Authority Store 在同一事务验证 active policy/envelope、`CapitalRiskSnapshot`、风险/损失锁存、permit、期限与 fence，原子 reserve 并发布 `PortfolioDecisionSeal`。经济幂等键固定为 `(portfolio_id, signal_session, decision_cycle_id)`，不得把 epoch 塞进 key 绕过冲突。
+8. **发送前最后一次授权检查**：entry 状态必须按 `SEALED -> PERMITTED -> OUTBOX_DURABLE -> SEND_CLAIMED -> SUBMISSION_AMBIGUOUS | BROKER_ACK` 单调推进；`SEND_CLAIMED` 是最终发送权线性化点，必须在 Gateway 同一事务重新验证并消费全部版本/nonce/deadline。只在券商能力测试证明同一 `client_order_id` 幂等时才可同 ID 重试，绝不能换 ID 猜测重发。
+9. **entry 与 exit 分道**：新仓必须消费有效 envelope；`ExitMandate` 只由权威经济持仓派生并由 durable scheduler 推进，不依赖 edge、readiness、stage loss 或 entry kill switch。未知可卖数量时不得超卖；bust/correction 使头寸重现时必须重开退出义务。
+10. **时点不可回填伪造**：必须满足 `T0 close finalized < seal_creation_deadline < permit_issue_deadline < ExecutionPermit.expires_at <= gateway_send_deadline < broker auction cutoff`。T+1 只能按冻结机械条件缩减或取消，不能看到开盘后增加；未成交、部分成交、撤单未确认、停牌/涨跌停未知必须保留真实状态，禁止用日线高低价或事后价格补造成交。
+11. **风险与 stage loss 各作用一次**：回撤不足 10% 不缩放，10%–15% 对未缩放 lineage 和组合 gross ceiling 线性降至 0，15% 锁存 `RISK_HALTED`。stage loss budget 在激活时冻结为整数分，并与 fill/fee/mark/reserve 同一资本事务按 `max(previous, instantaneous_charge)` 单调消费；盈利、反弹、重命名或换 epoch 均不能回补。恢复必须新 Risk/Authority Epoch，以 `RECOVERY` envelope 在组合 2% cap 内重启并计入全部继承风险和历史 loss consumption。
+12. **证据是受信时间轴，不只是双时间戳**：保存原始 payload，并记录 `effective_at`、`provider_published_at`、`observed_at`、Evidence Store 控制的 `ingested_at`/`commit_sequence`、`available_at`、revision/supersedes/active revision 和 mode。官方 OOS 只能消费信号 cutoff 前已入库的数据；fingerprint 只证明一致性，不能授予发行权限。
+13. **行为变化开启新证据世代**：策略、过滤、排序、仓位、成本、执行或数据口径变化时，更新 semver/behavior fingerprint/policy epoch，并在不可改名的 economic lineage/research program 下预注册 champion/challenger、Trial、SAP、Stage 与 expected-session spine。Attempt reservation 与 Trial/SAP seal 必须原子；failed/abandoned 也消耗全局 multiplicity budget。
+14. **样本不能换 ID 复用**：`EvidenceConsumptionLedger` 对 `(research_program_id, evidence_id, PRIMARY_PROMOTION)` 与 `(research_program_id, governance_minted_evaluation_unit_id, PRIMARY_PROMOTION)` 分别唯一；partial fill、late fee 和 outcome revision 不增加 plan-line outcome 数，decision-day/ESS 是另一独立评价单元。完整连续组合路径、150 个成熟 outcome 与 60 个 decision-day/ESS 是不同门槛，不能互相替代。
+15. **资本真相必须精确且可更正**：持久化 money/quantity/unit 全用整数最小单位，不保存 float 真相；显式 genesis units、`pending_redeemed_units`、`TERMINATING/TERMINATED`、`INSOLVENT` 和 as-observed/restated-final。每个经济事实只有一个 canonical event；公司行动用有理数 entitlement/cash-in-lieu，继承 lot/exit；历史订单 terminal 后发生 bust/correction 仍追加 revision、重投影资本，负持仓是 reconciliation halt，不能 clamp 为 0。
+16. **broker 与迁移必须证明外部完整性**：broker 前须绑定账户/环境指纹、可信时钟、authenticated raw envelope、分页/cursor/retention、client ID 幂等、集合竞价 TIF/cutoff、独立退出限流和 credential/session/network fencing，并有 `BrokerEnablementManifest` 与 `DisasterRecoveryManifest`。v2→v3 前须有签名 `MigrationApprovalManifest`、共享 durable inbox、live-order adoption manifest、精确 source/target 守恒、handoff cursor 和包含全部版本/root/fence 的 CAS；旧 writer/旧会话必须失权。
+17. **先 shadow，后逐模式 canary，允许不交易**：v3 与 v2 分账，完成版本绑定、资本守恒和 CAS authority flip 后 v2 才只读；shadow 类型/namespace 必须让 gateway 技术上无法接受。proxy/manual 的 2% 不能冒充 broker 证据；首次 broker 另开 `BROKER_CONFIRMED` Trial/Stage 和 one-shot 2% `EXPLORATION` envelope。每个 2%→5%→最多 10% stage 都使用新的、不复用的同模式前向证据；`--auto` 另行证明。任何关键门未过时，正确结果是 no-trade。
 
 任何影响上述语义的代码变更，必须同步更新权威设计、机器可读策略快照（实现后）、契约/故障注入测试和迁移说明；不得通过修改报告文案掩盖台账、授权或证据冲突。
 
-### 当前 v3 已实现范围（2026-07-22）
+### 当前 v3 已实现范围（2026-07-26）
 
-当前只实现了无存储的 strict/frozen v3 领域契约、默认 `off` 的版本化 PolicySnapshot 与行为指纹、只读 public-key trust registry/capability verifier，以及跨计划稳定 ports。**目标架构尚未上线，也没有资本授权。** 仍未实现 v3 capital repository/authoritative writer、Evidence Store、Authorizer、Growth Kernel、gateway、broker connection、authority flip 或任何可执行资本路径；这些接口和契约不得被解释为已经具备交易权限。
+当前只实现了 Plan 01 Revision 1 的无存储 strict/frozen v3 领域契约、默认 `off` 的版本化 PolicySnapshot 与行为指纹、只读 public-key trust registry/capability verifier，以及基础 ports。Revision 2 新增的 `TrustBundle`/activation、完整 `CapitalAuthorizationEnvelope`、`CapitalRiskSnapshot`、`PortfolioDecisionSeal`、`ExitMandate` 和各类治理 manifest 尚未实现，旧 `CapitalAuthorization`/`DecisionSeal` 接口不得作为最终实现继续向下扩散。**目标架构尚未上线，也没有资本授权。** 仍未实现 v3 capital repository/authoritative writer、Evidence Store、Authorizer、Growth Kernel、Capital Gateway、broker connection、authority flip 或任何可执行资本路径。
 
 ## 数据完整性（⚠ 最重要，曾因此误判）
 

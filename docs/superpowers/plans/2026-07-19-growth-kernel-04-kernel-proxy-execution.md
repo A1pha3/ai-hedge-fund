@@ -1,21 +1,22 @@
-# Growth Kernel and Proxy Execution Implementation Plan
+# Growth Kernel, Capital Gateway Admission, and Proxy Execution Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 实现确定、可回放、无网络副作用的 Growth Kernel，以及严格分离的 shadow、日线代理和人工确认执行状态机；producer 候选只有经授权、风险、容量和资本检查后才可能成为 seal。
+**Goal:** 实现确定、可回放、无 I/O 的 Growth Kernel；在 Plan 02 Gateway Authority Store 中实现唯一的 policy/envelope activation、entry seal/reserve/permit/send-claim 状态机；并交付与 broker 永久分离的 proxy/manual 执行及独立 ExitMandate lane。
 
-**Architecture:** 内核是纯函数，输入冻结的 PolicySnapshot、PIT snapshot、raw candidates、CapitalSnapshot 和已验证 CapitalAuthorization，输出 `NoTradeDecision`、`ShadowDecision` 或 `PublishDecisionCommand`。Seal repository 与执行服务负责事务幂等；proxy/manual 使用不同 namespace/issuer，均不能伪装 broker fill。
+**Architecture:** Kernel 输入冻结的 active policy、PIT evidence、raw candidates、`CapitalRiskSnapshot` 和完整 `CapitalAuthorizationEnvelope`，只输出 `NoTradeDecision | ShadowDecision | PortfolioDecision`。Capital Gateway 在同一数据库事务完成联合 activation、entry admission、reserve、`PortfolioDecisionSeal`、permit 与 `SEND_CLAIMED` 线性化。ExitMandate 从 AccountCapitalTruth 派生，不消费 entry authorization；Plan 05 将其运行成独立 durable scheduler。
 
-**Tech Stack:** Python、Decimal/整数、Plan 01 contracts、Plan 02/03 ports、pytest/Hypothesis。
+**Tech Stack:** Python、整数/Decimal、Plan 01–03 ports、SQLAlchemy Gateway transaction、Hypothesis、pytest。
 
 ## Global Constraints
 
-- 内核不得 import pandas、requests/httpx、SQLite repository、v2 service 或环境变量。
-- producer 不做组合 risk multiplier；BTST 初始禁用 streak/regime/composite sizing，OB disabled。
-- drawdown multiplier 只应用一次；15% 是新增风险 halt，不是强制平仓。
-- `DecisionSeal` 只能由 executable path 产生；shadow namespace 永远不能被 gateway 接受。
-- 日线一字板或无法证明开盘成交时为 UNKNOWN/cash；禁止事后 raw close 补 fill。
-- T+10 退出数量按当时权威可卖数量生成；risk halt 不阻止退出。
+- Kernel 禁止 import pandas、network、SQLite、v2、environment 或 clock；相同 canonical input 必须产生相同 hash。
+- producer 不应用 portfolio risk multiplier；BTST 初始禁用 regime/streak/composite sizing，OB disabled，Auto executable admission 为零。
+- drawdown multiplier 同时作用于未缩放 lineage target 与未缩放 portfolio gross ceiling，且只作用一次。
+- shadow schema/namespace/capability 必须让 Gateway executable endpoint 无法解析。
+- 每个 portfolio 同时最多一个 active envelope；PolicyActivation 与行为变化 envelope 必须联合 CAS。
+- `SEND_CLAIMED` 前可以 tombstone/cancel，之后按已在途风险处理；本计划不调用真实 broker。
+- entry halt 不得阻断 ExitMandate、公司行动、reconcile 或 execution correction。
 
 ---
 
@@ -26,123 +27,139 @@
 - Create `src/screening/offensive/v3/kernel/capacity.py`
 - Create `src/screening/offensive/v3/kernel/sizing.py`
 - Create `src/screening/offensive/v3/kernel/decide.py`
-- Create `src/screening/offensive/v3/decision/repository.py`
-- Create `src/screening/offensive/v3/execution/order_state.py`
+- Create `src/screening/offensive/v3/gateway/authority.py`
+- Create `src/screening/offensive/v3/gateway/decisions.py`
+- Create `src/screening/offensive/v3/gateway/admission.py`
+- Create `src/screening/offensive/v3/gateway/entry_state.py`
+- Create `src/screening/offensive/v3/gateway/exits.py`
 - Create `src/screening/offensive/v3/execution/proxy.py`
 - Create `src/screening/offensive/v3/execution/manual.py`
 - Create `src/screening/offensive/v3/execution/lifecycle.py`
-- Create tests under `tests/offensive/v3/kernel/` and `tests/offensive/v3/execution/`
+- Create tests under `tests/offensive/v3/kernel/`, `tests/offensive/v3/gateway/`, and `tests/offensive/v3/execution/`
 
-### Task 1: Raw candidate contract and single-pass risk
+### Task 1: Complete KernelInput and single-pass portfolio risk
 
 **Interfaces:** Produces `RawCandidate`, `KernelInput`, `RiskDecision`, `drawdown_multiplier()` and `apply_portfolio_risk_once()`.
 
-- [ ] **Step 1: Write failing tests** for drawdown 9.99/10/14.99/15%, negative/stale NAV, existing exposure above target, lineage/program/global caps, stage-loss latch, unattributed migration risk and double-scaling rejection.
+- [ ] **Step 1: Write failing tests** in `test_risk.py` for 9.99/10/12.5/14.99/15% drawdown, stale/negative NAV, open/pending/live/reserved/ambiguous/exit-pending/unattributed exposure, program/lineage/stage/global caps and mixed capital versions.
+- [ ] **Step 2: Add double-scaling tests** and prove the same multiplier scales both each unscaled lineage target and the unscaled portfolio gross ceiling before capacity/lot rounding.
 
 ```python
-def test_risk_multiplier_is_applied_once() -> None:
-    candidate = raw_candidate(target=Decimal("0.10"), risk_adjusted=False)
-    first = apply_portfolio_risk_once(candidate, Decimal("0.125"))
-    assert first.target_weight == Decimal("0.05")
-    with pytest.raises(KernelContractError, match="already risk adjusted"):
-        apply_portfolio_risk_once(first, Decimal("0.125"))
-```
-
-- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/kernel/test_risk.py -v`.
-- [ ] **Step 3: Implement pure risk module** with `risk_adjustment_count: Literal[0,1]`; inherited open/pending/live/reserve and unattributed risk count toward all caps.
-- [ ] **Step 4: Verify GREEN**.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): apply portfolio risk exactly once"`.
-
-### Task 2: Admission, ranking, ADV capacity, and integer sizing
-
-**Interfaces:** Produces `admit_candidates()`, `rank_candidates()`, `capacity_limit()`, `size_orders()` and structured `BlockReason`.
-
-- [ ] **Step 1: Write failing tests** for authorization/mode/lineage/version mismatch, BTST-only allowlist, OB disabled, Auto shadow-only, industry/day/ticker/gross caps, missing ADV, price boundary, 100-share lot, high-price zero lot, worst-case fees and deterministic tie-break.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement ordering**: validate → admit → deterministic rank → min(cash, risk, ADV, stock/industry/gross caps) → integer lot floor → worst-case reserve. Remaining cash is not reallocated after observed fills.
-
-```python
-quantity = floor_to_lot(
-    min(risk_notional, cash_notional, adv_notional),
-    worst_case_price_micros,
-    lot_size=policy.lot_size,
+adjusted = apply_portfolio_risk_once(
+    unscaled_lineage_targets=input.unscaled_targets,
+    unscaled_portfolio_gross_cap=input.envelope.portfolio_gross_cap,
+    drawdown=input.capital.drawdown,
 )
+assert adjusted.risk_adjustment_count == 1
 ```
 
-- [ ] **Step 4: Verify GREEN** with `uv run pytest tests/offensive/v3/kernel/test_{admission,capacity,sizing}.py -v`.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): size authorized capacity-safe orders"`.
+- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/kernel/test_risk.py -v`.
+- [ ] **Step 4: Implement pure risk module**; any unknown component returns a typed block, never zero/default exposure.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): apply complete portfolio risk once"`.
 
-### Task 3: Pure decision orchestration and deadlines
+### Task 2: Admission, ranking, capacity, and integer sizing
 
-**Interfaces:** Produces `GrowthKernel.decide(input) -> NoTradeDecision | ShadowDecision | PublishDecisionCommand`.
+**Interfaces:** Produces `admit_candidates()`, `rank_candidates()`, `capacity_limit()`, `size_portfolio()` and structured `BlockReason`.
 
-- [ ] **Step 1: Write table-driven tests** for snapshot cutoff, close-finalized ordering, seal/permit/send/broker deadlines, stale capital/authorization, kill override, no-signal, missed entry window and deterministic replay.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement six-step kernel only**. The function returns complete structured reasons and never writes or calls clock/network; all timestamps are explicit inputs.
-- [ ] **Step 4: Verify GREEN** and property `same canonical input => same canonical output hash`.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): decide with a deterministic growth kernel"`.
+- [ ] **Step 1: Write failing tests** for policy/envelope/mode/account/producer/lineage/behavior/cost/stage mismatch, BTST allowlist, OB disabled, Auto shadow-only, exploration aggregate cap, industry/day/ticker/gross caps, missing ADV, board price boundary, 100-share lot, high-price zero lot, worst-case fee/reserve and deterministic tie-break.
+- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/kernel/test_{admission,capacity,sizing}.py -v`.
+- [ ] **Step 3: Implement order**: validate complete frozen input → admit → deterministic rank → apply risk once → constrain by cash/risk/ADV/ticker/industry/portfolio → integer-lot floor → worst-case reserve. Remaining cash is not reallocated after observed T+1 fills.
+- [ ] **Step 4: Add invariance tests** proving producer-supplied weights/risk labels cannot bypass central limits and input permutation does not change selected orders.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): size authorized portfolio entries deterministically"`.
 
-### Task 4: Immutable seal repository and supersede protocol
+### Task 3: Pure portfolio decision and explicit deadline contract
 
-**Interfaces:** Produces `DecisionRepository.publish()`, `supersede()`, `issue_permit()`, `active_seal()` and `planned_projection()`。Decision tables 与 Plan 02 capital tables 位于同一个 gateway-owned DB，并共用一个 transaction/session，保证 seal 指针与 reserve 原子变化。
+**Interfaces:** Produces `GrowthKernel.decide(KernelInput)` and complete `PortfolioDecision` proposal.
 
-- [ ] **Step 1: Write failing tests** for logical key `(portfolio, session, authority_epoch)`, identical rerun, payload conflict, revision monotonicity, reserve swap rollback, permit/fence preventing supersede, expired authorization and old permit replay.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement atomic active-seal pointer** and reserve operations through Plan 02 transaction port. Same-key/different-payload is zero-write unless explicit legal supersede before any permit/fence/live order.
-- [ ] **Step 4: Verify GREEN** with multi-process race and injected failure between release/reserve/pointer switch.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): seal idempotent executable decisions"`.
+- [ ] **Step 1: Write table-driven tests** for trusted evidence cutoff, close finalization, `seal_creation_deadline`, `permit_issue_deadline`, `permit_expires_at`, `gateway_send_deadline`, broker cutoff, no-signal, missed window, stale capital and deterministic replay.
+- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/kernel/test_decide.py -v`.
+- [ ] **Step 3: Implement pure orchestration**. Proposal contains all lines, quantities, limit bounds, worst-case reserve, versions and reasons; no repository ID, active status or signature is self-assigned by Kernel.
+- [ ] **Step 4: Verify property** `same canonical input => same canonical output bytes/hash` across process and candidate input order.
+- [ ] **Step 5: Commit** with `git commit -m "feat(v3): propose deterministic portfolio decisions"`.
 
-### Task 5: Order/plan/position state machines and T+10 lifecycle
+### Task 4: Trust/policy/envelope activation and entry fences
 
-**Interfaces:** Produces legal transitions from spec §15, `prepare_entry_intents()`, `prepare_due_exits()` and `reconcile_execution_event()`.
+**Interfaces:** Produces `GatewayAuthorityRepository.activate_trust_bundle()`, `activate_policy_and_envelope()`, `replace_envelope()`, `raise_entry_fence()` and read-only active-state projection.
 
-- [ ] **Step 1: Write failing transition tests** for all legal/illegal plan and order edges, partial fill revisions, cancel-request late fill, terminal correction, T+10 session ordinal, EXIT_PENDING and legal terminal events.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement explicit transition maps**. Exit quantity is `tradable_quantity - live_exit_leaves`; unknown/suspended/limit state keeps pending position and reserve, never stale-close settlement.
-- [ ] **Step 4: Verify GREEN** with `uv run pytest tests/offensive/v3/execution/test_{state,lifecycle}.py -v`.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): govern entry exit and pending lifecycle"`.
+- [ ] **Step 1: Write failing tests** for invalid root/capability/predecessor, epoch rollback, wrong account/mode, policy/envelope fingerprint mismatch, two active envelopes, concurrent replacement, pure tightening and a fake “tightening” that adds behavior.
+- [ ] **Step 2: Add correction-fence tests** using Plan 03 protocol: signed `EntryFenceRaised` persists idempotently, increments fencing/authorization status, tombstones unclaimed entry, ACKs only after commit and never affects ExitMandate.
+- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/gateway/test_authority.py -v`.
+- [ ] **Step 4: Implement monotonic CAS**. Behavior-changing `PolicyActivation` and its complete envelope activate in one Gateway transaction; pure tightening may activate alone only when a mechanical subset check proves no new behavior/quantity/window/cap.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): activate governed policy and entry authority"`.
 
-### Task 6: DAILY_BAR_PROXY execution
+### Task 5: Atomic reserve and PortfolioDecisionSeal idempotency
 
-**Interfaces:** Produces `DailyBarProxy.execute_open()` and proxy fill/unknown/reject events.
+**Interfaces:** Produces `CapitalGateway.publish_entry()` and `active_seal()`.
 
-- [ ] **Step 1: Write failing tests** for T+1 open, favorable one-price limit ambiguity, ordinary limit touch, suspension, missing bar, late command, partial portfolio cash, fixed slippage/cost policy and mode tagging.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement conservative proxy**. Only a pre-sealed proxy intent with known, executable open produces a synthetic fill; otherwise plan expires or remains pending according to entry/exit semantics.
-- [ ] **Step 4: Verify GREEN** with `uv run pytest tests/offensive/v3/execution/test_proxy.py -v`.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): simulate conservative daily-bar execution"`.
+- [ ] **Step 1: Write failing tests** for economic key `(portfolio_id, signal_session, decision_cycle_id)`, identical rerun, same-key/different-payload, epoch change with same key, stale expected versions, reserve failure and two-process race.
+- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/gateway/test_decisions.py -v`.
+- [ ] **Step 3: Implement one immediate transaction**: reverify active trust/policy/envelope/capital/risk/stage/fence; insert decision; reserve exact worst-case cash/exposure; publish active `PortfolioDecisionSeal`. Any failure rolls back all three.
+- [ ] **Step 4: Add supersede tests**. Before permit, an explicit legal shrink/cancel may replace active seal under the same economic key/revision chain; after permit or outbox state, no quantity increase or key escape is allowed.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): seal and reserve portfolio entries atomically"`.
 
-### Task 7: MANUAL_CONFIRMED ingestion and corrections
+### Task 6: Permit, durable outbox, and SEND_CLAIMED linearization
 
-**Interfaces:** Produces `ManualExecutionService.record()`, `correct()` and attachment/reconciliation status projections.
+**Interfaces:** Produces `issue_permit()`, `make_outbox_durable()`, `claim_send()` and entry states through `SUBMISSION_AMBIGUOUS | BROKER_ACK` without network delivery.
 
-- [ ] **Step 1: Write failing tests** requiring operator, source, observed_at, attachment hash, exact quantity/price/fees; reject broker namespace, duplicate economics, missing provenance and direct history rewrite。另测真实但未关联 plan 的人工成交：必须记入资本真相、归为 `UNATTRIBUTED_RISK` 并锁存 reconciliation halt，不能因模型不认识而丢弃事实。
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement manual-only issuer path**. A later broker reconciliation links the manual event but cannot copy it; differences create explicit correction after human review. Unplanned confirmed economics are recorded first, then block new risk until attributed/reconciled.
-- [ ] **Step 4: Verify GREEN**.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): ingest auditable manual executions"`.
+- [ ] **Step 1: Write adversarial tests** for old active seal, wrong permit nonce, quantity increase, expired issue/permit/send deadlines, stale envelope/capital/risk/stage/fence versions, halt, duplicate claim and two competing dispatchers.
+- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/gateway/test_entry_state.py -v`.
+- [ ] **Step 3: Implement final send-right transaction**:
 
-### Task 8: Integrated kernel/execution verification
+```python
+with gateway.begin_immediate() as tx:
+    tx.require_outbox_durable(command_id)
+    tx.revalidate_active_seal_policy_envelope_capital_risk_stage_fence()
+    tx.consume_permit_nonce_before_expiry()
+    tx.require_before_gateway_send_deadline()
+    tx.mark_send_claimed(client_order_id)
+```
 
+No network call occurs inside the DB transaction. After commit the owner either sends the exact immutable payload with the same client ID or records ambiguous/receipt state.
+
+- [ ] **Step 4: Add crash matrix** before/after each state and prove an unclaimed outbox can be tombstoned while claimed state always remains worst-case live exposure.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): linearize final entry send rights"`.
+
+### Task 7: ExitMandate and economic-lot lifecycle
+
+**Interfaces:** Produces `derive_exit_mandates()`, `claim_due_exit_work()`, `record_exit_attempt()`, `reconcile_exit()` and correction-driven reopen.
+
+- [ ] **Step 1: Write transition tests** for T+10 ordinal, partial exit, suspension/limit state, unknown tradable quantity, existing live exit leaves, cancel-late-fill, terminal legal event, successor security and fill bust reopening a closed lot.
+- [ ] **Step 2: Add dependency-outage tests** proving exits continue when policy/envelope/Authorizer/Publisher/entry endpoints are unavailable or risk/stage halt is active.
+- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/gateway/test_exits.py -v`.
+- [ ] **Step 4: Implement mandate quantity** as verified tradable quantity minus proven live exit leaves. Unknown quantity schedules query/reconcile and sends zero new sell quantity; it never guesses or oversells. Mandates and leases are durable/restartable.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): persist independent exit obligations"`.
+
+### Task 8: DAILY_BAR_PROXY and MANUAL_CONFIRMED execution
+
+**Interfaces:** Produces `DailyBarProxy.execute_open()` and `ManualExecutionService.record/correct()` with permanent mode provenance.
+
+- [ ] **Step 1: Write proxy tests** for pre-sealed T+1 open, one-price limit ambiguity, ordinary limit touch, suspension, missing bar, late command, partial cash and fixed slippage/cost version. No known executable open means unknown/cash, never a stale-close fill.
+- [ ] **Step 2: Write manual tests** requiring pre-sealed plan for official OOS, operator/source/observed/attachment hash/exact price/quantity/fees; reject broker namespace. An out-of-protocol real trade is first recorded in AccountCapitalTruth, marked `UNATTRIBUTED_RISK`, excluded from official OOS and latches no-entry until reconciled.
+- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/execution/test_{proxy,manual}.py -v`.
+- [ ] **Step 4: Implement mode-specific adapters**; later broker matching links the same economic fact or posts delta correction, never copies it into another mode.
+- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): execute auditable proxy and manual modes"`.
+
+### Task 9: Integrated Kernel/Gateway/Exit verification
+
+- [ ] Add import-boundary test: Kernel has no storage/network/v2 imports.
+- [ ] Add projection test: planned entry rows equal active executable seals; shadow/blocked/tombstoned/ambiguous are separately visible.
 - [ ] Run:
 
 ```bash
-uv run pytest tests/offensive/v3/kernel/ tests/offensive/v3/execution/ -v
+uv run pytest tests/offensive/v3/kernel/ tests/offensive/v3/gateway/ tests/offensive/v3/execution/ -v
 uv run pytest tests/offensive/test_execution_adjuster.py tests/offensive/test_trade_lifecycle.py tests/offensive/test_daily_action_service.py -q
 git diff --check
 ```
 
-Expected: all pass.
+Expected: all pass; no broker network adapter exists and runtime remains off.
 
-- [ ] Add a test that asserts kernel imports contain no storage/network/v2 modules.
-- [ ] Add a projection test: planned BUY set equals active executable seals exactly; shadow/blocked/pending are excluded and separately visible.
-- [ ] Update `AGENTS.md`: kernel/proxy/manual implemented, runtime remains off/shadow, no broker capability.
-- [ ] Commit verification files and documentation.
+- [ ] Update `AGENTS.md` to the exact implemented boundary and commit verification files.
 
 ## Completion Gate
 
-- [ ] Pure kernel replay is byte-for-byte deterministic.
-- [ ] Risk/capacity/cash limits cannot be applied twice or bypassed by producer fields.
-- [ ] Shadow cannot be submitted; proxy/manual cannot be labeled broker.
-- [ ] T+10 and cancel-late-fill paths preserve real positions until actual/legal terminal facts.
-- [ ] Every planned report row maps to one active executable seal.
+- [ ] Kernel replay is byte-for-byte deterministic and all risk/capacity scaling occurs once.
+- [ ] One transaction owns active policy/envelope, seal/reserve and final `SEND_CLAIMED` version checks.
+- [ ] Economic idempotency cannot be bypassed by changing epoch or retry ID.
+- [ ] Entry dependency failures cannot block, erase or oversell exits.
+- [ ] Proxy/manual cannot be labeled broker; out-of-protocol facts preserve capital and halt new risk.
+- [ ] No real broker call or production capital activation is enabled by this plan.

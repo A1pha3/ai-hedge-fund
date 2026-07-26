@@ -2,146 +2,158 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把已批准的 Evidence-Gated Growth Kernel 目标架构拆成可独立开发、验证、回滚和审阅的子项目，并在不双写资本真相的前提下，从 v2 安全迁移到 v3 shadow、BTST canary 与可选 broker gateway。
+**Goal:** 把已批准的 Revision 2 架构拆成七个可独立验证、可停止、可回滚的子项目，在不伪造权限、不跨库假装原子、也不双写资本真相的前提下，从当前 Plan 01 Revision 1 基线推进到 v3 shadow、同模式 BTST canary 和可选 broker gateway。
 
-**Architecture:** 新代码进入独立的 `src/screening/offensive/v3/`，沿“契约与权限 → 精确资本台账 → 证据治理 → 纯决策与代理执行 → 服务边界与 CLI → 迁移/canary → broker gateway”单向推进。每个子项目先交付不可执行或 fail-closed 能力，只有后续验收门显式通过后才扩大权限。
+**Architecture:** 所有新能力位于 `src/screening/offensive/v3/`。依赖方向固定为“Revision 2 契约/控制面 → 精确资本与证据治理 → 纯 Growth Kernel/Capital Gateway → 隔离服务与 CLI → 签名迁移和 mode-specific canary → broker/DR”。Growth Kernel 只提出完整组合决策；Capital Gateway Authority Store 是 policy/envelope activation、entry admission、reserve、risk/stage latch 与 `SEND_CLAIMED` 的唯一线性化域；退出由独立 `ExitMandate` lane 持续推进。
 
-**Tech Stack:** Python 3.11+、Pydantic 2 strict models、SQLAlchemy 2 Core、Alembic、SQLite WAL（本地权威存储）、FastAPI/httpx（窄服务边界）、Ed25519/cryptography（签名验证）、pytest。
+**Tech Stack:** Python 3.11+、Pydantic 2 strict/frozen models、SQLAlchemy 2 Core、Alembic、SQLite WAL、整数最小货币/数量/单位 quanta、FastAPI/httpx UDS、Ed25519/cryptography、Hypothesis、pytest。
 
 ## Global Constraints
 
-- 权威规范是 `docs/superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md`；计划与规范冲突时以规范为准。
-- `data/paper_trading_backtest/`、`data/paper_trading/` 和当前 `data/paper_trading_v2/` 不得被测试或 shadow 运行修改。
-- v3 在原子 authority flip 前不得写 v2；flip 后 v2 只读，任何阶段都禁止 v2/v3 资本双写。
-- 默认运行模式是 `off` 或 `shadow`；计划完成不等于自动获得资金授权。
-- producer 只能提交候选；Publisher、Finalizer、Authorizer 与 Capital Gateway 分别使用独立 capability 和持久化 namespace。
-- 金额使用整数分，股数使用整数，比例使用 `Decimal`/规范化字符串；SQLite `REAL` 不得作为资本真相。
-- `RESEARCH_RECONSTRUCTION`、`DAILY_BAR_PROXY`、`MANUAL_CONFIRMED`、`BROKER_CONFIRMED` 永久分池。
-- 未知、冲突、stale、版本不匹配和过期授权停止新增风险，但不得阻断退出、公司行动、对账或补偿事件。
-- 每项实现都先写失败测试；测试路径必须来自 pytest `tmp_path`。
+- 唯一权威规范是 `docs/superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md` Revision 2；计划冲突时以规范为准，并先修计划。
+- 当前仅 Plan 01 Revision 1 已实现；其旧 `CapitalAuthorization`、`DecisionSeal`、本地 registry 等接口不是 Revision 2 最终接口，Plan 02 前必须先完成 Plan 01 增量升级。
+- `data/paper_trading_backtest/`、`data/paper_trading/`、`data/paper_trading_v2/` 不得被 v3 测试或 shadow 修改；所有测试存储使用 `tmp_path`。
+- v3 在签名 migration CAS flip 前不是资本 writer；flip 后 v2 只读，任何时刻禁止资本双写或无人接收外部事件。
+- producer 只写候选证据；Governance、Authorizer、Publisher、Finalizer、Capital Gateway 和 broker adapter 使用独立 capability/namespace。
+- 本地配置不是权限；只有有效签名、前驱链和 authority-store activation 能改变 trust、policy、authorization、stage、writer 或 broker enablement。
+- 持久化资本禁止 float/SQLite `REAL`；money、quantity、units、rational entitlement 均使用整数或显式分子/分母。
+- 四种执行模式的业绩/样本分池；同一真实 broker account 的经济事实进入一个 `AccountCapitalTruth`。
+- 任一 unknown/conflict/stale/version mismatch/expiry 只阻断新增风险；退出、公司行动、对账、bust/correction 和补偿事件继续。
+- 每个 Task 执行 RED → GREEN → refactor → scoped commit；实现状态只在对应测试和验收门通过后更新。
 - 不修改用户现有的 `docs/prompt/often/beta_loop.md` 变更。
 
 ---
 
-## 学习目标
-
-完成全部子项目后，执行者应能证明：资本事件精确守恒、决策只消费 PIT 证据、同一风险只缩放一次、shadow 无法伪装成 executable seal、授权样本不能重复消费、v2/v3 交接没有无人写入或双写窗口，以及 broker 回报乱序/重复/更正不会重复入账。
-
-## 架构与依赖图
+## 目标依赖图
 
 ```mermaid
 flowchart TD
-    P1["01 契约、策略快照与信任边界"] --> P2["02 v3 精确资本台账"]
-    P1 --> P3["03 PIT 证据与统计治理"]
-    P2 --> P4["04 Growth Kernel 与代理执行"]
+    P1["01 Revision 2 契约、Policy 与 Trust"] --> P2["02 AccountCapitalTruth 与 Authority Store"]
+    P1 --> P3["03 PIT Evidence、统计治理与 Authorizer"]
+    P2 --> P4["04 Growth Kernel、Entry/Exit 与 Proxy"]
     P3 --> P4
-    P4 --> P5["05 独立服务、CLI 与报告"]
-    P5 --> P6["06 迁移、shadow 与 BTST canary"]
-    P6 --> P7["07 可选 broker gateway"]
+    P4 --> P5["05 隔离服务、CLI、Scheduler 与报告"]
+    P5 --> P6["06 签名迁移、Shadow 与同模式 Canary"]
+    P6 --> P7["07 Broker Gateway、Reconcile 与 DR"]
     P3 --> P6
     P2 --> P6
 ```
 
-关键路径是 `01 → 02/03 → 04 → 05 → 06`。`07` 是独立安全工程，不能为了“先接券商”跳过前六项。
+关键路径是 `01 → 02/03 → 04 → 05 → 06`。Plan 07 只有在前六项验收完成且另获 broker enablement 批准后才能开始生产启用；写 adapter skeleton 不构成批准。
 
-## 子项目索引
+## 子项目索引与权限上限
 
-| 顺序 | 计划 | 独立交付物 | 完成后仍禁止 |
+| 顺序 | 计划 | 独立交付物 | 计划完成后仍禁止 |
 |---|---|---|---|
-| 01 | [契约、策略快照与信任边界](2026-07-19-growth-kernel-01-contracts-policy-trust.md) | strict schema、canonical hash、PolicySnapshot、trusted registry verifier | 写资本、签正式授权 |
-| 02 | [v3 精确资本台账](2026-07-19-growth-kernel-02-sealed-capital-ledger.md) | append-only events、整数分、NAV/flow、公司行动、checkpoint | 接收 producer 直写、启用交易 |
-| 03 | [PIT 证据与统计治理](2026-07-19-growth-kernel-03-evidence-stat-governance.md) | evidence blob/store、Outcome、Trial/SAP、消费账本、Authorizer | 用 readiness 代替 edge、用旧样本授权 |
-| 04 | [Growth Kernel 与代理执行](2026-07-19-growth-kernel-04-kernel-proxy-execution.md) | 纯内核、ShadowDecision/DecisionSeal、proxy/manual 状态机 | broker 标记、超过授权档位 |
-| 05 | [独立服务、CLI 与报告](2026-07-19-growth-kernel-05-services-cli-reporting.md) | ACL 服务边界、`--auto`/`--daily-action` 编排、ledger 投影 | v2/v3 authority flip、资本 canary |
-| 06 | [迁移、shadow 与 BTST canary](2026-07-19-growth-kernel-06-migration-shadow-canary.md) | CAS handoff、parity、故障注入、2% gate | 自动升 5%/10%、broker-live |
-| 07 | [可选 broker gateway](2026-07-19-growth-kernel-07-broker-gateway.md) | permit/fence/outbox、broker adapter、对账与 handoff | 未验收即启用生产 broker |
+| 01 | [Revision 2 契约、策略与信任](2026-07-19-growth-kernel-01-contracts-policy-trust.md) | 最终 schemas、domain-separated hash、TrustBundle/Policy activation、稳定 ports | 写资本、激活授权、下单 |
+| 02 | [精确资本真相与 Authority Store](2026-07-19-growth-kernel-02-sealed-capital-ledger.md) | AccountCapitalTruth、CapitalRiskSnapshot、stage loss、company action、Gateway transaction surface | 接受 producer 直写、宣称 writer 已迁移 |
+| 03 | [PIT 证据与统计治理](2026-07-19-growth-kernel-03-evidence-stat-governance.md) | revisioned Evidence Store、Trial/SAP/Attempt/消费账本、Authorizer/Governance issuance | 用 readiness/legacy 样本授权、直接修改资本 |
+| 04 | [Kernel、Gateway admission 与代理执行](2026-07-19-growth-kernel-04-kernel-proxy-execution.md) | 纯组合 proposal、原子 seal/reserve、entry/exit 状态机、proxy/manual | broker 标记、绕过 active envelope、自动升档 |
+| 05 | [服务、CLI、Scheduler 与报告](2026-07-19-growth-kernel-05-services-cli-reporting.md) | OS/DB ACL、控制面/Gateway API、durable lifecycle scheduler、两命令 shadow 编排 | authority flip、真实 canary、broker-live |
+| 06 | [迁移、Shadow 与 Canary](2026-07-19-growth-kernel-06-migration-shadow-canary.md) | signed migration/adoption、durable inbox、CAS flip、同模式 2% activation/monitor | proxy/manual 证据转 broker、自动升 5%/10% |
+| 07 | [Broker Gateway 与 DR](2026-07-19-growth-kernel-07-broker-gateway.md) | capability certification、SEND_CLAIMED、broker inbox/reconcile、credential fencing、DR | 未签 BrokerEnablementManifest 即连生产账户 |
 
 ## 跨计划稳定接口
 
-以下依赖方向不得反转：
-
-```text
-v3.capital imports v3.contracts
-v3.evidence imports v3.contracts
-v3.kernel imports v3.contracts + capital.ports + evidence.ports
-v3.services imports kernel + capital + evidence
-src/cli/dispatcher.py imports v3.services clients/orchestrators
-v3.broker adapters implement v3.execution gateway ports
-```
-
-稳定端口由子项目 01 定义：
+Plan 01 定义下列不可变契约；后续计划只通过 port 交互，不读取其他 authority 的 SQLite 表：
 
 ```python
-class CapitalViewPort(Protocol):
-    def snapshot(self, portfolio_id: str, as_of: datetime) -> CapitalSnapshot: ...
+class CapitalGatewayReadPort(Protocol):
+    def risk_snapshot(
+        self, portfolio_id: str, as_of: datetime
+    ) -> CapitalRiskSnapshot: ...
 
 class EvidenceQueryPort(Protocol):
-    def snapshot(self, evidence_id: str) -> SnapshotEvidence: ...
-    def authorization(self, authorization_id: str) -> CapitalAuthorization: ...
+    def active_revision(self, evidence_id: str, cutoff: datetime) -> EvidenceRecord: ...
+    def outcome(self, outcome_id: str, revision: int) -> OutcomeEvidence: ...
 
-class SealWriterPort(Protocol):
-    def publish(self, command: PublishDecisionCommand) -> DecisionSeal: ...
+class AuthorizationQueryPort(Protocol):
+    def active_envelope(self, portfolio_id: str) -> CapitalAuthorizationEnvelope: ...
+    def status(self, authorization_id: str) -> AuthorizationStatus: ...
+
+class GrowthKernelPort(Protocol):
+    def decide(self, frozen: KernelInput) -> NoTradeDecision | ShadowDecision | PortfolioDecision: ...
+
+class CapitalGatewayCommandPort(Protocol):
+    def publish_entry(
+        self, proposal: PortfolioDecision, expected: GatewayExpectedVersions
+    ) -> PortfolioDecisionSeal: ...
 
 class CapabilityVerifier(Protocol):
-    def verify(self, signed: SignedEnvelope, required: Capability) -> VerifiedIssuer: ...
+    def verify(
+        self, signed: SignedEnvelope, required: Capability, trusted_at: datetime
+    ) -> VerifiedIssuer: ...
 ```
 
-子项目只能依赖这些端口，不得直接读取另一个子项目的 SQLite 表。
+依赖方向固定：
+
+```text
+v3.capital -> v3.contracts
+v3.evidence -> v3.contracts
+v3.kernel -> v3.contracts + read-only ports
+v3.gateway -> v3.contracts + v3.capital + kernel port
+v3.services -> domain services/ports
+src/cli/dispatcher.py -> unprivileged v3 clients/orchestrators
+v3.broker.adapters -> broker ports only
+```
+
+Evidence/Authorizer 与 Capital Gateway 可以分库，但不得声称跨库同一事务。会使授权失效的 evidence correction 必须先准备 correction，再向 Gateway 持久化并 ACK `EntryFenceRaised`，最后才激活新 evidence revision。资本 correction/stage latch 在 Gateway 资本事务内直接递增版本并 tombstone 尚未 `SEND_CLAIMED` 的 entry。
 
 ## 统一执行纪律
 
-每个子项目按以下循环执行：
-
-1. 创建独立分支/工作树；运行该计划的 baseline 测试。
-2. 一次只执行一个 Task；严格 RED → GREEN → 重构 → 小提交。
-3. 运行本子项目测试、`tests/offensive/` 回归和静态契约检查。
-4. 使用规范第 18 节验收矩阵做对抗性审阅；发现新 P0/P1 先修计划或规范，不带风险上线。
-5. 合并前更新 `AGENTS.md` 的“已实现范围”，只勾选有测试证据的条目。
+1. 读取本 Roadmap、目标 Plan、规范相关章节和 `AGENTS.md`；先确认当前代码/迁移状态，不能把计划文本当已实现事实。
+2. 创建隔离分支/工作树；运行该 Plan 的 baseline。若 baseline 红，先按 systematic debugging 定位并记录，不把已有失败归因于新改动。
+3. 一次执行一个 Task；先加入能因缺失行为而失败的测试，再实现最小闭合语义。
+4. 每个跨权限边界的 happy path 必须配 unknown、stale、wrong issuer、old epoch、duplicate、same-key/different-payload、crash/restart 和竞争测试。
+5. 每个 Task 完成后运行目标测试；每个 Plan 完成后运行本 Plan 套件、`tests/offensive/v3/` 与明确列出的 legacy 回归。
+6. 独立代码审阅必须以规范 §18 矩阵和本 Roadmap 覆盖矩阵逐项给证据；P0/P1 先修规范/计划再扩权。
+7. 只有可重跑命令和持久化记录证明完成后，才能更新 `AGENTS.md` 当前实现范围。
 
 ## 总体验收门
 
-- [ ] 01–05 在 `off/shadow` 模式下完成，且 `uv run pytest tests/offensive/v3/ -v` 全绿。
-- [ ] 全量 `uv run pytest tests/offensive/ tests/test_main_auto_cache_refresh.py -q` 通过。
-- [ ] 生产目录写入监视测试证明 shadow 不触碰 v2 或 production v3 ledger。
-- [ ] 资本守恒属性测试覆盖成交、费用、外部 flow、分红、送股、换股和 late correction。
-- [ ] 权限负面测试证明 producer/CLI/shadow/manual issuer 无法写越权 namespace。
-- [ ] 同 key 同 payload 幂等；同 key 异 payload、旧 epoch/permit、未知 schema 均零写。
-- [ ] 迁移故障注入覆盖 verify/flip 间的 fill、dividend、fee、crash 和 inbox replay。
-- [ ] BTST 2% 前，独立治理者核验 Trial/SAP、非复用 evidence、执行匹配、最低样本门与尾部/容量门。
-- [ ] broker-live 前，07 的全部测试与独立安全审阅通过；否则系统只能标 proxy/manual。
+- [ ] Plan 01 Revision 2 schema/ports 完成；仓库内不再有下游代码依赖旧 `CapitalAuthorization`/`DecisionSeal` 作为最终接口。
+- [ ] Plan 02–05 在 `off|shadow` 下完成，`uv run pytest tests/offensive/v3/ -q` 全绿，且不生成 executable entry。
+- [ ] 资本属性测试覆盖 genesis、subscription/redemption、TERMINATING/INSOLVENT、fill/fee/reserve、公司行动、bust/correction、stage loss、as-observed/restated-final。
+- [ ] 权限测试证明本地配置、producer、CLI、shadow、manual issuer 和旧 epoch 无法激活 policy/envelope、写 Capital Gateway 或发送 broker entry。
+- [ ] `(portfolio_id, signal_session, decision_cycle_id)` 同 payload 幂等；异 payload 冲突；epoch 变化不能生成第二份经济决策。
+- [ ] `SEND_CLAIMED` 竞争测试证明最终发送前同事务重验 active seal/permit/fence/envelope/capital/risk/stage/deadline。
+- [ ] Authorizer correction 测试证明先 Gateway fence ACK 后 evidence activation；故障只会多阻断，不会漏放 entry。
+- [ ] ExitMandate/scheduler 在 Publisher、Authorizer、entry API、CLI 全停时仍推进 due exit/reconcile；unknown quantity 不超卖。
+- [ ] 迁移故障注入覆盖旧 fd/credential/session、verify/flip 间 fill/dividend/fee/correction/crash、handoff cursor 和 inbox replay。
+- [ ] 任一 2% activation 前，治理者核验 mode-specific Trial/SAP/Stage、新样本、完整组合 envelope、整数 loss budget 和风险快照。
+- [ ] broker-live 前，账户/环境绑定、分页/cursor/retention、auction TIF/cutoff、client ID 幂等、credential/network fencing、handoff 与 DR 全部通过独立审阅。
 
 ## 规范覆盖矩阵
 
-| 规范章节 | 主实现计划 | 独立验收重点 |
+| 规范主题 | 主计划 | 必须独立验收的核心 |
 |---|---|---|
-| §5–§6 不变量/证据契约 | 01、03 | strict schema、issuer capability、六类证据、模式分池 |
-| §7–§8 经济合约/执行模式 | 02、04、07 | T+1/T+10、精确费用、proxy/manual/broker 隔离 |
-| §9 producers | 04、05 | BTST raw target、OB disabled、Auto shadow-only |
-| §10 决策内核 | 04 | 单次风险缩放、容量、整数股、seal 幂等/supersede |
-| §11 风险恢复 | 02、04、06 | 10–15% 曲线、15% latch、RiskEpoch、2% 恢复 |
-| §12 NAV/公司行动 | 02 | 单位净值、外部 flow、checkpoint、法律终局 |
-| §13 统计与 canary | 03、06 | Trial/SAP、ITT、非复用样本、MEE/ESS/tail、stage loss |
-| §14 PIT | 01、03、05 | 双时态、payload 保留、独立故障域 |
-| §15 台账/broker | 02、04、07 | append-only 资本、订单状态机、outbox/reconcile/handoff |
-| §16 端到端任务流 | 05 | 两命令编排、lifecycle-first、真实报告状态 |
-| §17 迁移 | 06 | source-version CAS、共享 inbox、无双写/无人写窗口 |
-| §18 验收矩阵 | 全部 | 幂等、冲突、乱序、迟到、故障注入、权限负面测试 |
+| 不变量、控制面、完整授权包络 | 01、03、04 | TrustBundle/PolicyActivation 前驱；一 portfolio 一 active envelope；joint CAS |
+| 经济合约、模式与账户真相 | 02、04、07 | T+1/T+10；mode-pure performance；single AccountCapitalTruth |
+| producers 与纯内核 | 04、05 | Auto/BTST 独立；完整 proposal；risk exactly once；OB disabled |
+| 回撤、恢复与 stage loss | 02、04、06 | 10–15% 曲线；15% latch；RECOVERY 2%；不可回补整数 budget |
+| 单位 NAV、赎回、破产、公司行动 | 02 | genesis；pending units；TERMINATING/INSOLVENT；rational entitlements |
+| PIT、Trial/SAP、样本与 multiplicity | 03 | trusted ingest sequence；expected spine；双 unique key；decision-day 分离 |
+| Entry/Exit 生命周期 | 02、04、05 | seal/reserve 原子；ExitMandate 独立；bust reopen；negative shares halt |
+| 服务、CLI 与报告 | 05 | 真实 ACL；durable scheduler；状态不伪装；两命令可在 off 下运行 |
+| Migration/authority flip | 06 | signed manifests；source/target proof；durable inbox；handoff cursor；old writer fence |
+| Broker/SEND_CLAIMED/DR | 07 | capability certification；same-ID rule；pagination；credential/session/network fencing |
 
-## 明确的停止条件
+## 明确停止条件
 
-出现任一情况时暂停扩大权限，但继续修复和退出：
+出现任一情况时停止新增风险和扩权，但继续退出/对账/修复：
 
-- 资本或头寸无法守恒；
-- v2/v3 writer 身份不唯一；
-- NAV、calendar、price-limit、company-action 或 broker 状态未知；
-- evidence revision 未触发 authorization revalidation；
-- 迁移 CAS source version 已变化；
-- shadow 与 executable 类型或 namespace 可互换；
-- 测试需要读取或覆盖 production ledger 才能通过。
+- 现金、股份、单位、应收应付、reserve 或 stage loss 无法逐项守恒；
+- writer、active policy/envelope、broker account/environment 或 epoch 身份不唯一；
+- NAV/calendar/price-limit/company-action/broker order/fill/cursor 任一关键事实 unknown；
+- evidence revision 未先取得 Gateway entry-fence ACK；
+- `SEND_CLAIMED` 前无法同事务重验全部 authority/capital 条件；
+- v2/v3 source version、inbox handoff cursor、adoption manifest 或 migration root 变化；
+- shadow/executable 或 proxy/manual/broker 类型/namespace 可互换；
+- 测试必须读取或覆盖生产 ledger 才能通过。
 
 ## 路线图文档验收
 
-- [ ] 所有七个链接存在且无循环依赖。
-- [ ] 每个规范第 5–18 节至少映射到一个子项目验收项。
-- [ ] 运行文档质量脚本，拒绝未完成标记、模糊交叉引用和把浮点数声明为权威资金类型；测试中用于证明拒绝行为的字符串应加入显式 allowlist。
-- [ ] 检查状态：`git diff --check -- docs/superpowers/plans/2026-07-19-growth-kernel-*.md` 应无输出。
+- [ ] 七个相对链接全部存在，且依赖图无循环。
+- [ ] 规范 Revision 2 每个 P0/P1 约束都映射到至少一个任务和一个负面/故障测试。
+- [ ] 运行 `rg -n '[T]BD|[T]ODO|待[定]|Capital[S]napshot|\bEdge[A]uthorization\b|\bExploration[A]uthorization\b|\(portfolio.*authority_[e]poch\)' docs/superpowers/plans/2026-07-19-growth-kernel-*.md`；应无输出。另由 Plan 01 的 repository scan test 精确限制旧 `CapitalAuthorization`/`DecisionSeal` 只出现在 Revision 1 fixture/adapter 和历史状态文字中。
+- [ ] 运行 `git diff --check -- AGENTS.md docs/superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md docs/superpowers/plans/2026-07-19-growth-kernel-*.md`；应无输出。

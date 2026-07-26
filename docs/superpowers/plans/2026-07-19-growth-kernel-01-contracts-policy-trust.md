@@ -1,246 +1,171 @@
-# Growth Kernel Contracts, Policy, and Trust Implementation Plan
+# Growth Kernel Revision 2 Contracts, Policy, and Trust Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 建立 v3 的不可变领域契约、规范化序列化、版本化 PolicySnapshot 和只读发行者信任验证，使后续台账、证据、内核与服务共享同一种严格语义。
+**Goal:** 在已合并的 Plan 01 Revision 1 基线上完成不兼容的 Revision 2 契约升级，冻结控制面、完整组合授权、资本快照、entry/exit、迁移/broker/DR manifest 和可信时间语义，使后续计划只依赖最终接口。
 
-**Architecture:** 新建无 I/O 的 `v3/contracts` 与 `v3/policy`，使用 strict/frozen Pydantic models 和 canonical JSON；签名验证只依赖只读 trusted registry，CLI 与 producer 不包含私钥或签发方法。所有未知 schema major、额外字段、空 fingerprint 和模式错配均 fail closed。
+**Architecture:** `v3/contracts` 与 `v3/policy` 保持无存储、无网络、strict/frozen；canonical payload 使用 domain-separated hash。`TrustBundle` 和 `PolicyActivation` 是签名候选，只有未来 Capital Gateway 的单调 activation 才产生权限。旧 `CapitalAuthorization`/`DecisionSeal` 保留时只能作为显式 legacy adapter 输入，不能继续作为稳定 port 返回类型。
 
-**Tech Stack:** Python、Pydantic 2、`Decimal`、cryptography Ed25519、pytest。
+**Tech Stack:** Python、Pydantic 2、`Decimal`、Ed25519/cryptography、pytest。
 
 ## Global Constraints
 
-- 本计划只定义契约、验证和只读 policy；不写交易、资本或 evidence 数据库。
-- `execution_authorized` 禁止出现在 Snapshot/Signal/Outcome schema。
-- 四种执行模式和 shadow/executable 类型永久分离，不能靠布尔字段切换。
-- `family_id` 不能替代 `economic_lineage_id`；GLOBAL scope 使用 typed `family_id=None`。
-- PolicySnapshot 只能收紧当前运行；放宽配置必须进入新的 authority/risk epoch。
-- 私钥、MAC secret、broker credential 不进入仓库、CLI 环境或测试 fixture。
+- 当前实现事实：Revision 1 contracts/policy/trust/ports 已合并；本计划只完成 Revision 2 delta，不声称资本、Authorizer、Gateway 或 broker 已实现。
+- 本计划不写任何 evidence、capital、authority 或 broker 数据库，也不提供 `activate()`、`sign()`、`send()`。
+- Snapshot/Signal/Outcome schema 禁止 `execution_authorized`；shadow 与 executable 必须是不同 discriminant、issuer capability 和 namespace。
+- 所有授权都是 portfolio 完整政策的 `CapitalAuthorizationEnvelope`；不得恢复多个独立 lineage authorization 相加的旧语义。
+- 时间字段由类型区分；`permit_expires_at` 不能继续叫含混的 `deadline`。
+- 本地 registry/policy 文件只是候选；接口和文档不得暗示“读取成功即 active”。
+- 私钥、MAC secret、broker credential、真实账户 ID 不进入仓库、CLI 环境或测试 fixture。
 
 ---
 
-## File Structure
+## Existing Baseline and File Structure
 
-- Create `src/screening/offensive/v3/__init__.py`
-- Create `src/screening/offensive/v3/contracts/base.py`
-- Create `src/screening/offensive/v3/contracts/evidence.py`
-- Create `src/screening/offensive/v3/contracts/authorization.py`
-- Create `src/screening/offensive/v3/contracts/decision.py`
-- Create `src/screening/offensive/v3/contracts/capital.py`
-- Create `src/screening/offensive/v3/contracts/ports.py`
-- Create `src/screening/offensive/v3/policy/models.py`
-- Create `src/screening/offensive/v3/policy/loader.py`
-- Create `src/screening/offensive/v3/trust/registry.py`
-- Create `config/policies/v3/policy-v1.json`
-- Create tests under `tests/offensive/v3/contracts/`
+已实现基线位于：
 
-### Task 1: Strict base types and canonical payloads
+- Modify `src/screening/offensive/v3/contracts/base.py`
+- Modify `src/screening/offensive/v3/contracts/evidence.py`
+- Modify `src/screening/offensive/v3/contracts/authorization.py`
+- Modify `src/screening/offensive/v3/contracts/decision.py`
+- Modify `src/screening/offensive/v3/contracts/capital.py`
+- Modify `src/screening/offensive/v3/contracts/ports.py`
+- Create `src/screening/offensive/v3/contracts/governance.py`
+- Create `src/screening/offensive/v3/contracts/execution.py`
+- Create `src/screening/offensive/v3/contracts/migration.py`
+- Modify `src/screening/offensive/v3/contracts/trust.py`
+- Modify `src/screening/offensive/v3/policy/models.py`
+- Modify `src/screening/offensive/v3/policy/loader.py`
+- Modify `src/screening/offensive/v3/trust/registry.py`
+- Create `config/policies/v3/policy-v2.json`
+- Modify/create tests under `tests/offensive/v3/contracts/`
 
-**Interfaces:** Produces `ExecutionMode`, `EvidenceScope`, `SignalStage`, `Sha256`, `UtcInstant`, `CanonicalModel`, `canonical_json_bytes()` and `content_hash()`。所有 evidence contract 显式携带 `effective_at`、`observed_at`、`available_at`，派生证据的 `available_at` 取全部依赖的最大值。
+### Task 1: Freeze Revision 1 and add domain-separated canonical primitives
 
-- [ ] **Step 1: Write failing tests** in `tests/offensive/v3/contracts/test_base.py` proving strict booleans, timezone-aware UTC, forbidden extra fields, normalized decimal strings and order-independent hashes.
+**Interfaces:** Produces `SchemaVersion`, `UtcInstant`, `MoneyCents`, `QuantityUnits`, `UnitQuanta`, `RationalQuantity`, `CanonicalModel`, `canonical_json_bytes()` and `domain_hash(domain, schema_major, payload)`.
 
-```python
-def test_canonical_hash_is_stable() -> None:
-    left = canonical_json_bytes({"b": Decimal("1.00"), "a": 2})
-    right = canonical_json_bytes({"a": 2, "b": Decimal("1")})
-    assert left == right == b'{"a":2,"b":"1"}'
-
-def test_naive_datetime_is_rejected() -> None:
-    with pytest.raises(ValidationError):
-        UtcInstantAdapter.validate_python(datetime(2026, 7, 19, 16, 0))
-```
-
-- [ ] **Step 2: Verify RED**
-
-Run: `uv run pytest tests/offensive/v3/contracts/test_base.py -v`
-
-Expected: import fails because `v3.contracts.base` does not exist.
-
-- [ ] **Step 3: Implement the base contract** with `ConfigDict(strict=True, frozen=True, extra="forbid")`, UTC validator, finite `Decimal`, and JSON encoder that sorts keys, rejects NaN/Infinity and renders normalized decimals without exponent drift.
+- [ ] **Step 1: Add failing tests** to `tests/offensive/v3/contracts/test_revision2_base.py` for persisted float rejection, finite normalized decimals, timezone-aware UTC, rational denominator > 0, unknown schema major and cross-domain hash separation.
 
 ```python
-class ExecutionMode(StrEnum):
-    RESEARCH_RECONSTRUCTION = "research_reconstruction"
-    DAILY_BAR_PROXY = "daily_bar_proxy"
-    MANUAL_CONFIRMED = "manual_confirmed"
-    BROKER_CONFIRMED = "broker_confirmed"
-
-class CanonicalModel(BaseModel):
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
-    def canonical_bytes(self) -> bytes:
-        return canonical_json_bytes(self.model_dump(mode="python", exclude_none=False))
-
-    def content_hash(self) -> str:
-        return hashlib.sha256(self.canonical_bytes()).hexdigest()
+def test_same_payload_has_different_domain_hashes() -> None:
+    payload = {"portfolio_id": "p1", "version": 1}
+    assert domain_hash("policy-activation", 2, payload) != domain_hash(
+        "capital-authorization", 2, payload
+    )
 ```
 
-- [ ] **Step 4: Verify GREEN**
+- [ ] **Step 2: Verify RED**.
 
-Run: `uv run pytest tests/offensive/v3/contracts/test_base.py -v`
+Run: `uv run pytest tests/offensive/v3/contracts/test_revision2_base.py -v`
 
-Expected: all tests pass.
+Expected: collection succeeds; tests fail because `domain_hash` and exact integer aliases are absent.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Implement minimal primitives** in `contracts/base.py`. Canonical serialization sorts keys, rejects NaN/Infinity/float, normalizes Decimal strings and binds domain plus schema major before SHA-256.
+- [ ] **Step 4: Add frozen Revision 1 schema/hash fixtures** in `tests/offensive/v3/contracts/fixtures/revision1/` so import adapters can distinguish old payloads without silently reinterpreting them.
+- [ ] **Step 5: Verify and commit**.
 
 ```bash
-git add src/screening/offensive/v3 tests/offensive/v3/contracts/test_base.py
-git commit -m "feat(v3): define strict canonical contract primitives"
+uv run pytest tests/offensive/v3/contracts/test_base.py tests/offensive/v3/contracts/test_revision2_base.py -v
+git add src/screening/offensive/v3/contracts/base.py tests/offensive/v3/contracts
+git commit -m "feat(v3): domain-separate revision two contracts"
 ```
 
-### Task 2: Evidence, authorization, decision, and capital schemas
+### Task 2: Define Governance Control Plane and complete authorization envelope
 
-**Interfaces:** Consumes Task 1. Produces the six evidence contracts, `CapitalAuthorization` discriminated union, `ShadowDecision`, `DecisionSeal`, `ExecutionPermit`, capital snapshots/events and legal state enums.
+**Interfaces:** Produces `TrustBundle`, `PolicyActivation`, `RiskEpochStarted`, `TrialManifest`, `StatisticalAnalysisPlan`, `StageManifest`, `LineageGrant`, `CapitalAuthorizationEnvelope`, `AuthorizationStatus`, `EntryFenceRaised`, `MigrationApprovalManifest`, `BrokerEnablementManifest` and `DisasterRecoveryManifest`.
 
-- [ ] **Step 1: Write contract tests** in `test_evidence.py`, `test_authorization.py`, `test_decision.py`, and `test_capital.py` for exact keys, typed scope, execution-mode equality, timestamps, permit shrink-only fields and state-transition tables.
+- [ ] **Step 1: Add failing exact-schema tests** in `test_governance.py` and replace old authorization expectations in `test_authorization.py`. Cover issuer capability, predecessor/root hash, monotonic epoch fields, portfolio/account/mode binding, `EDGE | EXPLORATION | RECOVERY`, complete target policy, grants, fixed integer loss budgets and expiry.
+- [ ] **Step 2: Add adversarial tests** proving:
+  - multiple top-level lineage authorizations cannot parse as an active portfolio policy;
+  - `EXPLORATION` outside `BROKER_CONFIRMED` fails;
+  - exploration aggregate cap over 2% fails;
+  - first broker exploration without EDGE also enforces portfolio gross <= 2%;
+  - `RECOVERY` cannot create an exploration/edge grant and must bind inherited risk/loss versions;
+  - local `PolicySnapshot` or registry cannot parse as an activation object;
+  - migration/broker/DR manifests require the exact distinct capability.
+- [ ] **Step 3: Verify RED**.
+
+Run: `uv run pytest tests/offensive/v3/contracts/test_{authorization,governance}.py -v`
+
+Expected: failures name missing Revision 2 classes or rejected field sets; no fixture/setup error.
+
+- [ ] **Step 4: Implement strict models** in `contracts/authorization.py` and `contracts/governance.py`.
 
 ```python
-@pytest.mark.parametrize("model", [SnapshotEvidence, SignalEvidence, OutcomeEvidence])
-def test_producer_evidence_cannot_claim_execution_authority(model) -> None:
-    raw = valid_payload(model) | {"execution_authorized": True}
-    with pytest.raises(ValidationError, match="extra_forbidden"):
-        model.model_validate(raw)
+class AuthorizationKind(StrEnum):
+    EDGE = "EDGE"
+    EXPLORATION = "EXPLORATION"
+    RECOVERY = "RECOVERY"
 
-def test_shadow_cannot_parse_as_decision_seal(shadow_payload: dict) -> None:
-    with pytest.raises(ValidationError):
-        DecisionSeal.model_validate(shadow_payload)
+class CapitalAuthorizationEnvelope(CanonicalModel):
+    authorization_kind: AuthorizationKind
+    portfolio_id: str
+    mode: ExecutionMode
+    policy_activation_hash: Sha256
+    trust_bundle_hash: Sha256
+    authority_epoch: PositiveInt
+    risk_epoch: PositiveInt
+    portfolio_gross_cap: DecimalFraction
+    exploration_aggregate_gross_cap: DecimalFraction
+    lineage_grants: tuple[LineageGrant, ...]
+    program_loss_budget_bindings: tuple[ProgramLossBudgetBinding, ...]
 ```
 
-- [ ] **Step 2: Verify RED**
-
-Run: `uv run pytest tests/offensive/v3/contracts/test_{evidence,authorization,decision,capital}.py -v`
-
-Expected: imports fail.
-
-- [ ] **Step 3: Implement exact models**. `EvidenceEnvelope` contains all §6.2 fields; `EdgeAuthorization` contains evidence Merkle root, Trial/SAP hashes, attempt checkpoint, sample consumption and version; `ExplorationAuthorization` enforces broker mode and 2% max; `DecisionSeal` contains integer quantity, price/cost reserves, authority/risk epoch and active revision.
-
-```python
-AuthorizationUnion = Annotated[
-    EdgeAuthorization | ExplorationAuthorization,
-    Field(discriminator="authorization_kind"),
-]
-
-class CapitalAuthorization(RootModel[AuthorizationUnion]):
-    pass
-
-class ExecutionPermit(CanonicalModel):
-    permit_id: str
-    active_seal_id: str
-    seal_revision: int
-    permitted_quantity: int
-    sealed_quantity: int
-    capital_version: int
-    fencing_epoch: int
-    permit_nonce: str
-    deadline: UtcInstant
-
-    @model_validator(mode="after")
-    def shrink_only(self) -> Self:
-        if not 0 <= self.permitted_quantity <= self.sealed_quantity:
-            raise ValueError("permit may only shrink sealed quantity")
-        return self
-```
-
-- [ ] **Step 4: Verify GREEN and schema snapshots**
-
-Run: `uv run pytest tests/offensive/v3/contracts/ -v`
-
-Expected: pass; serialized fixture hashes are stable across two processes.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Verify, snapshot schemas and commit**.
 
 ```bash
+uv run pytest tests/offensive/v3/contracts/test_{authorization,governance}.py -v
 git add src/screening/offensive/v3/contracts tests/offensive/v3/contracts
-git commit -m "feat(v3): codify evidence decision and capital schemas"
+git commit -m "feat(v3): define governed portfolio authorization envelopes"
 ```
 
-### Task 3: Versioned PolicySnapshot and behavior fingerprint
+### Task 3: Replace decision/capital contracts with portfolio, lifecycle, and trusted-time semantics
 
-**Interfaces:** Produces `PolicySnapshot`, `load_policy_snapshot(path)`, `behavior_fingerprint(producer, policy)` and initial off-by-default `config/policies/v3/policy-v1.json`.
+**Interfaces:** Produces `PortfolioDecision`, `PortfolioDecisionSeal`, `ShadowDecision`, `ExecutionPermit`, `GatewayExpectedVersions`, `CapitalRiskSnapshot`, `ExitMandate`, entry/order states and exact deadline fields.
 
-- [ ] **Step 1: Write failing tests** in `tests/offensive/v3/contracts/test_policy.py` for the exact drawdown function, 2/5/10% tiers, ADV policy, cost/board/calendar versions, disabled OB/regime sizing/streak sizing and `runtime_mode="off"`.
-
-```python
-@pytest.mark.parametrize(
-    ("drawdown", "expected"),
-    [(Decimal("0.0999"), Decimal("1")), (Decimal("0.10"), Decimal("1")),
-     (Decimal("0.125"), Decimal("0.5")), (Decimal("0.1499"), Decimal("0.002")),
-     (Decimal("0.15"), Decimal("0"))],
-)
-def test_drawdown_multiplier_boundaries(drawdown, expected) -> None:
-    assert PolicySnapshot.drawdown_multiplier(drawdown) == expected
-```
-
-- [ ] **Step 2: Verify RED**
-
-Run: `uv run pytest tests/offensive/v3/contracts/test_policy.py -v`
-
-Expected: import fails.
-
-- [ ] **Step 3: Implement strict loader**. Reject symlinks/non-regular files, unknown major, duplicate JSON keys, environment-based risk relaxation and missing governance fields. Compute `policy_fingerprint` over the complete canonical payload.
-
-- [ ] **Step 4: Verify GREEN**
-
-Run: `uv run pytest tests/offensive/v3/contracts/test_policy.py -v`
-
-Expected: pass; initial policy remains non-executable.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 1: Update failing tests** in `test_decision.py`, `test_capital.py` and new `test_execution.py`. Cover full portfolio proposal, immutable quantities/limits/worst-case reserve, economic key `(portfolio_id, signal_session, decision_cycle_id)`, exact version bundle, account binding and exposure aggregation at portfolio/program/lineage/stage/global levels.
+- [ ] **Step 2: Add transition/deadline tests** for:
+  - `SEALED -> PERMITTED -> OUTBOX_DURABLE -> SEND_CLAIMED -> SUBMISSION_AMBIGUOUS | BROKER_ACK`;
+  - `close_finalized < seal_creation_deadline < permit_issue_deadline < permit_expires_at <= gateway_send_deadline < broker_auction_cutoff`;
+  - `permitted_quantity <= sealed_quantity` and T+1 cannot increase;
+  - ExitMandate has no entry authorization field and cannot sell unknown/untradable quantity;
+  - order lifecycle terminal history may receive a higher execution revision.
+- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/contracts/test_{decision,capital,execution}.py -v`.
+- [ ] **Step 4: Implement exact models** in `decision.py`, `capital.py`, and `execution.py`; remove final-interface exports of the old generic names from `contracts/__init__.py`.
+- [ ] **Step 5: Verify stable serialization and commit**.
 
 ```bash
-git add src/screening/offensive/v3/policy config/policies/v3 tests/offensive/v3/contracts/test_policy.py
-git commit -m "feat(v3): freeze fail-closed policy snapshots"
+uv run pytest tests/offensive/v3/contracts/test_{decision,capital,execution}.py -v
+git add src/screening/offensive/v3/contracts tests/offensive/v3/contracts
+git commit -m "feat(v3): freeze portfolio decision and lifecycle contracts"
 ```
 
-### Task 4: Capability registry and signature verification
+### Task 4: Upgrade PIT evidence and root-signed trust/policy candidates
 
-**Interfaces:** Produces `Capability`, `TrustedIssuer`, `SignedEnvelope`, `TrustedRegistry.load()`, `CapabilityVerifier.verify()`; never produces `sign()` in CLI-facing modules.
+**Interfaces:** Evidence envelopes add `provider_published_at`; store-controlled records add `ingested_at`, `commit_sequence`, revision links and active-revision identity. Produces root-verified `TrustBundleVerifier`, candidate `load_policy_snapshot()` and `verify_policy_activation()` without activation side effects.
 
-- [ ] **Step 1: Write adversarial tests** in `test_trust_registry.py`: unknown issuer/key, wrong capability/scope/version, expired key, payload mutation, issuer self-claim, shadow issuer signing seal, manual issuer writing broker mode and unknown schema all fail.
-
-- [ ] **Step 2: Verify RED**
-
-Run: `uv run pytest tests/offensive/v3/contracts/test_trust_registry.py -v`
-
-Expected: import fails.
-
-- [ ] **Step 3: Implement read-only Ed25519 verification**. Registry contains public keys and capability scopes only; service-specific signing adapters live outside this package and arrive in Plan 05/07 via injected ports.
-
-```python
-class CapabilityVerifier:
-    def verify(self, signed: SignedEnvelope, required: Capability) -> VerifiedIssuer:
-        issuer = self.registry.require(signed.issuer_id, signed.key_id)
-        issuer.require_capability(required, signed.schema_major)
-        Ed25519PublicKey.from_public_bytes(issuer.public_key).verify(
-            b64decode(signed.signature), signed.payload
-        )
-        return VerifiedIssuer(issuer_id=issuer.issuer_id, capability=required)
-```
-
-- [ ] **Step 4: Verify GREEN and secret scan**
-
-Run: `uv run pytest tests/offensive/v3/contracts/test_trust_registry.py -v`
-
-Run: `rg -n "PRIVATE KEY|broker.*secret|authorizer.*secret" src/screening/offensive/v3 config/policies/v3`
-
-Expected: tests pass; secret scan has no output.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 1: Add failing tests** in `test_evidence.py`, `test_trust_registry.py`, and `test_policy.py` for trusted clock ordering, store-controlled fields forbidden on producer input, root signature, registry epoch/predecessor rollback, revoked/expired issuer, policy predecessor/account/epoch mismatch, duplicate JSON key and symlink/non-regular files.
+- [ ] **Step 2: Verify RED**.
+- [ ] **Step 3: Implement verification only**. `TrustedRegistry.load()` becomes a compatibility parser; executable verification requires a valid `TrustBundle` chain and explicit `trusted_at`. `policy-v2.json` remains `runtime_mode="off"` and has no activation authority.
+- [ ] **Step 4: Run secret/capability scan**.
 
 ```bash
-git add src/screening/offensive/v3/trust tests/offensive/v3/contracts/test_trust_registry.py
-git commit -m "feat(v3): verify issuer capabilities at trust boundary"
+uv run pytest tests/offensive/v3/contracts/test_{evidence,trust_registry,policy}.py -v
+rg -n "PRIVATE KEY|broker.*secret|authorizer.*secret|def sign\(" src/screening/offensive/v3 config/policies/v3
 ```
 
-### Task 5: Ports, import boundaries, and plan-level verification
+Expected: tests pass; scan has no output.
 
-**Interfaces:** Produces Protocols listed in the roadmap and enforces contracts do not import storage, pandas, network, CLI or v2 modules.
+- [ ] **Step 5: Commit** with `git commit -m "feat(v3): verify trusted evidence policy and registry chains"`.
 
-- [ ] **Step 1: Add** `tests/offensive/v3/contracts/test_import_boundaries.py` and `test_ports.py` using AST import checks and small fakes that satisfy each Protocol.
-- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/contracts/test_{ports,import_boundaries}.py -v`.
-- [ ] **Step 3: Implement** `contracts/ports.py`; expose only immutable return types and command objects, never raw SQL connections or mutable mappings.
-- [ ] **Step 4: Run verification**:
+### Task 5: Publish final ports and block obsolete-interface diffusion
+
+**Interfaces:** Produces Roadmap ports: `CapitalGatewayReadPort`, `EvidenceQueryPort`, `AuthorizationQueryPort`, `GrowthKernelPort`, `CapitalGatewayCommandPort`, and `CapabilityVerifier`.
+
+- [ ] **Step 1: Update** `tests/offensive/v3/contracts/test_ports.py` with fakes for every final method and immutable return type.
+- [ ] **Step 2: Update** `test_import_boundaries.py` to forbid storage/network/pandas/v2 imports from contracts/policy and forbid downstream v3 modules from importing old interface aliases.
+- [ ] **Step 3: Add repository scan test** that permits old names only in Revision 1 fixture/adapter modules and this historical status documentation.
+- [ ] **Step 4: Run complete verification**.
 
 ```bash
 uv run pytest tests/offensive/v3/contracts/ -v
@@ -248,19 +173,15 @@ uv run pytest tests/offensive/test_daily_action_readiness.py tests/offensive/tes
 git diff --check
 ```
 
-Expected: all pass; v2 security regressions unchanged.
+Expected: all tests pass; policy remains off; no capital/authority file is created.
 
-- [ ] **Step 5: Update implementation status** in `AGENTS.md` to “v3 contracts/policy/trust verifier implemented; no capital authority”, then commit only relevant files.
-
-```bash
-git add AGENTS.md src/screening/offensive/v3 config/policies/v3 tests/offensive/v3/contracts
-git commit -m "test(v3): enforce contract and trust boundaries"
-```
+- [ ] **Step 5: Update `AGENTS.md` current implementation boundary** to “Revision 2 contracts/policy/trust/ports complete; no capital authority”, then commit scoped files.
 
 ## Completion Gate
 
-- [ ] All contract JSON schemas and fixture hashes are reviewed and versioned.
-- [ ] No model silently coerces strings into bool/int/date/Decimal.
-- [ ] No executable type can be constructed from shadow payload without a validation error.
-- [ ] No producer/CLI module has a signing primitive or private credential.
-- [ ] Policy default is `off`; enabling later requires a new versioned policy file and authority epoch.
+- [ ] Every Revision 2 schema and canonical hash has an approved snapshot fixture.
+- [ ] Unknown schema, extra field, float, empty fingerprint, naive time, wrong mode/account/capability/epoch and invalid predecessor fail closed.
+- [ ] `ShadowDecision` cannot parse or sign as `PortfolioDecisionSeal`.
+- [ ] `CapitalAuthorizationEnvelope` is the only final entry authorization type and represents one complete target portfolio policy.
+- [ ] Trust/policy loading performs no activation; no CLI/producer module contains signing material.
+- [ ] Plan 02–07 can compile exclusively against the final ports without importing obsolete aliases.
