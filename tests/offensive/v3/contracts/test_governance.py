@@ -20,6 +20,7 @@ def _governance():
 
 def _trial(**overrides):
     from src.screening.offensive.v3.contracts.base import ExecutionMode
+    from src.screening.offensive.v3.contracts.governance import PrimaryMetric
 
     payload = {
         "family_id": "btst-family",
@@ -37,7 +38,7 @@ def _trial(**overrides):
         "statistical_governance_policy_version": "gov-v1",
         "champion_behavior_fingerprint": HASH,
         "challenger_behavior_fingerprint": HASH,
-        "primary_metric": "log_growth",
+        "primary_metric": PrimaryMetric.PORTFOLIO_LOG_GROWTH,
         "minimum_economic_effect": Decimal("0.001"),
         "weight_selection_rule": "frozen",
         "trial_manifest_sealed_at": NOW,
@@ -72,6 +73,52 @@ def _trial(**overrides):
         "expires_at": NOW + timedelta(days=30),
         "schema_major": 2,
     }
+    return payload | overrides
+
+
+def _predecessor(**overrides):
+    payload = {
+        "predecessor_active_authorization_id": "previous-1",
+        "predecessor_active_authorization_version": 1,
+        "predecessor_active_authorization_hash": HASH,
+        "predecessor_active_authorization_status_hash": HASH,
+        "predecessor_target_policy_fingerprint": HASH,
+        "predecessor_active_edge_grant_certificate_hashes": (HASH,),
+    }
+    return payload | overrides
+
+
+def _exploration_controls(**overrides):
+    payload = {
+        "exploration_shared_stress_loss_budget_id": "exploration-loss-1",
+        "exploration_shared_stress_loss_budget_cents": 100,
+        "exploration_shared_stress_loss_consumed_cents": 0,
+        "exploration_shared_stress_loss_version": 1,
+        "exploration_one_shot_reservation_id": "one-shot-reservation",
+        "exploration_one_shot_consumption_id": "one-shot-consumption",
+        "exploration_trial_id": "explore-trial",
+        "exploration_fixed_assessment_at": NOW + timedelta(days=10),
+    }
+    return payload | overrides
+
+
+def _exploration_grant(**overrides):
+    from src.screening.offensive.v3.contracts.governance import GrantKind
+
+    payload = _grant(
+        grant_id="explore",
+        grant_kind=GrantKind.EXPLORATION,
+        grant_certificate_hash="b" * 64,
+        economic_lineage_id="explore-lineage",
+        stage_id="explore-stage",
+        stage_sample_reservation_id="explore-reservation",
+        stage_loss_budget_id="exploration-loss-1",
+        shared_exploration_loss_budget_id="exploration-loss-1",
+        assessment_result_hash="c" * 64,
+        attempt_ledger_checkpoint_hash="d" * 64,
+        alpha_or_evalue_budget_consumption_id="explore-alpha",
+        alpha_sample_consumption_id="explore-sample",
+    )
     return payload | overrides
 
 
@@ -145,6 +192,7 @@ def test_trust_activation_and_recovery_are_candidates_with_epochs_and_predecesso
 def test_trial_sap_and_stage_are_frozen_pre_signal_content():
     g = _governance()
     from src.screening.offensive.v3.contracts.base import ExecutionMode
+    from src.screening.offensive.v3.contracts.governance import PrimaryMetric
 
     trial = g.TrialManifest.model_validate(_trial())
     assert trial.trial_manifest_sealed_at < trial.enrollment_start
@@ -155,7 +203,10 @@ def test_trial_sap_and_stage_are_frozen_pre_signal_content():
         "trial_manifest_hash": HASH,
         "research_program_id": "program-1",
         "economic_lineage_id": "btst-lineage",
-        "primary_metric": "log_growth",
+        "primary_metric": PrimaryMetric.PORTFOLIO_LOG_GROWTH,
+        "baseline_portfolio_policy_fingerprint": HASH,
+        "target_portfolio_policy_fingerprint": HASH,
+        "execution_mode": ExecutionMode.BROKER_CONFIRMED,
         "one_sided_confidence_level": Decimal("0.95"),
         "bootstrap_method": "moving",
         "repetitions": 1000,
@@ -163,7 +214,10 @@ def test_trial_sap_and_stage_are_frozen_pre_signal_content():
         "block_rule": "40",
         "multiplicity_policy": "alpha",
         "alpha_or_evalue_budget_consumption_id": "alpha-1",
+        "issued_at": NOW,
         "sealed_at": NOW,
+        "enrollment_start": NOW + timedelta(days=1),
+        "expires_at": NOW + timedelta(days=2),
         "issuer_id": "governance",
         "issuer_capability": "governance.sap.v1",
         "schema_major": 2,
@@ -175,6 +229,7 @@ def test_trial_sap_and_stage_are_frozen_pre_signal_content():
         "statistical_analysis_plan_hash": HASH,
         "research_program_id": "program-1",
         "economic_lineage_id": "btst-lineage",
+        "primary_metric": PrimaryMetric.PORTFOLIO_LOG_GROWTH,
         "baseline_portfolio_policy_fingerprint": HASH,
         "target_portfolio_policy_fingerprint": HASH,
         "execution_version": "t1-open",
@@ -205,14 +260,16 @@ def test_exploration_recovery_and_budget_cross_constraints_fail_closed():
         CapitalAuthorizationEnvelope,
     )
     from src.screening.offensive.v3.contracts.authorization import AuthorizationKind
-    from src.screening.offensive.v3.contracts.governance import GrantKind
 
     exploration = _envelope(
         authorization_kind=AuthorizationKind.EXPLORATION,
         issuer_capability="governance.exploration.envelope.v1",
-        lineage_grants=(_grant(grant_kind=GrantKind.EXPLORATION),),
+        lineage_grants=(
+            _exploration_grant(grant_id="grant-1", economic_lineage_id="btst-lineage"),
+        ),
         exploration_aggregate_gross_cap=Decimal("0.02"),
         portfolio_gross_cap=Decimal("0.02"),
+        **_exploration_controls(),
     )
     assert (
         CapitalAuthorizationEnvelope.model_validate(
@@ -236,6 +293,7 @@ def test_exploration_recovery_and_budget_cross_constraints_fail_closed():
         recovery_stage_program_loss_consumption_version=2,
         risk_epoch_started_hash=HASH,
         recovery_manifest_hash=HASH,
+        **_predecessor(),
     )
     assert (
         CapitalAuthorizationEnvelope.model_validate(recovery).authorization_kind.value
@@ -243,7 +301,7 @@ def test_exploration_recovery_and_budget_cross_constraints_fail_closed():
     )
     with pytest.raises(ValidationError):
         CapitalAuthorizationEnvelope.model_validate(
-            recovery | {"lineage_grants": (_grant(grant_kind=GrantKind.EXPLORATION),)}
+            recovery | {"lineage_grants": (_exploration_grant(),)}
         )
 
 
@@ -252,20 +310,17 @@ def test_exploration_caps_include_existing_edge_and_recovery_requires_edge_only_
         CapitalAuthorizationEnvelope,
     )
     from src.screening.offensive.v3.contracts.authorization import AuthorizationKind
-    from src.screening.offensive.v3.contracts.governance import GrantKind
 
     edge = _grant(grant_id="edge", lineage_gross_cap=Decimal("0.02"))
-    exploration = _grant(
-        grant_id="explore",
-        grant_kind=GrantKind.EXPLORATION,
-        lineage_gross_cap=Decimal("0.01"),
-    )
+    exploration = _exploration_grant(lineage_gross_cap=Decimal("0.01"))
     payload = _envelope(
         authorization_kind=AuthorizationKind.EXPLORATION,
         issuer_capability="governance.exploration.envelope.v1",
         lineage_grants=(edge, exploration),
         exploration_aggregate_gross_cap=Decimal("0.01"),
         portfolio_gross_cap=Decimal("0.02"),
+        **_predecessor(),
+        **_exploration_controls(),
     )
     assert (
         CapitalAuthorizationEnvelope.model_validate(payload)
@@ -286,6 +341,7 @@ def test_exploration_caps_include_existing_edge_and_recovery_requires_edge_only_
         recovery_stage_program_loss_consumption_version=2,
         risk_epoch_started_hash=HASH,
         recovery_manifest_hash=HASH,
+        **_predecessor(),
     )
     with pytest.raises(ValidationError):
         CapitalAuthorizationEnvelope.model_validate(
@@ -298,20 +354,17 @@ def test_envelope_cross_caps_are_fail_closed_without_overconstraining_existing_e
         AuthorizationKind,
         CapitalAuthorizationEnvelope,
     )
-    from src.screening.offensive.v3.contracts.governance import GrantKind
 
     edge = _grant(grant_id="edge", lineage_gross_cap=Decimal("0.05"), capital_tier=5)
-    exploration = _grant(
-        grant_id="explore",
-        grant_kind=GrantKind.EXPLORATION,
-        lineage_gross_cap=Decimal("0.02"),
-    )
+    exploration = _exploration_grant(lineage_gross_cap=Decimal("0.02"))
     payload = _envelope(
         authorization_kind=AuthorizationKind.EXPLORATION,
         issuer_capability="governance.exploration.envelope.v1",
         lineage_grants=(edge, exploration),
         portfolio_gross_cap=Decimal("0.07"),
         exploration_aggregate_gross_cap=Decimal("0.02"),
+        **_predecessor(),
+        **_exploration_controls(),
     )
     assert CapitalAuthorizationEnvelope.model_validate(
         payload
@@ -377,6 +430,7 @@ def test_recovery_fields_are_required_only_for_recovery():
         recovery_stage_program_loss_consumption_version=2,
         risk_epoch_started_hash=HASH,
         recovery_manifest_hash=HASH,
+        **_predecessor(),
     )
     assert (
         CapitalAuthorizationEnvelope.model_validate(recovery).risk_epoch_started_hash

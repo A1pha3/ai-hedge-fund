@@ -6,12 +6,18 @@ policy, trust registry, broker, writer, or authorization.
 
 from __future__ import annotations
 
-from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+import re
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, Strict, field_validator, model_validator
+from pydantic import (
+    BeforeValidator,
+    Field,
+    ValidationInfo,
+    WithJsonSchema,
+    model_validator,
+)
 
 from .base import (
     CanonicalModel,
@@ -26,8 +32,34 @@ from .evidence import NonEmptyStr
 PositiveInt = Annotated[MoneyCents, Field(ge=1)]
 NonNegativeInt = Annotated[MoneyCents, Field(ge=0)]
 PositiveCents = Annotated[MoneyCents, Field(gt=0)]
-Fraction = Annotated[Decimal, Strict(), Field(ge=Decimal("0"), le=Decimal("1"))]
-PositiveDecimal = Annotated[Decimal, Strict(), Field(gt=Decimal("0"))]
+
+
+def _validate_exact_decimal(value: object, info: ValidationInfo) -> Decimal:
+    if info.mode == "json":
+        if type(value) is not str:
+            raise ValueError("JSON decimal values must be strings")
+        if re.fullmatch(r"-?(0|[1-9]\d*)(\.\d+)?", value) is None:
+            raise ValueError("JSON decimal string must use canonical decimal notation")
+        try:
+            decimal_value = Decimal(value)
+        except Exception as exc:
+            raise ValueError("invalid decimal string") from exc
+    else:
+        if type(value) is not Decimal:
+            raise ValueError("Python decimal values must use native Decimal")
+        decimal_value = value
+    if not decimal_value.is_finite():
+        raise ValueError("decimal values must be finite")
+    return Decimal("0") if decimal_value.is_zero() else decimal_value.normalize()
+
+
+ExactDecimal = Annotated[
+    Decimal,
+    BeforeValidator(_validate_exact_decimal),
+    WithJsonSchema({"type": "string", "pattern": r"^-?(0|[1-9]\d*)(\.\d+)?$"}),
+]
+Fraction = Annotated[ExactDecimal, Field(ge=Decimal("0"), le=Decimal("1"))]
+PositiveDecimal = Annotated[ExactDecimal, Field(gt=Decimal("0"))]
 
 
 def _capability(value: str, expected: str) -> None:
@@ -135,6 +167,10 @@ class RiskEpochStarted(CanonicalModel):
         return self
 
 
+class PrimaryMetric(StrEnum):
+    PORTFOLIO_LOG_GROWTH = "PORTFOLIO_LOG_GROWTH"
+
+
 class TrialManifest(CanonicalModel):
     family_id: NonEmptyStr
     economic_lineage_id: NonEmptyStr
@@ -151,7 +187,7 @@ class TrialManifest(CanonicalModel):
     statistical_governance_policy_version: NonEmptyStr
     champion_behavior_fingerprint: Sha256
     challenger_behavior_fingerprint: Sha256
-    primary_metric: NonEmptyStr
+    primary_metric: PrimaryMetric
     minimum_economic_effect: PositiveDecimal
     weight_selection_rule: NonEmptyStr
     trial_manifest_sealed_at: UtcInstant
@@ -191,7 +227,8 @@ class TrialManifest(CanonicalModel):
         _capability(self.issuer_capability, "governance.trial.manifest.v1")
         _unique(self.fold_boundaries, "fold_boundaries")
         if not (
-            self.trial_manifest_sealed_at
+            self.issued_at
+            == self.trial_manifest_sealed_at
             < self.enrollment_start
             <= self.enrollment_end
             < self.followup_finality_date
@@ -202,11 +239,11 @@ class TrialManifest(CanonicalModel):
             )
         if self.expires_at <= self.issued_at:
             raise ValueError("expires_at must be after issued_at")
-        if (
-            self.execution_mode is ExecutionMode.BROKER_CONFIRMED
-            and self.broker_experiment_design is None
-        ):
-            raise ValueError("broker trial requires broker_experiment_design")
+        if self.execution_mode is ExecutionMode.BROKER_CONFIRMED:
+            if self.broker_experiment_design is None:
+                raise ValueError("broker trial requires broker_experiment_design")
+        elif self.broker_experiment_design is not None:
+            raise ValueError("non-broker trial cannot carry broker_experiment_design")
         return self
 
 
@@ -215,7 +252,10 @@ class StatisticalAnalysisPlan(CanonicalModel):
     trial_manifest_hash: Sha256
     research_program_id: NonEmptyStr
     economic_lineage_id: NonEmptyStr
-    primary_metric: NonEmptyStr
+    primary_metric: PrimaryMetric
+    baseline_portfolio_policy_fingerprint: Sha256
+    target_portfolio_policy_fingerprint: Sha256
+    execution_mode: ExecutionMode
     one_sided_confidence_level: Fraction
     bootstrap_method: NonEmptyStr
     repetitions: PositiveInt
@@ -223,7 +263,10 @@ class StatisticalAnalysisPlan(CanonicalModel):
     block_rule: NonEmptyStr
     multiplicity_policy: NonEmptyStr
     alpha_or_evalue_budget_consumption_id: NonEmptyStr
+    issued_at: UtcInstant
     sealed_at: UtcInstant
+    enrollment_start: UtcInstant
+    expires_at: UtcInstant
     issuer_id: NonEmptyStr
     issuer_capability: NonEmptyStr
     schema_major: SchemaVersion
@@ -231,6 +274,10 @@ class StatisticalAnalysisPlan(CanonicalModel):
     @model_validator(mode="after")
     def validate_sap(self) -> Self:
         _capability(self.issuer_capability, "governance.sap.v1")
+        if not (
+            self.issued_at == self.sealed_at < self.enrollment_start < self.expires_at
+        ):
+            raise ValueError("SAP must be sealed before enrollment and expiry")
         return self
 
 
@@ -240,6 +287,7 @@ class StageManifest(CanonicalModel):
     statistical_analysis_plan_hash: Sha256
     research_program_id: NonEmptyStr
     economic_lineage_id: NonEmptyStr
+    primary_metric: PrimaryMetric
     baseline_portfolio_policy_fingerprint: Sha256
     target_portfolio_policy_fingerprint: Sha256
     execution_version: NonEmptyStr
@@ -265,8 +313,9 @@ class StageManifest(CanonicalModel):
     @model_validator(mode="after")
     def validate_stage(self) -> Self:
         _capability(self.issuer_capability, "governance.stage.manifest.v1")
-        if (
-            not self.enrollment_start
+        if not (
+            self.issued_at
+            < self.enrollment_start
             < self.followup_finality_date
             <= self.fixed_assessment_date
         ):
@@ -302,12 +351,31 @@ class LineageGrant(CanonicalModel):
     stage_loss_budget_id: NonEmptyStr
     stage_loss_budget_cents: PositiveCents
     stage_loss_version: PositiveInt
+    shared_exploration_loss_budget_id: NonEmptyStr | None = None
     assessment_result_hash: Sha256
     grant_evidence_set_merkle_root: Sha256
     attempt_ledger_checkpoint_hash: Sha256
     alpha_or_evalue_budget_consumption_id: NonEmptyStr
     alpha_sample_consumption_id: NonEmptyStr
     schema_major: SchemaVersion
+
+    @model_validator(mode="after")
+    def validate_grant(self) -> Self:
+        tier_cap = Decimal(self.capital_tier) / Decimal(100)
+        if self.lineage_gross_cap > tier_cap:
+            raise ValueError("lineage gross cap cannot exceed capital tier")
+        if self.grant_kind is GrantKind.EXPLORATION:
+            if (
+                self.capital_tier != 2
+                or self.lineage_gross_cap > Decimal("0.02")
+                or self.shared_exploration_loss_budget_id is None
+            ):
+                raise ValueError(
+                    "exploration grants require tier 2 and shared loss budget"
+                )
+        elif self.shared_exploration_loss_budget_id is not None:
+            raise ValueError("edge grants cannot bind exploration loss budget")
+        return self
 
 
 class ProgramLossBudgetBinding(CanonicalModel):
@@ -518,6 +586,7 @@ __all__ = [
     "LineageGrant",
     "MigrationApprovalManifest",
     "PolicyActivation",
+    "PrimaryMetric",
     "ProgramLossBudgetBinding",
     "RiskEpochStarted",
     "StageManifest",

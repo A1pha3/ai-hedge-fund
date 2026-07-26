@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from src.screening.offensive.v3.contracts.authorization import (
     CapitalAuthorizationEnvelope,
 )
