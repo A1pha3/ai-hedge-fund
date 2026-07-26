@@ -18,6 +18,7 @@ from pydantic import (
     Field,
     PlainSerializer,
     TypeAdapter,
+    ValidationError,
     ValidationInfo,
     WithJsonSchema,
     model_validator,
@@ -47,7 +48,7 @@ def _validate_exact_decimal(value: object, info: ValidationInfo) -> Decimal:
     if info.mode == "json":
         if type(value) is not str:
             raise ValueError("JSON decimal values must be strings")
-        if re.fullmatch(r"-?(0|[1-9]\d*)(\.\d+)?", value) is None:
+        if re.fullmatch(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?", value) is None:
             raise ValueError("JSON decimal string must use canonical decimal notation")
         try:
             decimal_value = Decimal(value)
@@ -66,10 +67,10 @@ ExactDecimal = Annotated[
     Decimal,
     BeforeValidator(_validate_exact_decimal),
     PlainSerializer(canonical_decimal_string, return_type=str, when_used="json"),
-    WithJsonSchema({"type": "string", "pattern": r"^-?(0|[1-9]\d*)(\.\d+)?$"}),
+    WithJsonSchema({"type": "string", "pattern": r"^-?(0|[1-9][0-9]*)(\.[0-9]+)?$"}),
 ]
 Fraction = Annotated[ExactDecimal, Field(ge=Decimal("0"), le=Decimal("1"))]
-_CONFIDENCE_LEVEL_JSON_PATTERN = r"^0\.\d*[1-9]\d*$"
+_CONFIDENCE_LEVEL_JSON_PATTERN = r"^0\.[0-9]*[1-9][0-9]*$"
 ConfidenceLevel = Annotated[
     ExactDecimal,
     Field(gt=Decimal("0"), lt=Decimal("1")),
@@ -666,6 +667,7 @@ class ApprovalAttestationBinding(GovernedArtifact):
 class _TwoPersonOneShotManifest(GovernedArtifact):
     APPROVAL_PREIMAGE_DOMAIN: ClassVar[str]
     APPROVAL_SCOPE: ClassVar[str]
+    EXPECTED_ISSUER_CAPABILITY: ClassVar[str]
 
     manifest_id: NonEmptyStr
     portfolio_id: NonEmptyStr
@@ -749,6 +751,27 @@ class _TwoPersonOneShotManifest(GovernedArtifact):
         return validated
 
     @classmethod
+    def _validate_unsigned_proposal(cls, proposal: Mapping[str, Any]) -> None:
+        candidate = cls.model_construct(
+            **proposal,
+            approval_attestations=(),
+        )
+        try:
+            candidate._validate_unsigned()
+        except ValueError as exc:
+            raise ValidationError.from_exception_data(
+                cls.__name__,
+                [
+                    {
+                        "type": "value_error",
+                        "loc": (),
+                        "input": dict(proposal),
+                        "ctx": {"error": exc},
+                    }
+                ],
+            ) from exc
+
+    @classmethod
     def approval_preimage_hash_for_proposal(cls, proposal: Mapping[str, Any]) -> str:
         """Hash an exact unsigned proposal only after full manifest validation."""
 
@@ -760,6 +783,7 @@ class _TwoPersonOneShotManifest(GovernedArtifact):
         if set(payload) != expected_keys:
             cls._raise_invalid_proposal(payload)
         validated_payload = cls._strictly_validate_unsigned_fields(payload)
+        cls._validate_unsigned_proposal(validated_payload)
         approved_preimage_hash = cls._unchecked_approval_preimage_hash_for_payload(
             validated_payload
         )
@@ -785,19 +809,22 @@ class _TwoPersonOneShotManifest(GovernedArtifact):
         )
         return validated._unchecked_approval_preimage_hash()
 
-    def _validate_common(self, expected: str) -> None:
-        _capability(self.issuer_capability, expected)
+    def _validate_unsigned(self) -> None:
+        _capability(self.issuer_capability, self.EXPECTED_ISSUER_CAPABILITY)
+        if not self.one_shot:
+            raise ValueError("manifest must be one_shot")
+        if self.expires_at <= self.issued_at:
+            raise ValueError("expires_at must be after issued_at")
+
+    def _validate_approvals(self) -> None:
         approvals = self.approval_attestations
         if (
-            not self.one_shot
-            or len(approvals) != 2
+            len(approvals) != 2
             or len({approval.approver_id for approval in approvals}) != 2
             or len({approval.key_id for approval in approvals}) != 2
             or len({approval.approval_artifact_hash for approval in approvals}) != 2
         ):
-            raise ValueError(
-                "manifest requires two distinct approval attestations and one_shot"
-            )
+            raise ValueError("manifest requires two distinct approval attestations")
         expected_order = tuple(
             sorted(
                 approvals,
@@ -821,8 +848,12 @@ class _TwoPersonOneShotManifest(GovernedArtifact):
         }
         if approved_hashes != {self._unchecked_approval_preimage_hash()}:
             raise ValueError("approvals must share the complete manifest preimage hash")
-        if self.expires_at <= self.issued_at:
-            raise ValueError("expires_at must be after issued_at")
+
+    @model_validator(mode="after")
+    def validate_manifest(self) -> Self:
+        self._validate_unsigned()
+        self._validate_approvals()
+        return self
 
 
 class MigrationApprovalManifest(_TwoPersonOneShotManifest):
@@ -831,6 +862,7 @@ class MigrationApprovalManifest(_TwoPersonOneShotManifest):
         "ai-hedge-fund.v3.governance.migration-approval-manifest.approval-preimage.v1"
     )
     APPROVAL_SCOPE = "MIGRATION_APPROVAL_MANIFEST"
+    EXPECTED_ISSUER_CAPABILITY = "governance.migration.approval.v1"
 
     source_portfolio_id: NonEmptyStr
     target_portfolio_id: NonEmptyStr
@@ -886,9 +918,8 @@ class MigrationApprovalManifest(_TwoPersonOneShotManifest):
     credential_fencing_hash: Sha256
     rollback_dr_hash: Sha256
 
-    @model_validator(mode="after")
-    def validate_manifest(self) -> Self:
-        self._validate_common("governance.migration.approval.v1")
+    def _validate_unsigned(self) -> None:
+        super()._validate_unsigned()
         if self.target_portfolio_id != self.portfolio_id:
             raise ValueError("target portfolio must match portfolio_id")
         if self.target_broker_account_id != self.broker_account_id:
@@ -903,7 +934,6 @@ class MigrationApprovalManifest(_TwoPersonOneShotManifest):
             raise ValueError(
                 "allowed migration window must be inside manifest validity"
             )
-        return self
 
 
 class BrokerEnablementManifest(_TwoPersonOneShotManifest):
@@ -912,6 +942,7 @@ class BrokerEnablementManifest(_TwoPersonOneShotManifest):
         "ai-hedge-fund.v3.governance.broker-enablement-manifest.approval-preimage.v1"
     )
     APPROVAL_SCOPE = "BROKER_ENABLEMENT_MANIFEST"
+    EXPECTED_ISSUER_CAPABILITY = "governance.broker.enablement.v1"
 
     broker_account_fingerprint: Sha256
     broker_environment_fingerprint: Sha256
@@ -925,11 +956,6 @@ class BrokerEnablementManifest(_TwoPersonOneShotManifest):
     exit_rate_limit_hash: Sha256
     credential_session_network_fencing_hash: Sha256
 
-    @model_validator(mode="after")
-    def validate_manifest(self) -> Self:
-        self._validate_common("governance.broker.enablement.v1")
-        return self
-
 
 class DisasterRecoveryManifest(_TwoPersonOneShotManifest):
     HASH_DOMAIN = "ai-hedge-fund.v3.governance.disaster-recovery-manifest.v1"
@@ -937,6 +963,7 @@ class DisasterRecoveryManifest(_TwoPersonOneShotManifest):
         "ai-hedge-fund.v3.governance.disaster-recovery-manifest.approval-preimage.v1"
     )
     APPROVAL_SCOPE = "DISASTER_RECOVERY_MANIFEST"
+    EXPECTED_ISSUER_CAPABILITY = "governance.disaster.recovery.v1"
 
     broker_account_fingerprint: Sha256
     trust_bundle_hash: Sha256
@@ -961,12 +988,10 @@ class DisasterRecoveryManifest(_TwoPersonOneShotManifest):
     reconciliation_proof_hash: Sha256
     reconcile_before_entry: ExactTrue
 
-    @model_validator(mode="after")
-    def validate_manifest(self) -> Self:
-        self._validate_common("governance.disaster.recovery.v1")
+    def _validate_unsigned(self) -> None:
+        super()._validate_unsigned()
         if not self.reconcile_before_entry:
             raise ValueError("disaster recovery must reconcile before entry")
-        return self
 
 
 __all__ = [
