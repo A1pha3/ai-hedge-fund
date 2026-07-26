@@ -6,17 +6,36 @@ from datetime import date
 from decimal import Decimal
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Annotated, Literal, Self, TypeAlias
+from typing import Annotated, ClassVar, Literal, Self, TypeAlias
 
 from pydantic import Field, model_validator
 
-from .base import CanonicalModel, ExecutionMode, Sha256, UtcInstant
+from .base import (
+    CanonicalModel,
+    ExactInteger,
+    ExecutionMode,
+    MoneyCents,
+    QuantityUnits,
+    SchemaVersion,
+    Sha256,
+    UnitQuanta,
+    UtcInstant,
+    domain_hash,
+)
 from .evidence import NonEmptyStr
+from ._execution_contracts import OrderState, PlanState
 
 
 PositiveInt = Annotated[int, Field(ge=1)]
 NonNegativeInt = Annotated[int, Field(ge=0)]
 NonNegativeDecimal = Annotated[Decimal, Field(ge=0)]
+PositiveExactInt = Annotated[ExactInteger, Field(ge=1)]
+PositiveQuantity = Annotated[QuantityUnits, Field(gt=0)]
+NonNegativeQuantity = Annotated[QuantityUnits, Field(ge=0)]
+NonNegativeCents = Annotated[MoneyCents, Field(ge=0)]
+PositiveCents = Annotated[MoneyCents, Field(gt=0)]
+NonNegativeUnits = Annotated[UnitQuanta, Field(ge=0)]
+DrawdownPpm = Annotated[ExactInteger, Field(ge=0, le=1_000_000)]
 
 
 class PositionState(StrEnum):
@@ -31,28 +50,6 @@ class AuthorityState(StrEnum):
     DRAINING = "DRAINING"
     BROKER_RECONCILED = "BROKER_RECONCILED"
     HANDOFF_COMPLETE = "HANDOFF_COMPLETE"
-
-
-class PlanState(StrEnum):
-    SEALED = "SEALED"
-    PERMITTED = "PERMITTED"
-    ORDER_DURABLE = "ORDER_DURABLE"
-    PARTIALLY_EXECUTED = "PARTIALLY_EXECUTED"
-    CANCEL_PENDING = "CANCEL_PENDING"
-    SUPERSEDED = "SUPERSEDED"
-    CANCELLED = "CANCELLED"
-    EXPIRED = "EXPIRED"
-    EXECUTED = "EXECUTED"
-
-
-class OrderState(StrEnum):
-    CREATED = "CREATED"
-    SUBMITTED = "SUBMITTED"
-    PARTIALLY_FILLED = "PARTIALLY_FILLED"
-    FILLED = "FILLED"
-    REJECTED = "REJECTED"
-    CANCEL_REQUESTED = "CANCEL_REQUESTED"
-    CANCELLED = "CANCELLED"
 
 
 class SessionPhase(StrEnum):
@@ -79,80 +76,8 @@ AUTHORITY_STATE_TRANSITIONS = MappingProxyType(
     {
         AuthorityState.ACTIVE: frozenset({AuthorityState.DRAINING}),
         AuthorityState.DRAINING: frozenset({AuthorityState.BROKER_RECONCILED}),
-        AuthorityState.BROKER_RECONCILED: frozenset(
-            {AuthorityState.HANDOFF_COMPLETE}
-        ),
+        AuthorityState.BROKER_RECONCILED: frozenset({AuthorityState.HANDOFF_COMPLETE}),
         AuthorityState.HANDOFF_COMPLETE: frozenset(),
-    }
-)
-
-PLAN_STATE_TRANSITIONS = MappingProxyType(
-    {
-        PlanState.SEALED: frozenset(
-            {
-                PlanState.PERMITTED,
-                PlanState.SUPERSEDED,
-                PlanState.CANCELLED,
-                PlanState.EXPIRED,
-            }
-        ),
-        PlanState.PERMITTED: frozenset(
-            {PlanState.ORDER_DURABLE, PlanState.CANCELLED, PlanState.EXPIRED}
-        ),
-        PlanState.ORDER_DURABLE: frozenset(
-            {
-                PlanState.PARTIALLY_EXECUTED,
-                PlanState.EXECUTED,
-                PlanState.CANCEL_PENDING,
-            }
-        ),
-        PlanState.PARTIALLY_EXECUTED: frozenset(
-            {PlanState.EXECUTED, PlanState.CANCEL_PENDING}
-        ),
-        PlanState.CANCEL_PENDING: frozenset(
-            {
-                PlanState.CANCEL_PENDING,
-                PlanState.EXECUTED,
-                PlanState.CANCELLED,
-            }
-        ),
-        PlanState.SUPERSEDED: frozenset(),
-        PlanState.CANCELLED: frozenset(),
-        PlanState.EXPIRED: frozenset(),
-        PlanState.EXECUTED: frozenset(),
-    }
-)
-
-ORDER_STATE_TRANSITIONS = MappingProxyType(
-    {
-        OrderState.CREATED: frozenset(
-            {OrderState.SUBMITTED, OrderState.REJECTED}
-        ),
-        OrderState.SUBMITTED: frozenset(
-            {
-                OrderState.PARTIALLY_FILLED,
-                OrderState.FILLED,
-                OrderState.REJECTED,
-                OrderState.CANCEL_REQUESTED,
-            }
-        ),
-        OrderState.PARTIALLY_FILLED: frozenset(
-            {
-                OrderState.PARTIALLY_FILLED,
-                OrderState.FILLED,
-                OrderState.CANCEL_REQUESTED,
-            }
-        ),
-        OrderState.CANCEL_REQUESTED: frozenset(
-            {
-                OrderState.PARTIALLY_FILLED,
-                OrderState.FILLED,
-                OrderState.CANCELLED,
-            }
-        ),
-        OrderState.FILLED: frozenset(),
-        OrderState.REJECTED: frozenset(),
-        OrderState.CANCELLED: frozenset(),
     }
 )
 
@@ -239,9 +164,7 @@ class OrderSnapshot(CanonicalModel):
     @model_validator(mode="after")
     def validate_quantities(self) -> Self:
         if (
-            self.filled_quantity
-            + self.leaves_quantity
-            + self.released_quantity
+            self.filled_quantity + self.leaves_quantity + self.released_quantity
             != self.ordered_quantity
         ):
             raise ValueError(
@@ -253,7 +176,9 @@ class OrderSnapshot(CanonicalModel):
                 and self.leaves_quantity == self.ordered_quantity
                 and self.released_quantity == 0
             ):
-                raise ValueError(f"{self.state.value} state has contradictory quantities")
+                raise ValueError(
+                    f"{self.state.value} state has contradictory quantities"
+                )
         elif self.state is OrderState.PARTIALLY_FILLED:
             if not (
                 0 < self.filled_quantity < self.ordered_quantity
@@ -292,6 +217,600 @@ class OrderSnapshot(CanonicalModel):
         return self
 
 
+class RiskSnapshotFreshness(StrEnum):
+    FRESH = "FRESH"
+    STALE = "STALE"
+    UNKNOWN = "UNKNOWN"
+
+
+class RiskSnapshotCompleteness(StrEnum):
+    COMPLETE = "COMPLETE"
+    INCOMPLETE = "INCOMPLETE"
+    UNKNOWN = "UNKNOWN"
+
+
+class ExposureScope(StrEnum):
+    GLOBAL = "GLOBAL"
+    PORTFOLIO = "PORTFOLIO"
+    RESEARCH_PROGRAM = "RESEARCH_PROGRAM"
+    ECONOMIC_LINEAGE = "ECONOMIC_LINEAGE"
+    STAGE = "STAGE"
+
+
+class RiskOrderSide(StrEnum):
+    ENTRY = "ENTRY"
+    EXIT = "EXIT"
+
+
+class RiskLatchState(StrEnum):
+    CLEAR = "CLEAR"
+    RISK_HALTED = "RISK_HALTED"
+
+
+class StageLossLatchState(StrEnum):
+    CLEAR = "CLEAR"
+    STAGE_LOSS_HALTED = "STAGE_LOSS_HALTED"
+
+
+class ReconciliationLatchState(StrEnum):
+    CLEAR = "CLEAR"
+    RECONCILIATION_HALT = "RECONCILIATION_HALT"
+
+
+def _validate_capital_account_mode(
+    mode: ExecutionMode,
+    broker_account_id: str | None,
+) -> None:
+    if mode is ExecutionMode.RESEARCH_RECONSTRUCTION:
+        raise ValueError("research mode cannot represent executable capital truth")
+    if mode is ExecutionMode.DAILY_BAR_PROXY:
+        if broker_account_id is not None:
+            raise ValueError("proxy mode cannot bind a real broker account")
+    elif broker_account_id is None:
+        raise ValueError("manual and broker modes require an account")
+
+
+class CapitalPositionRisk(CanonicalModel):
+    portfolio_id: NonEmptyStr
+    broker_account_id: NonEmptyStr | None
+    mode: ExecutionMode
+    position_lineage_id: NonEmptyStr
+    economic_lot_id: NonEmptyStr
+    security_id: NonEmptyStr
+    producer_namespace: NonEmptyStr
+    research_program_id: NonEmptyStr
+    economic_lineage_id: NonEmptyStr
+    stage_id: NonEmptyStr
+    state: PositionState
+    settled_quantity: NonNegativeQuantity
+    tradable_quantity: NonNegativeQuantity
+    share_receivable_quantity: NonNegativeQuantity
+    marked_gross_cents: NonNegativeCents
+
+    @model_validator(mode="after")
+    def validate_position_risk(self) -> Self:
+        _validate_capital_account_mode(self.mode, self.broker_account_id)
+        if self.state not in {PositionState.OPEN, PositionState.EXIT_PENDING}:
+            raise ValueError("capital position risk requires an open position state")
+        if self.tradable_quantity > self.settled_quantity:
+            raise ValueError("tradable quantity cannot exceed settled quantity")
+        return self
+
+
+class CapitalLiveOrderRisk(CanonicalModel):
+    portfolio_id: NonEmptyStr
+    broker_account_id: NonEmptyStr | None
+    mode: ExecutionMode
+    order_id: NonEmptyStr
+    order_line_id: NonEmptyStr
+    side: RiskOrderSide
+    state: OrderState
+    producer_namespace: NonEmptyStr
+    research_program_id: NonEmptyStr
+    economic_lineage_id: NonEmptyStr
+    stage_id: NonEmptyStr
+    leaves_quantity: PositiveQuantity
+    worst_case_leaves_notional_cents: PositiveCents
+
+    @model_validator(mode="after")
+    def validate_live_order_risk(self) -> Self:
+        _validate_capital_account_mode(self.mode, self.broker_account_id)
+        if self.state not in {
+            OrderState.SUBMITTED,
+            OrderState.PARTIALLY_FILLED,
+            OrderState.CANCEL_REQUESTED,
+        }:
+            raise ValueError("capital live order risk requires a live leaves state")
+        return self
+
+
+class RiskExposureBucket(CanonicalModel):
+    scope: ExposureScope
+    portfolio_id: NonEmptyStr | None
+    research_program_id: NonEmptyStr | None
+    economic_lineage_id: NonEmptyStr | None
+    stage_id: NonEmptyStr | None
+    position_marked_gross_cents: NonNegativeCents
+    live_order_leaves_gross_cents: NonNegativeCents
+    reserved_entry_gross_cents: NonNegativeCents
+    pending_stress_cents: NonNegativeCents
+    corporate_action_pending_risk_cents: NonNegativeCents
+    unattributed_risk_cents: NonNegativeCents
+    total_gross_cents: NonNegativeCents
+
+    @model_validator(mode="after")
+    def validate_exposure(self) -> Self:
+        identities = (
+            self.portfolio_id,
+            self.research_program_id,
+            self.economic_lineage_id,
+            self.stage_id,
+        )
+        required_depth = {
+            ExposureScope.GLOBAL: 0,
+            ExposureScope.PORTFOLIO: 1,
+            ExposureScope.RESEARCH_PROGRAM: 2,
+            ExposureScope.ECONOMIC_LINEAGE: 3,
+            ExposureScope.STAGE: 4,
+        }[self.scope]
+        if any(value is None for value in identities[:required_depth]) or any(
+            value is not None for value in identities[required_depth:]
+        ):
+            raise ValueError("exposure scope identity is incomplete or over-specified")
+        components = (
+            self.position_marked_gross_cents,
+            self.live_order_leaves_gross_cents,
+            self.reserved_entry_gross_cents,
+            self.pending_stress_cents,
+            self.corporate_action_pending_risk_cents,
+            self.unattributed_risk_cents,
+        )
+        if sum(components) != self.total_gross_cents:
+            raise ValueError("exposure aggregate does not equal its named components")
+        return self
+
+    def identity(self) -> tuple[ExposureScope, str, str, str, str]:
+        return (
+            self.scope,
+            self.portfolio_id or "",
+            self.research_program_id or "",
+            self.economic_lineage_id or "",
+            self.stage_id or "",
+        )
+
+
+class StageLossLatchSnapshot(CanonicalModel):
+    research_program_id: NonEmptyStr
+    economic_lineage_id: NonEmptyStr
+    stage_id: NonEmptyStr
+    stage_loss_budget_id: NonEmptyStr
+    frozen_budget_cents: PositiveCents
+    consumed_cents: NonNegativeCents
+    stage_loss_version: PositiveExactInt
+    state: StageLossLatchState
+
+    @model_validator(mode="after")
+    def validate_stage_loss(self) -> Self:
+        exhausted = self.consumed_cents >= self.frozen_budget_cents
+        if exhausted != (self.state is StageLossLatchState.STAGE_LOSS_HALTED):
+            raise ValueError(
+                "stage loss halt must match nonreplenishable budget consumption"
+            )
+        return self
+
+    def identity(self) -> tuple[str, str, str]:
+        return (
+            self.research_program_id,
+            self.economic_lineage_id,
+            self.stage_id,
+        )
+
+
+_EXPOSURE_COMPONENT_FIELDS = (
+    "position_marked_gross_cents",
+    "live_order_leaves_gross_cents",
+    "reserved_entry_gross_cents",
+    "pending_stress_cents",
+    "corporate_action_pending_risk_cents",
+)
+
+
+def _drawdown_ppm(nav_cents: int, high_water_mark_cents: int) -> int:
+    if high_water_mark_cents == 0:
+        return 0
+    return ((high_water_mark_cents - nav_cents) * 1_000_000) // high_water_mark_cents
+
+
+class CapitalRiskSnapshot(CanonicalModel):
+    risk_snapshot_id: NonEmptyStr
+    portfolio_id: NonEmptyStr
+    broker_account_id: NonEmptyStr | None
+    base_currency: NonEmptyStr
+    mode: ExecutionMode
+    as_of: UtcInstant
+    valid_until: UtcInstant
+    freshness: RiskSnapshotFreshness
+    completeness: RiskSnapshotCompleteness
+    available_cash_cents: NonNegativeCents
+    restricted_cash_cents: NonNegativeCents
+    unsettled_cash_cents: NonNegativeCents
+    cash_receivable_cents: NonNegativeCents
+    cash_payable_cents: NonNegativeCents
+    subscription_suspense_cents: NonNegativeCents
+    redemption_suspense_cents: NonNegativeCents
+    reserved_cash_cents: NonNegativeCents
+    issued_unit_quanta: NonNegativeUnits
+    pending_redeemed_unit_quanta: NonNegativeUnits
+    positions: tuple[CapitalPositionRisk, ...]
+    live_orders: tuple[CapitalLiveOrderRisk, ...]
+    pending_stress_cents: NonNegativeCents
+    corporate_action_pending_risk_cents: NonNegativeCents
+    unattributed_risk_cents: NonNegativeCents
+    exposures: Annotated[tuple[RiskExposureBucket, ...], Field(min_length=5)]
+    total_gross_exposure_cents: NonNegativeCents
+    as_observed_nav_cents: NonNegativeCents
+    lifetime_high_water_mark_cents: NonNegativeCents
+    active_epoch_high_water_mark_cents: NonNegativeCents
+    lifetime_drawdown_ppm: DrawdownPpm
+    active_epoch_drawdown_ppm: DrawdownPpm
+    risk_latch: RiskLatchState
+    stage_loss_latches: tuple[StageLossLatchSnapshot, ...]
+    reconciliation_latch: ReconciliationLatchState
+    policy_activation_hash: Sha256
+    policy_epoch: PositiveExactInt
+    authority_epoch: PositiveExactInt
+    risk_epoch: PositiveExactInt
+    registry_epoch: PositiveExactInt
+    authorization_id: NonEmptyStr
+    authorization_version: PositiveExactInt
+    stage_loss_version: PositiveExactInt
+    writer_fencing_epoch: PositiveExactInt
+    capital_version: PositiveExactInt
+    payload_content_hash: Sha256
+    schema_major: SchemaVersion
+
+    @model_validator(mode="after")
+    def validate_snapshot(self) -> Self:
+        _validate_capital_account_mode(self.mode, self.broker_account_id)
+        if self.valid_until <= self.as_of:
+            raise ValueError("risk snapshot validity must extend beyond as_of")
+        if self.freshness is RiskSnapshotFreshness.UNKNOWN:
+            raise ValueError("risk snapshot freshness cannot be unknown")
+        if self.completeness is not RiskSnapshotCompleteness.COMPLETE:
+            raise ValueError("risk snapshot facts must be complete")
+        if self.pending_redeemed_unit_quanta > self.issued_unit_quanta:
+            raise ValueError("pending redeemed units cannot exceed issued units")
+
+        position_ids = [
+            (position.position_lineage_id, position.economic_lot_id)
+            for position in self.positions
+        ]
+        if len({identity[0] for identity in position_ids}) != len(position_ids) or len(
+            {identity[1] for identity in position_ids}
+        ) != len(position_ids):
+            raise ValueError("duplicate position or economic lot identity")
+        if position_ids != sorted(position_ids):
+            raise ValueError("position identities must be in canonical order")
+
+        order_ids = [
+            (order.order_id, order.order_line_id) for order in self.live_orders
+        ]
+        if len({identity[0] for identity in order_ids}) != len(order_ids) or len(
+            {identity[1] for identity in order_ids}
+        ) != len(order_ids):
+            raise ValueError("duplicate live order identity")
+        if order_ids != sorted(order_ids):
+            raise ValueError("live order identities must be in canonical order")
+
+        for component in (*self.positions, *self.live_orders):
+            if component.portfolio_id != self.portfolio_id:
+                raise ValueError("capital component portfolio does not match snapshot")
+            if component.broker_account_id != self.broker_account_id:
+                raise ValueError("capital component account does not match snapshot")
+
+        latch_ids = [latch.identity() for latch in self.stage_loss_latches]
+        if len(latch_ids) != len(set(latch_ids)):
+            raise ValueError("duplicate stage loss latch identity")
+        budget_ids = [latch.stage_loss_budget_id for latch in self.stage_loss_latches]
+        if len(budget_ids) != len(set(budget_ids)):
+            raise ValueError("duplicate stage loss budget identity")
+        if latch_ids != sorted(latch_ids):
+            raise ValueError("stage loss latches must be in canonical order")
+        if any(
+            latch.stage_loss_version != self.stage_loss_version
+            for latch in self.stage_loss_latches
+        ):
+            raise ValueError("stage loss latch version does not match snapshot")
+
+        self._validate_exposures(latch_ids)
+        self._validate_nav_and_latches()
+        return self
+
+    def _validate_exposures(
+        self,
+        latch_ids: list[tuple[str, str, str]],
+    ) -> None:
+        exposure_ids = [exposure.identity() for exposure in self.exposures]
+        if len(exposure_ids) != len(set(exposure_ids)):
+            raise ValueError("duplicate exposure identity")
+        if exposure_ids != sorted(
+            exposure_ids,
+            key=lambda item: (list(ExposureScope).index(item[0]), *item[1:]),
+        ):
+            raise ValueError("exposures must be in canonical scope and identity order")
+
+        program_ids = {
+            component.research_program_id
+            for component in (*self.positions, *self.live_orders)
+        } | {identity[0] for identity in latch_ids}
+        lineage_ids = {
+            (component.research_program_id, component.economic_lineage_id)
+            for component in (*self.positions, *self.live_orders)
+        } | {(identity[0], identity[1]) for identity in latch_ids}
+        stage_ids = {
+            (
+                component.research_program_id,
+                component.economic_lineage_id,
+                component.stage_id,
+            )
+            for component in (*self.positions, *self.live_orders)
+        } | set(latch_ids)
+        expected_ids = {
+            (ExposureScope.GLOBAL, "", "", "", ""),
+            (ExposureScope.PORTFOLIO, self.portfolio_id, "", "", ""),
+            *{
+                (
+                    ExposureScope.RESEARCH_PROGRAM,
+                    self.portfolio_id,
+                    program_id,
+                    "",
+                    "",
+                )
+                for program_id in program_ids
+            },
+            *{
+                (
+                    ExposureScope.ECONOMIC_LINEAGE,
+                    self.portfolio_id,
+                    program_id,
+                    lineage_id,
+                    "",
+                )
+                for program_id, lineage_id in lineage_ids
+            },
+            *{
+                (
+                    ExposureScope.STAGE,
+                    self.portfolio_id,
+                    program_id,
+                    lineage_id,
+                    stage_id,
+                )
+                for program_id, lineage_id, stage_id in stage_ids
+            },
+        }
+        if set(exposure_ids) != expected_ids:
+            raise ValueError(
+                "exposure hierarchy is incomplete or contains an unknown scope"
+            )
+
+        by_identity = {exposure.identity(): exposure for exposure in self.exposures}
+        global_bucket = by_identity[(ExposureScope.GLOBAL, "", "", "", "")]
+        portfolio_bucket = by_identity[
+            (ExposureScope.PORTFOLIO, self.portfolio_id, "", "", "")
+        ]
+        expected_global = {
+            "position_marked_gross_cents": sum(
+                position.marked_gross_cents for position in self.positions
+            ),
+            "live_order_leaves_gross_cents": sum(
+                order.worst_case_leaves_notional_cents
+                for order in self.live_orders
+                if order.side is RiskOrderSide.ENTRY
+            ),
+            "reserved_entry_gross_cents": self.reserved_cash_cents,
+            "pending_stress_cents": self.pending_stress_cents,
+            "corporate_action_pending_risk_cents": (
+                self.corporate_action_pending_risk_cents
+            ),
+            "unattributed_risk_cents": self.unattributed_risk_cents,
+        }
+        for bucket in (global_bucket, portfolio_bucket):
+            for field_name, expected_value in expected_global.items():
+                if getattr(bucket, field_name) != expected_value:
+                    raise ValueError(f"exposure aggregate mismatch for {field_name}")
+        if global_bucket.total_gross_cents != self.total_gross_exposure_cents:
+            raise ValueError("total gross exposure does not match global aggregate")
+        if portfolio_bucket.total_gross_cents != global_bucket.total_gross_cents:
+            raise ValueError("portfolio and global gross exposure must agree")
+
+        program_buckets = [
+            exposure
+            for exposure in self.exposures
+            if exposure.scope is ExposureScope.RESEARCH_PROGRAM
+        ]
+        for field_name in (*_EXPOSURE_COMPONENT_FIELDS, "unattributed_risk_cents"):
+            if getattr(portfolio_bucket, field_name) != sum(
+                getattr(program, field_name) for program in program_buckets
+            ):
+                raise ValueError("portfolio exposure does not reconcile to programs")
+        if portfolio_bucket.total_gross_cents != sum(
+            program.total_gross_cents for program in program_buckets
+        ):
+            raise ValueError(
+                "portfolio gross exposure double-counts or omits a program"
+            )
+
+        for exposure in self.exposures:
+            if exposure.scope in {ExposureScope.GLOBAL, ExposureScope.PORTFOLIO}:
+                continue
+            matching_positions = [
+                position
+                for position in self.positions
+                if self._component_matches_exposure(position, exposure)
+            ]
+            matching_orders = [
+                order
+                for order in self.live_orders
+                if order.side is RiskOrderSide.ENTRY
+                and self._component_matches_exposure(order, exposure)
+            ]
+            if exposure.position_marked_gross_cents != sum(
+                position.marked_gross_cents for position in matching_positions
+            ):
+                raise ValueError("position exposure aggregate is inconsistent")
+            if exposure.live_order_leaves_gross_cents != sum(
+                order.worst_case_leaves_notional_cents for order in matching_orders
+            ):
+                raise ValueError("live order exposure aggregate is inconsistent")
+
+        self._validate_exposure_children(by_identity)
+
+    @staticmethod
+    def _component_matches_exposure(
+        component: CapitalPositionRisk | CapitalLiveOrderRisk,
+        exposure: RiskExposureBucket,
+    ) -> bool:
+        if component.research_program_id != exposure.research_program_id:
+            return False
+        if exposure.scope is ExposureScope.RESEARCH_PROGRAM:
+            return True
+        if component.economic_lineage_id != exposure.economic_lineage_id:
+            return False
+        if exposure.scope is ExposureScope.ECONOMIC_LINEAGE:
+            return True
+        return component.stage_id == exposure.stage_id
+
+    @staticmethod
+    def _validate_exposure_children(
+        by_identity: dict[tuple[ExposureScope, str, str, str, str], RiskExposureBucket],
+    ) -> None:
+        for identity, parent in by_identity.items():
+            scope, portfolio_id, program_id, lineage_id, _ = identity
+            if scope is ExposureScope.RESEARCH_PROGRAM:
+                child_scope = ExposureScope.ECONOMIC_LINEAGE
+                children = [
+                    bucket
+                    for child_id, bucket in by_identity.items()
+                    if child_id[0] is child_scope
+                    and child_id[1] == portfolio_id
+                    and child_id[2] == program_id
+                ]
+            elif scope is ExposureScope.ECONOMIC_LINEAGE:
+                child_scope = ExposureScope.STAGE
+                children = [
+                    bucket
+                    for child_id, bucket in by_identity.items()
+                    if child_id[0] is child_scope
+                    and child_id[1] == portfolio_id
+                    and child_id[2] == program_id
+                    and child_id[3] == lineage_id
+                ]
+            else:
+                continue
+            for field_name in _EXPOSURE_COMPONENT_FIELDS:
+                if getattr(parent, field_name) != sum(
+                    getattr(child, field_name) for child in children
+                ):
+                    raise ValueError("exposure child aggregate is inconsistent")
+            if parent.total_gross_cents != (
+                sum(child.total_gross_cents for child in children)
+                + parent.unattributed_risk_cents
+            ):
+                raise ValueError("exposure hierarchy double-counts or omits risk")
+        if any(
+            bucket.unattributed_risk_cents != 0
+            for bucket in by_identity.values()
+            if bucket.scope in {ExposureScope.ECONOMIC_LINEAGE, ExposureScope.STAGE}
+        ):
+            raise ValueError("lineage and stage risk cannot be unattributed")
+
+    def _validate_nav_and_latches(self) -> None:
+        if self.as_observed_nav_cents > self.lifetime_high_water_mark_cents:
+            raise ValueError("NAV cannot exceed lifetime high-water mark")
+        if self.as_observed_nav_cents > self.active_epoch_high_water_mark_cents:
+            raise ValueError("NAV cannot exceed active-epoch high-water mark")
+        if self.lifetime_drawdown_ppm != _drawdown_ppm(
+            self.as_observed_nav_cents,
+            self.lifetime_high_water_mark_cents,
+        ):
+            raise ValueError("lifetime NAV drawdown is inconsistent")
+        if self.active_epoch_drawdown_ppm != _drawdown_ppm(
+            self.as_observed_nav_cents,
+            self.active_epoch_high_water_mark_cents,
+        ):
+            raise ValueError("active-epoch NAV drawdown is inconsistent")
+        if (
+            self.active_epoch_drawdown_ppm >= 150_000
+            and self.risk_latch is not RiskLatchState.RISK_HALTED
+        ):
+            raise ValueError("risk latch must halt at 15 percent drawdown")
+        if (
+            self.unattributed_risk_cents > 0
+            and self.reconciliation_latch
+            is not ReconciliationLatchState.RECONCILIATION_HALT
+        ):
+            raise ValueError(
+                "NAV reconciliation latch must halt while risk is unattributed"
+            )
+
+
+class ExitMandate(CanonicalModel):
+    """Independent exit authority derived only from authoritative capital truth."""
+
+    HASH_DOMAIN: ClassVar[str] = "ai-hedge-fund.v3.capital.exit-mandate.v1"
+
+    exit_mandate_id: NonEmptyStr
+    portfolio_id: NonEmptyStr
+    broker_account_id: NonEmptyStr | None
+    base_currency: NonEmptyStr
+    mode: ExecutionMode
+    position_lineage_id: NonEmptyStr
+    economic_lot_id: NonEmptyStr
+    security_id: NonEmptyStr
+    producer_namespace: NonEmptyStr
+    research_program_id: NonEmptyStr
+    economic_lineage_id: NonEmptyStr
+    stage_id: NonEmptyStr
+    entry_plan_evidence_hash: Sha256
+    fixed_exit_policy_fingerprint: Sha256
+    exit_session_ordinal: PositiveExactInt
+    due_session: date
+    tradable_quantity: PositiveQuantity
+    live_exit_leaves_quantity: NonNegativeQuantity
+    executable_quantity: PositiveQuantity
+    capital_version: PositiveExactInt
+    writer_fencing_epoch: PositiveExactInt
+    stable_client_order_id: NonEmptyStr
+    issued_at: UtcInstant
+    source_risk_snapshot_id: NonEmptyStr
+    source_risk_snapshot_hash: Sha256
+    schema_major: SchemaVersion
+
+    @model_validator(mode="after")
+    def validate_mandate(self) -> Self:
+        _validate_capital_account_mode(self.mode, self.broker_account_id)
+        if self.exit_session_ordinal != 10:
+            raise ValueError("fixed exit policy requires T+10 session ordinal")
+        if self.live_exit_leaves_quantity > self.tradable_quantity:
+            raise ValueError("live exit leaves cannot exceed tradable quantity")
+        if self.executable_quantity != (
+            self.tradable_quantity - self.live_exit_leaves_quantity
+        ):
+            raise ValueError(
+                "executable quantity must equal tradable quantity minus live exit leaves"
+            )
+        if self.issued_at.date() > self.due_session:
+            raise ValueError("exit mandate cannot be issued after its due session")
+        return self
+
+    def artifact_hash(self) -> str:
+        return domain_hash(self.HASH_DOMAIN, self.schema_major, self)
+
+    def content_hash(self) -> str:
+        return self.artifact_hash()
+
+
 class DividendReceivable(CanonicalModel):
     receivable_id: NonEmptyStr
     position_lineage_id: NonEmptyStr
@@ -314,7 +833,9 @@ class ShareReceivable(CanonicalModel):
     @model_validator(mode="after")
     def validate_quantity(self) -> Self:
         if self.tradable_quantity > self.quantity:
-            raise ValueError("tradable receivable quantity cannot exceed total quantity")
+            raise ValueError(
+                "tradable receivable quantity cannot exceed total quantity"
+            )
         return self
 
 
@@ -412,12 +933,8 @@ _EVENT_REQUIRED_ASSETS = MappingProxyType(
         ),
         EconomicEventKind.SPLIT: frozenset({EconomicAssetKind.SECURITY}),
         EconomicEventKind.MERGE: frozenset({EconomicAssetKind.SECURITY}),
-        EconomicEventKind.CORPORATE_CASH_SETTLED: frozenset(
-            {EconomicAssetKind.CASH}
-        ),
-        EconomicEventKind.SECURITY_CONVERTED: frozenset(
-            {EconomicAssetKind.SECURITY}
-        ),
+        EconomicEventKind.CORPORATE_CASH_SETTLED: frozenset({EconomicAssetKind.CASH}),
+        EconomicEventKind.SECURITY_CONVERTED: frozenset({EconomicAssetKind.SECURITY}),
         EconomicEventKind.LEGAL_WRITE_OFF: frozenset(),
     }
 )
@@ -500,13 +1017,13 @@ class EconomicEvent(CanonicalModel):
         if len(leg_ids) != len(set(leg_ids)):
             raise ValueError("economic event leg IDs must be unique")
         valuation_legs = [
-            leg
-            for leg in self.legs
-            if isinstance(leg, ValuationMarkEconomicEventLeg)
+            leg for leg in self.legs if isinstance(leg, ValuationMarkEconomicEventLeg)
         ]
         if self.event_kind is EconomicEventKind.VALUATION:
             if len(valuation_legs) != len(self.legs):
-                raise ValueError("valuation events may contain only valuation-mark legs")
+                raise ValueError(
+                    "valuation events may contain only valuation-mark legs"
+                )
         elif valuation_legs:
             raise ValueError("valuation-mark legs require event_kind=VALUATION")
         elif self.event_kind is not EconomicEventKind.LATE_CORRECTION:
@@ -523,9 +1040,7 @@ class EconomicEvent(CanonicalModel):
                 )
             directions_by_asset = {
                 asset_kind: {
-                    leg.direction
-                    for leg in self.legs
-                    if leg.asset_kind is asset_kind
+                    leg.direction for leg in self.legs if leg.asset_kind is asset_kind
                 }
                 for asset_kind in actual_assets
             }
@@ -535,14 +1050,12 @@ class EconomicEvent(CanonicalModel):
                 cash_directions = directions_by_asset[EconomicAssetKind.CASH]
                 security_directions = directions_by_asset[EconomicAssetKind.SECURITY]
                 valid_trade = (
-                    cash_directions == {debit}
-                    and security_directions == {credit}
-                ) or (
-                    cash_directions == {credit}
-                    and security_directions == {debit}
-                )
+                    cash_directions == {debit} and security_directions == {credit}
+                ) or (cash_directions == {credit} and security_directions == {debit})
                 if not valid_trade:
-                    raise ValueError("TRADE_EXECUTED violates debit/credit conservation")
+                    raise ValueError(
+                        "TRADE_EXECUTED violates debit/credit conservation"
+                    )
             elif self.event_kind is EconomicEventKind.FEE_CHARGED:
                 if directions_by_asset[EconomicAssetKind.CASH] != {debit}:
                     raise ValueError("FEE_CHARGED requires a cash debit direction")
@@ -584,23 +1097,22 @@ class EconomicEvent(CanonicalModel):
                 )
                 has_receivable_destination = share_directions == {credit}
                 if not has_source_debit:
-                    raise ValueError("SECURITY_CONVERTED requires a source security debit")
+                    raise ValueError(
+                        "SECURITY_CONVERTED requires a source security debit"
+                    )
                 if has_tradable_destination == has_receivable_destination:
                     raise ValueError(
                         "SECURITY_CONVERTED requires exactly one destination representation"
                     )
             elif self.event_kind is EconomicEventKind.CORPORATE_CASH_SETTLED:
-                cash_is_credit = directions_by_asset[EconomicAssetKind.CASH] == {
-                    credit
-                }
+                cash_is_credit = directions_by_asset[EconomicAssetKind.CASH] == {credit}
                 noncash_legs = [
                     leg
                     for leg in self.legs
                     if leg.asset_kind is not EconomicAssetKind.CASH
                 ]
                 noncash_is_debit = bool(noncash_legs) and all(
-                    leg.direction is debit
-                    for leg in noncash_legs
+                    leg.direction is debit for leg in noncash_legs
                 )
                 if not cash_is_credit or not noncash_is_debit:
                     raise ValueError(
@@ -619,11 +1131,12 @@ class EconomicEvent(CanonicalModel):
 
 __all__ = [
     "AUTHORITY_STATE_TRANSITIONS",
-    "ORDER_STATE_TRANSITIONS",
-    "PLAN_STATE_TRANSITIONS",
     "POSITION_STATE_TRANSITIONS",
     "AuthoritySnapshot",
     "AuthorityState",
+    "CapitalLiveOrderRisk",
+    "CapitalPositionRisk",
+    "CapitalRiskSnapshot",
     "CapitalSnapshot",
     "CashEconomicEventLeg",
     "CashReceivableEconomicEventLeg",
@@ -634,16 +1147,24 @@ __all__ = [
     "EconomicEventKind",
     "EconomicEventLeg",
     "EconomicLegDirection",
+    "ExitMandate",
+    "ExposureScope",
     "OrderSnapshot",
-    "OrderState",
     "PlanSnapshot",
-    "PlanState",
     "PositionSnapshot",
     "PositionState",
+    "ReconciliationLatchState",
+    "RiskExposureBucket",
+    "RiskLatchState",
+    "RiskOrderSide",
+    "RiskSnapshotCompleteness",
+    "RiskSnapshotFreshness",
     "SecurityEconomicEventLeg",
     "SessionCheckpoint",
     "SessionPhase",
     "ShareReceivable",
     "ShareReceivableEconomicEventLeg",
+    "StageLossLatchSnapshot",
+    "StageLossLatchState",
     "ValuationMarkEconomicEventLeg",
 ]
