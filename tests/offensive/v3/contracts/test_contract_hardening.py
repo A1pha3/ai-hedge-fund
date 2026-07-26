@@ -473,59 +473,21 @@ def test_decision_input_recursively_revalidates_nested_instances(
 
 
 @pytest.mark.parametrize("method", ["model_copy", "model_construct"])
-def test_capital_authorization_root_revalidates_unchecked_instances(
+def test_envelope_revalidates_unchecked_nested_grants(
     method: str,
 ) -> None:
     api = _api()
-    valid = api.CapitalAuthorization.model_validate(
-        {
-            "authorization_kind": "edge",
-            "authorization_version": 1,
-            "evidence_id": "auth-001",
-            "subject_scope": api.EvidenceScope.STRATEGY_LINEAGE,
-            "subject_producer": "authorizer",
-            "family_id": "btst.limit-up-breakout",
-            "strategy_semver": "3.0.0",
-            "behavior_fingerprint": HASH,
-            "policy_epoch": 3,
-            "execution_version": "t1-open-t10-open.v1",
-            "cost_version": "cn-a-share-costs.v1",
-            "effective_at": NOW,
-            "observed_at": NOW,
-            "available_at": NOW,
-            "mode": api.ExecutionMode.DAILY_BAR_PROXY,
-            "source_authority": "authorizer",
-            "payload_content_hash": HASH,
-            "schema_major": 1,
-            "economic_lineage_id": "btst-economic-lineage",
-            "research_program_id": "program-001",
-            "baseline_portfolio_policy_fingerprint": HASH,
-            "target_portfolio_policy_fingerprint": POLICY_HASH,
-            "evidence_as_of": NOW,
-            "evidence_set_merkle_root": HASH,
-            "issued_at": NOW,
-            "expires_at": datetime(2026, 7, 20, 8, 0, tzinfo=UTC),
-            "max_capital_tier": 2,
-            "issuer_id": "authorizer.service",
-            "issuer_capability": "capital.edge.btst",
-            "trial_id": "trial-001",
-            "trial_manifest_hash": HASH,
-            "statistical_analysis_plan_hash": HASH,
-            "assessment_result_hash": HASH,
-            "attempt_ledger_checkpoint_hash": HASH,
-            "alpha_sample_consumption_id": "consumption-001",
-            "authorization_payload_hash": HASH,
-        }
-    )
+    from test_ports import _authorization
+    valid = _authorization(api)
     poisoned_member = _unchecked_mutation(
-        valid.root,
+        valid.lineage_grants[0],
         method,
-        max_capital_tier=3,
+        capital_tier=3,
     )
-    poisoned = _unchecked_mutation(valid, method, root=poisoned_member)
+    poisoned = _unchecked_mutation(valid, method, lineage_grants=(poisoned_member,))
 
     with pytest.raises(ValidationError):
-        api.CapitalAuthorization.model_validate(poisoned, strict=True)
+        api.CapitalAuthorizationEnvelope.model_validate(poisoned, strict=True)
 
 
 @pytest.mark.parametrize("method", ["model_copy", "model_construct"])

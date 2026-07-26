@@ -166,45 +166,32 @@ def _snapshot_evidence(api):
 
 
 def _authorization(api):
-    return api.CapitalAuthorization(
-        root=api.EdgeAuthorization(
-            evidence_id="auth-001",
-            subject_scope=api.EvidenceScope.STRATEGY_LINEAGE,
-            subject_producer="authorizer",
-            family_id="btst.limit-up-breakout",
-            strategy_semver="3.0.0",
-            behavior_fingerprint=HASH,
-            policy_epoch=3,
-            execution_version="t1-open-t10-open.v1",
-            cost_version="cn-a-share-costs.v1",
-            effective_at=NOW,
-            observed_at=NOW,
-            available_at=NOW,
-            mode=api.ExecutionMode.DAILY_BAR_PROXY,
-            source_authority="authorizer",
-            payload_content_hash=HASH,
-            schema_major=1,
-            authorization_kind="edge",
-            authorization_version=4,
-            economic_lineage_id="btst-economic-lineage",
-            research_program_id="program-001",
-            baseline_portfolio_policy_fingerprint=HASH,
-            target_portfolio_policy_fingerprint=HASH,
-            evidence_as_of=NOW,
-            evidence_set_merkle_root=HASH,
-            issued_at=NOW,
-            expires_at=datetime(2026, 7, 20, 8, 0, tzinfo=UTC),
-            max_capital_tier=2,
-            issuer_id="authorizer.service",
-            issuer_capability="capital.edge.btst",
-            trial_id="trial-001",
-            trial_manifest_hash=HASH,
-            statistical_analysis_plan_hash=HASH,
-            assessment_result_hash=HASH,
-            attempt_ledger_checkpoint_hash=HASH,
-            alpha_sample_consumption_id="consumption-001",
-            authorization_payload_hash=HASH,
-        )
+    grant = api.LineageGrant(
+        grant_id="grant-1", grant_kind=api.GrantKind.EDGE, grant_certificate_hash=HASH,
+        grant_issuer_id="authorizer", subject_producer="btst", family_id="btst.limit-up-breakout",
+        economic_lineage_id="btst-economic-lineage", research_program_id="program-001",
+        behavior_fingerprint=HASH, execution_version="t1-open-t10-open.v1", cost_version="cost-v1",
+        capital_tier=2, lineage_gross_cap=Decimal("0.02"), trial_id="trial-1", trial_manifest_hash=HASH,
+        statistical_analysis_plan_hash=HASH, stage_id="stage-1", stage_manifest_hash=HASH,
+        stage_sample_reservation_id="reserve-1", stage_loss_budget_id="stage-budget", stage_loss_budget_cents=100,
+        stage_loss_version=1, assessment_result_hash=HASH, grant_evidence_set_merkle_root=HASH,
+        attempt_ledger_checkpoint_hash=HASH, alpha_or_evalue_budget_consumption_id="alpha-1",
+        alpha_sample_consumption_id="sample-1", schema_major=2,
+    )
+    return api.CapitalAuthorizationEnvelope(
+        authorization_kind=api.AuthorizationKind.EDGE, authorization_id="auth-001", authorization_version=4,
+        mode=api.ExecutionMode.DAILY_BAR_PROXY, portfolio_id="paper-v3", broker_account_id=None,
+        broker_account_fingerprint=None, base_currency="CNY", policy_activation_hash=HASH, trust_bundle_hash=HASH,
+        registry_epoch=2, policy_epoch=3, authority_epoch=3, risk_epoch=8,
+        research_program_ids=("program-001",), baseline_portfolio_policy_fingerprint=HASH,
+        target_portfolio_policy_fingerprint=HASH, lineage_grants=(grant,), evidence_as_of=NOW,
+        evidence_set_merkle_root=HASH, issued_at=NOW, expires_at=datetime(2026, 7, 20, 8, tzinfo=UTC),
+        activation_capital_snapshot_id="capital-019", activation_capital_snapshot_hash=HASH,
+        portfolio_gross_cap=Decimal("0.02"), exploration_aggregate_gross_cap=Decimal("0"),
+        program_loss_budget_bindings=(api.ProgramLossBudgetBinding(research_program_id="program-001", budget_id="program-budget", budget_cents=100, consumed_cents=0, version=1, schema_major=2),),
+        issuer_id="authorizer.service", issuer_capability="authorizer.edge.envelope.v1",
+        portfolio_assessment_result_hash=HASH, global_attempt_ledger_checkpoint_hash=HASH,
+        global_multiplicity_budget_consumption_id="global-1", schema_major=2,
     )
 
 
@@ -424,8 +411,8 @@ def test_stable_ports_are_runtime_structural_and_return_domain_objects() -> None
             assert evidence_id == snapshot.evidence_id
             return snapshot
 
-        def authorization(self, authorization_id: str) -> api.CapitalAuthorization:
-            assert authorization_id == authorization.root.evidence_id
+        def authorization(self, authorization_id: str) -> api.CapitalAuthorizationEnvelope:
+            assert authorization_id == authorization.authorization_id
             return authorization
 
     class SealWriter:
@@ -493,7 +480,7 @@ def test_stable_port_annotations_are_exact_and_contain_no_mutable_or_any_boundar
         },
         api.EvidenceQueryPort.authorization: {
             "authorization_id": str,
-            "return": api.CapitalAuthorization,
+            "return": api.CapitalAuthorizationEnvelope,
         },
         api.SealWriterPort.publish: {
             "command": api.PublishDecisionCommand,

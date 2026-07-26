@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-from .authorization import CapitalAuthorization
+from .authorization import CapitalAuthorizationEnvelope
 from .capital import CapitalSnapshot
 from .decision import DecisionSeal, PublishDecisionCommand
 from .evidence import SnapshotEvidence
@@ -21,7 +21,7 @@ class CapitalViewPort(Protocol):
 class EvidenceQueryPort(Protocol):
     def snapshot(self, evidence_id: str) -> SnapshotEvidence: ...
 
-    def authorization(self, authorization_id: str) -> CapitalAuthorization: ...
+    def authorization(self, authorization_id: str) -> CapitalAuthorizationEnvelope: ...
 
 
 @runtime_checkable

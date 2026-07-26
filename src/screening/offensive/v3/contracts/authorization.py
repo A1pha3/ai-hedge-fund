@@ -55,6 +55,8 @@ class CapitalAuthorizationEnvelope(CanonicalModel):
     recovery_inherited_risk_version: PositiveInt | None = None
     recovery_open_pending_risk_version: PositiveInt | None = None
     recovery_stage_program_loss_consumption_version: PositiveInt | None = None
+    risk_epoch_started_hash: Sha256 | None = None
+    recovery_manifest_hash: Sha256 | None = None
     schema_major: SchemaVersion
 
     @model_validator(mode="after")
@@ -81,29 +83,29 @@ class CapitalAuthorizationEnvelope(CanonicalModel):
         exploration = [grant for grant in self.lineage_grants if grant.grant_kind.value == "EXPLORATION"]
         exploration_cap = sum((grant.lineage_gross_cap for grant in exploration), start=0)
         two_percent = Decimal("0.02")
+        for grant in self.lineage_grants:
+            if grant.lineage_gross_cap > self.portfolio_gross_cap:
+                raise ValueError("lineage gross cap cannot exceed portfolio gross cap")
+            if grant.lineage_gross_cap > Decimal(grant.capital_tier) / Decimal(100):
+                raise ValueError("lineage gross cap cannot exceed capital tier")
         if self.exploration_aggregate_gross_cap > two_percent or exploration_cap > two_percent:
             raise ValueError("exploration aggregate gross cap cannot exceed 2%")
         if self.authorization_kind is AuthorizationKind.EDGE:
-            if exploration or self.issuer_capability != "authorizer.edge.envelope.v1":
+            if exploration or self.exploration_aggregate_gross_cap != Decimal("0") or self.issuer_capability != "authorizer.edge.envelope.v1":
                 raise ValueError("EDGE envelope requires only edge grants and authorizer capability")
         elif self.authorization_kind is AuthorizationKind.EXPLORATION:
             if self.mode is not ExecutionMode.BROKER_CONFIRMED or not exploration or self.issuer_capability != "governance.exploration.envelope.v1":
                 raise ValueError("EXPLORATION requires broker mode, exploration grant, governance capability")
-            if self.exploration_aggregate_gross_cap != exploration_cap or self.portfolio_gross_cap > two_percent:
+            if self.exploration_aggregate_gross_cap != exploration_cap:
+                raise ValueError("exploration aggregate cap must equal exploration grants")
+            if not any(grant.grant_kind.value == "EDGE" for grant in self.lineage_grants) and self.portfolio_gross_cap > two_percent:
                 raise ValueError("first broker exploration portfolio cap cannot exceed 2%")
         else:
-            if self.issuer_capability != "governance.recovery.envelope.v1" or any(g.grant_kind.value == "EXPLORATION" for g in self.lineage_grants):
+            if self.issuer_capability != "governance.recovery.envelope.v1" or any(g.grant_kind.value != "EDGE" for g in self.lineage_grants) or self.exploration_aggregate_gross_cap != Decimal("0"):
                 raise ValueError("RECOVERY cannot create exploration grants")
-            if self.portfolio_gross_cap > two_percent or None in (self.recovery_inherited_risk_version, self.recovery_open_pending_risk_version, self.recovery_stage_program_loss_consumption_version):
+            if self.portfolio_gross_cap > two_percent or None in (self.recovery_inherited_risk_version, self.recovery_open_pending_risk_version, self.recovery_stage_program_loss_consumption_version, self.risk_epoch_started_hash, self.recovery_manifest_hash):
                 raise ValueError("RECOVERY requires 2% cap and inherited risk/loss versions")
         return self
 
-
-# Compatibility only.  These aliases deliberately are not re-exported from the
-# stable contracts package and must not be used by new ports.
-CapitalAuthorization = CapitalAuthorizationEnvelope
-AuthorizationUnion = CapitalAuthorizationEnvelope
-EdgeAuthorization = CapitalAuthorizationEnvelope
-ExplorationAuthorization = CapitalAuthorizationEnvelope
 
 __all__ = ["AuthorizationKind", "CapitalAuthorizationEnvelope"]

@@ -2,11 +2,7 @@
 
 from .authorization import (
     AuthorizationKind,
-    AuthorizationUnion,
-    CapitalAuthorization,
     CapitalAuthorizationEnvelope,
-    EdgeAuthorization,
-    ExplorationAuthorization,
 )
 from .governance import (
     AuthorizationLifecycle,
@@ -104,9 +100,7 @@ __all__ = [
     "AuthorizationKind",
     "AuthorizationLifecycle",
     "AuthorizationStatus",
-    "AuthorizationUnion",
     "CapitalAuthorizationBinding",
-    "CapitalAuthorization",
     "CapitalAuthorizationEnvelope",
     "CapitalViewPort",
     "CapabilityVerifier",
@@ -122,7 +116,6 @@ __all__ = [
     "DecisionInput",
     "DecisionSeal",
     "DecisionSealBinding",
-    "EdgeAuthorization",
     "EvidenceEnvelope",
     "EvidenceScope",
     "EvidenceQueryPort",
@@ -133,7 +126,6 @@ __all__ = [
     "EconomicLegDirection",
     "ExecutionMode",
     "ExecutionPermit",
-    "ExplorationAuthorization",
     "GrantKind",
     "LineageGrant",
     "MigrationApprovalManifest",

@@ -147,7 +147,8 @@ class StatisticalAnalysisPlan(CanonicalModel):
 class StageManifest(CanonicalModel):
     stage_id: NonEmptyStr; trial_manifest_hash: Sha256; statistical_analysis_plan_hash: Sha256; research_program_id: NonEmptyStr; economic_lineage_id: NonEmptyStr
     baseline_portfolio_policy_fingerprint: Sha256; target_portfolio_policy_fingerprint: Sha256; execution_version: NonEmptyStr; cost_version: NonEmptyStr; governance_policy_version: NonEmptyStr; execution_mode: ExecutionMode
-    stage_sample_reservation_id: NonEmptyStr; alpha_sample_consumption_id: NonEmptyStr; enrollment_start: UtcInstant; followup_finality_date: UtcInstant; fixed_assessment_date: UtcInstant
+    stage_sample_reservation_id: NonEmptyStr; alpha_sample_consumption_id: NonEmptyStr; alpha_or_evalue_budget_consumption_id: NonEmptyStr; attempt_ledger_checkpoint_hash: Sha256
+    stage_loss_budget_id: NonEmptyStr; stage_loss_version: PositiveInt; enrollment_start: UtcInstant; followup_finality_date: UtcInstant; fixed_assessment_date: UtcInstant
     maximum_loss_budget_cents: PositiveCents; promotion_boolean_expression: NonEmptyStr; issued_at: UtcInstant; issuer_id: NonEmptyStr; issuer_capability: NonEmptyStr; schema_major: SchemaVersion
 
     @model_validator(mode="after")

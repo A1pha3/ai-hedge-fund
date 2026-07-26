@@ -64,7 +64,7 @@ def test_trial_sap_and_stage_are_frozen_pre_signal_content():
     with pytest.raises(ValidationError): g.TrialManifest.model_validate(_trial(enrollment_start=NOW))
     sap = {"sap_id": "sap-1", "trial_manifest_hash": HASH, "research_program_id": "program-1", "economic_lineage_id": "btst-lineage", "primary_metric": "log_growth", "one_sided_confidence_level": Decimal("0.95"), "bootstrap_method": "moving", "repetitions": 1000, "seed": 7, "block_rule": "40", "multiplicity_policy": "alpha", "alpha_or_evalue_budget_consumption_id": "alpha-1", "sealed_at": NOW, "issuer_id": "governance", "issuer_capability": "governance.sap.v1", "schema_major": 2}
     assert g.StatisticalAnalysisPlan.model_validate(sap).sap_id == "sap-1"
-    stage = {"stage_id": "stage-1", "trial_manifest_hash": HASH, "statistical_analysis_plan_hash": HASH, "research_program_id": "program-1", "economic_lineage_id": "btst-lineage", "baseline_portfolio_policy_fingerprint": HASH, "target_portfolio_policy_fingerprint": HASH, "execution_version": "t1-open", "cost_version": "cost-v1", "governance_policy_version": "gov-v1", "execution_mode": ExecutionMode.BROKER_CONFIRMED, "stage_sample_reservation_id": "reserve-1", "alpha_sample_consumption_id": "alpha-1", "enrollment_start": NOW + timedelta(days=1), "followup_finality_date": NOW + timedelta(days=20), "fixed_assessment_date": NOW + timedelta(days=21), "maximum_loss_budget_cents": 100, "promotion_boolean_expression": "all", "issued_at": NOW, "issuer_id": "governance", "issuer_capability": "governance.stage.manifest.v1", "schema_major": 2}
+    stage = {"stage_id": "stage-1", "trial_manifest_hash": HASH, "statistical_analysis_plan_hash": HASH, "research_program_id": "program-1", "economic_lineage_id": "btst-lineage", "baseline_portfolio_policy_fingerprint": HASH, "target_portfolio_policy_fingerprint": HASH, "execution_version": "t1-open", "cost_version": "cost-v1", "governance_policy_version": "gov-v1", "execution_mode": ExecutionMode.BROKER_CONFIRMED, "stage_sample_reservation_id": "reserve-1", "alpha_sample_consumption_id": "alpha-1", "alpha_or_evalue_budget_consumption_id": "alpha-e-1", "attempt_ledger_checkpoint_hash": HASH, "stage_loss_budget_id": "stage-loss-1", "stage_loss_version": 1, "enrollment_start": NOW + timedelta(days=1), "followup_finality_date": NOW + timedelta(days=20), "fixed_assessment_date": NOW + timedelta(days=21), "maximum_loss_budget_cents": 100, "promotion_boolean_expression": "all", "issued_at": NOW, "issuer_id": "governance", "issuer_capability": "governance.stage.manifest.v1", "schema_major": 2}
     assert g.StageManifest.model_validate(stage).maximum_loss_budget_cents == 100
 
 
@@ -76,7 +76,7 @@ def test_exploration_recovery_and_budget_cross_constraints_fail_closed():
     assert CapitalAuthorizationEnvelope.model_validate(exploration).authorization_kind.value == "EXPLORATION"
     for override in ({"mode": "manual_confirmed"}, {"exploration_aggregate_gross_cap": Decimal("0.021")}, {"portfolio_gross_cap": Decimal("0.03")}):
         with pytest.raises(ValidationError): CapitalAuthorizationEnvelope.model_validate(exploration | override)
-    recovery = _envelope(authorization_kind=AuthorizationKind.RECOVERY, issuer_capability="governance.recovery.envelope.v1", portfolio_gross_cap=Decimal("0.02"), recovery_inherited_risk_version=2, recovery_open_pending_risk_version=2, recovery_stage_program_loss_consumption_version=2)
+    recovery = _envelope(authorization_kind=AuthorizationKind.RECOVERY, issuer_capability="governance.recovery.envelope.v1", portfolio_gross_cap=Decimal("0.02"), recovery_inherited_risk_version=2, recovery_open_pending_risk_version=2, recovery_stage_program_loss_consumption_version=2, risk_epoch_started_hash=HASH, recovery_manifest_hash=HASH)
     assert CapitalAuthorizationEnvelope.model_validate(recovery).authorization_kind.value == "RECOVERY"
     with pytest.raises(ValidationError): CapitalAuthorizationEnvelope.model_validate(recovery | {"lineage_grants": (_grant(grant_kind=GrantKind.EXPLORATION),)})
 
@@ -101,9 +101,21 @@ def test_exploration_caps_include_existing_edge_and_recovery_requires_edge_only_
         authorization_kind=AuthorizationKind.RECOVERY, issuer_capability="governance.recovery.envelope.v1",
         portfolio_gross_cap=Decimal("0.02"), recovery_inherited_risk_version=2,
         recovery_open_pending_risk_version=2, recovery_stage_program_loss_consumption_version=2,
+        risk_epoch_started_hash=HASH, recovery_manifest_hash=HASH,
     )
     with pytest.raises(ValidationError):
         CapitalAuthorizationEnvelope.model_validate(recovery | {"recovery_inherited_risk_version": None})
+
+
+def test_envelope_cross_caps_are_fail_closed_without_overconstraining_existing_edge():
+    from src.screening.offensive.v3.contracts.authorization import AuthorizationKind, CapitalAuthorizationEnvelope
+    from src.screening.offensive.v3.contracts.governance import GrantKind
+    edge = _grant(grant_id="edge", lineage_gross_cap=Decimal("0.05"), capital_tier=5)
+    exploration = _grant(grant_id="explore", grant_kind=GrantKind.EXPLORATION, lineage_gross_cap=Decimal("0.02"))
+    payload = _envelope(authorization_kind=AuthorizationKind.EXPLORATION, issuer_capability="governance.exploration.envelope.v1", lineage_grants=(edge, exploration), portfolio_gross_cap=Decimal("0.07"), exploration_aggregate_gross_cap=Decimal("0.02"))
+    assert CapitalAuthorizationEnvelope.model_validate(payload).portfolio_gross_cap == Decimal("0.07")
+    for override in ({"exploration_aggregate_gross_cap": Decimal("0.01")}, {"lineage_grants": (_grant(lineage_gross_cap=Decimal("0.03")),)}, {"authorization_kind": AuthorizationKind.EDGE, "exploration_aggregate_gross_cap": Decimal("0.01")}):
+        with pytest.raises(ValidationError): CapitalAuthorizationEnvelope.model_validate(payload | override)
 
 
 def test_authorization_status_and_entry_fence_are_strict_monotonic_candidates():
