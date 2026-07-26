@@ -1,278 +1,106 @@
-"""Contract tests for edge and one-shot exploration authorizations."""
+"""Revision 2 portfolio authorization envelope contracts."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
 
-
 UTC = timezone.utc
-HASH = "b" * 64
+HASH = "a" * 64
 
 
-def _contracts():
-    try:
-        from src.screening.offensive.v3.contracts.authorization import (
-            CapitalAuthorization,
-            EdgeAuthorization,
-            ExplorationAuthorization,
-        )
-        from src.screening.offensive.v3.contracts.evidence import SUPPORTED_SCHEMA_MAJOR
-    except ModuleNotFoundError:
-        pytest.fail("authorization contracts are not implemented", pytrace=False)
-    return SUPPORTED_SCHEMA_MAJOR, CapitalAuthorization, EdgeAuthorization, ExplorationAuthorization
-
-
-def _base(**overrides):
-    from src.screening.offensive.v3.contracts.base import (
-        EvidenceScope,
-        ExecutionMode,
-    )
-
+def _grant(**overrides):
+    from src.screening.offensive.v3.contracts.governance import GrantKind
     payload = {
-        "evidence_id": "auth-001",
-        "subject_scope": EvidenceScope.STRATEGY_LINEAGE,
-        "subject_producer": "btst",
-        "family_id": "btst.limit-up-breakout",
-        "strategy_semver": "3.0.0",
-        "behavior_fingerprint": HASH,
-        "policy_epoch": 3,
-        "execution_version": "t1-open-t10-open.v1",
-        "cost_version": "cn-a-share-costs.v1",
-        "effective_at": datetime(2026, 7, 19, 8, 0, tzinfo=UTC),
-        "observed_at": datetime(2026, 7, 19, 8, 1, tzinfo=UTC),
-        "available_at": datetime(2026, 7, 19, 8, 2, tzinfo=UTC),
-        "mode": ExecutionMode.BROKER_CONFIRMED,
-        "source_authority": "edge-authorizer",
-        "payload_content_hash": HASH,
-        "schema_major": 1,
-    }
-    payload.update(overrides)
-    return payload
-
-
-def _edge(**overrides):
-    payload = _base() | {
-        "authorization_kind": "edge",
-        "authorization_version": 4,
-        "economic_lineage_id": "btst-economic-lineage",
-        "research_program_id": "growth-program",
-        "baseline_portfolio_policy_fingerprint": HASH,
-        "target_portfolio_policy_fingerprint": HASH,
-        "evidence_as_of": datetime(2026, 7, 19, 8, 2, tzinfo=UTC),
-        "evidence_set_merkle_root": HASH,
-        "issued_at": datetime(2026, 7, 19, 8, 3, tzinfo=UTC),
-        "expires_at": datetime(2026, 8, 19, 8, 3, tzinfo=UTC),
-        "max_capital_tier": 5,
-        "issuer_id": "authorizer-service",
-        "issuer_capability": "edge.authorization.issue.v1",
-        "trial_id": "trial-2026-001",
-        "trial_manifest_hash": HASH,
-        "statistical_analysis_plan_hash": HASH,
-        "assessment_result_hash": HASH,
+        "grant_id": "grant-1", "grant_kind": GrantKind.EDGE, "grant_certificate_hash": HASH,
+        "grant_issuer_id": "authorizer", "subject_producer": "btst",
+        "family_id": "btst-family", "economic_lineage_id": "btst-lineage",
+        "research_program_id": "program-1", "behavior_fingerprint": HASH,
+        "execution_version": "t1-open", "cost_version": "cost-v1", "capital_tier": 2,
+        "lineage_gross_cap": Decimal("0.02"), "trial_id": "trial-1",
+        "trial_manifest_hash": HASH, "statistical_analysis_plan_hash": HASH,
+        "stage_id": "stage-1", "stage_manifest_hash": HASH,
+        "stage_sample_reservation_id": "reservation-1", "stage_loss_budget_id": "stage-budget-1",
+        "stage_loss_budget_cents": 100, "stage_loss_version": 1,
+        "assessment_result_hash": HASH, "grant_evidence_set_merkle_root": HASH,
         "attempt_ledger_checkpoint_hash": HASH,
-        "alpha_sample_consumption_id": "sample-consumption-001",
-        "authorization_payload_hash": HASH,
+        "alpha_or_evalue_budget_consumption_id": "alpha-1",
+        "alpha_sample_consumption_id": "sample-1", "schema_major": 2,
     }
-    payload.update(overrides)
-    return payload
+    return payload | overrides
 
 
-def _exploration(**overrides):
-    payload = _base(source_authority="growth-governance") | {
-        "authorization_kind": "exploration",
-        "authorization_version": 1,
-        "economic_lineage_id": "btst-economic-lineage",
-        "research_program_id": "growth-program",
-        "portfolio_id": "paper-v3",
-        "evidence_set_merkle_root": HASH,
-        "issued_at": datetime(2026, 7, 19, 8, 3, tzinfo=UTC),
-        "expires_at": datetime(2026, 8, 2, 8, 3, tzinfo=UTC),
-        "max_capital_tier": 2,
-        "portfolio_gross_risk_cap": Decimal("0.02"),
-        "stress_loss_budget": Decimal("1000.00"),
-        "issuer_id": "governance-service",
-        "issuer_capability": "exploration.authorization.issue.v1",
-        "trial_id": "explore-2026-001",
-        "trial_manifest_hash": HASH,
-        "one_shot": True,
-    }
-    payload.update(overrides)
-    return payload
-
-
-def test_edge_authorization_binds_every_required_assessment_field() -> None:
-    major, _, edge, _ = _contracts()
-    edge.model_validate(_edge(schema_major=major))
-
-    required = {
-        "economic_lineage_id",
-        "research_program_id",
-        "baseline_portfolio_policy_fingerprint",
-        "target_portfolio_policy_fingerprint",
-        "evidence_as_of",
-        "evidence_set_merkle_root",
-        "issued_at",
-        "expires_at",
-        "max_capital_tier",
-        "issuer_id",
-        "issuer_capability",
-        "trial_id",
-        "trial_manifest_hash",
-        "statistical_analysis_plan_hash",
-        "assessment_result_hash",
-        "attempt_ledger_checkpoint_hash",
-        "alpha_sample_consumption_id",
-        "authorization_payload_hash",
-        "authorization_version",
-    }
-    assert required <= set(edge.model_fields)
-
-
-@pytest.mark.parametrize("tier", [2, 5, 10])
-def test_edge_authorization_allows_only_governed_capital_tiers(tier) -> None:
-    major, _, edge, _ = _contracts()
-    assert edge.model_validate(_edge(schema_major=major, max_capital_tier=tier)).max_capital_tier == tier
-
-
-@pytest.mark.parametrize("tier", [0, 3, 20])
-def test_edge_authorization_rejects_ungoverned_capital_tiers(tier) -> None:
-    major, _, edge, _ = _contracts()
-    with pytest.raises(ValidationError):
-        edge.model_validate(_edge(schema_major=major, max_capital_tier=tier))
-
-
-def test_research_reconstruction_cannot_receive_capital_authorization() -> None:
+def _envelope(**overrides):
     from src.screening.offensive.v3.contracts.base import ExecutionMode
+    from src.screening.offensive.v3.contracts.authorization import AuthorizationKind
+    payload = {
+        "authorization_kind": AuthorizationKind.EDGE, "authorization_id": "envelope-1", "authorization_version": 1,
+        "mode": ExecutionMode.BROKER_CONFIRMED, "portfolio_id": "portfolio-1",
+        "broker_account_id": "account-1", "broker_account_fingerprint": HASH,
+        "base_currency": "CNY", "policy_activation_hash": HASH, "trust_bundle_hash": HASH,
+        "registry_epoch": 2, "policy_epoch": 2, "authority_epoch": 2, "risk_epoch": 2,
+        "research_program_ids": ("program-1",), "baseline_portfolio_policy_fingerprint": HASH,
+        "target_portfolio_policy_fingerprint": HASH, "lineage_grants": (_grant(),),
+        "evidence_as_of": datetime(2026, 7, 19, 8, tzinfo=UTC),
+        "evidence_set_merkle_root": HASH, "issued_at": datetime(2026, 7, 19, 9, tzinfo=UTC),
+        "expires_at": datetime(2026, 7, 20, 9, tzinfo=UTC),
+        "activation_capital_snapshot_id": "capital-1", "activation_capital_snapshot_hash": HASH,
+        "portfolio_gross_cap": Decimal("0.02"), "exploration_aggregate_gross_cap": Decimal("0"),
+        "program_loss_budget_bindings": ({"research_program_id": "program-1", "budget_id": "program-budget-1", "budget_cents": 200, "consumed_cents": 0, "version": 1, "schema_major": 2},),
+        "issuer_id": "authorizer", "issuer_capability": "authorizer.edge.envelope.v1",
+        "portfolio_assessment_result_hash": HASH, "global_attempt_ledger_checkpoint_hash": HASH,
+        "global_multiplicity_budget_consumption_id": "global-1", "schema_major": 2,
+    }
+    return payload | overrides
 
-    major, _, edge, exploration = _contracts()
-    with pytest.raises(ValidationError, match="research reconstruction"):
-        edge.model_validate(
-            _edge(schema_major=major, mode=ExecutionMode.RESEARCH_RECONSTRUCTION)
-        )
+
+def test_envelope_is_one_complete_portfolio_policy_and_has_no_self_hash():
+    from src.screening.offensive.v3.contracts.authorization import CapitalAuthorizationEnvelope
+    item = CapitalAuthorizationEnvelope.model_validate(_envelope())
+    assert item.authorization_kind.value == "EDGE"
+    assert "authorization_payload_hash" not in CapitalAuthorizationEnvelope.model_fields
+    assert {"portfolio_id", "target_portfolio_policy_fingerprint", "lineage_grants"} <= set(CapitalAuthorizationEnvelope.model_fields)
     with pytest.raises(ValidationError):
-        exploration.model_validate(
-            _exploration(
-                schema_major=major,
-                mode=ExecutionMode.RESEARCH_RECONSTRUCTION,
-            )
-        )
+        CapitalAuthorizationEnvelope.model_validate(_envelope(lineage_grants=()))
+    with pytest.raises(ValidationError):
+        CapitalAuthorizationEnvelope.model_validate(_envelope(research_program_ids=("program-1", "program-1")))
 
 
-def test_exploration_is_broker_confirmed_one_shot_and_exactly_two_percent() -> None:
-    from src.screening.offensive.v3.contracts.base import ExecutionMode
+def test_envelope_rejects_top_level_legacy_lineage_authorizations_and_float_truth():
+    from src.screening.offensive.v3.contracts.authorization import CapitalAuthorizationEnvelope
+    with pytest.raises(ValidationError):
+        CapitalAuthorizationEnvelope.model_validate(_envelope(edge_authorizations=(_grant(),)))
+    with pytest.raises(ValidationError):
+        CapitalAuthorizationEnvelope.model_validate(_envelope(program_loss_budget_bindings=({"research_program_id": "program-1", "budget_id": "budget", "budget_cents": 1.0, "consumed_cents": 0, "version": 1, "schema_major": 2},)))
 
-    major, _, _, exploration = _contracts()
-    item = exploration.model_validate(_exploration(schema_major=major))
-    assert item.mode is ExecutionMode.BROKER_CONFIRMED
-    assert item.max_capital_tier == 2
-    assert item.one_shot is True
 
+def test_envelope_requires_exact_broker_binding_and_capability_per_kind():
+    from src.screening.offensive.v3.contracts.authorization import CapitalAuthorizationEnvelope
+    payload = _envelope()
     for override in (
-        {"mode": ExecutionMode.MANUAL_CONFIRMED},
-        {"max_capital_tier": 5},
-        {"one_shot": False},
+        {"broker_account_id": None},
+        {"broker_account_fingerprint": None},
+        {"issuer_capability": "governance.exploration.envelope.v1"},
+        {"mode": "research_reconstruction"},
     ):
         with pytest.raises(ValidationError):
-            exploration.model_validate(_exploration(schema_major=major, **override))
-
-
-def test_authorizations_require_a_bounded_validity_window() -> None:
-    major, _, edge, exploration = _contracts()
-    issued = datetime(2026, 7, 19, 8, 3, tzinfo=UTC)
-    for model, payload in (
-        (edge, _edge(schema_major=major, expires_at=issued)),
-        (exploration, _exploration(schema_major=major, expires_at=issued)),
-    ):
-        with pytest.raises(ValidationError, match="expires_at"):
-            model.model_validate(payload)
-
-
-def test_edge_authorization_enforces_complete_pit_order_at_microsecond_boundary() -> None:
-    major, _, edge, _ = _contracts()
-    available = datetime(2026, 7, 19, 8, 2, tzinfo=UTC)
-    issued = datetime(2026, 7, 19, 8, 3, tzinfo=UTC)
-
-    assert edge.model_validate(
-        _edge(
-            schema_major=major,
-            available_at=available,
-            evidence_as_of=available,
-            issued_at=issued,
-        )
-    ).evidence_as_of == available
-    with pytest.raises(ValidationError, match="available_at|evidence_as_of"):
-        edge.model_validate(
-            _edge(
-                schema_major=major,
-                available_at=available + timedelta(microseconds=1),
-                evidence_as_of=available,
-                issued_at=issued,
-            )
-        )
-    with pytest.raises(ValidationError, match="evidence_as_of|issued_at"):
-        edge.model_validate(
-            _edge(
-                schema_major=major,
-                available_at=available,
-                evidence_as_of=issued + timedelta(microseconds=1),
-                issued_at=issued,
-            )
-        )
-
-
-def test_exploration_authorization_cannot_precede_evidence_availability() -> None:
-    major, _, _, exploration = _contracts()
-    issued = datetime(2026, 7, 19, 8, 3, tzinfo=UTC)
-
-    assert exploration.model_validate(
-        _exploration(schema_major=major, available_at=issued, issued_at=issued)
-    ).issued_at == issued
-    with pytest.raises(ValidationError, match="available_at|issued_at"):
-        exploration.model_validate(
-            _exploration(
-                schema_major=major,
-                available_at=issued + timedelta(microseconds=1),
-                issued_at=issued,
-            )
-        )
-
-
-def test_capital_authorization_is_a_discriminated_union() -> None:
-    major, union, edge, exploration = _contracts()
-    parsed_edge = union.model_validate(_edge(schema_major=major)).root
-    parsed_exploration = union.model_validate(_exploration(schema_major=major)).root
-
-    assert isinstance(parsed_edge, edge)
-    assert isinstance(parsed_exploration, exploration)
+            CapitalAuthorizationEnvelope.model_validate(payload | override)
+    manual = payload | {"mode": "manual_confirmed", "broker_account_fingerprint": HASH}
     with pytest.raises(ValidationError):
-        union.model_validate(_edge(schema_major=major, authorization_kind="exploration"))
+        CapitalAuthorizationEnvelope.model_validate(manual)
 
 
-@pytest.mark.parametrize(
-    ("model_index", "payload_factory"),
-    [(2, _edge), (3, _exploration)],
-)
-def test_authorization_identity_requires_strategy_scope_and_distinct_family_lineage(
-    model_index, payload_factory
-) -> None:
-    from src.screening.offensive.v3.contracts.base import EvidenceScope
-
-    contracts = _contracts()
-    model = contracts[model_index]
-    with pytest.raises(ValidationError, match="strategy-lineage"):
-        model.model_validate(
-            payload_factory(
-                schema_major=contracts[0],
-                subject_scope=EvidenceScope.GLOBAL,
-                family_id=None,
-            )
-        )
-    with pytest.raises(ValidationError, match="family.*lineage|lineage.*family"):
-        model.model_validate(
-            payload_factory(
-                schema_major=contracts[0],
-                family_id="btst-economic-lineage",
-            )
-        )
+def test_envelope_rejects_duplicate_grant_budget_ids_and_bad_budget_conservation():
+    from src.screening.offensive.v3.contracts.authorization import CapitalAuthorizationEnvelope
+    payload = _envelope()
+    duplicate_grant = _grant(grant_id="grant-1")
+    bad_budget = {"research_program_id": "program-1", "budget_id": "budget-1", "budget_cents": 1, "consumed_cents": 2, "version": 1, "schema_major": 2}
+    for override in (
+        {"lineage_grants": (_grant(), duplicate_grant)},
+        {"program_loss_budget_bindings": (bad_budget,)},
+        {"research_program_ids": ("program-1", "program-2")},
+        {"authorization_version": True},
+    ):
+        with pytest.raises(ValidationError):
+            CapitalAuthorizationEnvelope.model_validate(payload | override)
