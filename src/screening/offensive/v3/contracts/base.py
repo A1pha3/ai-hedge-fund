@@ -8,6 +8,7 @@ from decimal import Decimal
 from enum import Enum, StrEnum
 import hashlib
 import json
+from math import gcd
 from typing import Annotated, Any, TypeAlias
 
 from pydantic import (
@@ -19,6 +20,7 @@ from pydantic import (
     StringConstraints,
     TypeAdapter,
     field_validator,
+    model_validator,
 )
 
 
@@ -233,6 +235,26 @@ class RationalQuantity(CanonicalModel):
 
     numerator: QuantityUnits
     denominator: QuantityUnits
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_lowest_terms(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+
+        numerator = value.get("numerator")
+        denominator = value.get("denominator")
+        if type(numerator) is not int or type(denominator) is not int:
+            return value
+        if denominator <= 0:
+            return value
+
+        divisor = gcd(abs(numerator), denominator)
+        return {
+            **value,
+            "numerator": numerator // divisor,
+            "denominator": denominator // divisor,
+        }
 
     @field_validator("denominator")
     @classmethod

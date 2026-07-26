@@ -45,6 +45,32 @@ def test_rational_quantity_requires_a_positive_exact_integer_denominator() -> No
         RationalQuantity(numerator=1, denominator=2.0)
 
 
+@pytest.mark.parametrize(
+    ("numerator", "denominator", "expected"),
+    [
+        (2, 4, {"numerator": 1, "denominator": 2}),
+        (-2, 4, {"numerator": -1, "denominator": 2}),
+        (0, 9, {"numerator": 0, "denominator": 1}),
+    ],
+)
+def test_rational_quantity_normalizes_to_unique_lowest_terms(
+    numerator: int, denominator: int, expected: dict[str, int]
+) -> None:
+    from src.screening.offensive.v3.contracts.base import RationalQuantity
+
+    assert RationalQuantity(numerator=numerator, denominator=denominator).model_dump() == expected
+
+
+def test_equivalent_rational_quantities_have_identical_canonical_identity() -> None:
+    from src.screening.offensive.v3.contracts.base import RationalQuantity
+
+    left = RationalQuantity(numerator=2, denominator=4)
+    right = RationalQuantity(numerator=1, denominator=2)
+
+    assert left.canonical_bytes() == right.canonical_bytes()
+    assert left.content_hash() == right.content_hash()
+
+
 def test_schema_version_accepts_exact_revision_two() -> None:
     from src.screening.offensive.v3.contracts.base import SchemaVersion
 
