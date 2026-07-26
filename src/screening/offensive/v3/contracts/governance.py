@@ -69,11 +69,31 @@ ExactDecimal = Annotated[
     WithJsonSchema({"type": "string", "pattern": r"^-?(0|[1-9]\d*)(\.\d+)?$"}),
 ]
 Fraction = Annotated[ExactDecimal, Field(ge=Decimal("0"), le=Decimal("1"))]
+_CONFIDENCE_LEVEL_JSON_PATTERN = r"^0\.\d*[1-9]\d*$"
 ConfidenceLevel = Annotated[
     ExactDecimal,
     Field(gt=Decimal("0"), lt=Decimal("1")),
+    WithJsonSchema({"type": "string", "pattern": _CONFIDENCE_LEVEL_JSON_PATTERN}),
 ]
 PositiveDecimal = Annotated[ExactDecimal, Field(gt=Decimal("0"))]
+
+
+def _validate_exact_true(value: object) -> object:
+    if type(value) is not bool:
+        raise ValueError("exact true values must use the native bool type")
+    return value
+
+
+ExactTrue = Annotated[Literal[True], BeforeValidator(_validate_exact_true)]
+
+
+def _validate_capital_tier(value: object) -> object:
+    if type(value) is not int:
+        raise ValueError("capital tier must use the native int type")
+    return value
+
+
+CapitalTier = Annotated[Literal[2, 5, 10], BeforeValidator(_validate_capital_tier)]
 
 
 def _capability(value: str, expected: str) -> None:
@@ -391,7 +411,7 @@ class LineageGrant(GovernedArtifact):
     behavior_fingerprint: Sha256
     execution_version: NonEmptyStr
     cost_version: NonEmptyStr
-    capital_tier: Literal[2, 5, 10]
+    capital_tier: CapitalTier
     lineage_gross_cap: Fraction
     trial_id: NonEmptyStr
     trial_manifest_hash: Sha256
@@ -652,7 +672,7 @@ class _TwoPersonOneShotManifest(GovernedArtifact):
     broker_account_id: NonEmptyStr
     issued_at: UtcInstant
     expires_at: UtcInstant
-    one_shot: Literal[True]
+    one_shot: ExactTrue
     approval_attestations: tuple[ApprovalAttestationBinding, ...]
     issuer_id: NonEmptyStr
     issuer_capability: NonEmptyStr
@@ -939,7 +959,7 @@ class DisasterRecoveryManifest(_TwoPersonOneShotManifest):
     recovery_epoch: PositiveInt
     fencing_epoch: PositiveInt
     reconciliation_proof_hash: Sha256
-    reconcile_before_entry: Literal[True]
+    reconcile_before_entry: ExactTrue
 
     @model_validator(mode="after")
     def validate_manifest(self) -> Self:
