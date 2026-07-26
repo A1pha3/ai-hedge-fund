@@ -19,7 +19,7 @@ def _approval_attestations(scope: str) -> tuple[dict[str, object], ...]:
     return (
         {
             "approver_id": "alice",
-            "approver_key_id": "alice-key",
+            "key_id": "alice-key",
             "approval_artifact_hash": HASH_B,
             "approval_capability": "governance.manifest.approve.v1",
             "approval_scope": scope,
@@ -28,7 +28,7 @@ def _approval_attestations(scope: str) -> tuple[dict[str, object], ...]:
         },
         {
             "approver_id": "bob",
-            "approver_key_id": "bob-key",
+            "key_id": "bob-key",
             "approval_artifact_hash": HASH_C,
             "approval_capability": "governance.manifest.approve.v1",
             "approval_scope": scope,
@@ -114,6 +114,10 @@ def _migration_manifest() -> dict[str, object]:
 
 
 def _authorization_status(**overrides: object) -> dict[str, object]:
+    from src.screening.offensive.v3.contracts.governance import (
+        AuthorizationLifecycle,
+    )
+
     payload: dict[str, object] = {
         "portfolio_id": "portfolio-1",
         "broker_account_id": "account-1",
@@ -123,6 +127,8 @@ def _authorization_status(**overrides: object) -> dict[str, object]:
         "authorization_version": 2,
         "authorization_envelope_hash": HASH,
         "evidence_set_merkle_root": HASH,
+        "authorization_issued_at": NOW - timedelta(minutes=3),
+        "authorization_expires_at": NOW + timedelta(hours=1),
         "policy_activation_hash": HASH,
         "trust_bundle_hash": HASH,
         "registry_epoch": 2,
@@ -131,7 +137,7 @@ def _authorization_status(**overrides: object) -> dict[str, object]:
         "risk_epoch": 2,
         "status_version": 3,
         "predecessor_status_hash": HASH,
-        "status": "REVALIDATION_REQUIRED",
+        "status": AuthorizationLifecycle.REVALIDATION_REQUIRED,
         "entry_fence_version": 4,
         "activated_at": NOW - timedelta(minutes=2),
         "status_effective_at": NOW - timedelta(minutes=1),
@@ -208,10 +214,13 @@ def test_authorization_status_requires_authority_store_issuer_and_state_time_pro
 
 
 def test_authorization_status_applies_conservative_state_specific_fields() -> None:
-    from src.screening.offensive.v3.contracts.governance import AuthorizationStatus
+    from src.screening.offensive.v3.contracts.governance import (
+        AuthorizationLifecycle,
+        AuthorizationStatus,
+    )
 
     active = _authorization_status(
-        status="ACTIVE",
+        status=AuthorizationLifecycle.ACTIVE,
         activated_at=NOW - timedelta(minutes=1),
         status_effective_at=NOW - timedelta(minutes=1),
         status_reason=None,
@@ -222,13 +231,40 @@ def test_authorization_status_applies_conservative_state_specific_fields() -> No
         AuthorizationStatus.model_validate(
             active | {"status_effective_at": NOW, "status_reason": "late"}
         )
-    for state in ("REVALIDATION_REQUIRED", "REVOKED", "EXPIRED"):
+    with pytest.raises(ValidationError):
+        AuthorizationStatus.model_validate(
+            active | {"authorization_expires_at": NOW}
+        )
+    for state in (
+        AuthorizationLifecycle.REVALIDATION_REQUIRED,
+        AuthorizationLifecycle.REVOKED,
+    ):
         with pytest.raises(ValidationError):
             AuthorizationStatus.model_validate(
                 _authorization_status(
                     status=state, status_reason=None, status_cause_hash=None
                 )
             )
+    expired = _authorization_status(
+        status=AuthorizationLifecycle.EXPIRED,
+        authorization_expires_at=NOW - timedelta(minutes=1),
+        status_effective_at=NOW - timedelta(minutes=1),
+        status_reason=None,
+        status_cause_hash=None,
+    )
+    assert AuthorizationStatus.model_validate(expired).status.value == "EXPIRED"
+    with pytest.raises(ValidationError):
+        AuthorizationStatus.model_validate(
+            expired | {"status_effective_at": NOW - timedelta(seconds=30)}
+        )
+    revoked_after_expiry = _authorization_status(
+        status=AuthorizationLifecycle.REVOKED,
+        authorization_expires_at=NOW - timedelta(seconds=1),
+        status_effective_at=NOW - timedelta(minutes=1),
+    )
+    assert AuthorizationStatus.model_validate(revoked_after_expiry).status.value == (
+        "REVOKED"
+    )
 
 
 def test_entry_fence_request_and_gateway_ack_are_distinct_capabilities() -> None:

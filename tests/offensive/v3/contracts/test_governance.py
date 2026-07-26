@@ -172,8 +172,19 @@ def test_trust_activation_and_recovery_are_candidates_with_epochs_and_predecesso
         "mode": ExecutionMode.BROKER_CONFIRMED,
         "predecessor_risk_epoch_hash": HASH,
         "predecessor_authority_epoch_hash": HASH,
+        "trust_bundle_hash": HASH,
+        "registry_epoch": 2,
+        "policy_activation_hash": HASH,
+        "policy_epoch": 2,
         "risk_epoch": 3,
         "authority_epoch": 3,
+        "predecessor_active_authorization_id": "auth-1",
+        "predecessor_active_authorization_version": 2,
+        "predecessor_active_authorization_hash": HASH,
+        "predecessor_authorization_status_hash": HASH,
+        "predecessor_authorization_status_version": 4,
+        "predecessor_entry_fence_version": 5,
+        "predecessor_entry_fence_hash": HASH,
         "audited_capital_snapshot_id": "capital-1",
         "audited_capital_snapshot_hash": HASH,
         "inherited_risk_hash": HASH,
@@ -460,6 +471,8 @@ def test_authorization_status_and_entry_fence_are_strict_monotonic_candidates():
             "authorization_version": 2,
             "authorization_envelope_hash": HASH,
             "evidence_set_merkle_root": HASH,
+            "authorization_issued_at": NOW - timedelta(minutes=3),
+            "authorization_expires_at": NOW + timedelta(hours=1),
             "policy_activation_hash": HASH,
             "trust_bundle_hash": HASH,
             "registry_epoch": 2,
@@ -470,7 +483,15 @@ def test_authorization_status_and_entry_fence_are_strict_monotonic_candidates():
             "predecessor_status_hash": HASH,
             "status": g.AuthorizationLifecycle.REVALIDATION_REQUIRED,
             "entry_fence_version": 4,
+            "activated_at": NOW - timedelta(minutes=2),
+            "status_effective_at": NOW - timedelta(minutes=1),
+            "status_reason": "evidence revision",
+            "status_cause_hash": HASH,
             "as_of": NOW,
+            "issuer_id": "authority-store",
+            "issuer_capability": (
+                "gateway.authority-store.authorization-status.publish.v1"
+            ),
             "schema_major": 2,
         }
     )
@@ -484,8 +505,13 @@ def test_authorization_status_and_entry_fence_are_strict_monotonic_candidates():
             "mode": ExecutionMode.BROKER_CONFIRMED,
             "fence_version": 4,
             "predecessor_fence_hash": HASH,
+            "trust_bundle_hash": HASH,
+            "registry_epoch": 2,
+            "policy_activation_hash": HASH,
+            "policy_epoch": 2,
             "authority_epoch": 2,
             "risk_epoch": 2,
+            "predecessor_authorization_status_hash": HASH,
             "authorization_status_version": 3,
             "reason": "evidence-revision",
             "cause_revision_id": "revision-1",
@@ -495,8 +521,8 @@ def test_authorization_status_and_entry_fence_are_strict_monotonic_candidates():
             "affected_authorization_version": 2,
             "affected_authorization_envelope_hash": HASH,
             "affected_evidence_set_merkle_root": HASH,
-            "issuer_id": "gateway",
-            "issuer_capability": "gateway.entry.fence.raise.v1",
+            "issuer_id": "dependency-tracker",
+            "issuer_capability": "dependency-tracker.entry-fence.raise.v1",
             "schema_major": 2,
         }
     )
@@ -543,52 +569,21 @@ def test_trust_bundle_rejects_bad_time_revocation_and_non_native_epoch():
         ("DisasterRecoveryManifest", "governance.disaster.recovery.v1"),
     ],
 )
-def test_sensitive_manifests_require_distinct_capability_and_two_approvers(
+def test_sensitive_manifests_require_distinct_capability_and_two_attestations(
     name, capability
 ):
     g = _governance()
+    from test_governance_remediation_b import _manifest_common, _migration_manifest
+
     cls = getattr(g, name)
-    payload = {
-        "manifest_id": name,
-        "portfolio_id": "portfolio-1",
-        "broker_account_id": "account-1",
-        "issued_at": NOW,
-        "expires_at": NOW + timedelta(hours=1),
-        "one_shot": True,
-        "approver_ids": ("alice", "bob"),
-        "issuer_id": "governance",
-        "issuer_capability": capability,
-        "schema_major": 2,
-    }
     if name == "MigrationApprovalManifest":
-        payload |= {
-            "source_portfolio_id": "v2",
-            "target_portfolio_id": "portfolio-1",
-            "source_broker_account_id": "v2-account",
-            "target_broker_account_id": "account-1",
-            "source_schema_major": 2,
-            "target_schema_major": 2,
-            "source_writer_id": "v2-writer",
-            "target_writer_id": "v3-writer",
-            "migration_program_hash": HASH,
-            "allowed_from": NOW,
-            "allowed_until": NOW + timedelta(minutes=30),
-            "source_state_root_hash": HASH,
-            "target_state_root_hash": HASH,
-            "source_stream_version": 1,
-            "target_import_version": 1,
-            "shared_inbox_cursor": "shared-1",
-            "handoff_cursor": "handoff-1",
-            "conservation_formula_hash": HASH,
-            "live_order_adoption_hash": HASH,
-            "credential_fencing_hash": HASH,
-            "writer_fencing_epoch": 1,
-            "rollback_dr_hash": HASH,
-        }
+        payload = _migration_manifest()
     elif name == "BrokerEnablementManifest":
-        payload |= {
+        payload = _manifest_common("BROKER_ENABLEMENT_MANIFEST", capability) | {
             "broker_account_fingerprint": HASH,
             "broker_environment_fingerprint": HASH,
+            "base_currency": "CNY",
+            "currency_definition_fingerprint": HASH,
             "trusted_clock_hash": HASH,
             "authenticated_raw_envelope_hash": HASH,
             "pagination_cursor_retention_hash": HASH,
@@ -598,12 +593,23 @@ def test_sensitive_manifests_require_distinct_capability_and_two_approvers(
             "credential_session_network_fencing_hash": HASH,
         }
     else:
-        payload |= {
+        payload = _manifest_common("DISASTER_RECOVERY_MANIFEST", capability) | {
             "broker_account_fingerprint": HASH,
+            "trust_bundle_hash": HASH,
+            "registry_epoch": 2,
+            "policy_activation_hash": HASH,
+            "policy_epoch": 2,
+            "authority_epoch": 2,
+            "risk_epoch": 2,
+            "authorization_status_hash": HASH,
+            "authorization_status_version": 4,
+            "entry_fence_hash": HASH,
+            "entry_fence_version": 5,
             "backup_root_hash": HASH,
             "durable_inbox_cursor": "inbox-1",
             "durable_outbox_cursor": "outbox-1",
             "broker_cursor": "broker-1",
+            "durable_cursor_proof_hash": HASH,
             "source_writer_id": "source-writer",
             "target_writer_id": "recovery-writer",
             "recovery_epoch": 2,
@@ -615,11 +621,10 @@ def test_sensitive_manifests_require_distinct_capability_and_two_approvers(
     with pytest.raises(ValidationError):
         cls.model_validate(payload | {"issuer_capability": "governance.other.v1"})
     with pytest.raises(ValidationError):
-        cls.model_validate(payload | {"approver_ids": ("alice",)})
+        cls.model_validate(payload | {"approval_attestations": ()})
     for override in (
         {"expires_at": NOW},
         {"one_shot": False},
-        {"approver_ids": ("alice", "alice")},
         {"extra_field": True},
     ):
         with pytest.raises(ValidationError):

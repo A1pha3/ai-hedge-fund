@@ -9,9 +9,11 @@ from src.screening.offensive.v3.contracts.authorization import (
     CapitalAuthorizationEnvelope,
 )
 from src.screening.offensive.v3.contracts.governance import (
+    ApprovalAttestationBinding,
     AuthorizationStatus,
     BrokerEnablementManifest,
     DisasterRecoveryManifest,
+    EntryFenceAcknowledgement,
     EntryFenceRaised,
     LineageGrant,
     MigrationApprovalManifest,
@@ -25,10 +27,12 @@ from src.screening.offensive.v3.contracts.governance import (
 )
 
 TASK2_PUBLIC_MODELS = {
+    "ApprovalAttestationBinding": ApprovalAttestationBinding,
     "AuthorizationStatus": AuthorizationStatus,
     "BrokerEnablementManifest": BrokerEnablementManifest,
     "CapitalAuthorizationEnvelope": CapitalAuthorizationEnvelope,
     "DisasterRecoveryManifest": DisasterRecoveryManifest,
+    "EntryFenceAcknowledgement": EntryFenceAcknowledgement,
     "EntryFenceRaised": EntryFenceRaised,
     "LineageGrant": LineageGrant,
     "MigrationApprovalManifest": MigrationApprovalManifest,

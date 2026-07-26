@@ -5,10 +5,12 @@ from .authorization import (
     CapitalAuthorizationEnvelope,
 )
 from .governance import (
+    ApprovalAttestationBinding,
     AuthorizationLifecycle,
     AuthorizationStatus,
     BrokerEnablementManifest,
     DisasterRecoveryManifest,
+    EntryFenceAcknowledgement,
     EntryFenceRaised,
     GrantKind,
     LineageGrant,
@@ -25,6 +27,7 @@ from .governance import (
 from .base import (
     CanonicalModel,
     EvidenceScope,
+    ExactInteger,
     ExecutionMode,
     MoneyCents,
     QuantityUnits,
@@ -98,6 +101,7 @@ from .trust import ArtifactKind, Capability, SignedEnvelope, VerifiedIssuer
 __all__ = [
     "AUTHORITY_STATE_TRANSITIONS",
     "ArtifactKind",
+    "ApprovalAttestationBinding",
     "AuthorizationKind",
     "AuthorizationLifecycle",
     "AuthorizationStatus",
@@ -112,6 +116,7 @@ __all__ = [
     "CostBasisEconomicEventLeg",
     "BrokerEnablementManifest",
     "DisasterRecoveryManifest",
+    "EntryFenceAcknowledgement",
     "EntryFenceRaised",
     "DecisionLogicalKey",
     "DecisionInput",
@@ -119,6 +124,7 @@ __all__ = [
     "DecisionSealBinding",
     "EvidenceEnvelope",
     "EvidenceScope",
+    "ExactInteger",
     "EvidenceQueryPort",
     "EconomicAssetKind",
     "EconomicEvent",

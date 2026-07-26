@@ -8,10 +8,11 @@ from typing import Annotated, Self
 
 from pydantic import Field, model_validator
 
-from .base import CanonicalModel, ExecutionMode, SchemaVersion, Sha256, UtcInstant
+from .base import ExecutionMode, SchemaVersion, Sha256, UtcInstant
 from .evidence import NonEmptyStr
 from .governance import (
     Fraction,
+    GovernedArtifact,
     LineageGrant,
     NonNegativeInt,
     PositiveCents,
@@ -26,7 +27,9 @@ class AuthorizationKind(StrEnum):
     RECOVERY = "RECOVERY"
 
 
-class CapitalAuthorizationEnvelope(CanonicalModel):
+class CapitalAuthorizationEnvelope(GovernedArtifact):
+    HASH_DOMAIN = "ai-hedge-fund.v3.governance.capital-authorization-envelope.v1"
+
     authorization_kind: AuthorizationKind
     authorization_id: NonEmptyStr
     authorization_version: PositiveInt

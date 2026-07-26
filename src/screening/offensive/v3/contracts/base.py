@@ -82,25 +82,20 @@ def _validate_exact_integer(value: Any) -> Any:
     return value
 
 
-MoneyCents: TypeAlias = Annotated[
+ExactInteger: TypeAlias = Annotated[
     int,
     BeforeValidator(_validate_exact_integer),
     Strict(),
 ]
+"""A semantically neutral exact native integer without numeric coercion."""
+
+MoneyCents: TypeAlias = ExactInteger
 """An exact integer count of the smallest monetary unit."""
 
-QuantityUnits: TypeAlias = Annotated[
-    int,
-    BeforeValidator(_validate_exact_integer),
-    Strict(),
-]
+QuantityUnits: TypeAlias = ExactInteger
 """An exact integer count of a domain quantity's smallest unit."""
 
-UnitQuanta: TypeAlias = Annotated[
-    int,
-    BeforeValidator(_validate_exact_integer),
-    Strict(),
-]
+UnitQuanta: TypeAlias = ExactInteger
 """An exact integer count of issued or redeemed unit quanta."""
 
 
