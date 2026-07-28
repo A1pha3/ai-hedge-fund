@@ -24,6 +24,13 @@ from .base import (
 )
 from .evidence import NonEmptyStr
 from .execution import OrderState, PlanState
+from .risk import (
+    ReconciliationLatchState,
+    RiskLatchState,
+    RiskSnapshotCompleteness,
+    RiskSnapshotFreshness,
+    StageLossLatchState,
+)
 
 
 PositiveInt = Annotated[int, Field(ge=1)]
@@ -217,18 +224,6 @@ class OrderSnapshot(CanonicalModel):
         return self
 
 
-class RiskSnapshotFreshness(StrEnum):
-    FRESH = "FRESH"
-    STALE = "STALE"
-    UNKNOWN = "UNKNOWN"
-
-
-class RiskSnapshotCompleteness(StrEnum):
-    COMPLETE = "COMPLETE"
-    INCOMPLETE = "INCOMPLETE"
-    UNKNOWN = "UNKNOWN"
-
-
 class ExposureScope(StrEnum):
     GLOBAL = "GLOBAL"
     PORTFOLIO = "PORTFOLIO"
@@ -240,21 +235,6 @@ class ExposureScope(StrEnum):
 class RiskOrderSide(StrEnum):
     ENTRY = "ENTRY"
     EXIT = "EXIT"
-
-
-class RiskLatchState(StrEnum):
-    CLEAR = "CLEAR"
-    RISK_HALTED = "RISK_HALTED"
-
-
-class StageLossLatchState(StrEnum):
-    CLEAR = "CLEAR"
-    STAGE_LOSS_HALTED = "STAGE_LOSS_HALTED"
-
-
-class ReconciliationLatchState(StrEnum):
-    CLEAR = "CLEAR"
-    RECONCILIATION_HALT = "RECONCILIATION_HALT"
 
 
 class ExitQuantityKnowledge(StrEnum):

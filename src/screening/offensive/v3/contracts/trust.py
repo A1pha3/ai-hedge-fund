@@ -35,6 +35,7 @@ class ArtifactKind(StrEnum):
     PLAN = "plan"
     EDGE_AUTHORIZATION = "edge"
     EXPLORATION_AUTHORIZATION = "exploration"
+    PORTFOLIO_DECISION_SEAL = "portfolio_decision_seal"
     DECISION_SEAL = "decision_seal"
     SHADOW_DECISION = "shadow_decision"
     EXECUTION_PERMIT = "execution_permit"
