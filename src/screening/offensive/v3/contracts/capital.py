@@ -23,7 +23,7 @@ from .base import (
     domain_hash,
 )
 from .evidence import NonEmptyStr
-from ._execution_contracts import OrderState, PlanState
+from .execution import OrderState, PlanState
 
 
 PositiveInt = Annotated[int, Field(ge=1)]
@@ -257,6 +257,11 @@ class ReconciliationLatchState(StrEnum):
     RECONCILIATION_HALT = "RECONCILIATION_HALT"
 
 
+class ExitQuantityKnowledge(StrEnum):
+    KNOWN = "KNOWN"
+    UNKNOWN = "UNKNOWN"
+
+
 def _validate_capital_account_mode(
     mode: ExecutionMode,
     broker_account_id: str | None,
@@ -322,6 +327,55 @@ class CapitalLiveOrderRisk(CanonicalModel):
         }:
             raise ValueError("capital live order risk requires a live leaves state")
         return self
+
+
+class EntryReserveRiskComponent(CanonicalModel):
+    research_program_id: NonEmptyStr
+    economic_lineage_id: NonEmptyStr
+    stage_id: NonEmptyStr
+    source_id: NonEmptyStr
+    covered_live_order_id: NonEmptyStr | None
+    reserved_entry_gross_cents: PositiveCents
+
+    def identity(self) -> tuple[str, str, str, str]:
+        return (
+            self.research_program_id,
+            self.economic_lineage_id,
+            self.stage_id,
+            self.source_id,
+        )
+
+
+class PendingStressRiskComponent(CanonicalModel):
+    research_program_id: NonEmptyStr
+    economic_lineage_id: NonEmptyStr
+    stage_id: NonEmptyStr
+    source_id: NonEmptyStr
+    pending_stress_cents: PositiveCents
+
+    def identity(self) -> tuple[str, str, str, str]:
+        return (
+            self.research_program_id,
+            self.economic_lineage_id,
+            self.stage_id,
+            self.source_id,
+        )
+
+
+class CorporateActionRiskComponent(CanonicalModel):
+    research_program_id: NonEmptyStr
+    economic_lineage_id: NonEmptyStr
+    stage_id: NonEmptyStr
+    source_id: NonEmptyStr
+    pending_risk_cents: PositiveCents
+
+    def identity(self) -> tuple[str, str, str, str]:
+        return (
+            self.research_program_id,
+            self.economic_lineage_id,
+            self.stage_id,
+            self.source_id,
+        )
 
 
 class RiskExposureBucket(CanonicalModel):
@@ -422,6 +476,8 @@ def _drawdown_ppm(nav_cents: int, high_water_mark_cents: int) -> int:
 
 
 class CapitalRiskSnapshot(CanonicalModel):
+    HASH_DOMAIN: ClassVar[str] = "ai-hedge-fund.v3.capital.risk-snapshot.v1"
+
     risk_snapshot_id: NonEmptyStr
     portfolio_id: NonEmptyStr
     broker_account_id: NonEmptyStr | None
@@ -443,8 +499,9 @@ class CapitalRiskSnapshot(CanonicalModel):
     pending_redeemed_unit_quanta: NonNegativeUnits
     positions: tuple[CapitalPositionRisk, ...]
     live_orders: tuple[CapitalLiveOrderRisk, ...]
-    pending_stress_cents: NonNegativeCents
-    corporate_action_pending_risk_cents: NonNegativeCents
+    entry_reserves: tuple[EntryReserveRiskComponent, ...]
+    pending_stress_components: tuple[PendingStressRiskComponent, ...]
+    corporate_action_risk_components: tuple[CorporateActionRiskComponent, ...]
     unattributed_risk_cents: NonNegativeCents
     exposures: Annotated[tuple[RiskExposureBucket, ...], Field(min_length=5)]
     total_gross_exposure_cents: NonNegativeCents
@@ -463,10 +520,9 @@ class CapitalRiskSnapshot(CanonicalModel):
     registry_epoch: PositiveExactInt
     authorization_id: NonEmptyStr
     authorization_version: PositiveExactInt
-    stage_loss_version: PositiveExactInt
+    stage_loss_state_version: PositiveExactInt
     writer_fencing_epoch: PositiveExactInt
     capital_version: PositiveExactInt
-    payload_content_hash: Sha256
     schema_major: SchemaVersion
 
     @model_validator(mode="after")
@@ -474,10 +530,6 @@ class CapitalRiskSnapshot(CanonicalModel):
         _validate_capital_account_mode(self.mode, self.broker_account_id)
         if self.valid_until <= self.as_of:
             raise ValueError("risk snapshot validity must extend beyond as_of")
-        if self.freshness is RiskSnapshotFreshness.UNKNOWN:
-            raise ValueError("risk snapshot freshness cannot be unknown")
-        if self.completeness is not RiskSnapshotCompleteness.COMPLETE:
-            raise ValueError("risk snapshot facts must be complete")
         if self.pending_redeemed_unit_quanta > self.issued_unit_quanta:
             raise ValueError("pending redeemed units cannot exceed issued units")
 
@@ -514,47 +566,83 @@ class CapitalRiskSnapshot(CanonicalModel):
         budget_ids = [latch.stage_loss_budget_id for latch in self.stage_loss_latches]
         if len(budget_ids) != len(set(budget_ids)):
             raise ValueError("duplicate stage loss budget identity")
-        if latch_ids != sorted(latch_ids):
-            raise ValueError("stage loss latches must be in canonical order")
-        if any(
-            latch.stage_loss_version != self.stage_loss_version
-            for latch in self.stage_loss_latches
-        ):
-            raise ValueError("stage loss latch version does not match snapshot")
+        self._validate_risk_component_identities()
 
-        self._validate_exposures(latch_ids)
+        self._validate_exposures()
         self._validate_nav_and_latches()
         return self
 
-    def _validate_exposures(
-        self,
-        latch_ids: list[tuple[str, str, str]],
-    ) -> None:
+    def _validate_risk_component_identities(self) -> None:
+        for components, label in (
+            (self.entry_reserves, "entry reserve"),
+            (self.pending_stress_components, "pending stress"),
+            (self.corporate_action_risk_components, "corporate action risk"),
+        ):
+            identities = [component.identity() for component in components]
+            if len(identities) != len(set(identities)):
+                raise ValueError(f"duplicate {label} composite identity")
+            if identities != sorted(identities):
+                raise ValueError(f"{label} identities must be in canonical order")
+
+        live_entry_orders = {
+            order.order_id: order
+            for order in self.live_orders
+            if order.side is RiskOrderSide.ENTRY
+        }
+        for reserve in self.entry_reserves:
+            if reserve.covered_live_order_id is None:
+                continue
+            order = live_entry_orders.get(reserve.covered_live_order_id)
+            if order is None:
+                raise ValueError("entry reserve covers an unknown live order")
+            if (
+                reserve.research_program_id,
+                reserve.economic_lineage_id,
+                reserve.stage_id,
+            ) != (
+                order.research_program_id,
+                order.economic_lineage_id,
+                order.stage_id,
+            ):
+                raise ValueError("entry reserve attribution must match live order")
+
+        if self.reserved_cash_cents != sum(
+            reserve.reserved_entry_gross_cents for reserve in self.entry_reserves
+        ):
+            raise ValueError("reserved cash must equal itemized entry reserves")
+
+    def artifact_hash(self) -> str:
+        return domain_hash(self.HASH_DOMAIN, self.schema_major, self)
+
+    def content_hash(self) -> str:
+        return self.artifact_hash()
+
+    def _validate_exposures(self) -> None:
         exposure_ids = [exposure.identity() for exposure in self.exposures]
         if len(exposure_ids) != len(set(exposure_ids)):
             raise ValueError("duplicate exposure identity")
-        if exposure_ids != sorted(
-            exposure_ids,
-            key=lambda item: (list(ExposureScope).index(item[0]), *item[1:]),
-        ):
-            raise ValueError("exposures must be in canonical scope and identity order")
-
+        attributed_components = (
+            *self.positions,
+            *self.live_orders,
+            *self.entry_reserves,
+            *self.pending_stress_components,
+            *self.corporate_action_risk_components,
+        )
         program_ids = {
-            component.research_program_id
-            for component in (*self.positions, *self.live_orders)
-        } | {identity[0] for identity in latch_ids}
+            component.research_program_id for component in attributed_components
+        }
         lineage_ids = {
             (component.research_program_id, component.economic_lineage_id)
-            for component in (*self.positions, *self.live_orders)
-        } | {(identity[0], identity[1]) for identity in latch_ids}
+            for component in attributed_components
+        }
         stage_ids = {
             (
                 component.research_program_id,
                 component.economic_lineage_id,
                 component.stage_id,
             )
-            for component in (*self.positions, *self.live_orders)
-        } | set(latch_ids)
+            for component in attributed_components
+        }
         expected_ids = {
             (ExposureScope.GLOBAL, "", "", "", ""),
             (ExposureScope.PORTFOLIO, self.portfolio_id, "", "", ""),
@@ -608,10 +696,18 @@ class CapitalRiskSnapshot(CanonicalModel):
                 for order in self.live_orders
                 if order.side is RiskOrderSide.ENTRY
             ),
-            "reserved_entry_gross_cents": self.reserved_cash_cents,
-            "pending_stress_cents": self.pending_stress_cents,
-            "corporate_action_pending_risk_cents": (
-                self.corporate_action_pending_risk_cents
+            "reserved_entry_gross_cents": sum(
+                reserve.reserved_entry_gross_cents
+                for reserve in self.entry_reserves
+                if reserve.covered_live_order_id is None
+            ),
+            "pending_stress_cents": sum(
+                component.pending_stress_cents
+                for component in self.pending_stress_components
+            ),
+            "corporate_action_pending_risk_cents": sum(
+                component.pending_risk_cents
+                for component in self.corporate_action_risk_components
             ),
             "unattributed_risk_cents": self.unattributed_risk_cents,
         }
@@ -629,13 +725,16 @@ class CapitalRiskSnapshot(CanonicalModel):
             for exposure in self.exposures
             if exposure.scope is ExposureScope.RESEARCH_PROGRAM
         ]
-        for field_name in (*_EXPOSURE_COMPONENT_FIELDS, "unattributed_risk_cents"):
+        for field_name in _EXPOSURE_COMPONENT_FIELDS:
             if getattr(portfolio_bucket, field_name) != sum(
                 getattr(program, field_name) for program in program_buckets
             ):
                 raise ValueError("portfolio exposure does not reconcile to programs")
-        if portfolio_bucket.total_gross_cents != sum(
-            program.total_gross_cents for program in program_buckets
+        if portfolio_bucket.unattributed_risk_cents != self.unattributed_risk_cents:
+            raise ValueError("unattributed risk must remain portfolio scoped")
+        if portfolio_bucket.total_gross_cents != (
+            sum(program.total_gross_cents for program in program_buckets)
+            + self.unattributed_risk_cents
         ):
             raise ValueError(
                 "portfolio gross exposure double-counts or omits a program"
@@ -655,6 +754,22 @@ class CapitalRiskSnapshot(CanonicalModel):
                 if order.side is RiskOrderSide.ENTRY
                 and self._component_matches_exposure(order, exposure)
             ]
+            matching_reserves = [
+                reserve
+                for reserve in self.entry_reserves
+                if reserve.covered_live_order_id is None
+                and self._component_matches_exposure(reserve, exposure)
+            ]
+            matching_stresses = [
+                component
+                for component in self.pending_stress_components
+                if self._component_matches_exposure(component, exposure)
+            ]
+            matching_corporate_actions = [
+                component
+                for component in self.corporate_action_risk_components
+                if self._component_matches_exposure(component, exposure)
+            ]
             if exposure.position_marked_gross_cents != sum(
                 position.marked_gross_cents for position in matching_positions
             ):
@@ -663,12 +778,32 @@ class CapitalRiskSnapshot(CanonicalModel):
                 order.worst_case_leaves_notional_cents for order in matching_orders
             ):
                 raise ValueError("live order exposure aggregate is inconsistent")
+            if exposure.reserved_entry_gross_cents != sum(
+                reserve.reserved_entry_gross_cents for reserve in matching_reserves
+            ):
+                raise ValueError("entry reserve exposure aggregate is inconsistent")
+            if exposure.pending_stress_cents != sum(
+                component.pending_stress_cents for component in matching_stresses
+            ):
+                raise ValueError("pending stress attribution is inconsistent")
+            if exposure.corporate_action_pending_risk_cents != sum(
+                component.pending_risk_cents for component in matching_corporate_actions
+            ):
+                raise ValueError("corporate action risk attribution is inconsistent")
+            if exposure.unattributed_risk_cents != 0:
+                raise ValueError("attributed exposure cannot contain unattributed risk")
 
         self._validate_exposure_children(by_identity)
 
     @staticmethod
     def _component_matches_exposure(
-        component: CapitalPositionRisk | CapitalLiveOrderRisk,
+        component: (
+            CapitalPositionRisk
+            | CapitalLiveOrderRisk
+            | EntryReserveRiskComponent
+            | PendingStressRiskComponent
+            | CorporateActionRiskComponent
+        ),
         exposure: RiskExposureBucket,
     ) -> bool:
         if component.research_program_id != exposure.research_program_id:
@@ -721,9 +856,9 @@ class CapitalRiskSnapshot(CanonicalModel):
         if any(
             bucket.unattributed_risk_cents != 0
             for bucket in by_identity.values()
-            if bucket.scope in {ExposureScope.ECONOMIC_LINEAGE, ExposureScope.STAGE}
+            if bucket.scope not in {ExposureScope.GLOBAL, ExposureScope.PORTFOLIO}
         ):
-            raise ValueError("lineage and stage risk cannot be unattributed")
+            raise ValueError("program, lineage, and stage risk cannot be unattributed")
 
     def _validate_nav_and_latches(self) -> None:
         if self.as_observed_nav_cents > self.lifetime_high_water_mark_cents:
@@ -776,9 +911,14 @@ class ExitMandate(CanonicalModel):
     fixed_exit_policy_fingerprint: Sha256
     exit_session_ordinal: PositiveExactInt
     due_session: date
-    tradable_quantity: PositiveQuantity
+    quantity_knowledge: ExitQuantityKnowledge
+    reconciliation_pending: bool
+    tradable_quantity: NonNegativeQuantity
     live_exit_leaves_quantity: NonNegativeQuantity
-    executable_quantity: PositiveQuantity
+    executable_quantity: NonNegativeQuantity
+    mandate_revision: PositiveExactInt
+    supersedes_mandate_hash: Sha256 | None
+    reopened_by_execution_revision_id: NonEmptyStr | None
     capital_version: PositiveExactInt
     writer_fencing_epoch: PositiveExactInt
     stable_client_order_id: NonEmptyStr
@@ -792,16 +932,43 @@ class ExitMandate(CanonicalModel):
         _validate_capital_account_mode(self.mode, self.broker_account_id)
         if self.exit_session_ordinal != 10:
             raise ValueError("fixed exit policy requires T+10 session ordinal")
-        if self.live_exit_leaves_quantity > self.tradable_quantity:
-            raise ValueError("live exit leaves cannot exceed tradable quantity")
-        if self.executable_quantity != (
-            self.tradable_quantity - self.live_exit_leaves_quantity
+        if self.quantity_knowledge is ExitQuantityKnowledge.UNKNOWN:
+            if not self.reconciliation_pending:
+                raise ValueError("unknown quantity requires reconciliation pending")
+            if any(
+                quantity != 0
+                for quantity in (
+                    self.tradable_quantity,
+                    self.live_exit_leaves_quantity,
+                    self.executable_quantity,
+                )
+            ):
+                raise ValueError("unknown quantity cannot expose orderable quantity")
+        else:
+            if self.reconciliation_pending:
+                raise ValueError("known quantity cannot remain reconciliation pending")
+            if self.live_exit_leaves_quantity > self.tradable_quantity:
+                raise ValueError("live exit leaves cannot exceed tradable quantity")
+            if self.executable_quantity != (
+                self.tradable_quantity - self.live_exit_leaves_quantity
+            ):
+                raise ValueError(
+                    "executable quantity must equal tradable quantity minus live exit leaves"
+                )
+
+        if self.mandate_revision == 1:
+            if (
+                self.supersedes_mandate_hash is not None
+                or self.reopened_by_execution_revision_id is not None
+            ):
+                raise ValueError("first mandate revision cannot supersede or reopen")
+        elif (
+            self.supersedes_mandate_hash is None
+            or self.reopened_by_execution_revision_id is None
         ):
             raise ValueError(
-                "executable quantity must equal tradable quantity minus live exit leaves"
+                "reopened mandate revision requires supersedes hash and execution provenance"
             )
-        if self.issued_at.date() > self.due_session:
-            raise ValueError("exit mandate cannot be issued after its due session")
         return self
 
     def artifact_hash(self) -> str:

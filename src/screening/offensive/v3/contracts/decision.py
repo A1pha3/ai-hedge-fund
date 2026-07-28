@@ -6,7 +6,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated, ClassVar, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from .authorization import CapitalAuthorizationEnvelope
 from .base import (
@@ -146,6 +146,13 @@ class PortfolioOrderLine(CanonicalModel):
     time_in_force: NonEmptyStr
     worst_case_fee_reserve_cents: NonNegativeCents
     worst_case_cash_reserve_cents: PositiveCents
+
+    @field_validator("exit_session_ordinal", mode="before")
+    @classmethod
+    def validate_native_t_plus_ten(cls, value: object) -> object:
+        if type(value) is not int or value != 10:
+            raise ValueError("T+10 session ordinal must be the native integer 10")
+        return value
 
     @model_validator(mode="after")
     def validate_entry_economics_and_provenance(self) -> Self:
