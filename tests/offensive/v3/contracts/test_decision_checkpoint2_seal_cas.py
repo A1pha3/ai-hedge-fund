@@ -717,10 +717,6 @@ def test_legal_supersede_has_one_exact_prior_identity_in_all_representations() -
         "missing_supersedes_revision",
         "missing_prior_eligibility",
         "missing_expected_active",
-        "missing_expected_id",
-        "missing_expected_revision",
-        "missing_expected_logical_key",
-        "missing_expected_artifact_hash",
         "mismatch_supersedes_id",
         "mismatch_supersedes_revision",
         "mismatch_prior_id",
@@ -758,17 +754,6 @@ def test_supersede_rejects_every_missing_or_mismatched_prior_representation(
         payload["consumed_gateway_expected_versions"] = first_expected
         payload["consumed_gateway_expected_versions_artifact_hash"] = (
             first_expected.artifact_hash()
-        )
-    elif case.startswith("missing_expected_"):
-        field = case.removeprefix("missing_expected_")
-        field = {
-            "id": "expected_active_seal_id",
-            "revision": "expected_active_seal_revision",
-            "logical_key": "expected_active_seal_logical_key",
-            "artifact_hash": "expected_active_seal_artifact_hash",
-        }[field]
-        payload["consumed_gateway_expected_versions"] = expected.model_copy(
-            update={field: None}
         )
     elif case == "mismatch_supersedes_id":
         payload["supersedes_seal_id"] = "other-seal"
@@ -821,6 +806,37 @@ def test_supersede_rejects_every_missing_or_mismatched_prior_representation(
         ValidationError, match="supersede|prior|expected active|logical|artifact"
     ):
         api.PortfolioDecisionSeal.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "expected_active_seal_id",
+        "expected_active_seal_revision",
+        "expected_active_seal_logical_key",
+        "expected_active_seal_artifact_hash",
+    ],
+)
+def test_gateway_expected_versions_rejects_each_partial_expected_active_binding(
+    missing_field,
+) -> None:
+    api = _api()
+    eligibility = _prior_seal_eligibility(api)
+    expected = _gateway_expected_versions(
+        api,
+        expected_active_seal_id=eligibility.prior_seal_id,
+        expected_active_seal_revision=eligibility.prior_seal_revision,
+        expected_active_seal_logical_key=eligibility.logical_key,
+        expected_active_seal_artifact_hash=eligibility.prior_seal_artifact_hash,
+    )
+    partial_payload = expected.model_dump(mode="python", round_trip=True)
+    partial_payload[missing_field] = None
+
+    with pytest.raises(
+        ValidationError,
+        match="expected active|all-or-none|tuple|binding",
+    ):
+        type(expected).model_validate(partial_payload)
 
 
 def test_first_publication_rejects_consumed_expected_active_seal_pair() -> None:

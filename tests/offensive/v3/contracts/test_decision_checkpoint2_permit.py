@@ -600,10 +600,14 @@ def test_cancel_rejects_positive_line_or_durable_sendable_outbox() -> None:
     ("field", "value"),
     [
         ("outbox_batch_id", None),
+        ("outbox_batch_id", ""),
         ("outbox_payload_hash", None),
+        ("outbox_payload_hash", ""),
         ("outbox_state", "TOMBSTONED"),
         ("outbox_permit_nonce", None),
+        ("outbox_permit_nonce", ""),
         ("outbox_permit_nonce", "different-nonce"),
+        ("active_permit_nonce", ""),
         ("active_permit_nonce", "different-nonce"),
     ],
 )
@@ -623,6 +627,15 @@ def test_allow_positive_sendable_lines_require_exact_durable_outbox_binding(
     assert expected.outbox_payload_hash
     assert expected.outbox_state == "DURABLE"
     assert expected.outbox_permit_nonce == permit.permit_nonce
+
+    if value == "":
+        with pytest.raises(
+            ValidationError,
+            match="nonempty|empty|hash|nonce|outbox|identifier",
+        ):
+            type(expected).model_validate(
+                expected.model_dump(mode="python", round_trip=True) | {field: value}
+            )
 
     changed = expected.model_copy(update={field: value})
     with pytest.raises(
