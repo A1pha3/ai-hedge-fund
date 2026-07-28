@@ -341,6 +341,8 @@ def _expected_versions(api, **overrides: object):
         "stage_loss_expected_versions": _stage_loss_expected_versions(api),
         "expected_active_seal_id": None,
         "expected_active_seal_revision": None,
+        "expected_active_seal_logical_key": None,
+        "expected_active_seal_artifact_hash": None,
         "schema_major": 2,
     }
     payload.update(overrides)
@@ -544,6 +546,8 @@ def test_gateway_expected_versions_has_the_exact_full_cas_bundle() -> None:
         "stage_loss_expected_versions",
         "expected_active_seal_id",
         "expected_active_seal_revision",
+        "expected_active_seal_logical_key",
+        "expected_active_seal_artifact_hash",
         "schema_major",
     }
     versions = _expected_versions(api)
@@ -555,29 +559,48 @@ def test_gateway_expected_versions_has_the_exact_full_cas_bundle() -> None:
 
 def test_gateway_expected_versions_pairs_first_or_existing_active_seal() -> None:
     api = _decision_contracts(
+        "DecisionLogicalKey",
         "StageLossExpectedVersion",
         "GatewayExpectedVersions",
     )
 
     first = _expected_versions(api)
+    logical_key = api.DecisionLogicalKey(
+        portfolio_id=PORTFOLIO_ID,
+        signal_session=SIGNAL_SESSION,
+        decision_cycle_id="daily-t1-open-v1",
+    )
     existing = _expected_versions(
         api,
         expected_active_seal_id="seal-001",
         expected_active_seal_revision=2,
+        expected_active_seal_logical_key=logical_key,
+        expected_active_seal_artifact_hash="9" * 64,
     )
-    assert (first.expected_active_seal_id, first.expected_active_seal_revision) == (
+    assert (
+        first.expected_active_seal_id,
+        first.expected_active_seal_revision,
+        first.expected_active_seal_logical_key,
+        first.expected_active_seal_artifact_hash,
+    ) == (
+        None,
+        None,
         None,
         None,
     )
     assert (
         existing.expected_active_seal_id,
         existing.expected_active_seal_revision,
-    ) == ("seal-001", 2)
+        existing.expected_active_seal_logical_key,
+        existing.expected_active_seal_artifact_hash,
+    ) == ("seal-001", 2, logical_key, "9" * 64)
     for drift in (
         {"expected_active_seal_id": "seal-001"},
         {"expected_active_seal_revision": 1},
+        {"expected_active_seal_logical_key": logical_key},
+        {"expected_active_seal_artifact_hash": "9" * 64},
     ):
-        with pytest.raises(ValidationError, match="active seal|all-or-none|pair"):
+        with pytest.raises(ValidationError, match="active seal|all-or-none|tuple"):
             _expected_versions(api, **drift)
 
 

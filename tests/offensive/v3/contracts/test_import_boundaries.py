@@ -483,23 +483,26 @@ def test_final_top_level_omits_revision1_decision_and_seal_apis() -> None:
         "DecisionInput",
         "DecisionSeal",
         "DecisionSealBinding",
-        "ExecutionPermit",
         "PublishDecisionCommand",
         "SealedOrderLine",
         "SealWriterPort",
-        "ShadowDecision",
     }
+    final_replacements = {"ExecutionPermit", "ShadowDecision"}
     assert obsolete.isdisjoint(contracts.__all__)
+    assert final_replacements <= set(contracts.__all__)
     assert not hasattr(contracts, "CapitalGatewayCommandPort")
 
     revision1 = importlib.import_module(
         "src.screening.offensive.v3.contracts.revision1"
     )
-    assert obsolete <= set(revision1.__all__)
-    for name in obsolete:
+    revision1_names = obsolete | final_replacements
+    assert revision1_names <= set(revision1.__all__)
+    for name in revision1_names:
         assert getattr(revision1, name).__module__.startswith(
             "src.screening.offensive.v3.contracts"
         )
+    for name in final_replacements:
+        assert getattr(contracts, name) is not getattr(revision1, name)
 
 
 def test_final_proposal_models_do_not_reference_revision1_types() -> None:
