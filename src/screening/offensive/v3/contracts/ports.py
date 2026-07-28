@@ -7,7 +7,6 @@ from typing import Protocol, runtime_checkable
 
 from .authorization import CapitalAuthorizationEnvelope
 from .capital import CapitalSnapshot
-from .decision import DecisionSeal, PublishDecisionCommand
 from .evidence import SnapshotEvidence
 from .trust import Capability, SignedEnvelope, VerifiedIssuer
 
@@ -25,11 +24,6 @@ class EvidenceQueryPort(Protocol):
 
 
 @runtime_checkable
-class SealWriterPort(Protocol):
-    def publish(self, command: PublishDecisionCommand) -> DecisionSeal: ...
-
-
-@runtime_checkable
 class CapabilityVerifier(Protocol):
     def verify(
         self,
@@ -44,5 +38,4 @@ __all__ = [
     "CapitalViewPort",
     "CapabilityVerifier",
     "EvidenceQueryPort",
-    "SealWriterPort",
 ]
