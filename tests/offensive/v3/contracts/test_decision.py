@@ -1,464 +1,892 @@
-"""Contract tests for plan evidence, decisions, seals, and permits."""
+"""Revision 2 contracts for a complete, entry-only portfolio proposal."""
 
-from datetime import date, datetime, timedelta, timezone
+from __future__ import annotations
+
+from copy import deepcopy
+from datetime import date, datetime, timezone
 from decimal import Decimal
-import subprocess
-import sys
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
 
 UTC = timezone.utc
-HASH = "c" * 64
+SIGNAL_SESSION = date(2026, 7, 17)
+TARGET_ENTRY_SESSION = date(2026, 7, 20)
+DECISION_CUTOFF = datetime(2026, 7, 19, 8, 2, tzinfo=UTC)
+PROPOSAL_CREATED_AT = datetime(2026, 7, 19, 8, 4, tzinfo=UTC)
+
+POLICY_HASH = "d" * 64
+TRUST_HASH = "b" * 64
+ACCOUNT_FINGERPRINT = "c" * 64
+EVIDENCE_ROOT = "e" * 64
+ENTRY_FENCE_HASH = "f" * 64
+PLAN_PAYLOAD_HASH_1 = "1" * 64
+PLAN_PAYLOAD_HASH_2 = "2" * 64
+
+PORTFOLIO_ID = "portfolio-v3"
+BROKER_ACCOUNT_ID = "broker-account-001"
+AUTHORIZATION_ID = "authorization-001"
+AUTHORIZATION_VERSION = 8
+PRODUCER = "daily-action.btst"
+FAMILY_ID = "btst-family"
+LINEAGE_ID = "lineage-btst"
+PROGRAM_ID = "program-btst"
+STAGE_ID = "stage-broker-2pct"
+STAGE_MANIFEST_HASH = "3" * 64
+GRANT_ID = "grant-btst-2pct"
+GRANT_CERTIFICATE_HASH = "4" * 64
+STAGE_LOSS_BUDGET_ID = "stage-loss-001"
+STAGE_LOSS_VERSION = 7
 
 
-def _contracts():
-    try:
-        from src.screening.offensive.v3.contracts.decision import (
-            DecisionSeal,
-            DecisionLogicalKey,
-            ExecutionPermit,
-            PlanEvidence,
-            SealedOrderLine,
-            ShadowDecision,
+def _decision_contracts(*required_names: str) -> SimpleNamespace:
+    from src.screening.offensive.v3.contracts import decision
+
+    missing = [name for name in required_names if not hasattr(decision, name)]
+    if missing:
+        pytest.fail(
+            "missing final Task 3B decision API(s): " + ", ".join(missing),
+            pytrace=False,
         )
-    except ModuleNotFoundError:
-        pytest.fail("decision contracts are not implemented", pytrace=False)
-    return (
-        PlanEvidence,
-        ShadowDecision,
-        DecisionSeal,
-        ExecutionPermit,
-        DecisionLogicalKey,
-        SealedOrderLine,
+    return SimpleNamespace(
+        module=decision,
+        **{name: getattr(decision, name) for name in required_names},
     )
 
 
-def _envelope_fields(**overrides):
+def _authorization_envelope():
+    from src.screening.offensive.v3.contracts.authorization import (
+        CapitalAuthorizationEnvelope,
+    )
+    from tests.offensive.v3.contracts.test_authorization import _envelope, _grant
+
+    grant = _grant(
+        grant_id=GRANT_ID,
+        grant_certificate_hash=GRANT_CERTIFICATE_HASH,
+        subject_producer=PRODUCER,
+        family_id=FAMILY_ID,
+        economic_lineage_id=LINEAGE_ID,
+        research_program_id=PROGRAM_ID,
+        behavior_fingerprint="5" * 64,
+        execution_version="t1-open-t10-open-v1",
+        cost_version="broker-cost-v1",
+        stage_id=STAGE_ID,
+        stage_manifest_hash=STAGE_MANIFEST_HASH,
+        stage_loss_budget_id=STAGE_LOSS_BUDGET_ID,
+        stage_loss_budget_cents=100_000,
+        stage_loss_version=STAGE_LOSS_VERSION,
+    )
+    payload = _envelope(
+        authorization_id=AUTHORIZATION_ID,
+        authorization_version=AUTHORIZATION_VERSION,
+        portfolio_id=PORTFOLIO_ID,
+        broker_account_id=BROKER_ACCOUNT_ID,
+        broker_account_fingerprint=ACCOUNT_FINGERPRINT,
+        policy_activation_hash=POLICY_HASH,
+        trust_bundle_hash=TRUST_HASH,
+        registry_epoch=7,
+        policy_epoch=4,
+        authority_epoch=5,
+        risk_epoch=6,
+        research_program_ids=(PROGRAM_ID,),
+        baseline_portfolio_policy_fingerprint="6" * 64,
+        target_portfolio_policy_fingerprint="7" * 64,
+        lineage_grants=(grant,),
+        evidence_as_of=datetime(2026, 7, 19, 7, 55, tzinfo=UTC),
+        evidence_set_merkle_root=EVIDENCE_ROOT,
+        issued_at=datetime(2026, 7, 19, 7, 59, tzinfo=UTC),
+        expires_at=datetime(2026, 7, 19, 8, 20, tzinfo=UTC),
+        activation_capital_snapshot_id="activation-capital-001",
+        activation_capital_snapshot_hash="8" * 64,
+        program_loss_budget_bindings=(
+            {
+                "research_program_id": PROGRAM_ID,
+                "budget_id": "program-loss-001",
+                "budget_cents": 200_000,
+                "consumed_cents": 10_000,
+                "version": 7,
+                "schema_major": 2,
+            },
+        ),
+    )
+    return CapitalAuthorizationEnvelope.model_validate(payload)
+
+
+def _authorization_status(envelope=None):
+    from src.screening.offensive.v3.contracts.governance import (
+        AuthorizationLifecycle,
+        AuthorizationStatus,
+    )
+    from tests.offensive.v3.contracts.test_governance_remediation_b import (
+        _authorization_status as _status_payload,
+    )
+
+    envelope = envelope or _authorization_envelope()
+    payload = _status_payload(
+        portfolio_id=PORTFOLIO_ID,
+        broker_account_id=BROKER_ACCOUNT_ID,
+        broker_account_fingerprint=ACCOUNT_FINGERPRINT,
+        mode=envelope.mode,
+        authorization_id=AUTHORIZATION_ID,
+        authorization_version=AUTHORIZATION_VERSION,
+        authorization_envelope_hash=envelope.artifact_hash(),
+        evidence_set_merkle_root=EVIDENCE_ROOT,
+        authorization_issued_at=envelope.issued_at,
+        authorization_expires_at=envelope.expires_at,
+        policy_activation_hash=POLICY_HASH,
+        trust_bundle_hash=TRUST_HASH,
+        registry_epoch=7,
+        policy_epoch=4,
+        authority_epoch=5,
+        risk_epoch=6,
+        status_version=3,
+        status=AuthorizationLifecycle.ACTIVE,
+        entry_fence_version=4,
+        activated_at=datetime(2026, 7, 19, 8, 0, tzinfo=UTC),
+        status_effective_at=datetime(2026, 7, 19, 8, 0, tzinfo=UTC),
+        status_reason=None,
+        status_cause_hash=None,
+        as_of=datetime(2026, 7, 19, 8, 3, tzinfo=UTC),
+    )
+    return AuthorizationStatus.model_validate(payload)
+
+
+def _capital_risk_snapshot():
+    from src.screening.offensive.v3.contracts import capital
+    from tests.offensive.v3.contracts.test_capital import (
+        _exposure,
+        _risk_snapshot_payload,
+    )
+
+    exposures = tuple(
+        _exposure(
+            capital,
+            scope,
+            unattributed_risk_cents=0,
+            total_gross_cents=480_000,
+        )
+        for scope in capital.ExposureScope
+    )
+    payload = _risk_snapshot_payload(
+        capital,
+        unattributed_risk_cents=0,
+        exposures=exposures,
+        total_gross_exposure_cents=480_000,
+        reconciliation_latch=capital.ReconciliationLatchState.CLEAR,
+    )
+    return capital.CapitalRiskSnapshot.model_validate(payload)
+
+
+def _plan_evidence(*, suffix: str = "1"):
     from src.screening.offensive.v3.contracts.base import (
         EvidenceScope,
         ExecutionMode,
     )
+    from src.screening.offensive.v3.contracts.decision import PlanEvidence
 
-    payload = {
-        "evidence_id": "decision-evidence-001",
-        "subject_scope": EvidenceScope.STRATEGY_LINEAGE,
-        "subject_producer": "btst",
-        "family_id": "btst.limit-up-breakout",
-        "strategy_semver": "3.0.0",
-        "behavior_fingerprint": HASH,
-        "policy_epoch": 3,
-        "execution_version": "t1-open-t10-open.v1",
-        "cost_version": "cn-a-share-costs.v1",
-        "effective_at": datetime(2026, 7, 19, 8, 5, tzinfo=UTC),
-        "observed_at": datetime(2026, 7, 19, 8, 6, tzinfo=UTC),
-        "available_at": datetime(2026, 7, 19, 8, 7, tzinfo=UTC),
-        "mode": ExecutionMode.BROKER_CONFIRMED,
-        "source_authority": "growth-kernel",
-        "payload_content_hash": HASH,
-        "schema_major": 1,
-    }
-    payload.update(overrides)
-    return payload
-
-
-def _plan(**overrides):
-    payload = _envelope_fields(evidence_id="plan-001") | {
-        "evidence_kind": "plan",
-        "portfolio_id": "paper-v3",
-        "signal_session": date(2026, 7, 19),
-        "economic_lineage_id": "btst-economic-lineage",
-        "snapshot_id": "snapshot-001",
-        "raw_target_fraction": Decimal("0.05"),
-        "created_at": datetime(2026, 7, 19, 8, 10, tzinfo=UTC),
-    }
-    payload.update(overrides)
-    return payload
-
-
-def _order_line(**overrides):
-    payload = {
-        "order_line_id": "line-600000-entry",
-        "security_id": "600000.SH",
-        "order_action": "entry",
-        "entry_session": date(2026, 7, 20),
-        "exit_session_ordinal": 10,
-        "exit_policy_version": "t10-open.v1",
-        "sealed_quantity": 1000,
-        "lot_rule_version": "cn-board-lot.v1",
-        "order_type": "limit",
-        "limit_price": Decimal("10.50"),
-        "worst_case_price": Decimal("10.50"),
-        "price_boundary_version": "exchange-limit.v1",
-        "time_in_force": "opening-auction",
-        "worst_case_fee_reserve": Decimal("25.00"),
-        "worst_case_cash_reserve": Decimal("10525.00"),
-    }
-    payload.update(overrides)
-    return payload
-
-
-def _publish_command(*, plan_overrides=None, decision_overrides=None):
-    from src.screening.offensive.v3.contracts.capital import CapitalSnapshot
-    from src.screening.offensive.v3.contracts.decision import (
-        CapitalAuthorizationBinding,
-        DecisionInput,
-        DecisionLogicalKey,
-        PlanEvidence,
-        PublishDecisionCommand,
-        SealedOrderLine,
-    )
-
-    plan = PlanEvidence.model_validate(_plan(**(plan_overrides or {})))
-    decision_values = {
-        "plan_evidence": plan,
-        "capital_snapshot": CapitalSnapshot(
-            capital_snapshot_id="capital-019",
-            portfolio_id="paper-v3",
-            authority_epoch=3,
-            risk_epoch=8,
-            capital_version=19,
-            stream_version=29,
-            mode=plan.mode,
-            as_of=datetime(2026, 7, 19, 8, 0, tzinfo=UTC),
-            cash=Decimal("50000"),
-            nav=Decimal("100000"),
-            gross_exposure=Decimal("0"),
-            high_water_mark=Decimal("100000"),
-            positions=(),
-            payload_content_hash=HASH,
-        ),
-        "target_portfolio_policy_fingerprint": "1" * 64,
-        "evidence_set_merkle_root": HASH,
-        "authority_epoch": 3,
-        "risk_epoch": 8,
-        "order_lines": (SealedOrderLine.model_validate(_order_line()),),
-        "created_at": datetime(2026, 7, 19, 8, 10, tzinfo=UTC),
-        "deadline": datetime(2026, 7, 19, 8, 20, tzinfo=UTC),
-        "idempotency_key": DecisionLogicalKey(
-            portfolio_id="paper-v3",
-            signal_session=date(2026, 7, 19),
-            authority_epoch=3,
-        ),
-    }
-    decision_values.update(decision_overrides or {})
-    return PublishDecisionCommand(
-        decision=DecisionInput(**decision_values),
-        authorization=CapitalAuthorizationBinding(
-            capital_authorization_id="auth-001",
-            authorization_version=4,
-            evidence_set_merkle_root=HASH,
-            economic_lineage_id="btst-economic-lineage",
-            family_id="btst.limit-up-breakout",
-            mode=plan.mode,
-            target_portfolio_policy_fingerprint="1" * 64,
-        ),
+    payload_hash = PLAN_PAYLOAD_HASH_1 if suffix == "1" else PLAN_PAYLOAD_HASH_2
+    return PlanEvidence(
+        evidence_id=f"plan-evidence-{suffix}",
+        evidence_kind="plan",
+        subject_scope=EvidenceScope.STRATEGY_LINEAGE,
+        subject_producer=PRODUCER,
+        family_id=FAMILY_ID,
+        strategy_semver="3.0.0",
+        behavior_fingerprint="5" * 64,
+        policy_epoch=4,
+        execution_version="t1-open-t10-open-v1",
+        cost_version="broker-cost-v1",
+        effective_at=datetime(2026, 7, 17, 7, 0, tzinfo=UTC),
+        observed_at=datetime(2026, 7, 19, 7, 56, tzinfo=UTC),
+        available_at=datetime(2026, 7, 19, 7, 58, tzinfo=UTC),
+        mode=ExecutionMode.BROKER_CONFIRMED,
+        source_authority="evidence-store",
+        payload_content_hash=payload_hash,
+        schema_major=1,
+        portfolio_id=PORTFOLIO_ID,
+        signal_session=SIGNAL_SESSION,
+        economic_lineage_id=LINEAGE_ID,
+        snapshot_id="pit-snapshot-20260717",
+        raw_target_fraction=Decimal("0.01"),
+        created_at=datetime(2026, 7, 19, 7, 58, tzinfo=UTC),
     )
 
 
-def _seal(command=None, **overrides):
-    from src.screening.offensive.v3.contracts.decision import DecisionSeal
-
-    payload = DecisionSeal.from_command(
-        command or _publish_command(),
-        evidence_id="seal-001-r1",
-        seal_id="seal-001-r1",
-        seal_revision=1,
-        source_authority="growth-kernel",
-        payload_content_hash=HASH,
-    ).model_dump(mode="python", round_trip=True)
-    payload.update(overrides)
-    return payload
-
-
-def _shadow(**overrides):
-    payload = _seal() | {
-        "decision_kind": "shadow_decision",
-        "shadow_decision_id": "shadow-001",
-        "gateway_acceptable": False,
-    }
-    payload.pop("seal_id")
-    payload.pop("active_seal_id")
-    payload.pop("seal_revision")
-    payload.pop("capital_authorization_id")
-    payload.pop("authorization_version")
-    payload.pop("command_binding")
-    payload.update(overrides)
-    return payload
-
-
-def _permit(**overrides):
+def _line_payload(
+    *,
+    suffix: str = "1",
+    security_id: str = "600000.SH",
+    **overrides: object,
+) -> dict[str, object]:
     from src.screening.offensive.v3.contracts.base import ExecutionMode
 
-    payload = {
-        "permit_id": "permit-001",
-        "active_seal_id": "seal-001-r1",
-        "seal_revision": 1,
-        "order_line_id": "line-600000-entry",
-        "capital_authorization_id": "auth-001",
-        "authorization_version": 4,
-        "evidence_set_merkle_root": HASH,
+    plan = _plan_evidence(suffix=suffix)
+    if suffix == "1":
+        sealed_quantity_units = 100
+        limit_price_cents = 1_020
+        worst_case_price_cents = 1_050
+        worst_case_fee_reserve_cents = 50
+    else:
+        sealed_quantity_units = 200
+        limit_price_cents = 780
+        worst_case_price_cents = 800
+        worst_case_fee_reserve_cents = 75
+    payload: dict[str, object] = {
+        "order_line_id": f"line-{suffix}",
+        "security_id": security_id,
+        "order_action": "ENTRY",
+        "producer_namespace": PRODUCER,
+        "family_id": FAMILY_ID,
+        "economic_lineage_id": LINEAGE_ID,
+        "research_program_id": PROGRAM_ID,
+        "stage_id": STAGE_ID,
+        "stage_manifest_hash": STAGE_MANIFEST_HASH,
+        "grant_id": GRANT_ID,
+        "grant_certificate_hash": GRANT_CERTIFICATE_HASH,
+        "authorization_id": AUTHORIZATION_ID,
+        "authorization_version": AUTHORIZATION_VERSION,
+        "plan_evidence": plan,
+        "plan_evidence_artifact_hash": plan.content_hash(),
+        "plan_payload_content_hash": plan.payload_content_hash,
         "mode": ExecutionMode.BROKER_CONFIRMED,
-        "sealed_mode": ExecutionMode.BROKER_CONFIRMED,
-        "capital_authorization_mode": ExecutionMode.BROKER_CONFIRMED,
-        "permitted_quantity": 700,
-        "sealed_quantity": 1000,
-        "capital_version": 19,
-        "risk_snapshot_id": "risk-019",
-        "fencing_epoch": 5,
-        "permit_nonce": "nonce-001",
-        "deadline": datetime(2026, 7, 19, 8, 25, tzinfo=UTC),
+        "target_entry_session": TARGET_ENTRY_SESSION,
+        "exit_session_ordinal": 10,
+        "sealed_quantity_units": sealed_quantity_units,
+        "lot_size_units": 100,
+        "lot_rule_version": "cn-a-share-lot-v1",
+        "order_type": "LIMIT",
+        "limit_price_cents": limit_price_cents,
+        "worst_case_price_cents": worst_case_price_cents,
+        "price_boundary_version": "cn-price-limit-v1",
+        "time_in_force": "OPEN_AUCTION",
+        "worst_case_fee_reserve_cents": worst_case_fee_reserve_cents,
+        "worst_case_cash_reserve_cents": (
+            worst_case_price_cents * sealed_quantity_units
+            + worst_case_fee_reserve_cents
+        ),
     }
     payload.update(overrides)
     return payload
 
 
-def test_plan_evidence_is_immutable_raw_target_not_an_authorization() -> None:
-    plan, *_ = _contracts()
-    item = plan.model_validate(_plan())
-    assert item.raw_target_fraction == Decimal("0.05")
-    assert item.economic_lineage_id == "btst-economic-lineage"
-    assert {
-        "evidence_id",
-        "subject_scope",
-        "policy_epoch",
-        "execution_version",
-        "cost_version",
-        "effective_at",
-        "observed_at",
-        "available_at",
-        "source_authority",
-        "schema_major",
-    } <= set(plan.model_fields)
-    with pytest.raises(ValidationError, match="extra_forbidden"):
-        plan.model_validate(_plan(execution_authorized=True))
-    with pytest.raises(ValidationError, match="frozen_instance"):
-        item.raw_target_fraction = Decimal("0.10")
+def _order_lines(api) -> tuple[object, object]:
+    return (
+        api.PortfolioOrderLine.model_validate(_line_payload()),
+        api.PortfolioOrderLine.model_validate(
+            _line_payload(suffix="2", security_id="600001.SH")
+        ),
+    )
 
 
-def test_plan_identity_requires_strategy_scope_and_distinct_family_lineage() -> None:
-    from src.screening.offensive.v3.contracts.base import EvidenceScope
+def _stage_loss_expected_versions(api) -> tuple[object, ...]:
+    from src.screening.offensive.v3.contracts.capital import StageLossLatchState
 
-    plan, *_ = _contracts()
-    with pytest.raises(ValidationError, match="strategy-lineage"):
-        plan.model_validate(
-            _plan(subject_scope=EvidenceScope.GLOBAL, family_id=None)
-        )
-    with pytest.raises(ValidationError, match="family.*lineage|lineage.*family"):
-        plan.model_validate(_plan(family_id="btst-economic-lineage"))
+    return (
+        api.StageLossExpectedVersion(
+            stage_id=STAGE_ID,
+            stage_loss_budget_id=STAGE_LOSS_BUDGET_ID,
+            stage_loss_version=STAGE_LOSS_VERSION,
+            stage_loss_latch=StageLossLatchState.CLEAR,
+        ),
+    )
 
 
-def test_decision_seal_has_exact_execution_and_authority_bindings() -> None:
-    _, _, seal, _, _, _ = _contracts()
-    item = seal.model_validate(_seal())
+def _expected_versions(api, **overrides: object):
+    envelope = _authorization_envelope()
+    status = _authorization_status(envelope)
+    risk = _capital_risk_snapshot()
+    payload: dict[str, object] = {
+        "policy_activation_hash": POLICY_HASH,
+        "trust_bundle_hash": TRUST_HASH,
+        "registry_epoch": 7,
+        "policy_epoch": 4,
+        "authority_epoch": 5,
+        "risk_epoch": 6,
+        "authorization_id": AUTHORIZATION_ID,
+        "authorization_version": AUTHORIZATION_VERSION,
+        "authorization_envelope_hash": envelope.artifact_hash(),
+        "authorization_status_version": status.status_version,
+        "authorization_status_hash": status.artifact_hash(),
+        "evidence_set_merkle_root": EVIDENCE_ROOT,
+        "entry_fence_hash": ENTRY_FENCE_HASH,
+        "entry_fence_version": status.entry_fence_version,
+        "risk_snapshot_id": risk.risk_snapshot_id,
+        "risk_snapshot_payload_hash": risk.payload_content_hash,
+        "capital_version": risk.capital_version,
+        "capital_stream_version": 29,
+        "writer_fencing_epoch": risk.writer_fencing_epoch,
+        "stage_loss_expected_versions": _stage_loss_expected_versions(api),
+        "expected_active_seal_id": None,
+        "expected_active_seal_revision": None,
+        "schema_major": 2,
+    }
+    payload.update(overrides)
+    return api.GatewayExpectedVersions.model_validate(payload)
 
-    assert set(seal.model_fields) == {
-        "evidence_id",
-        "subject_scope",
-        "decision_kind",
-        "seal_id",
-        "active_seal_id",
-        "seal_revision",
+
+def _decision_payload(api, **overrides: object) -> dict[str, object]:
+    from src.screening.offensive.v3.contracts.base import ExecutionMode
+
+    envelope = _authorization_envelope()
+    status = _authorization_status(envelope)
+    risk = _capital_risk_snapshot()
+    lines = _order_lines(api)
+    payload: dict[str, object] = {
+        "logical_key": api.DecisionLogicalKey(
+            portfolio_id=PORTFOLIO_ID,
+            signal_session=SIGNAL_SESSION,
+            decision_cycle_id="daily-t1-open-v1",
+        ),
+        "portfolio_id": PORTFOLIO_ID,
+        "broker_account_id": BROKER_ACCOUNT_ID,
+        "broker_account_fingerprint": ACCOUNT_FINGERPRINT,
+        "base_currency": "CNY",
+        "mode": ExecutionMode.BROKER_CONFIRMED,
+        "target_entry_session": TARGET_ENTRY_SESSION,
+        "target_portfolio_policy_fingerprint": (
+            envelope.target_portfolio_policy_fingerprint
+        ),
+        "policy_activation_hash": POLICY_HASH,
+        "trust_bundle_hash": TRUST_HASH,
+        "registry_epoch": 7,
+        "policy_epoch": 4,
+        "authority_epoch": 5,
+        "risk_epoch": 6,
+        "capital_authorization": envelope,
+        "capital_authorization_artifact_hash": envelope.artifact_hash(),
+        "authorization_status": status,
+        "authorization_status_artifact_hash": status.artifact_hash(),
+        "evidence_set_merkle_root": EVIDENCE_ROOT,
+        "capital_risk_snapshot": risk,
+        "gateway_expected_versions": _expected_versions(api),
+        "order_lines": lines,
+        "total_worst_case_cash_reserve_cents": sum(
+            line.worst_case_cash_reserve_cents for line in lines
+        ),
+        "decision_cutoff": DECISION_CUTOFF,
+        "proposal_created_at": PROPOSAL_CREATED_AT,
+        "schema_major": 2,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _decision(api):
+    return api.PortfolioDecision.model_validate(_decision_payload(api))
+
+
+def test_task2_authorization_and_task3a_risk_builders_are_valid() -> None:
+    from src.screening.offensive.v3.contracts.capital import (
+        ReconciliationLatchState,
+    )
+    from src.screening.offensive.v3.contracts.governance import (
+        AuthorizationLifecycle,
+    )
+
+    envelope = _authorization_envelope()
+    status = _authorization_status(envelope)
+    risk = _capital_risk_snapshot()
+
+    assert envelope.lineage_grants[0].stage_id == STAGE_ID
+    assert status.status is AuthorizationLifecycle.ACTIVE
+    assert status.authorization_envelope_hash == envelope.artifact_hash()
+    assert risk.reconciliation_latch is ReconciliationLatchState.CLEAR
+    assert risk.authorization_id == envelope.authorization_id
+    assert risk.authorization_version == envelope.authorization_version
+
+
+def test_decision_logical_key_is_the_exact_economic_idempotency_key() -> None:
+    from src.screening.offensive.v3.contracts.decision import DecisionLogicalKey
+
+    assert set(DecisionLogicalKey.model_fields) == {
         "portfolio_id",
         "signal_session",
-        "economic_lineage_id",
-        "subject_producer",
+        "decision_cycle_id",
+    }
+    key = DecisionLogicalKey(
+        portfolio_id=PORTFOLIO_ID,
+        signal_session=SIGNAL_SESSION,
+        decision_cycle_id="daily-t1-open-v1",
+    )
+    assert key.model_dump() == {
+        "portfolio_id": PORTFOLIO_ID,
+        "signal_session": SIGNAL_SESSION,
+        "decision_cycle_id": "daily-t1-open-v1",
+    }
+
+
+def test_decision_logical_key_rejects_authority_epoch_laundering() -> None:
+    from src.screening.offensive.v3.contracts.decision import DecisionLogicalKey
+
+    with pytest.raises(ValidationError):
+        DecisionLogicalKey.model_validate(
+            {
+                "portfolio_id": PORTFOLIO_ID,
+                "signal_session": SIGNAL_SESSION,
+                "decision_cycle_id": "daily-t1-open-v1",
+                "authority_epoch": 5,
+            }
+        )
+
+
+def test_stage_loss_expected_version_has_exact_public_fields() -> None:
+    api = _decision_contracts("StageLossExpectedVersion")
+
+    assert set(api.StageLossExpectedVersion.model_fields) == {
+        "stage_id",
+        "stage_loss_budget_id",
+        "stage_loss_version",
+        "stage_loss_latch",
+    }
+
+
+def test_portfolio_order_line_has_exact_entry_only_public_fields() -> None:
+    api = _decision_contracts("PortfolioOrderLine")
+
+    assert set(api.PortfolioOrderLine.model_fields) == {
+        "order_line_id",
+        "security_id",
+        "order_action",
+        "producer_namespace",
         "family_id",
-        "strategy_semver",
-        "behavior_fingerprint",
-        "policy_epoch",
-        "execution_version",
-        "cost_version",
-        "effective_at",
-        "observed_at",
-        "available_at",
-        "snapshot_id",
-        "mode",
-        "source_authority",
-        "schema_major",
-        "capital_authorization_id",
+        "economic_lineage_id",
+        "research_program_id",
+        "stage_id",
+        "stage_manifest_hash",
+        "grant_id",
+        "grant_certificate_hash",
+        "authorization_id",
         "authorization_version",
-        "command_binding",
-        "evidence_set_merkle_root",
+        "plan_evidence",
+        "plan_evidence_artifact_hash",
+        "plan_payload_content_hash",
+        "mode",
+        "target_entry_session",
+        "exit_session_ordinal",
+        "sealed_quantity_units",
+        "lot_size_units",
+        "lot_rule_version",
+        "order_type",
+        "limit_price_cents",
+        "worst_case_price_cents",
+        "price_boundary_version",
+        "time_in_force",
+        "worst_case_fee_reserve_cents",
+        "worst_case_cash_reserve_cents",
+    }
+    line = api.PortfolioOrderLine.model_validate(_line_payload())
+    assert line.order_action == "ENTRY"
+    assert line.exit_session_ordinal == 10
+    assert line.sealed_quantity_units == 100
+    assert line.worst_case_cash_reserve_cents == 105_050
+
+
+def test_gateway_expected_versions_has_the_exact_full_cas_bundle() -> None:
+    api = _decision_contracts(
+        "StageLossExpectedVersion",
+        "GatewayExpectedVersions",
+    )
+
+    assert set(api.GatewayExpectedVersions.model_fields) == {
+        "policy_activation_hash",
+        "trust_bundle_hash",
+        "registry_epoch",
+        "policy_epoch",
         "authority_epoch",
         "risk_epoch",
-        "order_lines",
-        "created_at",
-        "deadline",
-        "idempotency_key",
-        "payload_content_hash",
+        "authorization_id",
+        "authorization_version",
+        "authorization_envelope_hash",
+        "authorization_status_version",
+        "authorization_status_hash",
+        "evidence_set_merkle_root",
+        "entry_fence_hash",
+        "entry_fence_version",
+        "risk_snapshot_id",
+        "risk_snapshot_payload_hash",
+        "capital_version",
+        "capital_stream_version",
+        "writer_fencing_epoch",
+        "stage_loss_expected_versions",
+        "expected_active_seal_id",
+        "expected_active_seal_revision",
+        "schema_major",
     }
-    assert item.active_seal_id == item.seal_id
-    assert item.order_lines[0].security_id == "600000.SH"
-    assert item.order_lines[0].exit_session_ordinal == 10
+    versions = _expected_versions(api)
+    assert versions.expected_active_seal_id is None
+    assert versions.expected_active_seal_revision is None
+    assert versions.capital_version == 10
+    assert versions.capital_stream_version == 29
 
 
-def test_shadow_and_seal_have_non_interchangeable_discriminators() -> None:
-    _, shadow, seal, _, _, _ = _contracts()
-    shadow_payload = _shadow()
-    seal_payload = _seal()
+def test_gateway_expected_versions_pairs_first_or_existing_active_seal() -> None:
+    api = _decision_contracts(
+        "StageLossExpectedVersion",
+        "GatewayExpectedVersions",
+    )
 
-    assert shadow.model_validate(shadow_payload).gateway_acceptable is False
-    with pytest.raises(ValidationError):
-        seal.model_validate(shadow_payload)
-    with pytest.raises(ValidationError):
-        shadow.model_validate(seal_payload)
+    first = _expected_versions(api)
+    existing = _expected_versions(
+        api,
+        expected_active_seal_id="seal-001",
+        expected_active_seal_revision=2,
+    )
+    assert (first.expected_active_seal_id, first.expected_active_seal_revision) == (
+        None,
+        None,
+    )
+    assert (
+        existing.expected_active_seal_id,
+        existing.expected_active_seal_revision,
+    ) == ("seal-001", 2)
+    for drift in (
+        {"expected_active_seal_id": "seal-001"},
+        {"expected_active_seal_revision": 1},
+    ):
+        with pytest.raises(ValidationError, match="active seal|all-or-none|pair"):
+            _expected_versions(api, **drift)
 
-    with pytest.raises(ValidationError, match="cash reserve"):
-        shadow.model_validate(
-            _shadow(
-                order_lines=(
-                    _order_line(worst_case_cash_reserve=Decimal("0")),
+
+def test_gateway_expected_versions_requires_unique_canonical_stage_versions() -> None:
+    from src.screening.offensive.v3.contracts.capital import StageLossLatchState
+
+    api = _decision_contracts(
+        "StageLossExpectedVersion",
+        "GatewayExpectedVersions",
+    )
+    stage_a = api.StageLossExpectedVersion(
+        stage_id="stage-a",
+        stage_loss_budget_id="budget-a",
+        stage_loss_version=1,
+        stage_loss_latch=StageLossLatchState.CLEAR,
+    )
+    stage_b = api.StageLossExpectedVersion(
+        stage_id="stage-b",
+        stage_loss_budget_id="budget-b",
+        stage_loss_version=2,
+        stage_loss_latch=StageLossLatchState.STAGE_LOSS_HALTED,
+    )
+    base = _expected_versions(api).model_dump(mode="python", round_trip=True)
+
+    legal = api.GatewayExpectedVersions.model_validate(
+        base | {"stage_loss_expected_versions": (stage_a, stage_b)}
+    )
+    assert tuple(item.stage_id for item in legal.stage_loss_expected_versions) == (
+        "stage-a",
+        "stage-b",
+    )
+    for invalid in ((stage_b, stage_a), (stage_a, stage_a)):
+        with pytest.raises(ValidationError, match="stage|canonical|unique"):
+            api.GatewayExpectedVersions.model_validate(
+                base | {"stage_loss_expected_versions": invalid}
+            )
+
+
+def test_portfolio_decision_has_exact_public_fields_and_multiline_reserve() -> None:
+    api = _decision_contracts(
+        "DecisionLogicalKey",
+        "StageLossExpectedVersion",
+        "PortfolioOrderLine",
+        "GatewayExpectedVersions",
+        "PortfolioDecision",
+    )
+
+    assert set(api.PortfolioDecision.model_fields) == {
+        "logical_key",
+        "portfolio_id",
+        "broker_account_id",
+        "broker_account_fingerprint",
+        "base_currency",
+        "mode",
+        "target_entry_session",
+        "target_portfolio_policy_fingerprint",
+        "policy_activation_hash",
+        "trust_bundle_hash",
+        "registry_epoch",
+        "policy_epoch",
+        "authority_epoch",
+        "risk_epoch",
+        "capital_authorization",
+        "capital_authorization_artifact_hash",
+        "authorization_status",
+        "authorization_status_artifact_hash",
+        "evidence_set_merkle_root",
+        "capital_risk_snapshot",
+        "gateway_expected_versions",
+        "order_lines",
+        "total_worst_case_cash_reserve_cents",
+        "decision_cutoff",
+        "proposal_created_at",
+        "schema_major",
+    }
+    decision = _decision(api)
+    assert len(decision.order_lines) == 2
+    assert decision.total_worst_case_cash_reserve_cents == 265_125
+    assert decision.decision_cutoff < decision.proposal_created_at
+    assert decision.capital_risk_snapshot.as_of <= decision.proposal_created_at
+    assert decision.proposal_created_at < decision.capital_risk_snapshot.valid_until
+
+
+@pytest.mark.parametrize(
+    ("field_name", "bad_value"),
+    [
+        ("sealed_quantity_units", True),
+        ("sealed_quantity_units", 100.0),
+        ("sealed_quantity_units", Decimal("100")),
+        ("lot_size_units", False),
+        ("lot_size_units", 100.0),
+        ("lot_size_units", Decimal("100")),
+        ("limit_price_cents", True),
+        ("limit_price_cents", 1_020.0),
+        ("limit_price_cents", Decimal("1020")),
+        ("worst_case_fee_reserve_cents", False),
+        ("worst_case_fee_reserve_cents", 50.0),
+        ("worst_case_cash_reserve_cents", Decimal("105050")),
+    ],
+)
+def test_order_line_rejects_bool_float_and_decimal_integer_laundering(
+    field_name: str,
+    bad_value: object,
+) -> None:
+    api = _decision_contracts("PortfolioOrderLine")
+
+    with pytest.raises(ValidationError, match="integer|native int|valid integer"):
+        api.PortfolioOrderLine.model_validate(_line_payload(**{field_name: bad_value}))
+
+
+def test_order_line_requires_exact_reserve_and_whole_lots() -> None:
+    api = _decision_contracts("PortfolioOrderLine")
+
+    for drift in (
+        {"worst_case_cash_reserve_cents": 105_049},
+        {"worst_case_cash_reserve_cents": 105_051},
+        {"sealed_quantity_units": 150},
+        {"limit_price_cents": 1_051},
+    ):
+        with pytest.raises(ValidationError, match="reserve|lot|price"):
+            api.PortfolioOrderLine.model_validate(_line_payload(**drift))
+
+
+@pytest.mark.parametrize(
+    ("field_name", "bad_value", "match"),
+    [
+        ("broker_account_id", "other-account", "account"),
+        ("mode", "daily_bar_proxy", "mode"),
+        ("policy_activation_hash", "9" * 64, "policy"),
+        ("trust_bundle_hash", "9" * 64, "trust"),
+        ("registry_epoch", 8, "registry"),
+        ("authority_epoch", 8, "authority"),
+        ("risk_epoch", 8, "risk"),
+        ("evidence_set_merkle_root", "9" * 64, "evidence"),
+    ],
+)
+def test_portfolio_decision_rejects_top_level_binding_drift(
+    field_name: str,
+    bad_value: object,
+    match: str,
+) -> None:
+    from src.screening.offensive.v3.contracts.base import ExecutionMode
+
+    api = _decision_contracts(
+        "DecisionLogicalKey",
+        "StageLossExpectedVersion",
+        "PortfolioOrderLine",
+        "GatewayExpectedVersions",
+        "PortfolioDecision",
+    )
+    if field_name == "mode":
+        bad_value = ExecutionMode.DAILY_BAR_PROXY
+    with pytest.raises(ValidationError, match=match):
+        api.PortfolioDecision.model_validate(
+            _decision_payload(api, **{field_name: bad_value})
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "bad_value", "match"),
+    [
+        ("economic_lineage_id", "other-lineage", "lineage"),
+        ("stage_id", "other-stage", "stage"),
+        ("stage_manifest_hash", "9" * 64, "stage"),
+        ("grant_id", "other-grant", "grant"),
+        ("grant_certificate_hash", "9" * 64, "grant"),
+        ("authorization_id", "other-authorization", "authorization"),
+        ("authorization_version", 9, "authorization"),
+        ("plan_evidence_artifact_hash", "9" * 64, "plan evidence"),
+        ("plan_payload_content_hash", "9" * 64, "payload"),
+    ],
+)
+def test_portfolio_decision_rejects_nested_line_provenance_drift(
+    field_name: str,
+    bad_value: object,
+    match: str,
+) -> None:
+    api = _decision_contracts(
+        "DecisionLogicalKey",
+        "StageLossExpectedVersion",
+        "PortfolioOrderLine",
+        "GatewayExpectedVersions",
+        "PortfolioDecision",
+    )
+    raw = _decision_payload(api)
+    line_payloads = [
+        line.model_dump(mode="python", round_trip=True) for line in raw["order_lines"]
+    ]
+    line_payloads[0][field_name] = bad_value
+    raw["order_lines"] = tuple(line_payloads)
+    raw["total_worst_case_cash_reserve_cents"] = sum(
+        line["worst_case_cash_reserve_cents"] for line in line_payloads
+    )
+
+    with pytest.raises(ValidationError, match=match):
+        api.PortfolioDecision.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "bad_value", "match"),
+    [
+        ("authorization_version", 9, "authorization"),
+        ("authorization_status_version", 4, "status"),
+        ("entry_fence_version", 5, "fence"),
+        ("risk_snapshot_id", "risk-snapshot-other", "risk snapshot"),
+        ("capital_version", 11, "capital"),
+        ("writer_fencing_epoch", 10, "fencing"),
+    ],
+)
+def test_portfolio_decision_rejects_nested_gateway_version_drift(
+    field_name: str,
+    bad_value: object,
+    match: str,
+) -> None:
+    api = _decision_contracts(
+        "DecisionLogicalKey",
+        "StageLossExpectedVersion",
+        "PortfolioOrderLine",
+        "GatewayExpectedVersions",
+        "PortfolioDecision",
+    )
+    raw = _decision_payload(api)
+    expected = raw["gateway_expected_versions"].model_dump(
+        mode="python", round_trip=True
+    )
+    expected[field_name] = bad_value
+    raw["gateway_expected_versions"] = expected
+
+    with pytest.raises(ValidationError, match=match):
+        api.PortfolioDecision.model_validate(raw)
+
+
+def test_portfolio_decision_rejects_stage_version_set_drift() -> None:
+    from src.screening.offensive.v3.contracts.capital import StageLossLatchState
+
+    api = _decision_contracts(
+        "DecisionLogicalKey",
+        "StageLossExpectedVersion",
+        "PortfolioOrderLine",
+        "GatewayExpectedVersions",
+        "PortfolioDecision",
+    )
+    raw = _decision_payload(api)
+    expected = raw["gateway_expected_versions"].model_dump(
+        mode="python", round_trip=True
+    )
+    expected["stage_loss_expected_versions"] = (
+        {
+            "stage_id": "other-stage",
+            "stage_loss_budget_id": "other-budget",
+            "stage_loss_version": 1,
+            "stage_loss_latch": StageLossLatchState.CLEAR,
+        },
+    )
+    raw["gateway_expected_versions"] = expected
+
+    with pytest.raises(ValidationError, match="stage"):
+        api.PortfolioDecision.model_validate(raw)
+
+
+def test_portfolio_decision_requires_exact_aggregate_reserve() -> None:
+    api = _decision_contracts(
+        "DecisionLogicalKey",
+        "StageLossExpectedVersion",
+        "PortfolioOrderLine",
+        "GatewayExpectedVersions",
+        "PortfolioDecision",
+    )
+
+    for drift in (265_124, 265_126):
+        with pytest.raises(ValidationError, match="reserve"):
+            api.PortfolioDecision.model_validate(
+                _decision_payload(
+                    api,
+                    total_worst_case_cash_reserve_cents=drift,
                 )
             )
-        )
 
 
-@pytest.mark.parametrize("payload_factory", [_seal, _shadow])
-def test_direct_decision_projection_requires_strategy_lineage_scope(
-    payload_factory,
-) -> None:
-    from src.screening.offensive.v3.contracts.base import EvidenceScope
-
-    _, shadow, seal, _, _, _ = _contracts()
-    model = seal if payload_factory is _seal else shadow
-    with pytest.raises(ValidationError, match="strategy-lineage"):
-        model.model_validate(
-            payload_factory(
-                subject_scope=EvidenceScope.GLOBAL,
-                family_id=None,
-            )
-        )
-
-
-@pytest.mark.parametrize("payload_factory", [_seal, _shadow])
-def test_direct_decision_projection_keeps_family_and_lineage_distinct(
-    payload_factory,
-) -> None:
-    _, shadow, seal, _, _, _ = _contracts()
-    model = seal if payload_factory is _seal else shadow
-    payload = payload_factory(
-        family_id="btst-economic-lineage",
-        economic_lineage_id="btst-economic-lineage",
+def test_portfolio_decision_requires_unique_canonical_order_lines() -> None:
+    api = _decision_contracts(
+        "DecisionLogicalKey",
+        "StageLossExpectedVersion",
+        "PortfolioOrderLine",
+        "GatewayExpectedVersions",
+        "PortfolioDecision",
     )
-    if payload_factory is _seal:
-        payload["command_binding"] = payload["command_binding"] | {
-            "family_id": "btst-economic-lineage"
-        }
-    with pytest.raises(ValidationError, match="family.*lineage|lineage.*family"):
-        model.model_validate(payload)
+    legal = _decision_payload(api)
+    lines = legal["order_lines"]
+    duplicate = deepcopy(legal)
+    duplicate["order_lines"] = (lines[0], lines[0])
+    duplicate["total_worst_case_cash_reserve_cents"] = (
+        lines[0].worst_case_cash_reserve_cents * 2
+    )
+    noncanonical = deepcopy(legal)
+    noncanonical["order_lines"] = tuple(reversed(lines))
+
+    with pytest.raises(ValidationError, match="unique|duplicate"):
+        api.PortfolioDecision.model_validate(duplicate)
+    with pytest.raises(ValidationError, match="canonical|order"):
+        api.PortfolioDecision.model_validate(noncanonical)
 
 
-def test_seal_requires_positive_integer_quantity_reserves_and_ordered_deadline() -> None:
+def test_portfolio_decision_rejects_research_execution() -> None:
     from src.screening.offensive.v3.contracts.base import ExecutionMode
 
-    _, _, seal, _, logical_key, _ = _contracts()
-    for override in (
-        {"order_lines": (_order_line(sealed_quantity=0),)},
-        {"order_lines": (_order_line(sealed_quantity=True),)},
-        {
-            "order_lines": (
-                _order_line(worst_case_fee_reserve=Decimal("-0.01")),
-            )
-        },
-        {
-            "order_lines": (
-                _order_line(worst_case_cash_reserve=Decimal("-0.01")),
-            )
-        },
-        {"deadline": datetime(2026, 7, 19, 8, 9, tzinfo=UTC)},
-        {"active_seal_id": "another-seal"},
-        {"mode": ExecutionMode.RESEARCH_RECONSTRUCTION},
-        {
-            "idempotency_key": logical_key(
-                portfolio_id="another-portfolio",
-                signal_session=date(2026, 7, 19),
-                authority_epoch=3,
-            )
-        },
-    ):
-        with pytest.raises(ValidationError):
-            seal.model_validate(_seal(**override))
+    api = _decision_contracts(
+        "DecisionLogicalKey",
+        "StageLossExpectedVersion",
+        "PortfolioOrderLine",
+        "GatewayExpectedVersions",
+        "PortfolioDecision",
+    )
 
-
-@pytest.mark.parametrize("payload_factory", [_seal, _shadow])
-def test_decision_projection_cannot_precede_evidence_availability(
-    payload_factory,
-) -> None:
-    _, shadow, seal, _, _, _ = _contracts()
-    model = seal if payload_factory is _seal else shadow
-    created = datetime(2026, 7, 19, 8, 10, tzinfo=UTC)
-
-    if payload_factory is _seal:
-        command = _publish_command(
-            plan_overrides={"available_at": created},
-            decision_overrides={"created_at": created},
+    with pytest.raises(ValidationError, match="research|execution"):
+        api.PortfolioOrderLine.model_validate(
+            _line_payload(mode=ExecutionMode.RESEARCH_RECONSTRUCTION)
         )
-        valid_payload = _seal(command=command)
-    else:
-        valid_payload = payload_factory(available_at=created, created_at=created)
-    assert model.model_validate(valid_payload).created_at == created
-    with pytest.raises(ValidationError, match="available_at|created_at"):
-        model.model_validate(
-            payload_factory(
-                available_at=created + timedelta(microseconds=1),
-                created_at=created,
+    with pytest.raises(ValidationError, match="research|execution"):
+        api.PortfolioDecision.model_validate(
+            _decision_payload(
+                api,
+                mode=ExecutionMode.RESEARCH_RECONSTRUCTION,
             )
         )
 
 
-def test_execution_permit_binds_authorization_and_only_shrinks_sealed_quantity() -> None:
-    from src.screening.offensive.v3.contracts.base import ExecutionMode
-
-    _, _, _, permit, _, _ = _contracts()
-    item = permit.model_validate(_permit())
-    assert item.capital_authorization_id == "auth-001"
-    assert item.authorization_version == 4
-    assert item.evidence_set_merkle_root == HASH
-    assert item.order_line_id == "line-600000-entry"
-    assert item.mode is ExecutionMode.BROKER_CONFIRMED
-    assert item.mode is item.sealed_mode is item.capital_authorization_mode
-    assert item.permitted_quantity < item.sealed_quantity
-
-    for quantity in (-1, 1001, True):
-        with pytest.raises(ValidationError, match="shrink|integer|greater than"):
-            permit.model_validate(_permit(permitted_quantity=quantity))
-
-    for override in (
-        {"sealed_mode": ExecutionMode.MANUAL_CONFIRMED},
-        {"capital_authorization_mode": ExecutionMode.DAILY_BAR_PROXY},
-        {"mode": "broker_confirmed"},
-    ):
-        with pytest.raises(ValidationError, match="mode|ExecutionMode"):
-            permit.model_validate(_permit(**override))
-
-
-def test_zero_quantity_permit_is_an_explicit_cancellation() -> None:
-    _, _, _, permit, _, _ = _contracts()
-    assert permit.model_validate(_permit(permitted_quantity=0)).permitted_quantity == 0
-
-
-def test_serialized_seal_hash_is_stable_across_processes() -> None:
-    _, _, seal, _, _, _ = _contracts()
-    fixture_json = seal.model_validate(_seal()).model_dump_json()
-    script = (
-        "from src.screening.offensive.v3.contracts.decision import DecisionSeal;"
-        f"print(DecisionSeal.model_validate_json({fixture_json!r}).content_hash())"
+def test_portfolio_decision_rejects_late_plan_or_stale_capital_snapshot() -> None:
+    api = _decision_contracts(
+        "DecisionLogicalKey",
+        "StageLossExpectedVersion",
+        "PortfolioOrderLine",
+        "GatewayExpectedVersions",
+        "PortfolioDecision",
     )
+    raw = _decision_payload(api)
+    raw["decision_cutoff"] = datetime(2026, 7, 19, 7, 57, tzinfo=UTC)
+    with pytest.raises(ValidationError, match="cutoff|available|PIT"):
+        api.PortfolioDecision.model_validate(raw)
 
-    hashes = [
-        subprocess.run(
-            [sys.executable, "-c", script],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        for _ in range(2)
-    ]
-
-    assert (
-        hashes[0]
-        == hashes[1]
-        == "0c7223083c8a92c5aaa53cc34c20774e31b9271aaaa1d5c587672652f2753dfa"
-    )
+    raw = _decision_payload(api)
+    raw["proposal_created_at"] = datetime(2026, 7, 19, 8, 6, tzinfo=UTC)
+    with pytest.raises(ValidationError, match="risk|snapshot|valid"):
+        api.PortfolioDecision.model_validate(raw)
