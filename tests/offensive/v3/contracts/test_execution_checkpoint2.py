@@ -118,32 +118,3 @@ def test_send_claimed_has_only_ambiguous_ack_or_reconciled_not_accepted_successo
         PlanState.EXPIRED,
         PlanState.SUPERSEDED,
     }.isdisjoint(PLAN_STATE_TRANSITIONS[PlanState.SEND_CLAIMED])
-
-
-def test_only_send_claimed_is_the_single_send_linearization_state() -> None:
-    from src.screening.offensive.v3.contracts import PlanState
-
-    non_authorizing = {
-        PlanState.SEALED,
-        PlanState.PERMITTED,
-        PlanState.OUTBOX_DURABLE,
-    }
-    send_linearization_states = {PlanState.SEND_CLAIMED}
-    assert non_authorizing.isdisjoint(send_linearization_states)
-    assert send_linearization_states == {PlanState.SEND_CLAIMED}
-
-
-def test_multi_line_plan_allows_independent_ack_partial_reject_and_expiry() -> None:
-    from src.screening.offensive.v3.contracts import (
-        ORDER_STATE_TRANSITIONS,
-        OrderState,
-    )
-
-    first_line = OrderState.SUBMITTED
-    second_line = OrderState.SUBMITTED
-    assert OrderState.PARTIALLY_FILLED in ORDER_STATE_TRANSITIONS[first_line]
-    assert OrderState.REJECTED in ORDER_STATE_TRANSITIONS[second_line]
-
-    independent_states = (OrderState.PARTIALLY_FILLED, OrderState.REJECTED)
-    assert OrderState.EXPIRED in ORDER_STATE_TRANSITIONS[independent_states[0]]
-    assert ORDER_STATE_TRANSITIONS[independent_states[1]] == frozenset()

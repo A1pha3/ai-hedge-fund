@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import hashlib
 from types import SimpleNamespace
 
 import pytest
@@ -33,7 +34,24 @@ AUTHORIZATION_ID = "authorization-v3"
 AUTHORIZATION_VERSION = 3
 EVIDENCE_ROOT = "2" * 64
 STAGE_ID = "stage-broker-2pct"
-STAGE_BUDGET_ID = "stage-loss-budget-broker-2pct"
+DIFFERENT_LOGICAL_KEY = object()
+
+# Approved from the plain, tests-first payloads above.  These literals are not
+# derived from the production model under test.
+APPROVED_SERIALIZATION_DIGESTS = {
+    "seal": (
+        "d8e1782149a2bc11172c4ba396d7eb066f7e957986b4c62bfdb16f7ac46b7939",
+        "f24235e42f77b56ebd37830298557eedc1e8cc696b1f70b0a11b8bb445f8d7a1",
+    ),
+    "shadow": (
+        "3b26055f7bd6cf8827c90f36ad6c419278b16021a1c15b183bf8cf1ce42d293e",
+        "96ead2ca6154758257c07ea90e64ee281295c7e0a986e47dcca4a0bba139e6f9",
+    ),
+    "permit": (
+        "02afcfd9961682360788c997d04ef79d6e3769d509e32910a519526e966696a0",
+        "81fa38b10dd4708cb535a279c8544adb2958f18252c033f1f1a933f33ed17e99",
+    ),
+}
 
 
 CHECKPOINT2_NAMES = (
@@ -41,8 +59,11 @@ CHECKPOINT2_NAMES = (
     "TrustedExecutionWindow",
     "GatewayIssuerBinding",
     "ShadowIssuerBinding",
+    "ShadowStageBinding",
     "StageAdmissionBinding",
     "SealReserveLineBinding",
+    "PriorSealEligibilityBinding",
+    "GatewayExpectedVersions",
     "PortfolioDecisionSeal",
     "CounterfactualDecisionKey",
     "ShadowOrderLine",
@@ -58,19 +79,30 @@ CHECKPOINT2_NAMES = (
 def _api() -> SimpleNamespace:
     from src.screening.offensive.v3 import contracts
 
-    missing = [name for name in CHECKPOINT2_NAMES if not hasattr(contracts, name)]
-    if not hasattr(contracts.ArtifactKind, "PORTFOLIO_DECISION_SEAL"):
-        missing.append("ArtifactKind.PORTFOLIO_DECISION_SEAL")
-    if missing:
-        pytest.fail(
-            f"Checkpoint 2 contract API is missing: {sorted(missing)}",
-            pytrace=False,
-        )
+    class _MissingContract:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def __getattr__(self, member: str):
+            pytest.fail(
+                f"Checkpoint 2 contract API is missing: {self.name}.{member}",
+                pytrace=False,
+            )
+
+        def __call__(self, *args, **kwargs):
+            del args, kwargs
+            pytest.fail(
+                f"Checkpoint 2 contract API is missing: {self.name}", pytrace=False
+            )
+
     return SimpleNamespace(
-        **{name: getattr(contracts, name) for name in CHECKPOINT2_NAMES},
+        **{
+            name: getattr(contracts, name, _MissingContract(name))
+            for name in CHECKPOINT2_NAMES
+        },
         ArtifactKind=contracts.ArtifactKind,
-        AuthorizationLifecycle=contracts.AuthorizationLifecycle,
         DecisionLogicalKey=contracts.DecisionLogicalKey,
+        EvidenceScope=contracts.EvidenceScope,
         ExecutionMode=contracts.ExecutionMode,
         PlanEvidence=contracts.PlanEvidence,
         PortfolioDecision=contracts.PortfolioDecision,
@@ -80,16 +112,23 @@ def _api() -> SimpleNamespace:
         RiskSnapshotCompleteness=contracts.RiskSnapshotCompleteness,
         RiskSnapshotFreshness=contracts.RiskSnapshotFreshness,
         StageLossLatchState=contracts.StageLossLatchState,
+        StageLossExpectedVersion=contracts.StageLossExpectedVersion,
         canonical_json_bytes=contracts.canonical_json_bytes,
         domain_hash=contracts.domain_hash,
     )
 
 
-def _plan(api, *, suffix: str = "1", security_id: str = "600000.SH"):
+def _plan(
+    api,
+    *,
+    suffix: str = "1",
+    security_id: str = "600000.SH",
+    economic_lineage_id: str = "btst-lineage-a",
+):
     del security_id
     return api.PlanEvidence(
         evidence_id=f"plan-{suffix}",
-        subject_scope="strategy_lineage",
+        subject_scope=api.EvidenceScope.STRATEGY_LINEAGE,
         subject_producer="btst",
         family_id="btst-family",
         strategy_semver="3.0.0",
@@ -103,11 +142,11 @@ def _plan(api, *, suffix: str = "1", security_id: str = "600000.SH"):
         mode=api.ExecutionMode.BROKER_CONFIRMED,
         source_authority="btst-producer",
         payload_content_hash=HASH_B,
-        schema_major=2,
+        schema_major=1,
         evidence_kind="plan",
         portfolio_id=PORTFOLIO_ID,
         signal_session=SIGNAL_SESSION,
-        economic_lineage_id="btst-lineage",
+        economic_lineage_id=economic_lineage_id,
         snapshot_id=f"signal-snapshot-{suffix}",
         raw_target_fraction=Decimal("0.01"),
         created_at=CLOSE_FINALIZED,
@@ -115,7 +154,16 @@ def _plan(api, *, suffix: str = "1", security_id: str = "600000.SH"):
 
 
 def _proposal_line(api, *, suffix: str = "1", security_id: str = "600000.SH"):
-    plan = _plan(api, suffix=suffix, security_id=security_id)
+    is_first = suffix == "1"
+    lineage = "btst-lineage-a" if is_first else "btst-lineage-b"
+    program = "btst-program-a" if is_first else "btst-program-b"
+    stage = STAGE_ID if is_first else "stage-broker-2pct-b"
+    plan = _plan(
+        api,
+        suffix=suffix,
+        security_id=security_id,
+        economic_lineage_id=lineage,
+    )
     quantity = 100 if suffix == "1" else 200
     price = 1_050 if suffix == "1" else 800
     fee = 50 if suffix == "1" else 75
@@ -125,11 +173,11 @@ def _proposal_line(api, *, suffix: str = "1", security_id: str = "600000.SH"):
         order_action="ENTRY",
         producer_namespace="btst",
         family_id="btst-family",
-        economic_lineage_id="btst-lineage",
-        research_program_id="btst-program",
-        stage_id=STAGE_ID,
+        economic_lineage_id=lineage,
+        research_program_id=program,
+        stage_id=stage,
         stage_manifest_hash=HASH_C,
-        grant_id="grant-btst",
+        grant_id=f"grant-{lineage}",
         grant_certificate_hash=HASH_D,
         authorization_id=AUTHORIZATION_ID,
         authorization_version=AUTHORIZATION_VERSION,
@@ -231,7 +279,7 @@ def _window(api, **overrides):
     return api.TrustedExecutionWindow.model_validate(_window_payload(api, **overrides))
 
 
-def _gateway_issuer(api, artifact_kind, namespace, *, verified_at=SEAL_CREATED):
+def _gateway_issuer(api, artifact_kind, namespace, *, verified_at=CLOSE_FINALIZED):
     return api.GatewayIssuerBinding(
         issuer_id="capital-gateway.service",
         key_id="capital-gateway-key-1",
@@ -247,16 +295,71 @@ def _gateway_issuer(api, artifact_kind, namespace, *, verified_at=SEAL_CREATED):
     )
 
 
-def _stage_binding(api):
+def _stage_binding(api, line=None):
+    if line is None:
+        line = _proposal_line(api)
     return api.StageAdmissionBinding(
-        research_program_id="btst-program",
-        economic_lineage_id="btst-lineage",
-        stage_id=STAGE_ID,
-        stage_loss_budget_id=STAGE_BUDGET_ID,
+        research_program_id=line.research_program_id,
+        economic_lineage_id=line.economic_lineage_id,
+        stage_id=line.stage_id,
+        stage_loss_budget_id=f"budget-{line.economic_lineage_id}",
         expected_stage_loss_version=3,
         post_stage_loss_version=4,
         stage_loss_latch=api.StageLossLatchState.CLEAR,
     )
+
+
+def _stage_expected_version(api, line):
+    return api.StageLossExpectedVersion(
+        research_program_id=line.research_program_id,
+        economic_lineage_id=line.economic_lineage_id,
+        stage_id=line.stage_id,
+        stage_loss_budget_id=f"budget-{line.economic_lineage_id}",
+        stage_loss_version=3,
+        stage_loss_latch=api.StageLossLatchState.CLEAR,
+    )
+
+
+def _gateway_expected_versions(api, proposal=None, **overrides):
+    if proposal is None:
+        proposal = _proposal(api)
+    values = {
+        "policy_activation_hash": proposal.policy_activation_hash,
+        "trust_bundle_hash": proposal.trust_bundle_hash,
+        "registry_epoch": proposal.registry_epoch,
+        "policy_epoch": proposal.policy_epoch,
+        "authority_epoch": proposal.authority_epoch,
+        "risk_epoch": proposal.risk_epoch,
+        "authorization_id": proposal.authorization_id,
+        "authorization_version": proposal.authorization_version,
+        "authorization_envelope_hash": proposal.authorization_artifact_hash,
+        "authorization_status_version": 5,
+        "authorization_status_hash": HASH_E,
+        "evidence_set_merkle_root": proposal.evidence_set_merkle_root,
+        "entry_fence_hash": HASH_F,
+        "entry_fence_version": 2,
+        "risk_snapshot_id": proposal.risk_snapshot_id,
+        "risk_snapshot_artifact_hash": proposal.risk_snapshot_artifact_hash,
+        "capital_version": proposal.capital_version,
+        "capital_stream_version": proposal.capital_stream_version,
+        "writer_fencing_epoch": proposal.writer_fencing_epoch,
+        "stage_loss_expected_versions": tuple(
+            sorted(
+                (_stage_expected_version(api, line) for line in proposal.order_lines),
+                key=lambda item: (
+                    item.research_program_id,
+                    item.economic_lineage_id,
+                    item.stage_id,
+                    item.stage_loss_budget_id,
+                ),
+            )
+        ),
+        "expected_active_seal_id": None,
+        "expected_active_seal_revision": None,
+        "schema_major": 2,
+    }
+    values.update(overrides)
+    return api.GatewayExpectedVersions.model_validate(values)
 
 
 def _reserve_bindings(api, proposal):
@@ -270,8 +373,28 @@ def _reserve_bindings(api, proposal):
     )
 
 
+def _prior_seal_eligibility(api, logical_key=None, **overrides):
+    if logical_key is None:
+        logical_key = _proposal(api).logical_key
+    values = {
+        "prior_seal_id": "seal-0",
+        "prior_seal_revision": 1,
+        "prior_seal_artifact_hash": "9" * 64,
+        "logical_key": logical_key,
+        "permit_issuance_sequence": 0,
+        "fencing_token_issuance_sequence": 0,
+        "live_order_count": 0,
+    }
+    values.update(overrides)
+    return api.PriorSealEligibilityBinding.model_validate(values)
+
+
 def _seal_payload(api, **overrides):
-    proposal = _proposal(api)
+    proposal = overrides.pop("proposal", _proposal(api))
+    expected = overrides.pop(
+        "consumed_gateway_expected_versions",
+        _gateway_expected_versions(api, proposal),
+    )
     reserve_lines = _reserve_bindings(api, proposal)
     values = {
         "artifact_kind": api.ArtifactKind.PORTFOLIO_DECISION_SEAL,
@@ -282,6 +405,7 @@ def _seal_payload(api, **overrides):
         "logical_key": proposal.logical_key,
         "supersedes_seal_id": None,
         "supersedes_seal_revision": None,
+        "prior_seal_eligibility": None,
         "proposal": proposal,
         "proposal_artifact_hash": proposal.artifact_hash(),
         "portfolio_id": proposal.portfolio_id,
@@ -302,8 +426,8 @@ def _seal_payload(api, **overrides):
         "authorization_id": proposal.authorization_id,
         "authorization_version": proposal.authorization_version,
         "authorization_envelope_hash": proposal.authorization_artifact_hash,
-        "authorization_status_version": 5,
-        "authorization_status_hash": HASH_E,
+        "authorization_status_version": expected.authorization_status_version,
+        "authorization_status_hash": expected.authorization_status_hash,
         "evidence_set_merkle_root": proposal.evidence_set_merkle_root,
         "entry_fence_id": "entry-fence-1",
         "entry_fence_hash": HASH_F,
@@ -312,9 +436,20 @@ def _seal_payload(api, **overrides):
         "risk_snapshot_artifact_hash": proposal.risk_snapshot_artifact_hash,
         "capital_version": proposal.capital_version,
         "capital_stream_version": proposal.capital_stream_version,
-        "stage_admission_bindings": (_stage_binding(api),),
+        "stage_admission_bindings": tuple(
+            sorted(
+                (_stage_binding(api, line) for line in proposal.order_lines),
+                key=lambda item: (
+                    item.research_program_id,
+                    item.economic_lineage_id,
+                    item.stage_id,
+                    item.stage_loss_budget_id,
+                ),
+            )
+        ),
         "writer_fencing_epoch": proposal.writer_fencing_epoch,
-        "gateway_expected_versions_artifact_hash": "3" * 64,
+        "consumed_gateway_expected_versions": expected,
+        "consumed_gateway_expected_versions_artifact_hash": (expected.artifact_hash()),
         "reservation_id": "reservation-1",
         "reservation_version": 1,
         "line_reserve_bindings": reserve_lines,
@@ -349,9 +484,19 @@ def _shadow_issuer(api):
         capability_schema_major=2,
         capability_version="growth-kernel-shadow.v1",
         capability_scope=f"portfolio:{PORTFOLIO_ID}",
-        verified_at=SEAL_CREATED,
+        verified_at=CLOSE_FINALIZED,
         trust_bundle_hash=HASH_B,
         registry_epoch=7,
+    )
+
+
+def _shadow_stage_binding(api):
+    return api.ShadowStageBinding(
+        research_program_id="auto-program",
+        economic_lineage_id="auto-lineage",
+        stage_id="auto-shadow-stage",
+        trial_id="auto-shadow-trial",
+        stage_manifest_hash=HASH_C,
     )
 
 
@@ -411,6 +556,7 @@ def _shadow_payload(api, **overrides):
         "policy_activation_hash": HASH_A,
         "policy_epoch": 4,
         "evidence_set_merkle_root": EVIDENCE_ROOT,
+        "stage_bindings": (_shadow_stage_binding(api),),
         "counterfactual_lines": (
             _shadow_line(api),
             _shadow_line(api, suffix="2", security_id="600001.SH"),
@@ -430,7 +576,16 @@ def _shadow(api, **overrides):
     return api.ShadowDecision.model_validate(_shadow_payload(api, **overrides))
 
 
-def _permit_line(api, sealed_line, *, disposition=None, permitted_quantity=None):
+def _permit_line(
+    api,
+    sealed_line,
+    *,
+    disposition=None,
+    permitted_quantity=None,
+    reason_code=None,
+    preopen_fact_as_of=PERMIT_DEADLINE,
+    client_order_id="AUTO",
+):
     if disposition is None:
         disposition = api.PermitDisposition.ALLOW
     if permitted_quantity is None:
@@ -440,21 +595,29 @@ def _permit_line(api, sealed_line, *, disposition=None, permitted_quantity=None)
     )
     released = sealed_line.worst_case_cash_reserve_cents - remaining
     sendable = disposition is api.PermitDisposition.ALLOW and permitted_quantity > 0
+    if reason_code is None:
+        reason_code = (
+            api.PermitReasonCode.UNCHANGED
+            if permitted_quantity == sealed_line.sealed_quantity_units
+            else (
+                api.PermitReasonCode.CAPITAL_RISK_REDUCTION
+                if permitted_quantity > 0
+                else api.PermitReasonCode.AUTHORIZATION_CANCEL
+            )
+        )
+    if client_order_id == "AUTO":
+        client_order_id = f"client-{sealed_line.order_line_id}" if sendable else None
     return api.ExecutionPermitLine(
         order_line_id=sealed_line.order_line_id,
         security_id=sealed_line.security_id,
         sealed_quantity_units=sealed_line.sealed_quantity_units,
         permitted_quantity_units=permitted_quantity,
-        reason_code=(
-            api.PermitReasonCode.UNCHANGED
-            if permitted_quantity == sealed_line.sealed_quantity_units
-            else api.PermitReasonCode.RISK_CAP_REDUCTION
-        ),
+        reason_code=reason_code,
         predicate_policy_version="preopen-mechanical.v1",
         preopen_fact_snapshot_id="preopen-facts-1",
         preopen_fact_snapshot_hash=HASH_A,
-        preopen_fact_as_of=PERMIT_DEADLINE,
-        client_order_id=(f"client-{sealed_line.order_line_id}" if sendable else None),
+        preopen_fact_as_of=preopen_fact_as_of,
+        client_order_id=client_order_id,
         order_type=sealed_line.order_type,
         limit_price_cents=sealed_line.limit_price_cents,
         worst_case_price_cents=sealed_line.worst_case_price_cents,
@@ -518,18 +681,26 @@ def _send_claim_versions(api, seal, permit_lines, *, nonce="permit-nonce-1"):
 
 
 def _permit_payload(api, **overrides):
-    seal = _seal(api)
-    disposition = overrides.get("disposition", api.PermitDisposition.ALLOW)
-    permit_lines = tuple(
-        _permit_line(api, line, disposition=disposition)
-        for line in seal.proposal.order_lines
+    seal = overrides.pop("seal", _seal(api))
+    disposition = overrides.pop("disposition", api.PermitDisposition.ALLOW)
+    permit_nonce = overrides.pop("permit_nonce", "permit-nonce-1")
+    permit_lines = overrides.pop(
+        "permit_lines",
+        tuple(
+            _permit_line(api, line, disposition=disposition)
+            for line in seal.proposal.order_lines
+        ),
+    )
+    expected = overrides.pop(
+        "send_claim_expected_versions",
+        _send_claim_versions(api, seal, permit_lines, nonce=permit_nonce),
     )
     values = {
         "artifact_kind": api.ArtifactKind.EXECUTION_PERMIT,
         "artifact_namespace": "capital-gateway.entry-permit.v1",
         "schema_major": 2,
         "permit_id": "permit-1",
-        "permit_nonce": "permit-nonce-1",
+        "permit_nonce": permit_nonce,
         "permit_nonce_sequence": 1,
         "permit_nonce_state": "ACTIVE",
         "disposition": disposition,
@@ -552,7 +723,7 @@ def _permit_payload(api, **overrides):
         "total_released_reserve_cents": sum(
             line.released_reserve_cents for line in permit_lines
         ),
-        "send_claim_expected_versions": _send_claim_versions(api, seal, permit_lines),
+        "send_claim_expected_versions": expected,
         "execution_window": seal.execution_window,
         "issued_at": PERMIT_DEADLINE,
         "permit_expires_at": PERMIT_EXPIRES,
@@ -560,7 +731,7 @@ def _permit_payload(api, **overrides):
             api,
             api.ArtifactKind.EXECUTION_PERMIT,
             "capital-gateway.entry-permit.v1",
-            verified_at=PERMIT_DEADLINE,
+            verified_at=CLOSE_FINALIZED,
         ),
     }
     values.update(overrides)
@@ -571,14 +742,36 @@ def _permit(api, **overrides):
     return api.ExecutionPermit.model_validate(_permit_payload(api, **overrides))
 
 
+@pytest.mark.parametrize("name", CHECKPOINT2_NAMES)
+def test_each_checkpoint2_public_contract_is_exported_independently(name) -> None:
+    from src.screening.offensive.v3 import contracts
+
+    assert hasattr(contracts, name), f"missing independent contract export: {name}"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ("PORTFOLIO_DECISION_SEAL", "SHADOW_DECISION", "EXECUTION_PERMIT"),
+)
+def test_each_checkpoint2_artifact_kind_is_exported_independently(name) -> None:
+    from src.screening.offensive.v3.contracts import ArtifactKind
+
+    assert hasattr(ArtifactKind, name), f"missing independent artifact kind: {name}"
+
+
 def test_checkpoint2_public_api_and_artifact_kinds_are_explicit() -> None:
     api = _api()
 
     assert api.ArtifactKind.PORTFOLIO_DECISION_SEAL.value == ("portfolio_decision_seal")
-    assert api.ArtifactKind.DECISION_SEAL.value == "decision_seal"
-    assert api.ArtifactKind.PORTFOLIO_DECISION_SEAL is not (
-        api.ArtifactKind.DECISION_SEAL
-    )
+    assert api.ArtifactKind.SHADOW_DECISION.value == "shadow_decision"
+    assert api.ArtifactKind.EXECUTION_PERMIT.value == "execution_permit"
+    assert {item.value for item in api.ClockHealth} == {
+        "HEALTHY",
+        "UNKNOWN",
+        "EXCESSIVE_SKEW",
+        "ROLLBACK_DETECTED",
+    }
+    assert {item.value for item in api.PermitDisposition} == {"ALLOW", "CANCEL"}
 
 
 def test_seal_shadow_and_permit_use_distinct_type_namespace_and_hash_domain() -> None:
@@ -691,9 +884,9 @@ def test_artifact_issuer_capability_must_match_type_namespace_mode_and_registry(
     seal = _seal(api)
     shadow = _shadow(api)
     permit = _permit(api)
-    assert seal.issuer_binding.verified_at == seal.created_at
-    assert shadow.issuer_binding.verified_at == shadow.created_at
-    assert permit.issuer_binding.verified_at == permit.issued_at
+    assert CLOSE_FINALIZED <= seal.issuer_binding.verified_at <= seal.created_at
+    assert CLOSE_FINALIZED <= shadow.issuer_binding.verified_at <= shadow.created_at
+    assert CLOSE_FINALIZED <= permit.issuer_binding.verified_at <= permit.issued_at
     cases = (
         (
             api.PortfolioDecisionSeal,
@@ -713,6 +906,25 @@ def test_artifact_issuer_capability_must_match_type_namespace_mode_and_registry(
             api.ExecutionPermit,
             permit,
             permit.issuer_binding.model_copy(update={"registry_epoch": 999}),
+        ),
+        (
+            api.PortfolioDecisionSeal,
+            seal,
+            seal.issuer_binding.model_copy(
+                update={"verified_at": seal.created_at + timedelta(microseconds=1)}
+            ),
+        ),
+        (
+            api.PortfolioDecisionSeal,
+            seal,
+            seal.issuer_binding.model_copy(
+                update={"verified_at": CLOSE_FINALIZED - timedelta(microseconds=1)}
+            ),
+        ),
+        (
+            api.ExecutionPermit,
+            permit,
+            permit.issuer_binding.model_copy(update={"trust_bundle_hash": HASH_F}),
         ),
     )
     for model, artifact, issuer in cases:
@@ -739,6 +951,7 @@ def test_portfolio_decision_seal_has_exact_gateway_receipt_fields() -> None:
         "logical_key",
         "supersedes_seal_id",
         "supersedes_seal_revision",
+        "prior_seal_eligibility",
         "proposal",
         "proposal_artifact_hash",
         "portfolio_id",
@@ -769,7 +982,8 @@ def test_portfolio_decision_seal_has_exact_gateway_receipt_fields() -> None:
         "capital_stream_version",
         "stage_admission_bindings",
         "writer_fencing_epoch",
-        "gateway_expected_versions_artifact_hash",
+        "consumed_gateway_expected_versions",
+        "consumed_gateway_expected_versions_artifact_hash",
         "reservation_id",
         "reservation_version",
         "line_reserve_bindings",
@@ -799,6 +1013,15 @@ def test_stage_and_reserve_bindings_have_exact_composite_fields() -> None:
         "reservation_allocation_id",
         "reserved_cash_cents",
     }
+    assert set(api.PriorSealEligibilityBinding.model_fields) == {
+        "prior_seal_id",
+        "prior_seal_revision",
+        "prior_seal_artifact_hash",
+        "logical_key",
+        "permit_issuance_sequence",
+        "fencing_token_issuance_sequence",
+        "live_order_count",
+    }
     with pytest.raises(ValidationError, match="post|version|monotonic"):
         api.StageAdmissionBinding.model_validate(
             _stage_binding(api).model_dump(mode="python", round_trip=True)
@@ -806,13 +1029,68 @@ def test_stage_and_reserve_bindings_have_exact_composite_fields() -> None:
         )
 
 
-def test_gateway_expected_versions_is_a_hashable_consumed_cas_artifact() -> None:
-    from src.screening.offensive.v3.contracts import GatewayExpectedVersions
+def test_stage_coverage_is_exactly_the_composite_identities_in_proposal_lines() -> None:
+    api = _api()
+    seal = _seal(api)
+    proposal_identities = {
+        (line.research_program_id, line.economic_lineage_id, line.stage_id)
+        for line in seal.proposal.order_lines
+    }
+    admission_identities = {
+        (item.research_program_id, item.economic_lineage_id, item.stage_id)
+        for item in seal.stage_admission_bindings
+    }
+    consumed_identities = {
+        (item.research_program_id, item.economic_lineage_id, item.stage_id)
+        for item in (
+            seal.consumed_gateway_expected_versions.stage_loss_expected_versions
+        )
+    }
+    assert admission_identities == consumed_identities == proposal_identities
 
-    assert GatewayExpectedVersions.HASH_DOMAIN == (
+    for changed in (
+        seal.stage_admission_bindings[:1],
+        seal.stage_admission_bindings
+        + (
+            seal.stage_admission_bindings[0].model_copy(
+                update={"economic_lineage_id": "unrelated-lineage"}
+            ),
+        ),
+    ):
+        with pytest.raises(ValidationError, match="stage|lineage|coverage|proposal"):
+            api.PortfolioDecisionSeal.model_validate(
+                _seal_payload(api, stage_admission_bindings=changed)
+            )
+
+
+def test_gateway_expected_versions_is_a_hashable_consumed_cas_artifact() -> None:
+    api = _api()
+    expected = _gateway_expected_versions(api)
+
+    assert type(expected).HASH_DOMAIN == (
         "ai-hedge-fund.v3.decision.gateway-expected-versions.v1"
     )
-    assert callable(GatewayExpectedVersions.artifact_hash)
+    assert expected.artifact_hash() == api.domain_hash(
+        type(expected).HASH_DOMAIN,
+        expected.schema_major,
+        expected,
+    )
+
+
+def test_seal_embeds_the_exact_consumed_gateway_expected_versions_artifact() -> None:
+    api = _api()
+    seal = _seal(api)
+    consumed = seal.consumed_gateway_expected_versions
+
+    assert seal.consumed_gateway_expected_versions_artifact_hash == (
+        consumed.artifact_hash()
+    )
+    assert consumed.policy_activation_hash == seal.policy_activation_hash
+    assert consumed.trust_bundle_hash == seal.trust_bundle_hash
+    assert consumed.authorization_envelope_hash == seal.authorization_envelope_hash
+    assert consumed.authorization_status_hash == seal.authorization_status_hash
+    assert consumed.entry_fence_hash == seal.entry_fence_hash
+    assert consumed.risk_snapshot_artifact_hash == seal.risk_snapshot_artifact_hash
 
 
 def test_seal_logical_key_proposal_hash_and_identity_exactly_match_proposal() -> None:
@@ -828,9 +1106,20 @@ def test_seal_logical_key_proposal_hash_and_identity_exactly_match_proposal() ->
         {"mode": api.ExecutionMode.MANUAL_CONFIRMED},
         {"target_entry_session": TARGET_SESSION + timedelta(days=1)},
         {"target_portfolio_policy_fingerprint": HASH_F},
+        {"policy_activation_hash": HASH_F},
+        {"trust_bundle_hash": HASH_F},
+        {"registry_epoch": proposal.registry_epoch + 1},
+        {"policy_epoch": proposal.policy_epoch + 1},
+        {"authority_epoch": proposal.authority_epoch + 1},
+        {"risk_epoch": proposal.risk_epoch + 1},
         {"authorization_id": "other-authorization"},
         {"authorization_version": 99},
         {"evidence_set_merkle_root": HASH_F},
+        {"risk_snapshot_id": "other-risk-snapshot"},
+        {"risk_snapshot_artifact_hash": HASH_F},
+        {"capital_version": proposal.capital_version + 1},
+        {"capital_stream_version": proposal.capital_stream_version + 1},
+        {"writer_fencing_epoch": proposal.writer_fencing_epoch + 1},
     )
     for drift in drift_cases:
         with pytest.raises(
@@ -838,6 +1127,83 @@ def test_seal_logical_key_proposal_hash_and_identity_exactly_match_proposal() ->
             match="proposal|logical|portfolio|account|mode|policy|authorization|evidence",
         ):
             api.PortfolioDecisionSeal.model_validate(base | drift)
+
+
+def test_seal_rejects_each_consumed_cas_binding_drift_even_with_fresh_hash() -> None:
+    api = _api()
+    seal = _seal(api)
+    expected = seal.consumed_gateway_expected_versions
+    scalar_drifts = {
+        "policy_activation_hash": HASH_F,
+        "trust_bundle_hash": HASH_F,
+        "registry_epoch": expected.registry_epoch + 1,
+        "policy_epoch": expected.policy_epoch + 1,
+        "authority_epoch": expected.authority_epoch + 1,
+        "risk_epoch": expected.risk_epoch + 1,
+        "authorization_id": "other-authorization",
+        "authorization_version": expected.authorization_version + 1,
+        "authorization_envelope_hash": HASH_F,
+        "authorization_status_version": expected.authorization_status_version + 1,
+        "authorization_status_hash": HASH_F,
+        "evidence_set_merkle_root": HASH_F,
+        "entry_fence_hash": HASH_A,
+        "entry_fence_version": expected.entry_fence_version + 1,
+        "risk_snapshot_id": "other-risk-snapshot",
+        "risk_snapshot_artifact_hash": HASH_F,
+        "capital_version": expected.capital_version + 1,
+        "capital_stream_version": expected.capital_stream_version + 1,
+        "writer_fencing_epoch": expected.writer_fencing_epoch + 1,
+    }
+    changed_stage = expected.stage_loss_expected_versions[0].model_copy(
+        update={
+            "stage_loss_version": (
+                expected.stage_loss_expected_versions[0].stage_loss_version + 1
+            )
+        }
+    )
+    structured_drifts = {
+        "stage_loss_expected_versions": (
+            changed_stage,
+            *expected.stage_loss_expected_versions[1:],
+        ),
+        "expected_active_seal_id": "seal-0",
+    }
+    for field, value in scalar_drifts.items():
+        changed = type(expected).model_validate(
+            expected.model_dump(mode="python", round_trip=True) | {field: value}
+        )
+        with pytest.raises(ValidationError, match="expected|proposal|seal|CAS|binding"):
+            api.PortfolioDecisionSeal.model_validate(
+                _seal_payload(
+                    api,
+                    consumed_gateway_expected_versions=changed,
+                    consumed_gateway_expected_versions_artifact_hash=(
+                        changed.artifact_hash()
+                    ),
+                )
+            )
+    changed = type(expected).model_validate(
+        expected.model_dump(mode="python", round_trip=True)
+        | {
+            "stage_loss_expected_versions": structured_drifts[
+                "stage_loss_expected_versions"
+            ]
+        }
+    )
+    with pytest.raises(ValidationError, match="stage|expected|proposal|coverage"):
+        api.PortfolioDecisionSeal.model_validate(
+            _seal_payload(
+                api,
+                consumed_gateway_expected_versions=changed,
+                consumed_gateway_expected_versions_artifact_hash=changed.artifact_hash(),
+            )
+        )
+
+    with pytest.raises(ValidationError, match="expected|active seal|supersede"):
+        type(expected).model_validate(
+            expected.model_dump(mode="python", round_trip=True)
+            | {"expected_active_seal_id": "seal-0"}
+        )
 
 
 def test_proposal_cannot_supply_gateway_owned_seal_or_reservation_identity() -> None:
@@ -908,7 +1274,7 @@ def test_seal_reserve_is_exact_per_line_and_in_aggregate() -> None:
             api.PortfolioDecisionSeal.model_validate(_seal_payload(api, **drift))
 
 
-def test_seal_supersedes_identity_is_all_or_none_and_has_no_active_self_claim() -> None:
+def test_seal_supersedes_identity_is_typed_all_or_none_and_has_no_self_claim() -> None:
     api = _api()
     assert "active_seal_id" not in api.PortfolioDecisionSeal.model_fields
     for drift in (
@@ -918,26 +1284,118 @@ def test_seal_supersedes_identity_is_all_or_none_and_has_no_active_self_claim() 
         with pytest.raises(ValidationError, match="supersedes|all-or-none|pair"):
             api.PortfolioDecisionSeal.model_validate(_seal_payload(api, **drift))
 
+    eligible = _prior_seal_eligibility(api)
+    superseding = _seal(
+        api,
+        seal_revision=2,
+        supersedes_seal_id=eligible.prior_seal_id,
+        supersedes_seal_revision=eligible.prior_seal_revision,
+        prior_seal_eligibility=eligible,
+    )
+    assert superseding.seal_revision > eligible.prior_seal_revision
+
+
+@pytest.mark.parametrize(
+    "drift",
+    [
+        {"logical_key": DIFFERENT_LOGICAL_KEY},
+        {"permit_issuance_sequence": 1},
+        {"fencing_token_issuance_sequence": 1},
+        {"live_order_count": 1},
+    ],
+)
+def test_supersede_requires_same_key_no_prior_permit_fence_or_live_order(drift) -> None:
+    api = _api()
+    if drift.get("logical_key") is DIFFERENT_LOGICAL_KEY:
+        drift = {
+            "logical_key": _proposal(api).logical_key.model_copy(
+                update={"decision_cycle_id": "other-cycle"}
+            )
+        }
+    eligibility = _prior_seal_eligibility(api, **drift)
+    with pytest.raises(
+        ValidationError, match="supersede|logical|permit|fenc|live order|eligib"
+    ):
+        api.PortfolioDecisionSeal.model_validate(
+            _seal_payload(
+                api,
+                seal_revision=2,
+                supersedes_seal_id=eligibility.prior_seal_id,
+                supersedes_seal_revision=eligibility.prior_seal_revision,
+                prior_seal_eligibility=eligibility,
+            )
+        )
+
+
+def test_supersede_revision_must_be_strictly_higher_than_prior_revision() -> None:
+    api = _api()
+    eligibility = _prior_seal_eligibility(api)
+    with pytest.raises(ValidationError, match="revision|higher|supersede"):
+        api.PortfolioDecisionSeal.model_validate(
+            _seal_payload(
+                api,
+                seal_revision=eligibility.prior_seal_revision,
+                supersedes_seal_id=eligibility.prior_seal_id,
+                supersedes_seal_revision=eligibility.prior_seal_revision,
+                prior_seal_eligibility=eligibility,
+            )
+        )
+
 
 def test_seal_hash_covers_proposal_and_every_gateway_binding() -> None:
     api = _api()
     seal = _seal(api)
-    base = seal.model_dump(mode="python", round_trip=True)
-    drift = {
-        "proposal_artifact_hash": HASH_F,
-        "policy_activation_hash": HASH_F,
-        "authorization_status_hash": HASH_F,
-        "entry_fence_hash": HASH_A,
-        "risk_snapshot_artifact_hash": HASH_F,
-        "capital_stream_version": seal.capital_stream_version + 1,
-        "gateway_expected_versions_artifact_hash": HASH_F,
-        "reservation_version": seal.reservation_version + 1,
-        "writer_fencing_epoch": seal.writer_fencing_epoch + 1,
-        "created_at": seal.created_at + timedelta(seconds=1),
+    proposal = _proposal(api)
+    proposal_variant = api.PortfolioDecision.model_validate(
+        proposal.model_dump(mode="python", round_trip=True)
+        | {
+            "logical_key": proposal.logical_key.model_copy(
+                update={"decision_cycle_id": "daily-t1-open-v2"}
+            )
+        }
+    )
+    expected_variant = _gateway_expected_versions(
+        api,
+        proposal,
+        authorization_status_version=6,
+        authorization_status_hash=HASH_F,
+    )
+    reserve_variant = tuple(
+        item.model_copy(
+            update={
+                "reservation_allocation_id": (
+                    f"replacement-{item.reservation_allocation_id}"
+                )
+            }
+        )
+        for item in seal.line_reserve_bindings
+    )
+    issuer_variant = seal.issuer_binding.model_copy(
+        update={"key_id": "capital-gateway-key-2"}
+    )
+    window_variant = _window(
+        api,
+        broker_auction_submission_cutoff=BROKER_CUTOFF + timedelta(microseconds=1),
+    )
+    eligibility = _prior_seal_eligibility(api)
+    valid_variants = {
+        "proposal": _seal(api, proposal=proposal_variant),
+        "consumed_expected": _seal(
+            api, consumed_gateway_expected_versions=expected_variant
+        ),
+        "reserve": _seal(api, line_reserve_bindings=reserve_variant),
+        "issuer": _seal(api, issuer_binding=issuer_variant),
+        "deadline": _seal(api, execution_window=window_variant),
+        "supersede": _seal(
+            api,
+            seal_revision=2,
+            supersedes_seal_id=eligibility.prior_seal_id,
+            supersedes_seal_revision=eligibility.prior_seal_revision,
+            prior_seal_eligibility=eligibility,
+        ),
     }
-    for field, value in drift.items():
-        unchecked = api.PortfolioDecisionSeal.model_construct(**(base | {field: value}))
-        assert unchecked.artifact_hash() != seal.artifact_hash(), field
+    for label, valid_variant in valid_variants.items():
+        assert valid_variant.artifact_hash() != seal.artifact_hash(), label
 
 
 def test_trusted_execution_window_has_exact_semantic_fields() -> None:
@@ -1024,14 +1482,8 @@ def test_permit_time_boundaries_are_exact() -> None:
             api.ExecutionPermit.model_validate(_permit_payload(api, **drift))
 
 
-def test_seal_and_permit_reject_non_utc_or_unhealthy_clock() -> None:
+def test_unhealthy_or_rollback_clock_blocks_seal_and_permit() -> None:
     api = _api()
-    naive = SEAL_CREATED.replace(tzinfo=None)
-    with pytest.raises(ValidationError, match="UTC|timezone"):
-        api.TrustedExecutionWindow.model_validate(
-            _window_payload(api, wall_clock_observed_at=naive)
-        )
-
     for health in (
         api.ClockHealth.UNKNOWN,
         api.ClockHealth.EXCESSIVE_SKEW,
@@ -1181,48 +1633,97 @@ def test_permit_identity_authority_nonce_outbox_and_deadline_match_seal() -> Non
         permit.execution_window.gateway_send_deadline,
     )
 
-    drift_cases = (
+    top_level_drifts = (
+        {"seal_id": "other-seal"},
+        {"seal_revision": permit.seal_revision + 1},
         {"seal_artifact_hash": HASH_F},
+        {
+            "logical_key": permit.logical_key.model_copy(
+                update={"decision_cycle_id": "other-cycle"}
+            )
+        },
+        {"proposal_artifact_hash": HASH_F},
         {"portfolio_id": "other-portfolio"},
         {"broker_account_id": "other-account"},
+        {"broker_account_fingerprint": HASH_F},
+        {"base_currency": "USD"},
         {"mode": api.ExecutionMode.MANUAL_CONFIRMED},
+        {"target_entry_session": TARGET_SESSION + timedelta(days=1)},
         {"permit_nonce": "different-nonce"},
-        {
-            "send_claim_expected_versions": expected.model_copy(
-                update={"authority_epoch": expected.authority_epoch + 1}
-            )
-        },
-        {
-            "send_claim_expected_versions": expected.model_copy(
-                update={"authorization_status": "REVOKED"}
-            )
-        },
-        {
-            "send_claim_expected_versions": expected.model_copy(
-                update={"entry_fence_version": expected.entry_fence_version + 1}
-            )
-        },
-        {
-            "send_claim_expected_versions": expected.model_copy(
-                update={"outbox_permit_nonce": "different-nonce"}
-            )
-        },
-        {
-            "send_claim_expected_versions": expected.model_copy(
-                update={
-                    "effective_send_deadline": (
-                        expected.effective_send_deadline + timedelta(microseconds=1)
-                    )
-                }
-            )
-        },
     )
-    for drift in drift_cases:
+    for drift in top_level_drifts:
         with pytest.raises(
             ValidationError,
-            match="seal|portfolio|account|mode|nonce|authority|authorization|fence|outbox|deadline",
+            match="seal|logical|proposal|portfolio|account|currency|mode|session|nonce",
         ):
             api.ExecutionPermit.model_validate(_permit_payload(api, **drift))
+
+    changed_stage = expected.stage_loss_bindings[0].model_copy(
+        update={
+            "expected_stage_loss_version": (
+                expected.stage_loss_bindings[0].expected_stage_loss_version + 1
+            ),
+            "post_stage_loss_version": (
+                expected.stage_loss_bindings[0].post_stage_loss_version + 1
+            ),
+        }
+    )
+    expected_drifts = {
+        "active_seal_id": "other-seal",
+        "active_seal_revision": expected.active_seal_revision + 1,
+        "active_seal_artifact_hash": HASH_F,
+        "active_permit_id": "other-permit",
+        "active_permit_nonce": "other-nonce",
+        "permit_nonce_sequence": expected.permit_nonce_sequence + 1,
+        "permit_nonce_state": "CONSUMED",
+        "policy_activation_hash": HASH_F,
+        "trust_bundle_hash": HASH_F,
+        "registry_epoch": expected.registry_epoch + 1,
+        "policy_epoch": expected.policy_epoch + 1,
+        "authority_epoch": expected.authority_epoch + 1,
+        "risk_epoch": expected.risk_epoch + 1,
+        "authorization_id": "other-authorization",
+        "authorization_version": expected.authorization_version + 1,
+        "authorization_envelope_hash": HASH_F,
+        "authorization_status": "REVOKED",
+        "authorization_status_version": expected.authorization_status_version + 1,
+        "authorization_status_hash": HASH_F,
+        "authorization_revalidation_required": True,
+        "evidence_set_merkle_root": HASH_F,
+        "entry_fence_id": "other-fence",
+        "entry_fence_hash": HASH_A,
+        "entry_fence_version": expected.entry_fence_version + 1,
+        "capital_version": expected.capital_version + 1,
+        "capital_stream_version": expected.capital_stream_version + 1,
+        "risk_snapshot_id": "other-risk-snapshot",
+        "risk_snapshot_artifact_hash": HASH_F,
+        "risk_snapshot_freshness": api.RiskSnapshotFreshness.STALE,
+        "risk_snapshot_completeness": api.RiskSnapshotCompleteness.INCOMPLETE,
+        "risk_latch": api.RiskLatchState.RISK_HALTED,
+        "reconciliation_latch": (api.ReconciliationLatchState.RECONCILIATION_HALT),
+        "stage_loss_bindings": (
+            changed_stage,
+            *expected.stage_loss_bindings[1:],
+        ),
+        "reservation_id": "other-reservation",
+        "reservation_version": expected.reservation_version + 1,
+        "reservation_state": "RELEASED",
+        "remaining_reserved_cash_cents": (expected.remaining_reserved_cash_cents + 1),
+        "outbox_permit_nonce": "different-nonce",
+        "writer_fencing_epoch": expected.writer_fencing_epoch + 1,
+        "effective_send_deadline": (
+            expected.effective_send_deadline + timedelta(microseconds=1)
+        ),
+    }
+    for field, value in expected_drifts.items():
+        changed = expected.model_copy(update={field: value})
+        with pytest.raises(
+            ValidationError,
+            match="seal|permit|nonce|policy|trust|registry|authority|authorization|risk|fence|capital|stage|reservation|outbox|deadline|latch",
+        ):
+            api.ExecutionPermit.model_validate(
+                _permit_payload(api, send_claim_expected_versions=changed)
+            )
 
 
 def test_permit_nonce_contract_is_single_use_shaped_and_cannot_self_claim() -> None:
@@ -1262,16 +1763,76 @@ def test_permit_line_set_exactly_matches_seal_and_never_grows_own_line() -> None
             )
 
 
+def test_permit_accepts_partial_positive_shrink_with_exact_cash_release() -> None:
+    api = _api()
+    seal = _seal(api)
+    lines = (
+        _permit_line(api, seal.proposal.order_lines[0]),
+        _permit_line(
+            api,
+            seal.proposal.order_lines[1],
+            permitted_quantity=100,
+            reason_code=api.PermitReasonCode.CAPITAL_RISK_REDUCTION,
+        ),
+    )
+    permit = _permit(api, seal=seal, permit_lines=lines)
+    changed = permit.permit_lines[1]
+
+    assert changed.permitted_quantity_units == 100
+    assert changed.remaining_reserve_cents == 800 * 100 + 75
+    assert changed.released_reserve_cents == 800 * 100
+    assert permit.total_released_reserve_cents == 800 * 100
+
+
+def test_same_total_quantity_cannot_hide_line_a_shrink_and_line_b_growth() -> None:
+    api = _api()
+    permit = _permit(api)
+    line_b, line_a = permit.permit_lines
+    changed = (
+        line_b.model_copy(
+            update={
+                "permitted_quantity_units": line_b.permitted_quantity_units + 100,
+                "remaining_reserve_cents": (
+                    line_b.worst_case_price_cents
+                    * (line_b.permitted_quantity_units + 100)
+                    + 50
+                ),
+            }
+        ),
+        line_a.model_copy(
+            update={
+                "permitted_quantity_units": line_a.permitted_quantity_units - 100,
+                "reason_code": api.PermitReasonCode.CAPITAL_RISK_REDUCTION,
+                "remaining_reserve_cents": (
+                    line_a.worst_case_price_cents
+                    * (line_a.permitted_quantity_units - 100)
+                    + 75
+                ),
+                "released_reserve_cents": (line_a.worst_case_price_cents * 100),
+            }
+        ),
+    )
+    assert sum(line.permitted_quantity_units for line in changed) == sum(
+        line.sealed_quantity_units for line in permit.permit_lines
+    )
+    with pytest.raises(ValidationError, match="line|grow|sealed|quantity"):
+        api.ExecutionPermit.model_validate(_permit_payload(api, permit_lines=changed))
+
+
 def test_permit_cannot_change_line_economics_or_reallocate_released_cash() -> None:
     api = _api()
     permit = _permit(api)
     line = permit.permit_lines[0]
     drift = {
         "security_id": "000001.SZ",
+        "sealed_quantity_units": line.sealed_quantity_units + 100,
         "order_type": "MARKET",
         "limit_price_cents": line.limit_price_cents + 1,
+        "worst_case_price_cents": line.worst_case_price_cents + 1,
+        "price_boundary_version": "other-price-boundary.v2",
         "time_in_force": "DAY",
         "exit_session_ordinal": 9,
+        "sealed_reserve_cents": line.sealed_reserve_cents + 1,
         "remaining_reserve_cents": line.remaining_reserve_cents + 1,
         "released_reserve_cents": line.released_reserve_cents + 1,
     }
@@ -1296,16 +1857,112 @@ def test_permit_reasons_reject_alpha_news_quote_and_discretion(reason) -> None:
     api = _api()
     assert {item.value for item in api.PermitReasonCode} == {
         "UNCHANGED",
-        "LOT_ROUNDING",
-        "EXCHANGE_PRICE_LIMIT",
-        "SUSPENSION",
-        "RISK_CAP_REDUCTION",
-        "AUTHORITY_CANCEL",
+        "AVAILABILITY_REDUCTION",
+        "PRICE_REDUCTION",
+        "CAPACITY_REDUCTION",
+        "CASH_REDUCTION",
+        "CAPITAL_RISK_REDUCTION",
+        "STAGE_HALT_CANCEL",
+        "RECONCILIATION_CANCEL",
+        "FACT_INTEGRITY_CANCEL",
+        "AUTHORIZATION_CANCEL",
+        "FENCE_CANCEL",
+        "DEADLINE_CANCEL",
     }
     line = _permit(api).permit_lines[0]
     with pytest.raises(ValidationError, match="reason"):
         api.ExecutionPermitLine.model_validate(
             line.model_dump(mode="python", round_trip=True) | {"reason_code": reason}
+        )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "AVAILABILITY_REDUCTION",
+        "PRICE_REDUCTION",
+        "CAPACITY_REDUCTION",
+        "CASH_REDUCTION",
+        "CAPITAL_RISK_REDUCTION",
+        "STAGE_HALT_CANCEL",
+        "RECONCILIATION_CANCEL",
+        "FACT_INTEGRITY_CANCEL",
+        "AUTHORIZATION_CANCEL",
+        "FENCE_CANCEL",
+        "DEADLINE_CANCEL",
+    ],
+)
+def test_permit_reason_categories_are_typed_mechanical_facts(reason) -> None:
+    api = _api()
+    assert api.PermitReasonCode(reason).value == reason
+
+
+@pytest.mark.parametrize(
+    ("quantity_delta", "reason"),
+    [
+        (0, "CAPITAL_RISK_REDUCTION"),
+        (-100, "UNCHANGED"),
+        (-100, "AUTHORIZATION_CANCEL"),
+    ],
+)
+def test_permit_reason_must_match_unchanged_shrink_or_cancel(
+    quantity_delta, reason
+) -> None:
+    api = _api()
+    seal_line = _seal(api).proposal.order_lines[1]
+    quantity = seal_line.sealed_quantity_units + quantity_delta
+    with pytest.raises(ValidationError, match="reason|unchanged|shrink|cancel"):
+        _permit_line(
+            api,
+            seal_line,
+            permitted_quantity=quantity,
+            reason_code=api.PermitReasonCode(reason),
+        )
+
+
+def test_permit_rejects_future_preopen_fact_timestamp() -> None:
+    api = _api()
+    seal = _seal(api)
+    line = _permit_line(
+        api,
+        seal.proposal.order_lines[0],
+        preopen_fact_as_of=PERMIT_DEADLINE + timedelta(microseconds=1),
+    )
+    with pytest.raises(ValidationError, match="preopen|fact|issued|future"):
+        api.ExecutionPermit.model_validate(
+            _permit_payload(
+                api,
+                seal=seal,
+                permit_lines=(line, _permit_line(api, seal.proposal.order_lines[1])),
+            )
+        )
+
+
+@pytest.mark.parametrize("case", ["duplicate", "missing_positive", "present_zero"])
+def test_client_order_ids_are_unique_and_exactly_match_sendable_lines(case) -> None:
+    api = _api()
+    seal = _seal(api)
+    lines = [
+        _permit_line(api, line, disposition=api.PermitDisposition.ALLOW)
+        for line in seal.proposal.order_lines
+    ]
+    if case == "duplicate":
+        lines[1] = lines[1].model_copy(
+            update={"client_order_id": lines[0].client_order_id}
+        )
+    elif case == "missing_positive":
+        lines[0] = lines[0].model_copy(update={"client_order_id": None})
+    else:
+        lines[0] = _permit_line(
+            api,
+            seal.proposal.order_lines[0],
+            permitted_quantity=0,
+            reason_code=api.PermitReasonCode.AUTHORIZATION_CANCEL,
+            client_order_id="client-zero-line",
+        )
+    with pytest.raises(ValidationError, match="client|order|sendable|unique|zero"):
+        api.ExecutionPermit.model_validate(
+            _permit_payload(api, seal=seal, permit_lines=tuple(lines))
         )
 
 
@@ -1359,6 +2016,45 @@ def test_cancel_and_allow_dispositions_are_typed_and_non_interchangeable() -> No
         )
 
 
+def test_cancel_rejects_positive_line_or_durable_sendable_outbox() -> None:
+    api = _api()
+    seal = _seal(api)
+    positive_lines = tuple(
+        _permit_line(api, line, disposition=api.PermitDisposition.ALLOW)
+        for line in seal.proposal.order_lines
+    )
+    with pytest.raises(ValidationError, match="CANCEL|zero|positive|sendable"):
+        api.ExecutionPermit.model_validate(
+            _permit_payload(
+                api,
+                seal=seal,
+                disposition=api.PermitDisposition.CANCEL,
+                permit_lines=positive_lines,
+            )
+        )
+
+    zero_lines = tuple(
+        _permit_line(
+            api,
+            line,
+            disposition=api.PermitDisposition.CANCEL,
+            permitted_quantity=0,
+        )
+        for line in seal.proposal.order_lines
+    )
+    durable = _send_claim_versions(api, seal, zero_lines)
+    with pytest.raises(ValidationError, match="CANCEL|outbox|tombstone|sendable"):
+        api.ExecutionPermit.model_validate(
+            _permit_payload(
+                api,
+                seal=seal,
+                disposition=api.PermitDisposition.CANCEL,
+                permit_lines=zero_lines,
+                send_claim_expected_versions=durable,
+            )
+        )
+
+
 def test_shadow_has_complete_counterfactual_provenance_and_independent_lines() -> None:
     api = _api()
     assert set(api.CounterfactualDecisionKey.model_fields) == {
@@ -1384,6 +2080,7 @@ def test_shadow_has_complete_counterfactual_provenance_and_independent_lines() -
         "policy_activation_hash",
         "policy_epoch",
         "evidence_set_merkle_root",
+        "stage_bindings",
         "counterfactual_lines",
         "cost_assumption_version",
         "execution_assumption_version",
@@ -1422,6 +2119,92 @@ def test_shadow_has_complete_counterfactual_provenance_and_independent_lines() -
     shadow = _shadow(api)
     assert shadow.execution_authority == "NONE"
     assert len(shadow.counterfactual_lines) == 2
+    assert set(api.ShadowStageBinding.model_fields) == {
+        "research_program_id",
+        "economic_lineage_id",
+        "stage_id",
+        "trial_id",
+        "stage_manifest_hash",
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("producer_namespace", "different-producer"),
+        ("research_program_id", "different-program"),
+        ("economic_lineage_id", "different-lineage"),
+        ("stage_id", "different-stage"),
+        ("trial_id", "different-trial"),
+        ("cost_assumption_version", "different-cost"),
+        ("execution_assumption_version", "different-execution"),
+    ],
+)
+def test_shadow_lines_must_match_header_provenance_and_assumptions(
+    field, value
+) -> None:
+    api = _api()
+    shadow = _shadow(api)
+    changed = shadow.counterfactual_lines[0].model_copy(update={field: value})
+    with pytest.raises(
+        ValidationError,
+        match="producer|program|lineage|stage|trial|cost|execution|header",
+    ):
+        api.ShadowDecision.model_validate(
+            _shadow_payload(
+                api,
+                counterfactual_lines=(changed, *shadow.counterfactual_lines[1:]),
+            )
+        )
+
+
+def test_shadow_stage_bindings_are_canonical_unique_and_exactly_cover_lines() -> None:
+    api = _api()
+    shadow = _shadow(api)
+    expected = {
+        (
+            line.research_program_id,
+            line.economic_lineage_id,
+            line.stage_id,
+            line.trial_id,
+            line.stage_manifest_hash,
+        )
+        for line in shadow.counterfactual_lines
+    }
+    actual = {
+        (
+            item.research_program_id,
+            item.economic_lineage_id,
+            item.stage_id,
+            item.trial_id,
+            item.stage_manifest_hash,
+        )
+        for item in shadow.stage_bindings
+    }
+    assert actual == expected
+    assert shadow.stage_bindings == tuple(
+        sorted(
+            shadow.stage_bindings,
+            key=lambda item: (
+                item.research_program_id,
+                item.economic_lineage_id,
+                item.stage_id,
+                item.trial_id,
+            ),
+        )
+    )
+    for bindings in ((), shadow.stage_bindings + shadow.stage_bindings):
+        with pytest.raises(ValidationError, match="stage|coverage|duplicate|canonical"):
+            api.ShadowDecision.model_validate(
+                _shadow_payload(api, stage_bindings=bindings)
+            )
+    with pytest.raises(ValidationError, match="line|canonical|order"):
+        api.ShadowDecision.model_validate(
+            _shadow_payload(
+                api,
+                counterfactual_lines=tuple(reversed(shadow.counterfactual_lines)),
+            )
+        )
 
 
 def test_shadow_schema_forbids_every_authority_and_execution_field() -> None:
@@ -1458,29 +2241,216 @@ def test_shadow_counterfactual_key_is_not_a_seal_logical_key() -> None:
         )
 
 
+INTEGER_FIELDS_BY_FIXTURE = {
+    "window": (
+        "calendar_snapshot_version",
+        "cutoff_snapshot_version",
+        "monotonic_observation_ns",
+        "monotonic_sequence",
+    ),
+    "gateway_issuer": ("capability_schema_major", "registry_epoch"),
+    "shadow_issuer": ("capability_schema_major", "registry_epoch"),
+    "stage": ("expected_stage_loss_version", "post_stage_loss_version"),
+    "stage_expected": ("stage_loss_version",),
+    "reserve": ("reserved_cash_cents",),
+    "prior": (
+        "prior_seal_revision",
+        "permit_issuance_sequence",
+        "fencing_token_issuance_sequence",
+        "live_order_count",
+    ),
+    "gateway_expected": (
+        "registry_epoch",
+        "policy_epoch",
+        "authority_epoch",
+        "risk_epoch",
+        "authorization_version",
+        "authorization_status_version",
+        "entry_fence_version",
+        "capital_version",
+        "capital_stream_version",
+        "writer_fencing_epoch",
+        "expected_active_seal_revision",
+        "schema_major",
+    ),
+    "seal": (
+        "schema_major",
+        "seal_revision",
+        "supersedes_seal_revision",
+        "registry_epoch",
+        "policy_epoch",
+        "authority_epoch",
+        "risk_epoch",
+        "authorization_version",
+        "authorization_status_version",
+        "entry_fence_version",
+        "capital_version",
+        "capital_stream_version",
+        "writer_fencing_epoch",
+        "reservation_version",
+        "total_reserved_cash_cents",
+        "post_admission_capital_version",
+        "post_admission_reservation_version",
+    ),
+    "shadow_line": (
+        "target_quantity_units",
+        "lot_size_units",
+        "limit_price_cents",
+        "worst_case_price_cents",
+        "exit_session_ordinal",
+        "estimated_fee_cents",
+        "estimated_cash_reserve_cents",
+    ),
+    "shadow": ("schema_major", "policy_epoch"),
+    "permit_line": (
+        "sealed_quantity_units",
+        "permitted_quantity_units",
+        "limit_price_cents",
+        "worst_case_price_cents",
+        "exit_session_ordinal",
+        "sealed_reserve_cents",
+        "remaining_reserve_cents",
+        "released_reserve_cents",
+    ),
+    "send_claim": (
+        "active_seal_revision",
+        "permit_nonce_sequence",
+        "registry_epoch",
+        "policy_epoch",
+        "authority_epoch",
+        "risk_epoch",
+        "authorization_version",
+        "authorization_status_version",
+        "entry_fence_version",
+        "capital_version",
+        "capital_stream_version",
+        "risk_snapshot_version",
+        "reservation_version",
+        "remaining_reserved_cash_cents",
+        "writer_fencing_epoch",
+    ),
+    "permit": (
+        "schema_major",
+        "permit_nonce_sequence",
+        "seal_revision",
+        "total_remaining_reserve_cents",
+        "total_released_reserve_cents",
+    ),
+}
+
+
+def _strict_fixture(api, fixture_name):
+    if fixture_name == "window":
+        instance = _window(api)
+    elif fixture_name == "gateway_issuer":
+        instance = _gateway_issuer(
+            api,
+            api.ArtifactKind.PORTFOLIO_DECISION_SEAL,
+            "capital-gateway.entry-seal.v1",
+        )
+    elif fixture_name == "shadow_issuer":
+        instance = _shadow_issuer(api)
+    elif fixture_name == "stage":
+        instance = _stage_binding(api)
+    elif fixture_name == "stage_expected":
+        instance = _stage_expected_version(api, _proposal(api).order_lines[0])
+    elif fixture_name == "reserve":
+        instance = _reserve_bindings(api, _proposal(api))[0]
+    elif fixture_name == "prior":
+        instance = _prior_seal_eligibility(api)
+    elif fixture_name == "gateway_expected":
+        instance = _gateway_expected_versions(api)
+    elif fixture_name == "seal":
+        instance = _seal(api)
+    elif fixture_name == "shadow_line":
+        instance = _shadow_line(api)
+    elif fixture_name == "shadow":
+        instance = _shadow(api)
+    elif fixture_name == "permit_line":
+        instance = _permit(api).permit_lines[0]
+    elif fixture_name == "send_claim":
+        instance = _permit(api).send_claim_expected_versions
+    elif fixture_name == "permit":
+        instance = _permit(api)
+    else:  # pragma: no cover - the parameter table is closed above
+        raise AssertionError(f"unknown strict fixture: {fixture_name}")
+    return type(instance), instance
+
+
 @pytest.mark.parametrize(
-    ("builder", "field", "bad"),
+    ("fixture_name", "field"),
     [
-        (_seal_payload, "seal_revision", True),
-        (_seal_payload, "seal_revision", 1.0),
-        (_seal_payload, "seal_revision", Decimal("1")),
-        (_permit_payload, "permit_nonce_sequence", False),
-        (_permit_payload, "permit_nonce_sequence", 1.0),
-        (_permit_payload, "permit_nonce_sequence", Decimal("1")),
+        (fixture_name, field)
+        for fixture_name, fields in INTEGER_FIELDS_BY_FIXTURE.items()
+        for field in fields
     ],
 )
-def test_checkpoint2_models_reject_numeric_integer_laundering(
-    builder, field, bad
+def test_every_checkpoint2_integer_field_rejects_non_native_integer(
+    fixture_name, field
 ) -> None:
     api = _api()
-    model = (
-        api.PortfolioDecisionSeal if builder is _seal_payload else api.ExecutionPermit
-    )
-    with pytest.raises(ValidationError, match="integer|native int|valid integer"):
-        model.model_validate(builder(api, **{field: bad}))
+    model, instance = _strict_fixture(api, fixture_name)
+    base = instance.model_dump(mode="python", round_trip=True)
+    if base[field] is None:
+        if field == "expected_active_seal_revision":
+            base["expected_active_seal_id"] = "seal-0"
+            base[field] = 1
+        elif field == "supersedes_seal_revision":
+            eligibility = _prior_seal_eligibility(api)
+            base.update(
+                seal_revision=2,
+                supersedes_seal_id=eligibility.prior_seal_id,
+                supersedes_seal_revision=eligibility.prior_seal_revision,
+                prior_seal_eligibility=eligibility,
+            )
+    for bad in (True, 1.0, Decimal("1")):
+        with pytest.raises(ValidationError, match="integer|native int|valid integer"):
+            model.model_validate(base | {field: bad})
 
 
-def test_nested_line_models_reject_numeric_laundering_and_unknown_fields() -> None:
+UTC_FIELDS_BY_FIXTURE = {
+    "window": (
+        "wall_clock_observed_at",
+        "t0_close_finalized_at",
+        "seal_creation_deadline",
+        "permit_issue_deadline",
+        "gateway_send_deadline",
+        "broker_auction_submission_cutoff",
+    ),
+    "gateway_issuer": ("verified_at",),
+    "shadow_issuer": ("verified_at",),
+    "seal": ("created_at",),
+    "shadow": ("created_at", "available_at"),
+    "permit_line": ("preopen_fact_as_of",),
+    "send_claim": ("effective_send_deadline",),
+    "permit": ("issued_at", "permit_expires_at"),
+}
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "field"),
+    [
+        (fixture_name, field)
+        for fixture_name, fields in UTC_FIELDS_BY_FIXTURE.items()
+        for field in fields
+    ],
+)
+def test_every_checkpoint2_time_field_rejects_naive_or_non_utc(
+    fixture_name, field
+) -> None:
+    api = _api()
+    model, instance = _strict_fixture(api, fixture_name)
+    for bad_time in (
+        SEAL_CREATED.replace(tzinfo=None),
+        SEAL_CREATED.astimezone(timezone(timedelta(hours=8))),
+    ):
+        with pytest.raises(ValidationError, match="UTC|timezone"):
+            model.model_validate(
+                instance.model_dump(mode="python", round_trip=True) | {field: bad_time}
+            )
+
+
+def test_nested_line_models_forbid_unknown_fields() -> None:
     api = _api()
     seal_line = _reserve_bindings(api, _proposal(api))[0]
     shadow_line = _shadow_line(api)
@@ -1495,13 +2465,8 @@ def test_nested_line_models_reject_numeric_laundering_and_unknown_fields() -> No
         (api.ShadowOrderLine, shadow_line, "target_quantity_units"),
         (api.ExecutionPermitLine, permit_line, "permitted_quantity_units"),
     )
-    for model, instance, field in cases:
+    for model, instance, _field in cases:
         base = instance.model_dump(mode="python", round_trip=True)
-        for bad in (True, 1.0, Decimal("1")):
-            with pytest.raises(
-                ValidationError, match="integer|native int|valid integer"
-            ):
-                model.model_validate(base | {field: bad})
         with pytest.raises(ValidationError, match="extra_forbidden"):
             model.model_validate(base | {"unknown": "forbidden"})
 
@@ -1515,28 +2480,32 @@ def test_nested_unchecked_models_are_recursively_revalidated() -> None:
             | {"reserved_cash_cents": -1}
         )
     )
+    poisoned_seal_payload = _seal_payload(
+        api,
+        line_reserve_bindings=(
+            poisoned_reserve,
+            *seal.line_reserve_bindings[1:],
+        ),
+    )
     with pytest.raises(ValidationError):
-        api.PortfolioDecisionSeal.model_validate(
-            _seal_payload(
-                api,
-                line_reserve_bindings=(
-                    poisoned_reserve,
-                    *seal.line_reserve_bindings[1:],
-                ),
-            )
-        )
+        api.PortfolioDecisionSeal.model_validate(poisoned_seal_payload)
+    poisoned_seal = api.PortfolioDecisionSeal.model_construct(**poisoned_seal_payload)
+    with pytest.raises(ValidationError):
+        poisoned_seal.artifact_hash()
 
     permit = _permit(api)
     poisoned_line = permit.permit_lines[0].model_copy(
         update={"permitted_quantity_units": -1}
     )
+    poisoned_permit_payload = _permit_payload(
+        api,
+        permit_lines=(poisoned_line, *permit.permit_lines[1:]),
+    )
     with pytest.raises(ValidationError):
-        api.ExecutionPermit.model_validate(
-            _permit_payload(
-                api,
-                permit_lines=(poisoned_line, *permit.permit_lines[1:]),
-            )
-        )
+        api.ExecutionPermit.model_validate(poisoned_permit_payload)
+    poisoned_permit = api.ExecutionPermit.model_construct(**poisoned_permit_payload)
+    with pytest.raises(ValidationError):
+        poisoned_permit.artifact_hash()
 
 
 def test_checkpoint2_artifacts_are_frozen_and_canonical_ordered() -> None:
@@ -1594,27 +2563,18 @@ def test_nested_binding_identities_are_unique_and_composite() -> None:
 def test_seal_shadow_and_permit_have_stable_canonical_serialization_fixtures() -> None:
     api = _api()
     fixtures = (
-        (
-            _seal(api),
-            "ai-hedge-fund.v3.decision.portfolio-seal.v1",
-        ),
-        (
-            _shadow(api),
-            "ai-hedge-fund.v3.decision.shadow-decision.v1",
-        ),
-        (
-            _permit(api),
-            "ai-hedge-fund.v3.decision.execution-permit.v1",
-        ),
+        ("seal", _seal(api)),
+        ("shadow", _shadow(api)),
+        ("permit", _permit(api)),
     )
-    for artifact, domain in fixtures:
-        approved_payload = artifact.model_dump(mode="python", round_trip=True)
-        assert api.canonical_json_bytes(artifact) == api.canonical_json_bytes(
-            approved_payload
+    for label, artifact in fixtures:
+        approved_canonical_digest, approved_artifact_hash = (
+            APPROVED_SERIALIZATION_DIGESTS[label]
         )
-        assert artifact.artifact_hash() == api.domain_hash(
-            domain, artifact.schema_major, artifact
+        assert hashlib.sha256(api.canonical_json_bytes(artifact)).hexdigest() == (
+            approved_canonical_digest
         )
+        assert artifact.artifact_hash() == approved_artifact_hash
 
 
 def test_every_authority_reserve_line_or_deadline_change_changes_artifact_hash() -> (
@@ -1622,71 +2582,46 @@ def test_every_authority_reserve_line_or_deadline_change_changes_artifact_hash()
 ):
     api = _api()
     permit = _permit(api)
-    permit_payload = permit.model_dump(mode="python", round_trip=True)
-    expected = permit.send_claim_expected_versions
-    expected_payload = expected.model_dump(mode="python", round_trip=True)
-    permit_line = permit.permit_lines[0]
-    line_payload = permit_line.model_dump(mode="python", round_trip=True)
-
-    authority_changes = {
-        "policy_activation_hash": HASH_F,
-        "trust_bundle_hash": HASH_F,
-        "registry_epoch": expected.registry_epoch + 1,
-        "authority_epoch": expected.authority_epoch + 1,
-        "authorization_status_hash": HASH_F,
-        "entry_fence_version": expected.entry_fence_version + 1,
-        "capital_stream_version": expected.capital_stream_version + 1,
-        "risk_snapshot_version": expected.risk_snapshot_version + 1,
-        "reservation_version": expected.reservation_version + 1,
-        "outbox_payload_hash": HASH_F,
-        "writer_fencing_epoch": expected.writer_fencing_epoch + 1,
-        "effective_send_deadline": (
-            expected.effective_send_deadline - timedelta(microseconds=1)
+    seal = permit.seal
+    partial_lines = (
+        permit.permit_lines[0],
+        _permit_line(
+            api,
+            seal.proposal.order_lines[1],
+            permitted_quantity=100,
+            reason_code=api.PermitReasonCode.CAPITAL_RISK_REDUCTION,
+        ),
+    )
+    outbox_expected = api.SendClaimExpectedVersions.model_validate(
+        permit.send_claim_expected_versions.model_dump(mode="python", round_trip=True)
+        | {"outbox_payload_hash": HASH_F}
+    )
+    earlier_expiry = PERMIT_EXPIRES - timedelta(microseconds=1)
+    deadline_expected = api.SendClaimExpectedVersions.model_validate(
+        permit.send_claim_expected_versions.model_dump(mode="python", round_trip=True)
+        | {"effective_send_deadline": earlier_expiry}
+    )
+    valid_permit_variants = {
+        "line": _permit(api, seal=seal, permit_lines=partial_lines),
+        "nonce": _permit(api, permit_nonce="permit-nonce-2"),
+        "outbox": _permit(api, send_claim_expected_versions=outbox_expected),
+        "deadline": _permit(
+            api,
+            permit_expires_at=earlier_expiry,
+            send_claim_expected_versions=deadline_expected,
+        ),
+        "issuer": _permit(
+            api,
+            issuer_binding=permit.issuer_binding.model_copy(
+                update={"key_id": "capital-gateway-key-2"}
+            ),
         ),
     }
-    for field, value in authority_changes.items():
-        changed_expected = api.SendClaimExpectedVersions.model_construct(
-            **(expected_payload | {field: value})
-        )
-        changed = api.ExecutionPermit.model_construct(
-            **(permit_payload | {"send_claim_expected_versions": changed_expected})
-        )
-        assert changed.artifact_hash() != permit.artifact_hash(), field
-
-    for field, value in {
-        "permitted_quantity_units": permit_line.permitted_quantity_units - 100,
-        "remaining_reserve_cents": permit_line.remaining_reserve_cents - 1,
-        "released_reserve_cents": permit_line.released_reserve_cents + 1,
-    }.items():
-        changed_line = api.ExecutionPermitLine.model_construct(
-            **(line_payload | {field: value})
-        )
-        changed = api.ExecutionPermit.model_construct(
-            **(
-                permit_payload
-                | {"permit_lines": (changed_line, *permit.permit_lines[1:])}
-            )
-        )
-        assert changed.artifact_hash() != permit.artifact_hash(), field
-
-    changed_expiry = api.ExecutionPermit.model_construct(
-        **(
-            permit_payload
-            | {
-                "permit_expires_at": permit.permit_expires_at
-                - timedelta(microseconds=1)
-            }
-        )
-    )
-    assert changed_expiry.artifact_hash() != permit.artifact_hash()
+    for label, valid_variant in valid_permit_variants.items():
+        assert valid_variant.artifact_hash() != permit.artifact_hash(), label
 
     shadow = _shadow(api)
-    changed_shadow = api.ShadowDecision.model_construct(
-        **(
-            shadow.model_dump(mode="python", round_trip=True)
-            | {"evidence_set_merkle_root": HASH_F}
-        )
-    )
+    changed_shadow = _shadow(api, evidence_set_merkle_root=HASH_F)
     assert changed_shadow.artifact_hash() != shadow.artifact_hash()
 
 
