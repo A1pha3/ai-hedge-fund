@@ -223,12 +223,12 @@ def test_seal_binds_exact_observed_wall_time_and_rejects_backfilled_proposal() -
             "proposal_created_at": SEAL_CREATED + timedelta(microseconds=1),
         },
     ):
-        changed = type(proposal).model_validate(
-            proposal.model_dump(mode="python", round_trip=True) | proposal_drift
-        )
         with pytest.raises(
             ValidationError, match="close|cutoff|proposal|created|seal|time"
         ):
+            changed = type(proposal).model_validate(
+                proposal.model_dump(mode="python", round_trip=True) | proposal_drift
+            )
             api.PortfolioDecisionSeal.model_validate(
                 _seal_payload(api, proposal=changed)
             )
