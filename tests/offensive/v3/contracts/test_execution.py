@@ -1,6 +1,7 @@
 """Revision 2 contract tests for entry/order and execution-revision lifecycles."""
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
@@ -182,11 +183,22 @@ def _revision_payload(e, **overrides):
         "revision_kind": e.ExecutionRevisionKind.RECORDED,
         "supersedes_revision": None,
         "order_id": "order-001",
+        "portfolio_id": "portfolio-v3",
+        "broker_account_id": "broker-account-001",
+        "mode": e.ExecutionMode.BROKER_CONFIRMED,
+        "security_id": "600000.SH",
+        "position_lineage_id": "position-001",
+        "economic_lot_id": "lot-001",
+        "side": e.ExecutionSide.ENTRY,
         "broker_order_id": "broker-order-001",
         "broker_execution_id": "broker-execution-001",
         "historical_terminal_order_state": e.OrderState.FILLED,
         "effective_filled_quantity": 100,
+        "effective_position_quantity": 100,
         "effective_gross_cash_cents": 100_000,
+        "effective_position_state": e.EffectivePositionState.EXIT_PENDING,
+        "exit_mandate_id": "exit-mandate-001",
+        "exit_mandate_revision": 1,
         "economic_projection_state": e.EconomicProjectionState.RECONCILED,
         "effective_at": NOW,
         "observed_at": NOW + timedelta(seconds=1),
@@ -209,17 +221,35 @@ def test_execution_revision_contract_has_exact_schema_and_typed_states() -> None
         "REOPENED_BY_CORRECTION",
         "RECONCILIATION_PENDING",
     ]
+    assert [side.value for side in e.ExecutionSide] == ["ENTRY", "EXIT"]
+    assert [state.value for state in e.EffectivePositionState] == [
+        "OPEN",
+        "EXIT_PENDING",
+        "FLAT",
+        "RECONCILIATION_HALT",
+    ]
     assert set(e.ExecutionRevision.model_fields) == {
         "execution_id",
         "revision",
         "revision_kind",
         "supersedes_revision",
         "order_id",
+        "portfolio_id",
+        "broker_account_id",
+        "mode",
+        "security_id",
+        "position_lineage_id",
+        "economic_lot_id",
+        "side",
         "broker_order_id",
         "broker_execution_id",
         "historical_terminal_order_state",
         "effective_filled_quantity",
+        "effective_position_quantity",
         "effective_gross_cash_cents",
+        "effective_position_state",
+        "exit_mandate_id",
+        "exit_mandate_revision",
         "economic_projection_state",
         "effective_at",
         "observed_at",
@@ -235,6 +265,32 @@ def test_execution_revision_contract_has_exact_schema_and_typed_states() -> None
     }
 
 
+def test_execution_types_are_defined_by_the_public_execution_module() -> None:
+    from src.screening.offensive.v3 import contracts
+    from src.screening.offensive.v3.contracts import _execution_contracts, capital
+
+    public = _execution()
+    names = (
+        "PlanState",
+        "OrderState",
+        "ExecutionRevisionKind",
+        "EconomicProjectionState",
+        "ExecutionSide",
+        "EffectivePositionState",
+        "ExecutionRevision",
+        "ExecutionRevisionHistory",
+    )
+    for name in names:
+        public_type = getattr(public, name)
+        assert public_type.__module__ == (
+            "src.screening.offensive.v3.contracts.execution"
+        )
+        assert getattr(contracts, name) is public_type
+        assert getattr(_execution_contracts, name) is public_type
+    assert capital.PlanState is public.PlanState
+    assert capital.OrderState is public.OrderState
+
+
 def test_terminal_order_history_accepts_higher_bust_and_correction_revisions() -> None:
     e = _execution()
     recorded = e.ExecutionRevision(**_revision_payload(e))
@@ -245,8 +301,12 @@ def test_terminal_order_history_accepts_higher_bust_and_correction_revisions() -
             revision_kind=e.ExecutionRevisionKind.BUSTED,
             supersedes_revision=1,
             effective_filled_quantity=0,
+            effective_position_quantity=0,
             effective_gross_cash_cents=0,
-            economic_projection_state=e.EconomicProjectionState.REOPENED_BY_CORRECTION,
+            effective_position_state=e.EffectivePositionState.FLAT,
+            exit_mandate_id=None,
+            exit_mandate_revision=None,
+            economic_projection_state=e.EconomicProjectionState.RECONCILED,
             observed_at=NOW + timedelta(minutes=1),
         )
     )
@@ -257,8 +317,12 @@ def test_terminal_order_history_accepts_higher_bust_and_correction_revisions() -
             revision_kind=e.ExecutionRevisionKind.CORRECTED,
             supersedes_revision=2,
             effective_filled_quantity=60,
+            effective_position_quantity=60,
             effective_gross_cash_cents=61_000,
-            economic_projection_state=e.EconomicProjectionState.RECONCILIATION_PENDING,
+            effective_position_state=e.EffectivePositionState.EXIT_PENDING,
+            exit_mandate_id="exit-mandate-001",
+            exit_mandate_revision=2,
+            economic_projection_state=e.EconomicProjectionState.REOPENED_BY_CORRECTION,
             observed_at=NOW + timedelta(minutes=2),
         )
     )
@@ -273,8 +337,52 @@ def test_terminal_order_history_accepts_higher_bust_and_correction_revisions() -
     assert history.revisions[-1].historical_terminal_order_state is e.OrderState.FILLED
     assert (
         history.revisions[-1].economic_projection_state
-        is e.EconomicProjectionState.RECONCILIATION_PENDING
+        is e.EconomicProjectionState.REOPENED_BY_CORRECTION
     )
+    assert history.revisions[-1].exit_mandate_revision == 2
+
+
+def test_negative_long_only_position_is_preserved_as_reconciliation_halt() -> None:
+    e = _execution()
+    negative = e.ExecutionRevision(
+        **_revision_payload(
+            e,
+            side=e.ExecutionSide.EXIT,
+            effective_filled_quantity=120,
+            effective_position_quantity=-20,
+            effective_position_state=e.EffectivePositionState.RECONCILIATION_HALT,
+            exit_mandate_id=None,
+            exit_mandate_revision=None,
+            economic_projection_state=e.EconomicProjectionState.RECONCILIATION_PENDING,
+        )
+    )
+    assert negative.effective_position_quantity == -20
+    assert (
+        negative.effective_position_state
+        is e.EffectivePositionState.RECONCILIATION_HALT
+    )
+
+    for impossible in (
+        {"effective_position_quantity": -20},
+        {
+            "effective_position_quantity": 0,
+            "effective_position_state": e.EffectivePositionState.RECONCILIATION_HALT,
+            "exit_mandate_id": None,
+            "exit_mandate_revision": None,
+        },
+    ):
+        with pytest.raises(ValidationError, match="position|negative|reconciliation"):
+            e.ExecutionRevision(**_revision_payload(e, **impossible))
+
+
+@pytest.mark.parametrize("bad", [True, 100.0, Decimal("100"), "100"])
+@pytest.mark.parametrize(
+    "field_name", ["effective_filled_quantity", "effective_position_quantity"]
+)
+def test_execution_revision_quantities_require_native_integers(field_name, bad) -> None:
+    e = _execution()
+    with pytest.raises(ValidationError, match="integer|int"):
+        e.ExecutionRevision(**_revision_payload(e, **{field_name: bad}))
 
 
 @pytest.mark.parametrize(
@@ -297,6 +405,12 @@ def test_terminal_order_history_accepts_higher_bust_and_correction_revisions() -
         },
         {"effective_filled_quantity": -1},
         {"effective_gross_cash_cents": -1},
+        {
+            "effective_position_quantity": 100,
+            "effective_position_state": "FLAT",
+        },
+        {"effective_position_quantity": 100, "exit_mandate_id": None},
+        {"effective_position_quantity": 100, "exit_mandate_revision": None},
         {"observed_at": NOW - timedelta(seconds=1)},
     ],
 )
@@ -317,7 +431,11 @@ def test_revision_history_rejects_gaps_identity_or_terminal_rewrite() -> None:
         revision_kind=e.ExecutionRevisionKind.BUSTED,
         supersedes_revision=1,
         effective_filled_quantity=0,
+        effective_position_quantity=0,
         effective_gross_cash_cents=0,
+        effective_position_state=e.EffectivePositionState.FLAT,
+        exit_mandate_id=None,
+        exit_mandate_revision=None,
         observed_at=NOW + timedelta(minutes=1),
     )
     for bad_revision, active_revision in [
@@ -329,6 +447,22 @@ def test_revision_history_rejects_gaps_identity_or_terminal_rewrite() -> None:
         ),
         (e.ExecutionRevision(**(valid_bust | {"execution_id": "execution-other"})), 2),
         (e.ExecutionRevision(**(valid_bust | {"order_id": "order-other"})), 2),
+        (e.ExecutionRevision(**(valid_bust | {"portfolio_id": "portfolio-other"})), 2),
+        (
+            e.ExecutionRevision(
+                **(valid_bust | {"broker_account_id": "broker-account-other"})
+            ),
+            2,
+        ),
+        (e.ExecutionRevision(**(valid_bust | {"security_id": "600001.SH"})), 2),
+        (
+            e.ExecutionRevision(
+                **(valid_bust | {"position_lineage_id": "position-other"})
+            ),
+            2,
+        ),
+        (e.ExecutionRevision(**(valid_bust | {"economic_lot_id": "lot-other"})), 2),
+        (e.ExecutionRevision(**(valid_bust | {"side": e.ExecutionSide.EXIT})), 2),
         (
             e.ExecutionRevision(
                 **(

@@ -26,7 +26,6 @@ FORBIDDEN_V3_SEGMENTS = {
     "capital.repository",
     "cli",
     "dispatcher",
-    "execution",
     "gateway",
     "repository",
     "services",
@@ -103,7 +102,9 @@ def _scan_contract_imports(root: Path) -> list[str]:
                 target_parts = tuple(target.split("."))
                 root_name = target_parts[0]
                 if root_name in FORBIDDEN_ROOTS:
-                    violations.append(f"{path.relative_to(root)}:{node.lineno}: {target}")
+                    violations.append(
+                        f"{path.relative_to(root)}:{node.lineno}: {target}"
+                    )
                     continue
                 if target == "<invalid-relative-import>":
                     violations.append(
@@ -122,7 +123,9 @@ def _scan_contract_imports(root: Path) -> list[str]:
                     _contains_path_pattern(lowered_parts, pattern)
                     for pattern in FORBIDDEN_V3_SEGMENTS
                 ):
-                    violations.append(f"{path.relative_to(root)}:{node.lineno}: {target}")
+                    violations.append(
+                        f"{path.relative_to(root)}:{node.lineno}: {target}"
+                    )
     return violations
 
 
@@ -216,12 +219,14 @@ def test_import_scanner_rejects_all_project_siblings_and_allows_contracts(
     (tmp_path / "absolute_siblings.py").write_text(
         "from src.screening.offensive.v3.kernel import decide as run\n"
         "import src.screening.offensive.v3.policy.loader as policy_loader\n"
+        "from src.screening.offensive.v3.execution import submit as execute\n"
         "from src.screening.offensive import daily_action as legacy\n",
         encoding="utf-8",
     )
     (tmp_path / "legal_contracts.py").write_text(
         "from . import base as base_contract\n"
-        "from .decision import DecisionSeal as Seal\n"
+        "from .execution import ExecutionRevision as Revision\n"
+        "from .decision import PortfolioDecision as Proposal\n"
         "from src.screening.offensive.v3.contracts import CapitalSnapshot as Snapshot\n",
         encoding="utf-8",
     )
@@ -235,11 +240,12 @@ def test_import_scanner_rejects_all_project_siblings_and_allows_contracts(
 
     violations = _scan_contract_imports(tmp_path)
 
-    assert len(violations) == 7
+    assert len(violations) == 8
     rendered = "\n".join(violations)
     for module in (
         "src.screening.offensive.v3.kernel",
         "src.screening.offensive.v3.policy",
+        "src.screening.offensive.v3.execution",
         "src.screening.offensive.daily_action",
     ):
         assert module in rendered
@@ -312,7 +318,9 @@ class BadPort:
     assert {"DataFrame", "list"} <= names
 
 
-def test_annotation_scanner_parses_only_nested_forward_reference_type_positions() -> None:
+def test_annotation_scanner_parses_only_nested_forward_reference_type_positions() -> (
+    None
+):
     source = """
 class NestedPort:
     def tuple_forward(self, value: tuple['list[int]', ...]) -> None: ...
@@ -350,7 +358,6 @@ def test_ports_expose_no_forbidden_annotations_or_method_implementation() -> Non
     protocol_names = {
         "CapitalViewPort",
         "EvidenceQueryPort",
-        "SealWriterPort",
         "CapabilityVerifier",
     }
     found: set[str] = set()
@@ -419,7 +426,6 @@ assert contracts.VerifiedIssuer is trust.VerifiedIssuer
 protocols = (
     contracts.CapitalViewPort,
     contracts.EvidenceQueryPort,
-    contracts.SealWriterPort,
     contracts.CapabilityVerifier,
 )
 for protocol in protocols:
@@ -450,6 +456,7 @@ root = Path(sys.argv[1]).resolve()
 assert Path(contracts.__file__).resolve() == root / 'src/screening/offensive/v3/contracts/__init__.py'
 forbidden = (
     'src.screening.offensive.v3.trust',
+    'src.screening.offensive.v3.execution',
     'sqlalchemy', 'pandas', 'numpy', 'requests', 'httpx', 'sqlite3',
     'src.cli.dispatcher',
 )
@@ -464,3 +471,50 @@ assert loaded == [], loaded
         check=False,
     )
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_final_top_level_omits_revision1_decision_and_seal_apis() -> None:
+    import importlib
+
+    from src.screening.offensive.v3 import contracts
+
+    obsolete = {
+        "CapitalAuthorizationBinding",
+        "DecisionInput",
+        "DecisionSeal",
+        "DecisionSealBinding",
+        "ExecutionPermit",
+        "PublishDecisionCommand",
+        "SealedOrderLine",
+        "SealWriterPort",
+        "ShadowDecision",
+    }
+    assert obsolete.isdisjoint(contracts.__all__)
+    assert not hasattr(contracts, "CapitalGatewayCommandPort")
+
+    revision1 = importlib.import_module(
+        "src.screening.offensive.v3.contracts.revision1"
+    )
+    assert obsolete <= set(revision1.__all__)
+    for name in obsolete:
+        assert getattr(revision1, name).__module__.startswith(
+            "src.screening.offensive.v3.contracts"
+        )
+
+
+def test_final_proposal_models_do_not_reference_revision1_types() -> None:
+    from src.screening.offensive.v3.contracts import PortfolioDecision
+
+    annotations = " ".join(
+        str(field.annotation) for field in PortfolioDecision.model_fields.values()
+    )
+    for obsolete in (
+        "CapitalAuthorizationEnvelope",
+        "AuthorizationStatus",
+        "CapitalRiskSnapshot",
+        "DecisionInput",
+        "DecisionSeal",
+        "PublishDecisionCommand",
+        "SealedOrderLine",
+    ):
+        assert obsolete not in annotations

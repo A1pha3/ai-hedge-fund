@@ -21,9 +21,9 @@ POLICY_HASH = "1" * 64
 
 
 def _api() -> Any:
-    from src.screening.offensive.v3 import contracts
+    from src.screening.offensive.v3.contracts import revision1
 
-    return contracts
+    return revision1
 
 
 def _plan(api: Any, **overrides: Any) -> Any:

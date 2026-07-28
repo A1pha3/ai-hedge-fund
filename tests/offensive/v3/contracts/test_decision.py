@@ -179,7 +179,13 @@ def _capital_risk_snapshot():
     return capital.CapitalRiskSnapshot.model_validate(payload)
 
 
-def _plan_evidence(*, suffix: str = "1"):
+def _plan_evidence(
+    *,
+    suffix: str = "1",
+    producer_namespace: str = PRODUCER,
+    family_id: str = FAMILY_ID,
+    economic_lineage_id: str = LINEAGE_ID,
+):
     from src.screening.offensive.v3.contracts.base import (
         EvidenceScope,
         ExecutionMode,
@@ -191,8 +197,8 @@ def _plan_evidence(*, suffix: str = "1"):
         evidence_id=f"plan-evidence-{suffix}",
         evidence_kind="plan",
         subject_scope=EvidenceScope.STRATEGY_LINEAGE,
-        subject_producer=PRODUCER,
-        family_id=FAMILY_ID,
+        subject_producer=producer_namespace,
+        family_id=family_id,
         strategy_semver="3.0.0",
         behavior_fingerprint="5" * 64,
         policy_epoch=4,
@@ -207,7 +213,7 @@ def _plan_evidence(*, suffix: str = "1"):
         schema_major=1,
         portfolio_id=PORTFOLIO_ID,
         signal_session=SIGNAL_SESSION,
-        economic_lineage_id=LINEAGE_ID,
+        economic_lineage_id=economic_lineage_id,
         snapshot_id="pit-snapshot-20260717",
         raw_target_fraction=Decimal("0.01"),
         created_at=datetime(2026, 7, 19, 7, 58, tzinfo=UTC),
@@ -218,11 +224,24 @@ def _line_payload(
     *,
     suffix: str = "1",
     security_id: str = "600000.SH",
+    producer_namespace: str = PRODUCER,
+    family_id: str = FAMILY_ID,
+    economic_lineage_id: str = LINEAGE_ID,
+    research_program_id: str = PROGRAM_ID,
+    stage_id: str = STAGE_ID,
+    stage_manifest_hash: str = STAGE_MANIFEST_HASH,
+    grant_id: str = GRANT_ID,
+    grant_certificate_hash: str = GRANT_CERTIFICATE_HASH,
     **overrides: object,
 ) -> dict[str, object]:
     from src.screening.offensive.v3.contracts.base import ExecutionMode
 
-    plan = _plan_evidence(suffix=suffix)
+    plan = _plan_evidence(
+        suffix=suffix,
+        producer_namespace=producer_namespace,
+        family_id=family_id,
+        economic_lineage_id=economic_lineage_id,
+    )
     if suffix == "1":
         sealed_quantity_units = 100
         limit_price_cents = 1_020
@@ -237,14 +256,14 @@ def _line_payload(
         "order_line_id": f"line-{suffix}",
         "security_id": security_id,
         "order_action": "ENTRY",
-        "producer_namespace": PRODUCER,
-        "family_id": FAMILY_ID,
-        "economic_lineage_id": LINEAGE_ID,
-        "research_program_id": PROGRAM_ID,
-        "stage_id": STAGE_ID,
-        "stage_manifest_hash": STAGE_MANIFEST_HASH,
-        "grant_id": GRANT_ID,
-        "grant_certificate_hash": GRANT_CERTIFICATE_HASH,
+        "producer_namespace": producer_namespace,
+        "family_id": family_id,
+        "economic_lineage_id": economic_lineage_id,
+        "research_program_id": research_program_id,
+        "stage_id": stage_id,
+        "stage_manifest_hash": stage_manifest_hash,
+        "grant_id": grant_id,
+        "grant_certificate_hash": grant_certificate_hash,
         "authorization_id": AUTHORIZATION_ID,
         "authorization_version": AUTHORIZATION_VERSION,
         "plan_evidence": plan,
@@ -285,6 +304,8 @@ def _stage_loss_expected_versions(api) -> tuple[object, ...]:
 
     return (
         api.StageLossExpectedVersion(
+            research_program_id=PROGRAM_ID,
+            economic_lineage_id=LINEAGE_ID,
             stage_id=STAGE_ID,
             stage_loss_budget_id=STAGE_LOSS_BUDGET_ID,
             stage_loss_version=STAGE_LOSS_VERSION,
@@ -313,7 +334,7 @@ def _expected_versions(api, **overrides: object):
         "entry_fence_hash": ENTRY_FENCE_HASH,
         "entry_fence_version": status.entry_fence_version,
         "risk_snapshot_id": risk.risk_snapshot_id,
-        "risk_snapshot_payload_hash": risk.payload_content_hash,
+        "risk_snapshot_artifact_hash": risk.artifact_hash(),
         "capital_version": risk.capital_version,
         "capital_stream_version": 29,
         "writer_fencing_epoch": risk.writer_fencing_epoch,
@@ -330,7 +351,6 @@ def _decision_payload(api, **overrides: object) -> dict[str, object]:
     from src.screening.offensive.v3.contracts.base import ExecutionMode
 
     envelope = _authorization_envelope()
-    status = _authorization_status(envelope)
     risk = _capital_risk_snapshot()
     lines = _order_lines(api)
     payload: dict[str, object] = {
@@ -354,13 +374,16 @@ def _decision_payload(api, **overrides: object) -> dict[str, object]:
         "policy_epoch": 4,
         "authority_epoch": 5,
         "risk_epoch": 6,
-        "capital_authorization": envelope,
-        "capital_authorization_artifact_hash": envelope.artifact_hash(),
-        "authorization_status": status,
-        "authorization_status_artifact_hash": status.artifact_hash(),
+        "authorization_id": envelope.authorization_id,
+        "authorization_version": envelope.authorization_version,
+        "authorization_artifact_hash": envelope.artifact_hash(),
         "evidence_set_merkle_root": EVIDENCE_ROOT,
-        "capital_risk_snapshot": risk,
-        "gateway_expected_versions": _expected_versions(api),
+        "risk_snapshot_id": risk.risk_snapshot_id,
+        "risk_snapshot_artifact_hash": risk.artifact_hash(),
+        "risk_snapshot_as_of": risk.as_of,
+        "capital_version": risk.capital_version,
+        "capital_stream_version": 29,
+        "writer_fencing_epoch": risk.writer_fencing_epoch,
         "order_lines": lines,
         "total_worst_case_cash_reserve_cents": sum(
             line.worst_case_cash_reserve_cents for line in lines
@@ -435,6 +458,8 @@ def test_stage_loss_expected_version_has_exact_public_fields() -> None:
     api = _decision_contracts("StageLossExpectedVersion")
 
     assert set(api.StageLossExpectedVersion.model_fields) == {
+        "research_program_id",
+        "economic_lineage_id",
         "stage_id",
         "stage_loss_budget_id",
         "stage_loss_version",
@@ -483,6 +508,13 @@ def test_portfolio_order_line_has_exact_entry_only_public_fields() -> None:
     assert line.worst_case_cash_reserve_cents == 105_050
 
 
+@pytest.mark.parametrize("bad", [True, 10.0, Decimal("10"), "10"])
+def test_portfolio_order_line_requires_native_integer_t_plus_10(bad) -> None:
+    api = _decision_contracts("PortfolioOrderLine")
+    with pytest.raises(ValidationError, match="integer|int|literal"):
+        api.PortfolioOrderLine.model_validate(_line_payload(exit_session_ordinal=bad))
+
+
 def test_gateway_expected_versions_has_the_exact_full_cas_bundle() -> None:
     api = _decision_contracts(
         "StageLossExpectedVersion",
@@ -505,7 +537,7 @@ def test_gateway_expected_versions_has_the_exact_full_cas_bundle() -> None:
         "entry_fence_hash",
         "entry_fence_version",
         "risk_snapshot_id",
-        "risk_snapshot_payload_hash",
+        "risk_snapshot_artifact_hash",
         "capital_version",
         "capital_stream_version",
         "writer_fencing_epoch",
@@ -557,13 +589,17 @@ def test_gateway_expected_versions_requires_unique_canonical_stage_versions() ->
         "GatewayExpectedVersions",
     )
     stage_a = api.StageLossExpectedVersion(
+        research_program_id="program-a",
+        economic_lineage_id="lineage-a",
         stage_id="stage-a",
         stage_loss_budget_id="budget-a",
         stage_loss_version=1,
         stage_loss_latch=StageLossLatchState.CLEAR,
     )
     stage_b = api.StageLossExpectedVersion(
-        stage_id="stage-b",
+        research_program_id="program-b",
+        economic_lineage_id="lineage-b",
+        stage_id="stage-a",
         stage_loss_budget_id="budget-b",
         stage_loss_version=2,
         stage_loss_latch=StageLossLatchState.STAGE_LOSS_HALTED,
@@ -573,9 +609,12 @@ def test_gateway_expected_versions_requires_unique_canonical_stage_versions() ->
     legal = api.GatewayExpectedVersions.model_validate(
         base | {"stage_loss_expected_versions": (stage_a, stage_b)}
     )
-    assert tuple(item.stage_id for item in legal.stage_loss_expected_versions) == (
-        "stage-a",
-        "stage-b",
+    assert tuple(
+        (item.research_program_id, item.economic_lineage_id, item.stage_id)
+        for item in legal.stage_loss_expected_versions
+    ) == (
+        ("program-a", "lineage-a", "stage-a"),
+        ("program-b", "lineage-b", "stage-a"),
     )
     for invalid in ((stage_b, stage_a), (stage_a, stage_a)):
         with pytest.raises(ValidationError, match="stage|canonical|unique"):
@@ -608,13 +647,16 @@ def test_portfolio_decision_has_exact_public_fields_and_multiline_reserve() -> N
         "policy_epoch",
         "authority_epoch",
         "risk_epoch",
-        "capital_authorization",
-        "capital_authorization_artifact_hash",
-        "authorization_status",
-        "authorization_status_artifact_hash",
+        "authorization_id",
+        "authorization_version",
+        "authorization_artifact_hash",
         "evidence_set_merkle_root",
-        "capital_risk_snapshot",
-        "gateway_expected_versions",
+        "risk_snapshot_id",
+        "risk_snapshot_artifact_hash",
+        "risk_snapshot_as_of",
+        "capital_version",
+        "capital_stream_version",
+        "writer_fencing_epoch",
         "order_lines",
         "total_worst_case_cash_reserve_cents",
         "decision_cutoff",
@@ -625,8 +667,7 @@ def test_portfolio_decision_has_exact_public_fields_and_multiline_reserve() -> N
     assert len(decision.order_lines) == 2
     assert decision.total_worst_case_cash_reserve_cents == 265_125
     assert decision.decision_cutoff < decision.proposal_created_at
-    assert decision.capital_risk_snapshot.as_of <= decision.proposal_created_at
-    assert decision.proposal_created_at < decision.capital_risk_snapshot.valid_until
+    assert decision.risk_snapshot_as_of <= decision.proposal_created_at
 
 
 @pytest.mark.parametrize(
@@ -672,41 +713,6 @@ def test_order_line_requires_exact_reserve_and_whole_lots() -> None:
 @pytest.mark.parametrize(
     ("field_name", "bad_value", "match"),
     [
-        ("broker_account_id", "other-account", "account"),
-        ("mode", "daily_bar_proxy", "mode"),
-        ("policy_activation_hash", "9" * 64, "policy"),
-        ("trust_bundle_hash", "9" * 64, "trust"),
-        ("registry_epoch", 8, "registry"),
-        ("authority_epoch", 8, "authority"),
-        ("risk_epoch", 8, "risk"),
-        ("evidence_set_merkle_root", "9" * 64, "evidence"),
-    ],
-)
-def test_portfolio_decision_rejects_top_level_binding_drift(
-    field_name: str,
-    bad_value: object,
-    match: str,
-) -> None:
-    from src.screening.offensive.v3.contracts.base import ExecutionMode
-
-    api = _decision_contracts(
-        "DecisionLogicalKey",
-        "StageLossExpectedVersion",
-        "PortfolioOrderLine",
-        "GatewayExpectedVersions",
-        "PortfolioDecision",
-    )
-    if field_name == "mode":
-        bad_value = ExecutionMode.DAILY_BAR_PROXY
-    with pytest.raises(ValidationError, match=match):
-        api.PortfolioDecision.model_validate(
-            _decision_payload(api, **{field_name: bad_value})
-        )
-
-
-@pytest.mark.parametrize(
-    ("field_name", "bad_value", "match"),
-    [
         ("economic_lineage_id", "other-lineage", "lineage"),
         ("stage_id", "other-stage", "stage"),
         ("stage_manifest_hash", "9" * 64, "stage"),
@@ -744,22 +750,7 @@ def test_portfolio_decision_rejects_nested_line_provenance_drift(
         api.PortfolioDecision.model_validate(raw)
 
 
-@pytest.mark.parametrize(
-    ("field_name", "bad_value", "match"),
-    [
-        ("authorization_version", 9, "authorization"),
-        ("authorization_status_version", 4, "status"),
-        ("entry_fence_version", 5, "fence"),
-        ("risk_snapshot_id", "risk-snapshot-other", "risk snapshot"),
-        ("capital_version", 11, "capital"),
-        ("writer_fencing_epoch", 10, "fencing"),
-    ],
-)
-def test_portfolio_decision_rejects_nested_gateway_version_drift(
-    field_name: str,
-    bad_value: object,
-    match: str,
-) -> None:
+def test_portfolio_decision_and_gateway_cas_are_independent_immutable_inputs() -> None:
     api = _decision_contracts(
         "DecisionLogicalKey",
         "StageLossExpectedVersion",
@@ -767,43 +758,28 @@ def test_portfolio_decision_rejects_nested_gateway_version_drift(
         "GatewayExpectedVersions",
         "PortfolioDecision",
     )
-    raw = _decision_payload(api)
-    expected = raw["gateway_expected_versions"].model_dump(
-        mode="python", round_trip=True
+    proposal = _decision(api)
+    expected = _expected_versions(api)
+    assert not set(api.PortfolioDecision.model_fields) & {
+        "capital_authorization",
+        "authorization_status",
+        "capital_risk_snapshot",
+        "gateway_expected_versions",
+    }
+
+    changed_expected = api.GatewayExpectedVersions.model_validate(
+        expected.model_dump(mode="python", round_trip=True)
+        | {"capital_stream_version": expected.capital_stream_version + 1}
     )
-    expected[field_name] = bad_value
-    raw["gateway_expected_versions"] = expected
+    assert changed_expected.capital_stream_version != expected.capital_stream_version
+    assert proposal.artifact_hash() == _decision(api).artifact_hash()
 
-    with pytest.raises(ValidationError, match=match):
-        api.PortfolioDecision.model_validate(raw)
-
-
-def test_portfolio_decision_rejects_stage_version_set_drift() -> None:
-    from src.screening.offensive.v3.contracts.capital import StageLossLatchState
-
-    api = _decision_contracts(
-        "DecisionLogicalKey",
-        "StageLossExpectedVersion",
-        "PortfolioOrderLine",
-        "GatewayExpectedVersions",
-        "PortfolioDecision",
+    changed_proposal = api.PortfolioDecision.model_validate(
+        proposal.model_dump(mode="python", round_trip=True)
+        | {"risk_snapshot_artifact_hash": "9" * 64}
     )
-    raw = _decision_payload(api)
-    expected = raw["gateway_expected_versions"].model_dump(
-        mode="python", round_trip=True
-    )
-    expected["stage_loss_expected_versions"] = (
-        {
-            "stage_id": "other-stage",
-            "stage_loss_budget_id": "other-budget",
-            "stage_loss_version": 1,
-            "stage_loss_latch": StageLossLatchState.CLEAR,
-        },
-    )
-    raw["gateway_expected_versions"] = expected
-
-    with pytest.raises(ValidationError, match="stage"):
-        api.PortfolioDecision.model_validate(raw)
+    assert changed_proposal.artifact_hash() != proposal.artifact_hash()
+    assert expected.capital_stream_version == 29
 
 
 def test_portfolio_decision_requires_exact_aggregate_reserve() -> None:
@@ -849,6 +825,73 @@ def test_portfolio_decision_requires_unique_canonical_order_lines() -> None:
         api.PortfolioDecision.model_validate(noncanonical)
 
 
+def test_portfolio_decision_keeps_same_security_lines_separate_by_lineage() -> None:
+    api = _decision_contracts(
+        "DecisionLogicalKey",
+        "PortfolioOrderLine",
+        "PortfolioDecision",
+    )
+    first = api.PortfolioOrderLine.model_validate(_line_payload())
+    second = api.PortfolioOrderLine.model_validate(
+        _line_payload(
+            suffix="2",
+            security_id=first.security_id,
+            producer_namespace="auto.shadow",
+            family_id="auto-family",
+            economic_lineage_id="lineage-auto",
+            research_program_id="program-auto",
+            stage_id="stage-auto-shadow",
+            stage_manifest_hash="8" * 64,
+            grant_id="grant-auto-shadow",
+            grant_certificate_hash="9" * 64,
+        )
+    )
+    raw = _decision_payload(api)
+    raw["order_lines"] = (first, second)
+    raw["total_worst_case_cash_reserve_cents"] = sum(
+        line.worst_case_cash_reserve_cents for line in raw["order_lines"]
+    )
+    decision = api.PortfolioDecision.model_validate(raw)
+    assert [line.security_id for line in decision.order_lines] == [
+        "600000.SH",
+        "600000.SH",
+    ]
+    assert [line.economic_lineage_id for line in decision.order_lines] == [
+        "lineage-btst",
+        "lineage-auto",
+    ]
+
+
+def test_task5_roadmap_publish_entry_shape_keeps_proposal_and_cas_separate() -> None:
+    import inspect
+
+    from src.screening.offensive.v3.contracts import decision as decision_module
+    from src.screening.offensive.v3.contracts.decision import (
+        GatewayExpectedVersions,
+        PortfolioDecision,
+    )
+
+    def publish_entry(
+        proposal: PortfolioDecision,
+        expected: GatewayExpectedVersions,
+    ) -> object:
+        raise NotImplementedError
+
+    signature = inspect.signature(publish_entry)
+    assert tuple(signature.parameters) == ("proposal", "expected")
+    annotations = inspect.get_annotations(
+        publish_entry,
+        eval_str=True,
+        locals={
+            "PortfolioDecision": PortfolioDecision,
+            "GatewayExpectedVersions": GatewayExpectedVersions,
+        },
+    )
+    assert annotations["proposal"] is PortfolioDecision
+    assert annotations["expected"] is GatewayExpectedVersions
+    assert not hasattr(decision_module, "CapitalGatewayCommandPort")
+
+
 def test_portfolio_decision_rejects_research_execution() -> None:
     from src.screening.offensive.v3.contracts.base import ExecutionMode
 
@@ -873,7 +916,7 @@ def test_portfolio_decision_rejects_research_execution() -> None:
         )
 
 
-def test_portfolio_decision_rejects_late_plan_or_stale_capital_snapshot() -> None:
+def test_portfolio_decision_rejects_late_plan_or_future_risk_reference() -> None:
     api = _decision_contracts(
         "DecisionLogicalKey",
         "StageLossExpectedVersion",
@@ -887,6 +930,6 @@ def test_portfolio_decision_rejects_late_plan_or_stale_capital_snapshot() -> Non
         api.PortfolioDecision.model_validate(raw)
 
     raw = _decision_payload(api)
-    raw["proposal_created_at"] = datetime(2026, 7, 19, 8, 6, tzinfo=UTC)
-    with pytest.raises(ValidationError, match="risk|snapshot|valid"):
+    raw["risk_snapshot_as_of"] = datetime(2026, 7, 19, 8, 5, tzinfo=UTC)
+    with pytest.raises(ValidationError, match="risk|snapshot|as.of|future"):
         api.PortfolioDecision.model_validate(raw)

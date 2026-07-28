@@ -186,9 +186,7 @@ def test_order_snapshot_accepts_exact_state_quantity_classes(
         as_of=datetime(2026, 7, 19, 8, 0, tzinfo=UTC),
     )
     assert snapshot.ordered_quantity == (
-        snapshot.filled_quantity
-        + snapshot.leaves_quantity
-        + snapshot.released_quantity
+        snapshot.filled_quantity + snapshot.leaves_quantity + snapshot.released_quantity
     )
 
 
@@ -223,7 +221,9 @@ def test_order_snapshot_rejects_state_quantity_contradictions(
         )
 
 
-def test_economic_event_supports_multi_leg_company_actions_and_late_corrections() -> None:
+def test_economic_event_supports_multi_leg_company_actions_and_late_corrections() -> (
+    None
+):
     c = _contracts()
     event = c.EconomicEvent(
         economic_event_id="event-001",
@@ -523,14 +523,7 @@ def _exposure(c, scope, **overrides):
     if scope is c.ExposureScope.STAGE:
         identities["stage_id"] = "stage-broker-2pct"
     unattributed_risk_cents = (
-        5_000
-        if scope
-        in {
-            c.ExposureScope.GLOBAL,
-            c.ExposureScope.PORTFOLIO,
-            c.ExposureScope.RESEARCH_PROGRAM,
-        }
-        else 0
+        5_000 if scope in {c.ExposureScope.GLOBAL, c.ExposureScope.PORTFOLIO} else 0
     )
     payload = {
         "scope": scope,
@@ -562,6 +555,43 @@ def _stage_loss_latch(c, **overrides):
     return c.StageLossLatchSnapshot(**payload)
 
 
+def _entry_reserve(c, **overrides):
+    payload = {
+        "research_program_id": "program-btst",
+        "economic_lineage_id": "lineage-btst",
+        "stage_id": "stage-broker-2pct",
+        "source_id": "reserve-001",
+        "covered_live_order_id": None,
+        "reserved_entry_gross_cents": 50_000,
+    }
+    payload.update(overrides)
+    return c.EntryReserveRiskComponent(**payload)
+
+
+def _pending_stress(c, **overrides):
+    payload = {
+        "research_program_id": "program-btst",
+        "economic_lineage_id": "lineage-btst",
+        "stage_id": "stage-broker-2pct",
+        "source_id": "pending-stress-001",
+        "pending_stress_cents": 20_000,
+    }
+    payload.update(overrides)
+    return c.PendingStressRiskComponent(**payload)
+
+
+def _corporate_action_risk(c, **overrides):
+    payload = {
+        "research_program_id": "program-btst",
+        "economic_lineage_id": "lineage-btst",
+        "stage_id": "stage-broker-2pct",
+        "source_id": "corporate-action-001",
+        "pending_risk_cents": 10_000,
+    }
+    payload.update(overrides)
+    return c.CorporateActionRiskComponent(**payload)
+
+
 def _risk_snapshot_payload(c, **overrides):
     payload = {
         "risk_snapshot_id": "risk-snapshot-019",
@@ -585,8 +615,9 @@ def _risk_snapshot_payload(c, **overrides):
         "pending_redeemed_unit_quanta": 10_000,
         "positions": (_risk_position(c),),
         "live_orders": (_live_order(c),),
-        "pending_stress_cents": 20_000,
-        "corporate_action_pending_risk_cents": 10_000,
+        "entry_reserves": (_entry_reserve(c),),
+        "pending_stress_components": (_pending_stress(c),),
+        "corporate_action_risk_components": (_corporate_action_risk(c),),
         "unattributed_risk_cents": 5_000,
         "exposures": tuple(_exposure(c, scope) for scope in c.ExposureScope),
         "total_gross_exposure_cents": 485_000,
@@ -605,10 +636,9 @@ def _risk_snapshot_payload(c, **overrides):
         "registry_epoch": 7,
         "authorization_id": "authorization-001",
         "authorization_version": 8,
-        "stage_loss_version": 7,
+        "stage_loss_state_version": 11,
         "writer_fencing_epoch": 9,
         "capital_version": 10,
-        "payload_content_hash": HASH,
         "schema_major": 2,
     }
     payload.update(overrides)
@@ -700,6 +730,28 @@ def test_capital_risk_snapshot_contract_has_exact_schema_and_typed_statuses() ->
         "stage_loss_version",
         "state",
     }
+    assert set(c.EntryReserveRiskComponent.model_fields) == {
+        "research_program_id",
+        "economic_lineage_id",
+        "stage_id",
+        "source_id",
+        "covered_live_order_id",
+        "reserved_entry_gross_cents",
+    }
+    assert set(c.PendingStressRiskComponent.model_fields) == {
+        "research_program_id",
+        "economic_lineage_id",
+        "stage_id",
+        "source_id",
+        "pending_stress_cents",
+    }
+    assert set(c.CorporateActionRiskComponent.model_fields) == {
+        "research_program_id",
+        "economic_lineage_id",
+        "stage_id",
+        "source_id",
+        "pending_risk_cents",
+    }
     assert set(c.CapitalRiskSnapshot.model_fields) == {
         "risk_snapshot_id",
         "portfolio_id",
@@ -722,8 +774,9 @@ def test_capital_risk_snapshot_contract_has_exact_schema_and_typed_statuses() ->
         "pending_redeemed_unit_quanta",
         "positions",
         "live_orders",
-        "pending_stress_cents",
-        "corporate_action_pending_risk_cents",
+        "entry_reserves",
+        "pending_stress_components",
+        "corporate_action_risk_components",
         "unattributed_risk_cents",
         "exposures",
         "total_gross_exposure_cents",
@@ -742,10 +795,9 @@ def test_capital_risk_snapshot_contract_has_exact_schema_and_typed_statuses() ->
         "registry_epoch",
         "authorization_id",
         "authorization_version",
-        "stage_loss_version",
+        "stage_loss_state_version",
         "writer_fencing_epoch",
         "capital_version",
-        "payload_content_hash",
         "schema_major",
     }
 
@@ -862,16 +914,36 @@ def test_capital_live_order_risk_rejects_nonlive_order_states(state) -> None:
         _live_order(c, state=c.OrderState(state))
 
 
-def test_capital_risk_snapshot_rejects_unknown_or_incomplete_facts() -> None:
+@pytest.mark.parametrize(
+    ("freshness", "completeness"),
+    [
+        ("FRESH", "COMPLETE"),
+        ("STALE", "COMPLETE"),
+        ("UNKNOWN", "COMPLETE"),
+        ("FRESH", "INCOMPLETE"),
+        ("FRESH", "UNKNOWN"),
+    ],
+)
+def test_capital_risk_snapshot_represents_non_authorizing_fact_statuses(
+    freshness, completeness
+) -> None:
+    c = _contracts()
+    snapshot = c.CapitalRiskSnapshot(
+        **_risk_snapshot_payload(
+            c,
+            freshness=c.RiskSnapshotFreshness(freshness),
+            completeness=c.RiskSnapshotCompleteness(completeness),
+        )
+    )
+    assert snapshot.freshness.value == freshness
+    assert snapshot.completeness.value == completeness
+
+
+def test_capital_risk_snapshot_still_rejects_unknown_numeric_payloads() -> None:
     c = _contracts()
     position = _risk_position(c).model_dump(mode="python")
     position["tradable_quantity"] = "UNKNOWN"
-    for changes in (
-        {"freshness": c.RiskSnapshotFreshness.UNKNOWN},
-        {"completeness": c.RiskSnapshotCompleteness.UNKNOWN},
-        {"completeness": c.RiskSnapshotCompleteness.INCOMPLETE},
-        {"positions": (position,)},
-    ):
+    for changes in ({"positions": (position,)},):
         with pytest.raises(ValidationError, match="unknown|complete|integer"):
             c.CapitalRiskSnapshot(**_risk_snapshot_payload(c, **changes))
 
@@ -897,6 +969,129 @@ def test_risk_snapshot_rejects_double_counted_aggregates() -> None:
             c.CapitalRiskSnapshot(**_risk_snapshot_payload(c, **changes))
 
 
+def test_live_order_leaves_and_its_covering_reserve_are_not_double_counted() -> None:
+    c = _contracts()
+    covered = _entry_reserve(c, covered_live_order_id="order-live-001")
+    exposures = tuple(
+        _exposure(
+            c,
+            scope,
+            reserved_entry_gross_cents=0,
+            total_gross_cents=(
+                435_000
+                if scope in {c.ExposureScope.GLOBAL, c.ExposureScope.PORTFOLIO}
+                else 430_000
+            ),
+        )
+        for scope in c.ExposureScope
+    )
+    snapshot = c.CapitalRiskSnapshot(
+        **_risk_snapshot_payload(
+            c,
+            entry_reserves=(covered,),
+            exposures=exposures,
+            total_gross_exposure_cents=435_000,
+        )
+    )
+    assert snapshot.reserved_cash_cents == 50_000
+    assert snapshot.total_gross_exposure_cents == 435_000
+
+    with pytest.raises(ValidationError, match="reserve|live order|double|aggregate"):
+        c.CapitalRiskSnapshot(**_risk_snapshot_payload(c, entry_reserves=(covered,)))
+
+
+def test_risk_component_relocation_requires_matching_composite_attribution() -> None:
+    c = _contracts()
+    relocated = _pending_stress(
+        c,
+        research_program_id="program-auto",
+        economic_lineage_id="lineage-auto",
+        stage_id="stage-auto-shadow",
+    )
+    global_bucket = _exposure(c, c.ExposureScope.GLOBAL)
+    portfolio_bucket = _exposure(c, c.ExposureScope.PORTFOLIO)
+    btst_program = _exposure(
+        c,
+        c.ExposureScope.RESEARCH_PROGRAM,
+        pending_stress_cents=0,
+        total_gross_cents=460_000,
+    )
+    btst_lineage = _exposure(
+        c,
+        c.ExposureScope.ECONOMIC_LINEAGE,
+        pending_stress_cents=0,
+        total_gross_cents=460_000,
+    )
+    btst_stage = _exposure(
+        c,
+        c.ExposureScope.STAGE,
+        pending_stress_cents=0,
+        total_gross_cents=460_000,
+    )
+
+    def auto_bucket(scope):
+        identities = {
+            "portfolio_id": "portfolio-v3"
+            if scope is not c.ExposureScope.GLOBAL
+            else None,
+            "research_program_id": "program-auto",
+            "economic_lineage_id": (
+                "lineage-auto"
+                if scope in {c.ExposureScope.ECONOMIC_LINEAGE, c.ExposureScope.STAGE}
+                else None
+            ),
+            "stage_id": "stage-auto-shadow" if scope is c.ExposureScope.STAGE else None,
+        }
+        return c.RiskExposureBucket(
+            scope=scope,
+            **identities,
+            position_marked_gross_cents=0,
+            live_order_leaves_gross_cents=0,
+            reserved_entry_gross_cents=0,
+            pending_stress_cents=20_000,
+            corporate_action_pending_risk_cents=0,
+            unattributed_risk_cents=0,
+            total_gross_cents=20_000,
+        )
+
+    exposures = (
+        global_bucket,
+        portfolio_bucket,
+        btst_program,
+        btst_lineage,
+        btst_stage,
+        auto_bucket(c.ExposureScope.RESEARCH_PROGRAM),
+        auto_bucket(c.ExposureScope.ECONOMIC_LINEAGE),
+        auto_bucket(c.ExposureScope.STAGE),
+    )
+    snapshot = c.CapitalRiskSnapshot(
+        **_risk_snapshot_payload(
+            c,
+            pending_stress_components=(relocated,),
+            exposures=exposures,
+        )
+    )
+    assert snapshot.pending_stress_components[0].research_program_id == "program-auto"
+    assert all(
+        bucket.unattributed_risk_cents == 0
+        for bucket in snapshot.exposures
+        if bucket.scope
+        in {
+            c.ExposureScope.RESEARCH_PROGRAM,
+            c.ExposureScope.ECONOMIC_LINEAGE,
+            c.ExposureScope.STAGE,
+        }
+    )
+
+    with pytest.raises(ValidationError, match="attribution|exposure|aggregate"):
+        c.CapitalRiskSnapshot(
+            **_risk_snapshot_payload(
+                c,
+                pending_stress_components=(relocated,),
+            )
+        )
+
+
 def test_capital_risk_snapshot_requires_one_complete_exposure_hierarchy() -> None:
     c = _contracts()
     valid = _risk_snapshot_payload(c)["exposures"]
@@ -918,7 +1113,6 @@ def test_risk_snapshot_rejects_nav_latch_inconsistency() -> None:
     invalid = (
         {"as_observed_nav_cents": 1_000_001},
         {"active_epoch_drawdown_ppm": 49_999},
-        {"stage_loss_latches": (_stage_loss_latch(c, stage_loss_version=8),)},
         {"stage_loss_latches": (_stage_loss_latch(c), _stage_loss_latch(c))},
         {"reconciliation_latch": c.ReconciliationLatchState.CLEAR},
         {
@@ -933,6 +1127,71 @@ def test_risk_snapshot_rejects_nav_latch_inconsistency() -> None:
             ValidationError, match="NAV|drawdown|stage|duplicate|version"
         ):
             c.CapitalRiskSnapshot(**_risk_snapshot_payload(c, **changes))
+
+
+def test_stage_loss_state_version_does_not_alias_per_stage_versions() -> None:
+    c = _contracts()
+    other = _stage_loss_latch(
+        c,
+        research_program_id="program-auto",
+        economic_lineage_id="lineage-auto",
+        stage_id="stage-broker-2pct",
+        stage_loss_budget_id="stage-loss-auto-001",
+        stage_loss_version=8,
+    )
+    snapshot = c.CapitalRiskSnapshot(
+        **_risk_snapshot_payload(
+            c,
+            stage_loss_state_version=19,
+            stage_loss_latches=(_stage_loss_latch(c), other),
+        )
+    )
+    assert snapshot.stage_loss_state_version == 19
+    assert [latch.stage_loss_version for latch in snapshot.stage_loss_latches] == [
+        7,
+        8,
+    ]
+
+
+def test_risk_snapshot_owns_a_domain_separated_artifact_hash() -> None:
+    c = _contracts()
+    snapshot = c.CapitalRiskSnapshot(**_risk_snapshot_payload(c))
+    assert snapshot.HASH_DOMAIN == "ai-hedge-fund.v3.capital.risk-snapshot.v1"
+    assert "payload_content_hash" not in c.CapitalRiskSnapshot.model_fields
+    assert len(snapshot.artifact_hash()) == 64
+    assert snapshot.artifact_hash() == snapshot.artifact_hash()
+    changed = c.CapitalRiskSnapshot(
+        **_risk_snapshot_payload(c, available_cash_cents=400_001)
+    )
+    assert changed.artifact_hash() != snapshot.artifact_hash()
+
+
+def test_risk_snapshot_hash_commits_cent_share_latch_and_version_mutations() -> None:
+    c = _contracts()
+    original = c.CapitalRiskSnapshot(**_risk_snapshot_payload(c))
+    mutations = (
+        {"available_cash_cents": 400_001},
+        {"positions": (_risk_position(c, settled_quantity=101),)},
+        {"stage_loss_latches": (_stage_loss_latch(c, stage_loss_version=8),)},
+        {"capital_version": 11},
+    )
+    for changes in mutations:
+        changed = c.CapitalRiskSnapshot(**_risk_snapshot_payload(c, **changes))
+        assert changed.artifact_hash() != original.artifact_hash()
+
+
+def test_risk_snapshot_hash_revalidates_poisoned_unchecked_instances() -> None:
+    c = _contracts()
+    snapshot = c.CapitalRiskSnapshot(**_risk_snapshot_payload(c))
+    poisoned_copy = snapshot.model_copy(update={"total_gross_exposure_cents": 1})
+    poisoned_construct = c.CapitalRiskSnapshot.model_construct(
+        **(snapshot.model_dump(mode="python") | {"capital_version": True})
+    )
+    for poisoned in (poisoned_copy, poisoned_construct):
+        with pytest.raises(
+            (ValidationError, ValueError), match="aggregate|integer|int"
+        ):
+            poisoned.artifact_hash()
 
 
 def test_stage_loss_latch_state_matches_nonreplenishable_consumption() -> None:
@@ -972,9 +1231,14 @@ def _exit_mandate_payload(c, **overrides):
         "fixed_exit_policy_fingerprint": HASH,
         "exit_session_ordinal": 10,
         "due_session": date(2026, 7, 30),
+        "quantity_knowledge": c.ExitQuantityKnowledge.KNOWN,
+        "reconciliation_pending": False,
         "tradable_quantity": 100,
         "live_exit_leaves_quantity": 40,
         "executable_quantity": 60,
+        "mandate_revision": 1,
+        "supersedes_mandate_hash": None,
+        "reopened_by_execution_revision_id": None,
         "capital_version": 10,
         "writer_fencing_epoch": 9,
         "stable_client_order_id": "exit-client-portfolio-v3-lot-001-10",
@@ -1006,9 +1270,14 @@ def test_exit_mandate_has_exact_independent_schema_and_hash() -> None:
         "fixed_exit_policy_fingerprint",
         "exit_session_ordinal",
         "due_session",
+        "quantity_knowledge",
+        "reconciliation_pending",
         "tradable_quantity",
         "live_exit_leaves_quantity",
         "executable_quantity",
+        "mandate_revision",
+        "supersedes_mandate_hash",
+        "reopened_by_execution_revision_id",
         "capital_version",
         "writer_fencing_epoch",
         "stable_client_order_id",
@@ -1035,15 +1304,86 @@ def test_exit_mandate_has_exact_independent_schema_and_hash() -> None:
     assert mandate.artifact_hash() != changed.artifact_hash()
 
 
+def test_exit_mandate_is_a_persistent_obligation_when_nothing_is_executable() -> None:
+    c = _contracts()
+    blocked = c.ExitMandate(
+        **_exit_mandate_payload(
+            c,
+            tradable_quantity=100,
+            live_exit_leaves_quantity=100,
+            executable_quantity=0,
+            issued_at=datetime(2026, 8, 3, 8, 0, tzinfo=UTC),
+        )
+    )
+    assert blocked.executable_quantity == 0
+    assert blocked.issued_at.date() > blocked.due_session
+
+    unknown = c.ExitMandate(
+        **_exit_mandate_payload(
+            c,
+            quantity_knowledge=c.ExitQuantityKnowledge.UNKNOWN,
+            reconciliation_pending=True,
+            tradable_quantity=0,
+            live_exit_leaves_quantity=0,
+            executable_quantity=0,
+        )
+    )
+    assert unknown.quantity_knowledge is c.ExitQuantityKnowledge.UNKNOWN
+    assert unknown.reconciliation_pending is True
+
+
+def test_exit_mandate_correction_reopens_obligation_as_a_new_revision() -> None:
+    c = _contracts()
+    original = c.ExitMandate(**_exit_mandate_payload(c))
+    reopened = c.ExitMandate(
+        **_exit_mandate_payload(
+            c,
+            mandate_revision=2,
+            supersedes_mandate_hash=original.artifact_hash(),
+            reopened_by_execution_revision_id="execution-revision-002",
+            tradable_quantity=20,
+            live_exit_leaves_quantity=0,
+            executable_quantity=20,
+        )
+    )
+    assert reopened.mandate_revision == 2
+    assert reopened.artifact_hash() != original.artifact_hash()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"quantity_knowledge": "UNKNOWN", "reconciliation_pending": False},
+        {
+            "quantity_knowledge": "UNKNOWN",
+            "reconciliation_pending": True,
+            "tradable_quantity": 1,
+            "live_exit_leaves_quantity": 0,
+            "executable_quantity": 1,
+        },
+        {"quantity_knowledge": "KNOWN", "reconciliation_pending": True},
+        {"mandate_revision": 1, "supersedes_mandate_hash": HASH},
+        {
+            "mandate_revision": 2,
+            "supersedes_mandate_hash": None,
+            "reopened_by_execution_revision_id": "execution-revision-002",
+        },
+    ],
+)
+def test_exit_mandate_rejects_quantity_knowledge_and_revision_contradictions(
+    changes,
+) -> None:
+    c = _contracts()
+    with pytest.raises(
+        ValidationError, match="quantity|knowledge|reconciliation|revision|supersedes"
+    ):
+        c.ExitMandate(**_exit_mandate_payload(c, **changes))
+
+
 @pytest.mark.parametrize(
     "changes",
     [
         {"tradable_quantity": "UNKNOWN"},
-        {
-            "tradable_quantity": 0,
-            "live_exit_leaves_quantity": 0,
-            "executable_quantity": 0,
-        },
         {
             "tradable_quantity": 100,
             "live_exit_leaves_quantity": 101,
@@ -1063,7 +1403,7 @@ def test_exit_mandate_has_exact_independent_schema_and_hash() -> None:
         {"executable_quantity": -1},
     ],
 )
-def test_exit_mandate_rejects_unknown_untradable_oversell_and_negative_quantity(
+def test_exit_mandate_rejects_string_unknown_oversell_and_negative_quantity(
     changes,
 ) -> None:
     c = _contracts()
@@ -1091,3 +1431,10 @@ def test_exit_mandate_rejects_non_native_integer_quantity(bad) -> None:
     c = _contracts()
     with pytest.raises(ValidationError, match="integer|int"):
         c.ExitMandate(**_exit_mandate_payload(c, executable_quantity=bad))
+
+
+@pytest.mark.parametrize("bad", [True, 10.0, Decimal("10"), "10"])
+def test_exit_mandate_requires_native_integer_t_plus_10(bad) -> None:
+    c = _contracts()
+    with pytest.raises(ValidationError, match="integer|int|literal"):
+        c.ExitMandate(**_exit_mandate_payload(c, exit_session_ordinal=bad))

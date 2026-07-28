@@ -19,9 +19,12 @@ POLICY_HASH = "1" * 64
 
 def _api():
     try:
-        from src.screening.offensive.v3 import contracts
+        from src.screening.offensive.v3.contracts import revision1
     except ImportError as exc:
-        pytest.fail(f"stable v3 ports are not implemented: {exc}", pytrace=False)
+        pytest.fail(
+            f"Revision 1 compatibility contracts are not isolated: {exc}",
+            pytrace=False,
+        )
     required = {
         "CapitalAuthorizationBinding",
         "CapitalViewPort",
@@ -31,10 +34,13 @@ def _api():
         "PublishDecisionCommand",
         "SealWriterPort",
     }
-    missing = sorted(required - set(dir(contracts)))
+    missing = sorted(required - set(dir(revision1)))
     if missing:
-        pytest.fail(f"stable v3 ports are not implemented: {missing}", pytrace=False)
-    return contracts
+        pytest.fail(
+            f"Revision 1 compatibility contracts are incomplete: {missing}",
+            pytrace=False,
+        )
+    return revision1
 
 
 def _plan(api, **overrides):
