@@ -173,7 +173,7 @@ def test_valid_signature_returns_only_verified_issuer_and_required_capability() 
 
 
 def test_trust_verification_does_not_substitute_for_decision_seal_parsing() -> None:
-    from src.screening.offensive.v3.contracts import DecisionSeal
+    from src.screening.offensive.v3.contracts.revision1 import DecisionSeal
 
     api = _api()
     private_key = Ed25519PrivateKey.generate()
