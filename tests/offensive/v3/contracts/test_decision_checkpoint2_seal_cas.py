@@ -525,6 +525,8 @@ def test_seal_rejects_each_consumed_cas_binding_drift_even_with_fresh_hash() -> 
                     consumed_gateway_expected_versions_artifact_hash=(
                         changed.artifact_hash()
                     ),
+                    authorization_status_version=seal.authorization_status_version,
+                    authorization_status_hash=seal.authorization_status_hash,
                 )
             )
     changed = type(expected).model_validate(
@@ -593,7 +595,11 @@ def test_seal_cannot_change_any_bound_proposal_order_line() -> None:
     )
     with pytest.raises(ValidationError, match="proposal|artifact hash"):
         api.PortfolioDecisionSeal.model_validate(
-            _seal_payload(api, proposal=changed_proposal)
+            _seal_payload(
+                api,
+                proposal=changed_proposal,
+                proposal_artifact_hash=proposal.artifact_hash(),
+            )
         )
 
 
