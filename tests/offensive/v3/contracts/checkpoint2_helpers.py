@@ -38,22 +38,23 @@ DIFFERENT_LOGICAL_KEY = object()
 # derived from the production model under test.
 APPROVED_SERIALIZATION_DIGESTS = {
     "seal": (
-        "92c54984825be668d4f5b883036fd1d1012b6a976d6b5fcfcbad7dac8b8a5062",
-        "71d3988c91702d45e43813c2b7e41f6ad7b50730a9fa967a5211aeb19cc9eedb",
+        "794cf274a92d93e8c7b1833801c2d65b232934f4b1f5064157687d2c3feef69e",
+        "abc846695e00bfb6104b7f770318c23c3b230d8252bada03e2941af6a32f7d1b",
     ),
     "shadow": (
         "ef47050623a9627ff5366df0bb62d7440b5940672b0a5896fa8a77bf32534763",
         "3df3714bc82d3b30b09e4917ccea0bd47ef4ea91842539483a3f8d871cc7b2ea",
     ),
     "permit": (
-        "c6172dde34fff835eeeb94b69836fc2bd7ba29f821af6edffd6a257f934ba8b6",
-        "2a26fa945dc436173ac4b59f6c963a7fe626c1a780d41d132d6cf65ec0bbd9a7",
+        "3d9691aa3a5dbf1b456d76d50efaeb84ba6199393552290b55d1659c62d7bb66",
+        "5461184cedebcb75a4e0c8598e02cb6eb605b83670c345831e5beec21556dabf",
     ),
 }
 
 
 CHECKPOINT2_NAMES = (
     "ClockHealth",
+    "TrustedClockObservation",
     "TrustedExecutionWindow",
     "GatewayIssuerBinding",
     "ShadowIssuerBinding",
@@ -68,7 +69,12 @@ CHECKPOINT2_NAMES = (
     "ShadowDecision",
     "PermitDisposition",
     "PermitReasonCode",
+    "PermitNonceState",
+    "ReservationState",
+    "OutboxState",
     "ExecutionPermitLine",
+    "PermitEvaluationState",
+    "PermitCancellationBinding",
     "SendClaimExpectedVersions",
     "ExecutionPermit",
 )
@@ -99,6 +105,7 @@ def _api() -> SimpleNamespace:
             for name in CHECKPOINT2_NAMES
         },
         ArtifactKind=contracts.ArtifactKind,
+        AuthorizationLifecycle=contracts.AuthorizationLifecycle,
         DecisionLogicalKey=contracts.DecisionLogicalKey,
         EvidenceScope=contracts.EvidenceScope,
         ExecutionMode=contracts.ExecutionMode,
@@ -257,12 +264,7 @@ def _window_payload(api, **overrides):
         "cutoff_snapshot_exchange_id": "SSE",
         "execution_policy_version": "t1-open-t10-open.v1",
         "cutoff_policy_version": "sse-opening-auction.v1",
-        "clock_observation_id": "clock-observation-1",
-        "clock_observation_hash": HASH_C,
-        "wall_clock_observed_at": SEAL_CREATED,
-        "monotonic_observation_ns": 1_000_000,
-        "monotonic_sequence": 8,
-        "clock_health": api.ClockHealth.HEALTHY,
+        "seal_clock_observation": _clock_observation(api),
         "t0_close_finalized_at": CLOSE_FINALIZED,
         "seal_creation_deadline": SEAL_DEADLINE,
         "permit_issue_deadline": PERMIT_DEADLINE,
@@ -275,6 +277,41 @@ def _window_payload(api, **overrides):
 
 def _window(api, **overrides):
     return api.TrustedExecutionWindow.model_validate(_window_payload(api, **overrides))
+
+
+def _clock_observation(
+    api,
+    *,
+    observation_id="clock-observation-seal-1",
+    raw_payload_hash=HASH_C,
+    wall_clock_utc=SEAL_CREATED,
+    monotonic_observation_ns=1_000_000,
+    monotonic_sequence=8,
+    clock_health=None,
+):
+    if clock_health is None:
+        clock_health = api.ClockHealth.HEALTHY
+    return api.TrustedClockObservation(
+        observation_id=observation_id,
+        raw_payload_hash=raw_payload_hash,
+        wall_clock_utc=wall_clock_utc,
+        monotonic_observation_ns=monotonic_observation_ns,
+        monotonic_sequence=monotonic_sequence,
+        clock_health=clock_health,
+    )
+
+
+def _permit_clock_observation(api, **overrides):
+    values = {
+        "observation_id": "clock-observation-permit-1",
+        "raw_payload_hash": HASH_D,
+        "wall_clock_utc": PERMIT_DEADLINE,
+        "monotonic_observation_ns": 2_000_000,
+        "monotonic_sequence": 9,
+        "clock_health": api.ClockHealth.HEALTHY,
+    }
+    values.update(overrides)
+    return _clock_observation(api, **values)
 
 
 def _gateway_issuer(api, artifact_kind, namespace, *, verified_at=CLOSE_FINALIZED):
@@ -334,6 +371,7 @@ def _gateway_expected_versions(api, proposal=None, **overrides):
         "authorization_status_version": 5,
         "authorization_status_hash": HASH_E,
         "evidence_set_merkle_root": proposal.evidence_set_merkle_root,
+        "entry_fence_id": "entry-fence-1",
         "entry_fence_hash": HASH_F,
         "entry_fence_version": 2,
         "risk_snapshot_id": proposal.risk_snapshot_id,
@@ -623,7 +661,7 @@ def _permit_line(
         sealed_quantity_units=sealed_line.sealed_quantity_units,
         permitted_quantity_units=permitted_quantity,
         reason_code=reason_code,
-        predicate_policy_version="preopen-mechanical.v1",
+        predicate_policy_version="t1-open-t10-open.v1",
         preopen_fact_snapshot_id="preopen-facts-1",
         preopen_fact_snapshot_hash=HASH_A,
         preopen_fact_as_of=preopen_fact_as_of,
@@ -640,7 +678,65 @@ def _permit_line(
     )
 
 
-def _send_claim_versions(api, seal, permit_lines, *, nonce="permit-nonce-1"):
+def _permit_evaluation_state(api, seal, **overrides):
+    values = {
+        "policy_activation_hash": seal.policy_activation_hash,
+        "trust_bundle_hash": seal.trust_bundle_hash,
+        "registry_epoch": seal.registry_epoch,
+        "policy_epoch": seal.policy_epoch,
+        "authority_epoch": seal.authority_epoch,
+        "risk_epoch": seal.risk_epoch,
+        "authorization_id": seal.authorization_id,
+        "authorization_version": seal.authorization_version,
+        "authorization_envelope_hash": seal.authorization_envelope_hash,
+        "authorization_lifecycle": api.AuthorizationLifecycle.ACTIVE,
+        "authorization_status_version": seal.authorization_status_version + 1,
+        "authorization_status_hash": HASH_A,
+        "authorization_revalidation_required": False,
+        "evidence_set_merkle_root": seal.evidence_set_merkle_root,
+        "entry_fence_id": seal.entry_fence_id,
+        "entry_fence_hash": seal.entry_fence_hash,
+        "entry_fence_version": seal.entry_fence_version,
+        "capital_version": seal.post_admission_capital_version + 1,
+        "capital_stream_version": seal.capital_stream_version + 2,
+        "risk_snapshot_id": "risk-snapshot-preopen-1",
+        "risk_snapshot_artifact_hash": HASH_E,
+        "risk_snapshot_version": 4,
+        "risk_snapshot_freshness": api.RiskSnapshotFreshness.FRESH,
+        "risk_snapshot_completeness": api.RiskSnapshotCompleteness.COMPLETE,
+        "risk_latch": api.RiskLatchState.CLEAR,
+        "reconciliation_latch": api.ReconciliationLatchState.CLEAR,
+        "stage_loss_bindings": tuple(
+            api.StageLossExpectedVersion(
+                research_program_id=item.research_program_id,
+                economic_lineage_id=item.economic_lineage_id,
+                stage_id=item.stage_id,
+                stage_loss_budget_id=item.stage_loss_budget_id,
+                stage_loss_version=item.post_stage_loss_version + 1,
+                stage_loss_latch=api.StageLossLatchState.CLEAR,
+            )
+            for item in seal.stage_admission_bindings
+        ),
+        "reservation_id": seal.reservation_id,
+        "reservation_version": seal.post_admission_reservation_version + 1,
+        "reservation_state": api.ReservationState.ACTIVE,
+        "remaining_reserved_cash_cents": seal.total_reserved_cash_cents,
+        "writer_fencing_epoch": seal.writer_fencing_epoch,
+    }
+    values.update(overrides)
+    return api.PermitEvaluationState.model_validate(values)
+
+
+def _send_claim_versions(
+    api,
+    seal,
+    permit_lines,
+    *,
+    nonce="permit-nonce-1",
+    evaluation_state=None,
+):
+    if evaluation_state is None:
+        evaluation_state = _permit_evaluation_state(api, seal)
     remaining = sum(line.remaining_reserve_cents for line in permit_lines)
     return api.SendClaimExpectedVersions(
         active_seal_id=seal.seal_id,
@@ -649,44 +745,69 @@ def _send_claim_versions(api, seal, permit_lines, *, nonce="permit-nonce-1"):
         active_permit_id="permit-1",
         active_permit_nonce=nonce,
         permit_nonce_sequence=1,
-        permit_nonce_state="ACTIVE",
-        policy_activation_hash=seal.policy_activation_hash,
-        trust_bundle_hash=seal.trust_bundle_hash,
-        registry_epoch=seal.registry_epoch,
-        policy_epoch=seal.policy_epoch,
-        authority_epoch=seal.authority_epoch,
-        risk_epoch=seal.risk_epoch,
-        authorization_id=seal.authorization_id,
-        authorization_version=seal.authorization_version,
-        authorization_envelope_hash=seal.authorization_envelope_hash,
-        authorization_status="ACTIVE",
-        authorization_status_version=seal.authorization_status_version,
-        authorization_status_hash=seal.authorization_status_hash,
-        authorization_revalidation_required=False,
-        evidence_set_merkle_root=seal.evidence_set_merkle_root,
-        entry_fence_id=seal.entry_fence_id,
-        entry_fence_hash=seal.entry_fence_hash,
-        entry_fence_version=seal.entry_fence_version,
-        capital_version=seal.post_admission_capital_version,
-        capital_stream_version=seal.capital_stream_version,
-        risk_snapshot_id=seal.risk_snapshot_id,
-        risk_snapshot_artifact_hash=seal.risk_snapshot_artifact_hash,
-        risk_snapshot_version=3,
-        risk_snapshot_freshness=api.RiskSnapshotFreshness.FRESH,
-        risk_snapshot_completeness=api.RiskSnapshotCompleteness.COMPLETE,
-        risk_latch=api.RiskLatchState.CLEAR,
-        reconciliation_latch=api.ReconciliationLatchState.CLEAR,
-        stage_loss_bindings=seal.stage_admission_bindings,
-        reservation_id=seal.reservation_id,
-        reservation_version=seal.post_admission_reservation_version,
-        reservation_state="ACTIVE",
+        permit_nonce_state=api.PermitNonceState.ACTIVE,
+        policy_activation_hash=evaluation_state.policy_activation_hash,
+        trust_bundle_hash=evaluation_state.trust_bundle_hash,
+        registry_epoch=evaluation_state.registry_epoch,
+        policy_epoch=evaluation_state.policy_epoch,
+        authority_epoch=evaluation_state.authority_epoch,
+        risk_epoch=evaluation_state.risk_epoch,
+        authorization_id=evaluation_state.authorization_id,
+        authorization_version=evaluation_state.authorization_version,
+        authorization_envelope_hash=evaluation_state.authorization_envelope_hash,
+        authorization_lifecycle=evaluation_state.authorization_lifecycle,
+        authorization_status_version=evaluation_state.authorization_status_version,
+        authorization_status_hash=evaluation_state.authorization_status_hash,
+        authorization_revalidation_required=(
+            evaluation_state.authorization_revalidation_required
+        ),
+        evidence_set_merkle_root=evaluation_state.evidence_set_merkle_root,
+        entry_fence_id=evaluation_state.entry_fence_id,
+        entry_fence_hash=evaluation_state.entry_fence_hash,
+        entry_fence_version=evaluation_state.entry_fence_version,
+        capital_version=evaluation_state.capital_version + 1,
+        capital_stream_version=evaluation_state.capital_stream_version + 1,
+        risk_snapshot_id=evaluation_state.risk_snapshot_id,
+        risk_snapshot_artifact_hash=evaluation_state.risk_snapshot_artifact_hash,
+        risk_snapshot_version=evaluation_state.risk_snapshot_version + 1,
+        risk_snapshot_freshness=evaluation_state.risk_snapshot_freshness,
+        risk_snapshot_completeness=evaluation_state.risk_snapshot_completeness,
+        risk_latch=evaluation_state.risk_latch,
+        reconciliation_latch=evaluation_state.reconciliation_latch,
+        stage_loss_bindings=tuple(
+            item.model_copy(update={"stage_loss_version": item.stage_loss_version + 1})
+            for item in evaluation_state.stage_loss_bindings
+        ),
+        reservation_id=evaluation_state.reservation_id,
+        reservation_version=evaluation_state.reservation_version + 1,
+        reservation_state=api.ReservationState.ACTIVE,
         remaining_reserved_cash_cents=remaining,
         outbox_batch_id="outbox-batch-1",
         outbox_payload_hash=HASH_B,
-        outbox_state="DURABLE",
+        outbox_state=api.OutboxState.DURABLE,
         outbox_permit_nonce=nonce,
-        writer_fencing_epoch=seal.writer_fencing_epoch,
+        writer_fencing_epoch=evaluation_state.writer_fencing_epoch,
         effective_send_deadline=min(PERMIT_EXPIRES, SEND_DEADLINE),
+    )
+
+
+def _cancellation_binding(api, seal, *, evaluation_state=None, nonce="permit-nonce-1"):
+    if evaluation_state is None:
+        evaluation_state = _permit_evaluation_state(api, seal)
+    return api.PermitCancellationBinding(
+        permit_nonce=nonce,
+        reservation_id=evaluation_state.reservation_id,
+        pre_reservation_version=evaluation_state.reservation_version,
+        post_reservation_version=evaluation_state.reservation_version + 1,
+        post_reservation_state=api.ReservationState.RELEASED,
+        released_cash_cents=evaluation_state.remaining_reserved_cash_cents,
+        remaining_reserved_cash_cents=0,
+        outbox_batch_id="outbox-batch-1",
+        outbox_payload_hash=HASH_B,
+        post_outbox_state=api.OutboxState.TOMBSTONED,
+        post_capital_version=evaluation_state.capital_version + 1,
+        post_capital_stream_version=evaluation_state.capital_stream_version + 1,
+        writer_fencing_epoch=evaluation_state.writer_fencing_epoch,
     )
 
 
@@ -701,10 +822,29 @@ def _permit_payload(api, **overrides):
             for line in seal.proposal.order_lines
         ),
     )
-    expected = overrides.pop(
-        "send_claim_expected_versions",
-        _send_claim_versions(api, seal, permit_lines, nonce=permit_nonce),
+    evaluation_state = overrides.pop(
+        "evaluation_state", _permit_evaluation_state(api, seal)
     )
+    if disposition is api.PermitDisposition.ALLOW:
+        expected = overrides.pop(
+            "send_claim_expected_versions",
+            _send_claim_versions(
+                api,
+                seal,
+                permit_lines,
+                nonce=permit_nonce,
+                evaluation_state=evaluation_state,
+            ),
+        )
+        cancellation_binding = overrides.pop("cancellation_binding", None)
+    else:
+        expected = overrides.pop("send_claim_expected_versions", None)
+        cancellation_binding = overrides.pop(
+            "cancellation_binding",
+            _cancellation_binding(
+                api, seal, evaluation_state=evaluation_state, nonce=permit_nonce
+            ),
+        )
     values = {
         "artifact_kind": api.ArtifactKind.EXECUTION_PERMIT,
         "artifact_namespace": "capital-gateway.entry-permit.v1",
@@ -712,7 +852,7 @@ def _permit_payload(api, **overrides):
         "permit_id": "permit-1",
         "permit_nonce": permit_nonce,
         "permit_nonce_sequence": 1,
-        "permit_nonce_state": "ACTIVE",
+        "permit_nonce_state": api.PermitNonceState.ACTIVE,
         "disposition": disposition,
         "seal": seal,
         "seal_id": seal.seal_id,
@@ -733,7 +873,10 @@ def _permit_payload(api, **overrides):
         "total_released_reserve_cents": sum(
             line.released_reserve_cents for line in permit_lines
         ),
+        "permit_clock_observation": _permit_clock_observation(api),
+        "evaluation_state": evaluation_state,
         "send_claim_expected_versions": expected,
+        "cancellation_binding": cancellation_binding,
         "execution_window": seal.execution_window,
         "issued_at": PERMIT_DEADLINE,
         "permit_expires_at": PERMIT_EXPIRES,

@@ -1108,6 +1108,68 @@ def test_capital_risk_snapshot_requires_one_complete_exposure_hierarchy() -> Non
             c.CapitalRiskSnapshot(**_risk_snapshot_payload(c, exposures=exposures))
 
 
+def test_flat_cash_only_snapshot_requires_only_global_and_portfolio_zero_buckets() -> (
+    None
+):
+    c = _contracts()
+    zero_components = {
+        "position_marked_gross_cents": 0,
+        "live_order_leaves_gross_cents": 0,
+        "reserved_entry_gross_cents": 0,
+        "pending_stress_cents": 0,
+        "corporate_action_pending_risk_cents": 0,
+        "unattributed_risk_cents": 0,
+        "total_gross_cents": 0,
+    }
+    flat = c.CapitalRiskSnapshot(
+        **_risk_snapshot_payload(
+            c,
+            available_cash_cents=1_000_000,
+            restricted_cash_cents=0,
+            unsettled_cash_cents=0,
+            cash_receivable_cents=0,
+            cash_payable_cents=0,
+            subscription_suspense_cents=0,
+            redemption_suspense_cents=0,
+            reserved_cash_cents=0,
+            pending_redeemed_unit_quanta=0,
+            positions=(),
+            live_orders=(),
+            entry_reserves=(),
+            pending_stress_components=(),
+            corporate_action_risk_components=(),
+            unattributed_risk_cents=0,
+            exposures=(
+                _exposure(c, c.ExposureScope.GLOBAL, **zero_components),
+                _exposure(c, c.ExposureScope.PORTFOLIO, **zero_components),
+            ),
+            total_gross_exposure_cents=0,
+            as_observed_nav_cents=1_000_000,
+            lifetime_high_water_mark_cents=1_000_000,
+            active_epoch_high_water_mark_cents=1_000_000,
+            lifetime_drawdown_ppm=0,
+            active_epoch_drawdown_ppm=0,
+            risk_latch=c.RiskLatchState.CLEAR,
+            stage_loss_latches=(),
+            reconciliation_latch=c.ReconciliationLatchState.CLEAR,
+        )
+    )
+    assert [bucket.scope for bucket in flat.exposures] == [
+        c.ExposureScope.GLOBAL,
+        c.ExposureScope.PORTFOLIO,
+    ]
+    assert flat.total_gross_exposure_cents == 0
+
+
+def test_risk_snapshot_rejects_noncanonical_exposure_order() -> None:
+    c = _contracts()
+    exposures = _risk_snapshot_payload(c)["exposures"]
+    with pytest.raises(ValidationError, match="exposure|canonical|order"):
+        c.CapitalRiskSnapshot(
+            **_risk_snapshot_payload(c, exposures=tuple(reversed(exposures)))
+        )
+
+
 def test_risk_snapshot_rejects_nav_latch_inconsistency() -> None:
     c = _contracts()
     invalid = (
@@ -1143,14 +1205,23 @@ def test_stage_loss_state_version_does_not_alias_per_stage_versions() -> None:
         **_risk_snapshot_payload(
             c,
             stage_loss_state_version=19,
-            stage_loss_latches=(_stage_loss_latch(c), other),
+            stage_loss_latches=(other, _stage_loss_latch(c)),
         )
     )
     assert snapshot.stage_loss_state_version == 19
     assert [latch.stage_loss_version for latch in snapshot.stage_loss_latches] == [
-        7,
         8,
+        7,
     ]
+
+    with pytest.raises(ValidationError, match="stage|canonical|order"):
+        c.CapitalRiskSnapshot(
+            **_risk_snapshot_payload(
+                c,
+                stage_loss_state_version=19,
+                stage_loss_latches=(_stage_loss_latch(c), other),
+            )
+        )
 
 
 def test_risk_snapshot_owns_a_domain_separated_artifact_hash() -> None:
@@ -1237,6 +1308,7 @@ def _exit_mandate_payload(c, **overrides):
         "live_exit_leaves_quantity": 40,
         "executable_quantity": 60,
         "mandate_revision": 1,
+        "revision_kind": c.ExitMandateRevisionKind.INITIAL,
         "supersedes_mandate_hash": None,
         "reopened_by_execution_revision_id": None,
         "capital_version": 10,
@@ -1276,6 +1348,7 @@ def test_exit_mandate_has_exact_independent_schema_and_hash() -> None:
         "live_exit_leaves_quantity",
         "executable_quantity",
         "mandate_revision",
+        "revision_kind",
         "supersedes_mandate_hash",
         "reopened_by_execution_revision_id",
         "capital_version",
@@ -1287,6 +1360,22 @@ def test_exit_mandate_has_exact_independent_schema_and_hash() -> None:
         "schema_major",
     }
     assert set(c.ExitMandate.model_fields) == expected_fields
+    assert [kind.value for kind in c.ExitMandateRevisionKind] == [
+        "INITIAL",
+        "QUANTITY_REFRESH",
+        "REOPENED_BY_CORRECTION",
+    ]
+    assert c.ExitMandateRevisionKind.__module__ == (
+        "src.screening.offensive.v3.contracts.capital"
+    )
+    assert (
+        c.ExitMandate.model_fields["revision_kind"].annotation
+        is c.ExitMandateRevisionKind
+    )
+    from src.screening.offensive.v3 import contracts
+
+    assert contracts.ExitMandateRevisionKind is c.ExitMandateRevisionKind
+    assert "ExitMandateRevisionKind" in contracts.__all__
     assert not expected_fields & {
         "authorization_id",
         "authorization_version",
@@ -1339,6 +1428,7 @@ def test_exit_mandate_correction_reopens_obligation_as_a_new_revision() -> None:
         **_exit_mandate_payload(
             c,
             mandate_revision=2,
+            revision_kind=c.ExitMandateRevisionKind.REOPENED_BY_CORRECTION,
             supersedes_mandate_hash=original.artifact_hash(),
             reopened_by_execution_revision_id="execution-revision-002",
             tradable_quantity=20,
@@ -1348,6 +1438,26 @@ def test_exit_mandate_correction_reopens_obligation_as_a_new_revision() -> None:
     )
     assert reopened.mandate_revision == 2
     assert reopened.artifact_hash() != original.artifact_hash()
+
+
+def test_exit_mandate_quantity_refresh_is_a_routine_non_reopen_revision() -> None:
+    c = _contracts()
+    original = c.ExitMandate(**_exit_mandate_payload(c))
+    refreshed = c.ExitMandate(
+        **_exit_mandate_payload(
+            c,
+            mandate_revision=2,
+            revision_kind=c.ExitMandateRevisionKind.QUANTITY_REFRESH,
+            supersedes_mandate_hash=original.artifact_hash(),
+            reopened_by_execution_revision_id=None,
+            tradable_quantity=80,
+            live_exit_leaves_quantity=40,
+            executable_quantity=40,
+            capital_version=11,
+        )
+    )
+    assert refreshed.revision_kind is c.ExitMandateRevisionKind.QUANTITY_REFRESH
+    assert refreshed.reopened_by_execution_revision_id is None
 
 
 @pytest.mark.parametrize(
@@ -1365,9 +1475,28 @@ def test_exit_mandate_correction_reopens_obligation_as_a_new_revision() -> None:
         {"mandate_revision": 1, "supersedes_mandate_hash": HASH},
         {
             "mandate_revision": 2,
+            "revision_kind": "REOPENED_BY_CORRECTION",
             "supersedes_mandate_hash": None,
             "reopened_by_execution_revision_id": "execution-revision-002",
         },
+        {"mandate_revision": 1, "revision_kind": "QUANTITY_REFRESH"},
+        {
+            "mandate_revision": 2,
+            "revision_kind": "INITIAL",
+            "supersedes_mandate_hash": HASH,
+        },
+        {
+            "mandate_revision": 2,
+            "revision_kind": "QUANTITY_REFRESH",
+            "supersedes_mandate_hash": None,
+        },
+        {
+            "mandate_revision": 2,
+            "revision_kind": "QUANTITY_REFRESH",
+            "supersedes_mandate_hash": HASH,
+            "reopened_by_execution_revision_id": "execution-revision-002",
+        },
+        {"revision_kind": "RECONCILED"},
     ],
 )
 def test_exit_mandate_rejects_quantity_knowledge_and_revision_contradictions(

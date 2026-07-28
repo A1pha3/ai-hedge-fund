@@ -31,10 +31,12 @@ from tests.offensive.v3.contracts.checkpoint2_helpers import (
     SIGNAL_SESSION,
     TARGET_SESSION,
     _api,
+    _clock_observation,
     _gateway_expected_versions,
     _gateway_issuer,
     _permit,
     _permit_line,
+    _permit_clock_observation,
     _permit_payload,
     _prior_seal_eligibility,
     _proposal,
@@ -57,6 +59,14 @@ from tests.offensive.v3.contracts.checkpoint2_helpers import (
 def test_trusted_execution_window_has_exact_semantic_fields() -> None:
     api = _api()
 
+    assert set(api.TrustedClockObservation.model_fields) == {
+        "observation_id",
+        "raw_payload_hash",
+        "wall_clock_utc",
+        "monotonic_observation_ns",
+        "monotonic_sequence",
+        "clock_health",
+    }
     assert set(api.TrustedExecutionWindow.model_fields) == {
         "signal_session",
         "target_entry_session",
@@ -71,12 +81,7 @@ def test_trusted_execution_window_has_exact_semantic_fields() -> None:
         "cutoff_snapshot_exchange_id",
         "execution_policy_version",
         "cutoff_policy_version",
-        "clock_observation_id",
-        "clock_observation_hash",
-        "wall_clock_observed_at",
-        "monotonic_observation_ns",
-        "monotonic_sequence",
-        "clock_health",
+        "seal_clock_observation",
         "t0_close_finalized_at",
         "seal_creation_deadline",
         "permit_issue_deadline",
@@ -112,7 +117,16 @@ def test_trusted_execution_window_rejects_every_strict_boundary_equality(
 
 def test_seal_created_at_may_equal_creation_deadline_but_must_follow_close() -> None:
     api = _api()
-    seal = _seal(api, created_at=SEAL_DEADLINE)
+    deadline_window = _window(
+        api,
+        seal_clock_observation=_clock_observation(
+            api,
+            wall_clock_utc=SEAL_DEADLINE,
+            monotonic_observation_ns=1_000_001,
+            monotonic_sequence=9,
+        ),
+    )
+    seal = _seal(api, created_at=SEAL_DEADLINE, execution_window=deadline_window)
     assert seal.created_at == seal.execution_window.seal_creation_deadline
 
     for created_at in (CLOSE_FINALIZED, SEAL_DEADLINE + timedelta(microseconds=1)):
@@ -145,14 +159,22 @@ def test_unhealthy_or_rollback_clock_blocks_seal_and_permit() -> None:
         api.ClockHealth.EXCESSIVE_SKEW,
         api.ClockHealth.ROLLBACK_DETECTED,
     ):
-        unhealthy = _window(api, clock_health=health)
+        unhealthy = _window(
+            api,
+            seal_clock_observation=_clock_observation(api, clock_health=health),
+        )
         with pytest.raises(ValidationError, match="clock"):
             api.PortfolioDecisionSeal.model_validate(
                 _seal_payload(api, execution_window=unhealthy)
             )
+        unhealthy_permit_observation = _permit_clock_observation(
+            api, clock_health=health
+        )
         with pytest.raises(ValidationError, match="clock"):
             api.ExecutionPermit.model_validate(
-                _permit_payload(api, execution_window=unhealthy)
+                _permit_payload(
+                    api, permit_clock_observation=unhealthy_permit_observation
+                )
             )
 
 
@@ -161,9 +183,93 @@ def test_cutoff_snapshot_session_exchange_and_observation_are_bounded() -> None:
     for drift in (
         {"cutoff_snapshot_session": SIGNAL_SESSION},
         {"cutoff_snapshot_exchange_id": "SZSE"},
-        {"wall_clock_observed_at": SEAL_DEADLINE + timedelta(microseconds=1)},
+        {
+            "seal_clock_observation": _clock_observation(
+                api,
+                wall_clock_utc=SEAL_DEADLINE + timedelta(microseconds=1),
+            )
+        },
     ):
         with pytest.raises(
             ValidationError, match="cutoff|session|exchange|clock|deadline"
         ):
             api.TrustedExecutionWindow.model_validate(_window_payload(api, **drift))
+
+
+def test_seal_binds_exact_observed_wall_time_and_rejects_backfilled_proposal() -> None:
+    api = _api()
+    proposal = _proposal(api)
+    valid_boundary = type(proposal).model_validate(
+        proposal.model_dump(mode="python", round_trip=True)
+        | {
+            "decision_cutoff": CLOSE_FINALIZED,
+            "proposal_created_at": CLOSE_FINALIZED + timedelta(seconds=1),
+        }
+    )
+    assert _seal(api, proposal=valid_boundary).proposal == valid_boundary
+    proposal_at_seal = type(proposal).model_validate(
+        proposal.model_dump(mode="python", round_trip=True)
+        | {"proposal_created_at": SEAL_CREATED}
+    )
+    assert _seal(api, proposal=proposal_at_seal).proposal == proposal_at_seal
+
+    for proposal_drift in (
+        {
+            "decision_cutoff": CLOSE_FINALIZED - timedelta(microseconds=1),
+            "proposal_created_at": CLOSE_FINALIZED + timedelta(seconds=1),
+        },
+        {
+            "decision_cutoff": CLOSE_FINALIZED + timedelta(seconds=30),
+            "proposal_created_at": SEAL_CREATED + timedelta(microseconds=1),
+        },
+    ):
+        changed = type(proposal).model_validate(
+            proposal.model_dump(mode="python", round_trip=True) | proposal_drift
+        )
+        with pytest.raises(
+            ValidationError, match="close|cutoff|proposal|created|seal|time"
+        ):
+            api.PortfolioDecisionSeal.model_validate(
+                _seal_payload(api, proposal=changed)
+            )
+
+    mismatched_window = _window(
+        api,
+        seal_clock_observation=_clock_observation(
+            api,
+            wall_clock_utc=SEAL_CREATED + timedelta(microseconds=1),
+        ),
+    )
+    with pytest.raises(ValidationError, match="clock|observed|created|seal"):
+        api.PortfolioDecisionSeal.model_validate(
+            _seal_payload(api, execution_window=mismatched_window)
+        )
+
+
+def test_permit_has_its_own_later_trusted_observation_and_cannot_backfill_it() -> None:
+    api = _api()
+    permit = _permit(api)
+    seal_observation = permit.execution_window.seal_clock_observation
+    permit_observation = permit.permit_clock_observation
+    assert permit.issued_at == permit_observation.wall_clock_utc
+    assert permit_observation.wall_clock_utc > seal_observation.wall_clock_utc
+    assert permit_observation.monotonic_observation_ns > (
+        seal_observation.monotonic_observation_ns
+    )
+    assert permit_observation.monotonic_sequence > seal_observation.monotonic_sequence
+
+    invalid_observations = (
+        _permit_clock_observation(api, wall_clock_utc=SEAL_CREATED),
+        _permit_clock_observation(api, monotonic_observation_ns=1_000_000),
+        _permit_clock_observation(api, monotonic_sequence=8),
+        _permit_clock_observation(
+            api, wall_clock_utc=PERMIT_DEADLINE - timedelta(microseconds=1)
+        ),
+    )
+    for observation in invalid_observations:
+        with pytest.raises(
+            ValidationError, match="clock|observation|monotonic|issued|later|sequence"
+        ):
+            api.ExecutionPermit.model_validate(
+                _permit_payload(api, permit_clock_observation=observation)
+            )

@@ -31,9 +31,11 @@ from tests.offensive.v3.contracts.checkpoint2_helpers import (
     SIGNAL_SESSION,
     TARGET_SESSION,
     _api,
+    _cancellation_binding,
     _gateway_expected_versions,
     _gateway_issuer,
     _permit,
+    _permit_evaluation_state,
     _permit_line,
     _permit_payload,
     _prior_seal_eligibility,
@@ -81,7 +83,10 @@ def test_execution_permit_has_exact_complete_binding_fields() -> None:
         "permit_lines",
         "total_remaining_reserve_cents",
         "total_released_reserve_cents",
+        "permit_clock_observation",
+        "evaluation_state",
         "send_claim_expected_versions",
+        "cancellation_binding",
         "execution_window",
         "issued_at",
         "permit_expires_at",
@@ -129,7 +134,7 @@ def test_send_claim_expected_versions_freezes_complete_recheck_bundle() -> None:
         "authorization_id",
         "authorization_version",
         "authorization_envelope_hash",
-        "authorization_status",
+        "authorization_lifecycle",
         "authorization_status_version",
         "authorization_status_hash",
         "authorization_revalidation_required",
@@ -160,7 +165,7 @@ def test_send_claim_expected_versions_freezes_complete_recheck_bundle() -> None:
     }
 
 
-def test_permit_identity_authority_nonce_outbox_and_deadline_match_seal() -> None:
+def test_permit_identity_and_current_to_post_cas_progression_are_exact() -> None:
     api = _api()
     permit = _permit(api)
     expected = permit.send_claim_expected_versions
@@ -198,16 +203,22 @@ def test_permit_identity_authority_nonce_outbox_and_deadline_match_seal() -> Non
         ):
             api.ExecutionPermit.model_validate(_permit_payload(api, **drift))
 
-    changed_stage = expected.stage_loss_bindings[0].model_copy(
-        update={
-            "expected_stage_loss_version": (
-                expected.stage_loss_bindings[0].expected_stage_loss_version + 1
-            ),
-            "post_stage_loss_version": (
-                expected.stage_loss_bindings[0].post_stage_loss_version + 1
-            ),
-        }
+    current = permit.evaluation_state
+    assert current.risk_snapshot_id != permit.seal.risk_snapshot_id
+    assert current.capital_version > permit.seal.post_admission_capital_version
+    assert current.capital_stream_version > permit.seal.capital_stream_version
+    assert current.reservation_version > permit.seal.post_admission_reservation_version
+    assert expected.capital_version > current.capital_version
+    assert expected.capital_stream_version > current.capital_stream_version
+    assert expected.reservation_version > current.reservation_version
+    assert expected.risk_snapshot_version >= current.risk_snapshot_version
+    assert all(
+        post.stage_loss_version >= pre.stage_loss_version
+        for pre, post in zip(
+            current.stage_loss_bindings, expected.stage_loss_bindings, strict=True
+        )
     )
+
     expected_drifts = {
         "active_seal_id": "other-seal",
         "active_seal_revision": expected.active_seal_revision + 1,
@@ -225,29 +236,18 @@ def test_permit_identity_authority_nonce_outbox_and_deadline_match_seal() -> Non
         "authorization_id": "other-authorization",
         "authorization_version": expected.authorization_version + 1,
         "authorization_envelope_hash": HASH_F,
-        "authorization_status": "REVOKED",
-        "authorization_status_version": expected.authorization_status_version + 1,
-        "authorization_status_hash": HASH_F,
-        "authorization_revalidation_required": True,
+        "authorization_lifecycle": api.AuthorizationLifecycle.REVOKED,
         "evidence_set_merkle_root": HASH_F,
         "entry_fence_id": "other-fence",
         "entry_fence_hash": HASH_A,
         "entry_fence_version": expected.entry_fence_version + 1,
-        "capital_version": expected.capital_version + 1,
-        "capital_stream_version": expected.capital_stream_version + 1,
-        "risk_snapshot_id": "other-risk-snapshot",
-        "risk_snapshot_artifact_hash": HASH_F,
-        "risk_snapshot_freshness": api.RiskSnapshotFreshness.STALE,
-        "risk_snapshot_completeness": api.RiskSnapshotCompleteness.INCOMPLETE,
-        "risk_latch": api.RiskLatchState.RISK_HALTED,
-        "reconciliation_latch": (api.ReconciliationLatchState.RECONCILIATION_HALT),
-        "stage_loss_bindings": (
-            changed_stage,
-            *expected.stage_loss_bindings[1:],
-        ),
+        "capital_version": current.capital_version,
+        "capital_stream_version": current.capital_stream_version,
+        "risk_snapshot_version": current.risk_snapshot_version - 1,
+        "stage_loss_bindings": current.stage_loss_bindings,
         "reservation_id": "other-reservation",
-        "reservation_version": expected.reservation_version + 1,
-        "reservation_state": "RELEASED",
+        "reservation_version": current.reservation_version,
+        "reservation_state": api.ReservationState.RELEASED,
         "remaining_reserved_cash_cents": (expected.remaining_reserved_cash_cents + 1),
         "outbox_permit_nonce": "different-nonce",
         "writer_fencing_epoch": expected.writer_fencing_epoch + 1,
@@ -269,8 +269,11 @@ def test_permit_identity_authority_nonce_outbox_and_deadline_match_seal() -> Non
 def test_permit_nonce_contract_is_single_use_shaped_and_cannot_self_claim() -> None:
     api = _api()
     permit = _permit(api)
-    assert permit.permit_nonce_state == "ACTIVE"
-    assert permit.send_claim_expected_versions.permit_nonce_state == "ACTIVE"
+    assert permit.permit_nonce_state is api.PermitNonceState.ACTIVE
+    assert (
+        permit.send_claim_expected_versions.permit_nonce_state
+        is api.PermitNonceState.ACTIVE
+    )
     assert "nonce_consumed_at" not in api.ExecutionPermit.model_fields
     assert "send_claimed_at" not in api.ExecutionPermit.model_fields
 
@@ -525,14 +528,10 @@ def test_cancel_and_allow_dispositions_are_typed_and_non_interchangeable() -> No
         )
         for line in seal.proposal.order_lines
     )
-    cancel_expected = _send_claim_versions(api, seal, cancelled_lines).model_copy(
-        update={
-            "remaining_reserved_cash_cents": 0,
-            "outbox_batch_id": None,
-            "outbox_payload_hash": None,
-            "outbox_state": "TOMBSTONED",
-            "outbox_permit_nonce": None,
-        }
+    cancelled_state = _permit_evaluation_state(
+        api,
+        seal,
+        authorization_lifecycle=api.AuthorizationLifecycle.REVOKED,
     )
     cancel = api.ExecutionPermit.model_validate(
         _permit_payload(
@@ -543,11 +542,17 @@ def test_cancel_and_allow_dispositions_are_typed_and_non_interchangeable() -> No
             total_released_reserve_cents=sum(
                 line.released_reserve_cents for line in cancelled_lines
             ),
-            send_claim_expected_versions=cancel_expected,
+            evaluation_state=cancelled_state,
         )
     )
     assert all(line.permitted_quantity_units == 0 for line in cancel.permit_lines)
     assert all(line.client_order_id is None for line in cancel.permit_lines)
+    assert cancel.send_claim_expected_versions is None
+    assert cancel.cancellation_binding.post_outbox_state is api.OutboxState.TOMBSTONED
+    assert (
+        cancel.cancellation_binding.post_reservation_state
+        is api.ReservationState.RELEASED
+    )
 
     with pytest.raises(ValidationError, match="ALLOW|positive|sendable"):
         api.ExecutionPermit.model_validate(
@@ -582,7 +587,14 @@ def test_cancel_rejects_positive_line_or_durable_sendable_outbox() -> None:
         )
         for line in seal.proposal.order_lines
     )
-    durable = _send_claim_versions(api, seal, zero_lines)
+    cancelled_state = _permit_evaluation_state(
+        api,
+        seal,
+        authorization_lifecycle=api.AuthorizationLifecycle.REVOKED,
+    )
+    durable = _send_claim_versions(
+        api, seal, zero_lines, evaluation_state=cancelled_state
+    )
     with pytest.raises(ValidationError, match="CANCEL|outbox|tombstone|sendable"):
         api.ExecutionPermit.model_validate(
             _permit_payload(
@@ -590,6 +602,7 @@ def test_cancel_rejects_positive_line_or_durable_sendable_outbox() -> None:
                 seal=seal,
                 disposition=api.PermitDisposition.CANCEL,
                 permit_lines=zero_lines,
+                evaluation_state=cancelled_state,
                 send_claim_expected_versions=durable,
             )
         )
@@ -624,7 +637,7 @@ def test_allow_positive_sendable_lines_require_exact_durable_outbox_binding(
     expected = permit.send_claim_expected_versions
     assert expected.outbox_batch_id
     assert expected.outbox_payload_hash
-    assert expected.outbox_state == "DURABLE"
+    assert expected.outbox_state is api.OutboxState.DURABLE
     assert expected.outbox_permit_nonce == permit.permit_nonce
 
     if value == "":

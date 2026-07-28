@@ -434,6 +434,7 @@ def test_seal_embeds_the_exact_consumed_gateway_expected_versions_artifact() -> 
     assert consumed.trust_bundle_hash == seal.trust_bundle_hash
     assert consumed.authorization_envelope_hash == seal.authorization_envelope_hash
     assert consumed.authorization_status_hash == seal.authorization_status_hash
+    assert consumed.entry_fence_id == seal.entry_fence_id
     assert consumed.entry_fence_hash == seal.entry_fence_hash
     assert consumed.risk_snapshot_artifact_hash == seal.risk_snapshot_artifact_hash
 
@@ -491,6 +492,7 @@ def test_seal_rejects_each_consumed_cas_binding_drift_even_with_fresh_hash() -> 
         "authorization_status_version": expected.authorization_status_version + 1,
         "authorization_status_hash": HASH_F,
         "evidence_set_merkle_root": HASH_F,
+        "entry_fence_id": "other-entry-fence",
         "entry_fence_hash": HASH_A,
         "entry_fence_version": expected.entry_fence_version + 1,
         "risk_snapshot_id": "other-risk-snapshot",
@@ -550,6 +552,24 @@ def test_seal_rejects_each_consumed_cas_binding_drift_even_with_fresh_hash() -> 
         type(expected).model_validate(
             expected.model_dump(mode="python", round_trip=True)
             | {"expected_active_seal_id": "seal-0"}
+        )
+
+
+def test_seal_creation_rejects_any_halted_stage_admission() -> None:
+    api = _api()
+    seal = _seal(api)
+    halted = seal.stage_admission_bindings[0].model_copy(
+        update={"stage_loss_latch": api.StageLossLatchState.STAGE_LOSS_HALTED}
+    )
+    with pytest.raises(ValidationError, match="stage|halt|admission|entry"):
+        api.PortfolioDecisionSeal.model_validate(
+            _seal_payload(
+                api,
+                stage_admission_bindings=(
+                    halted,
+                    *seal.stage_admission_bindings[1:],
+                ),
+            )
         )
 
 

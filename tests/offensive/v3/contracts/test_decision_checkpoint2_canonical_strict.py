@@ -31,9 +31,11 @@ from tests.offensive.v3.contracts.checkpoint2_helpers import (
     SIGNAL_SESSION,
     TARGET_SESSION,
     _api,
+    _clock_observation,
     _gateway_expected_versions,
     _gateway_issuer,
     _permit,
+    _permit_evaluation_state,
     _permit_line,
     _permit_payload,
     _prior_seal_eligibility,
@@ -55,11 +57,13 @@ from tests.offensive.v3.contracts.checkpoint2_helpers import (
 )
 
 INTEGER_FIELDS_BY_FIXTURE = {
+    "clock_observation": (
+        "monotonic_observation_ns",
+        "monotonic_sequence",
+    ),
     "window": (
         "calendar_snapshot_version",
         "cutoff_snapshot_version",
-        "monotonic_observation_ns",
-        "monotonic_sequence",
     ),
     "gateway_issuer": ("capability_schema_major", "registry_epoch"),
     "shadow_issuer": ("capability_schema_major", "registry_epoch"),
@@ -142,6 +146,21 @@ INTEGER_FIELDS_BY_FIXTURE = {
         "remaining_reserved_cash_cents",
         "writer_fencing_epoch",
     ),
+    "permit_evaluation": (
+        "registry_epoch",
+        "policy_epoch",
+        "authority_epoch",
+        "risk_epoch",
+        "authorization_version",
+        "authorization_status_version",
+        "entry_fence_version",
+        "capital_version",
+        "capital_stream_version",
+        "risk_snapshot_version",
+        "reservation_version",
+        "remaining_reserved_cash_cents",
+        "writer_fencing_epoch",
+    ),
     "permit": (
         "schema_major",
         "permit_nonce_sequence",
@@ -153,7 +172,9 @@ INTEGER_FIELDS_BY_FIXTURE = {
 
 
 def _strict_fixture(api, fixture_name):
-    if fixture_name == "window":
+    if fixture_name == "clock_observation":
+        instance = _clock_observation(api)
+    elif fixture_name == "window":
         instance = _window(api)
     elif fixture_name == "gateway_issuer":
         instance = _gateway_issuer(
@@ -183,6 +204,8 @@ def _strict_fixture(api, fixture_name):
         instance = _permit(api).permit_lines[0]
     elif fixture_name == "send_claim":
         instance = _permit(api).send_claim_expected_versions
+    elif fixture_name == "permit_evaluation":
+        instance = _permit_evaluation_state(api, _seal(api))
     elif fixture_name == "permit":
         instance = _permit(api)
     else:  # pragma: no cover - the parameter table is closed above
@@ -224,8 +247,8 @@ def test_every_checkpoint2_integer_field_rejects_non_native_integer(
 
 
 UTC_FIELDS_BY_FIXTURE = {
+    "clock_observation": ("wall_clock_utc",),
     "window": (
-        "wall_clock_observed_at",
         "t0_close_finalized_at",
         "seal_creation_deadline",
         "permit_issue_deadline",
