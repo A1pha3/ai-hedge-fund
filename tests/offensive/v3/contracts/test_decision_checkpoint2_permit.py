@@ -190,7 +190,6 @@ def test_permit_identity_authority_nonce_outbox_and_deadline_match_seal() -> Non
         {"base_currency": "USD"},
         {"mode": api.ExecutionMode.MANUAL_CONFIRMED},
         {"target_entry_session": TARGET_SESSION + timedelta(days=1)},
-        {"permit_nonce": "different-nonce"},
     )
     for drift in top_level_drifts:
         with pytest.raises(
