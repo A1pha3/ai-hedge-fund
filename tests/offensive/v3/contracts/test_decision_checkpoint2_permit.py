@@ -34,6 +34,7 @@ from tests.offensive.v3.contracts.checkpoint2_helpers import (
     _cancellation_binding,
     _gateway_expected_versions,
     _gateway_issuer,
+    _mechanical_binding,
     _permit,
     _permit_evaluation_state,
     _permit_line,
@@ -98,10 +99,7 @@ def test_execution_permit_has_exact_complete_binding_fields() -> None:
         "sealed_quantity_units",
         "permitted_quantity_units",
         "reason_code",
-        "predicate_policy_version",
-        "preopen_fact_snapshot_id",
-        "preopen_fact_snapshot_hash",
-        "preopen_fact_as_of",
+        "mechanical_binding",
         "client_order_id",
         "order_type",
         "limit_price_cents",
@@ -137,24 +135,20 @@ def test_send_claim_expected_versions_freezes_complete_recheck_bundle() -> None:
         "authorization_lifecycle",
         "authorization_status_version",
         "authorization_status_hash",
-        "authorization_revalidation_required",
+        "authorization_revalidation",
         "evidence_set_merkle_root",
         "entry_fence_id",
         "entry_fence_hash",
         "entry_fence_version",
         "capital_version",
         "capital_stream_version",
-        "risk_snapshot_id",
-        "risk_snapshot_artifact_hash",
-        "risk_snapshot_version",
-        "risk_snapshot_freshness",
-        "risk_snapshot_completeness",
-        "risk_latch",
-        "reconciliation_latch",
+        "post_risk_snapshot",
+        "post_risk_snapshot_artifact_hash",
         "stage_loss_bindings",
         "reservation_id",
         "reservation_version",
         "reservation_state",
+        "post_reservation_allocations",
         "remaining_reserved_cash_cents",
         "outbox_batch_id",
         "outbox_payload_hash",
@@ -204,19 +198,20 @@ def test_permit_identity_and_current_to_post_cas_progression_are_exact() -> None
             api.ExecutionPermit.model_validate(_permit_payload(api, **drift))
 
     current = permit.evaluation_state
-    assert current.risk_snapshot_id != permit.seal.risk_snapshot_id
-    assert current.capital_version > permit.seal.post_admission_capital_version
-    assert current.capital_stream_version > permit.seal.capital_stream_version
-    assert current.reservation_version > permit.seal.post_admission_reservation_version
-    assert expected.capital_version > current.capital_version
-    assert expected.capital_stream_version > current.capital_stream_version
-    assert expected.reservation_version > current.reservation_version
-    assert expected.risk_snapshot_version >= current.risk_snapshot_version
-    assert all(
-        post.stage_loss_version >= pre.stage_loss_version
-        for pre, post in zip(
-            current.stage_loss_bindings, expected.stage_loss_bindings, strict=True
-        )
+    assert current.risk_snapshot.risk_snapshot_id != permit.seal.risk_snapshot_id
+    assert current.capital_version == permit.seal.post_admission_capital_version
+    assert (
+        current.capital_stream_version
+        == permit.seal.post_admission_capital_stream_version
+    )
+    assert current.reservation_version == permit.seal.post_admission_reservation_version
+    assert expected.capital_version == current.capital_version
+    assert expected.capital_stream_version == current.capital_stream_version
+    assert expected.reservation_version == current.reservation_version
+    assert expected.stage_loss_bindings == current.stage_loss_bindings
+    assert expected.post_risk_snapshot == current.risk_snapshot
+    assert expected.post_risk_snapshot_artifact_hash == (
+        current.risk_snapshot_artifact_hash
     )
 
     expected_drifts = {
@@ -241,12 +236,15 @@ def test_permit_identity_and_current_to_post_cas_progression_are_exact() -> None
         "entry_fence_id": "other-fence",
         "entry_fence_hash": HASH_A,
         "entry_fence_version": expected.entry_fence_version + 1,
-        "capital_version": current.capital_version,
-        "capital_stream_version": current.capital_stream_version,
-        "risk_snapshot_version": current.risk_snapshot_version - 1,
-        "stage_loss_bindings": current.stage_loss_bindings,
+        "capital_version": current.capital_version - 1,
+        "capital_stream_version": current.capital_stream_version - 1,
+        "post_risk_snapshot_artifact_hash": HASH_F,
+        "stage_loss_bindings": tuple(
+            item.model_copy(update={"stage_loss_version": item.stage_loss_version + 1})
+            for item in current.stage_loss_bindings
+        ),
         "reservation_id": "other-reservation",
-        "reservation_version": current.reservation_version,
+        "reservation_version": current.reservation_version - 1,
         "reservation_state": api.ReservationState.RELEASED,
         "remaining_reserved_cash_cents": (expected.remaining_reserved_cash_cents + 1),
         "outbox_permit_nonce": "different-nonce",
@@ -259,7 +257,7 @@ def test_permit_identity_and_current_to_post_cas_progression_are_exact() -> None
         changed = expected.model_copy(update={field: value})
         with pytest.raises(
             ValidationError,
-            match="seal|permit|nonce|policy|trust|registry|authority|authorization|risk|fence|capital|stage|reservation|outbox|deadline|latch",
+            match="seal|permit|nonce|policy|trust|registry|authority|authorization|risk|fence|capital|stage|reservation|reserve|outbox|deadline|latch",
         ):
             api.ExecutionPermit.model_validate(
                 _permit_payload(api, send_claim_expected_versions=changed)
@@ -405,6 +403,7 @@ def test_permit_reasons_reject_alpha_news_quote_and_discretion(reason) -> None:
         "CAPACITY_REDUCTION",
         "CASH_REDUCTION",
         "CAPITAL_RISK_REDUCTION",
+        "RISK_HALT_CANCEL",
         "STAGE_HALT_CANCEL",
         "RECONCILIATION_CANCEL",
         "FACT_INTEGRITY_CANCEL",
@@ -466,10 +465,15 @@ def test_permit_reason_must_match_unchanged_shrink_or_cancel(
 def test_permit_rejects_future_preopen_fact_timestamp() -> None:
     api = _api()
     seal = _seal(api)
-    line = _permit_line(
+    binding = _mechanical_binding(
         api,
         seal.proposal.order_lines[0],
         preopen_fact_as_of=PERMIT_DEADLINE + timedelta(microseconds=1),
+    )
+    line = _permit_line(
+        api,
+        seal.proposal.order_lines[0],
+        mechanical_binding=binding,
     )
     with pytest.raises(ValidationError, match="preopen|fact|issued|future"):
         api.ExecutionPermit.model_validate(
@@ -532,6 +536,8 @@ def test_cancel_and_allow_dispositions_are_typed_and_non_interchangeable() -> No
         api,
         seal,
         authorization_lifecycle=api.AuthorizationLifecycle.REVOKED,
+        authorization_status_version=seal.authorization_status_version + 1,
+        authorization_status_hash=HASH_A,
     )
     cancel = api.ExecutionPermit.model_validate(
         _permit_payload(
@@ -548,7 +554,8 @@ def test_cancel_and_allow_dispositions_are_typed_and_non_interchangeable() -> No
     assert all(line.permitted_quantity_units == 0 for line in cancel.permit_lines)
     assert all(line.client_order_id is None for line in cancel.permit_lines)
     assert cancel.send_claim_expected_versions is None
-    assert cancel.cancellation_binding.post_outbox_state is api.OutboxState.TOMBSTONED
+    assert cancel.cancellation_binding.post_outbox_state is None
+    assert cancel.cancellation_binding.outbox_batch_id is None
     assert (
         cancel.cancellation_binding.post_reservation_state
         is api.ReservationState.RELEASED
@@ -591,6 +598,8 @@ def test_cancel_rejects_positive_line_or_durable_sendable_outbox() -> None:
         api,
         seal,
         authorization_lifecycle=api.AuthorizationLifecycle.REVOKED,
+        authorization_status_version=seal.authorization_status_version + 1,
+        authorization_status_hash=HASH_A,
     )
     durable = _send_claim_versions(
         api, seal, zero_lines, evaluation_state=cancelled_state

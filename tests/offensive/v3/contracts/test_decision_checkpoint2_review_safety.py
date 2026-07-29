@@ -32,29 +32,38 @@ def test_permit_evaluation_state_has_exact_current_truth_schema() -> None:
         "authorization_lifecycle",
         "authorization_status_version",
         "authorization_status_hash",
-        "authorization_revalidation_required",
+        "authorization_revalidation",
         "evidence_set_merkle_root",
         "entry_fence_id",
         "entry_fence_hash",
         "entry_fence_version",
         "capital_version",
         "capital_stream_version",
-        "risk_snapshot_id",
+        "risk_snapshot",
         "risk_snapshot_artifact_hash",
-        "risk_snapshot_version",
-        "risk_snapshot_freshness",
-        "risk_snapshot_completeness",
-        "risk_latch",
-        "reconciliation_latch",
         "stage_loss_bindings",
         "reservation_id",
         "reservation_version",
         "reservation_state",
+        "reservation_allocations",
         "remaining_reserved_cash_cents",
+        "prior_permit_nonce_sequence",
+        "active_permit_id",
+        "active_permit_artifact_hash",
+        "active_permit_nonce",
+        "active_permit_nonce_sequence",
+        "active_permit_nonce_state",
+        "active_outbox_batch_id",
+        "active_outbox_payload_hash",
+        "active_outbox_state",
+        "active_send_claim_state",
+        "send_claim_sequence",
         "writer_fencing_epoch",
     }
     assert set(api.PermitCancellationBinding.model_fields) == {
         "permit_nonce",
+        "post_permit_nonce_sequence",
+        "post_permit_nonce_state",
         "reservation_id",
         "pre_reservation_version",
         "post_reservation_version",
@@ -66,6 +75,8 @@ def test_permit_evaluation_state_has_exact_current_truth_schema() -> None:
         "post_outbox_state",
         "post_capital_version",
         "post_capital_stream_version",
+        "post_risk_snapshot",
+        "post_risk_snapshot_artifact_hash",
         "writer_fencing_epoch",
     }
 
@@ -116,6 +127,9 @@ def test_review_types_have_stable_public_module_identity() -> None:
         api.PermitNonceState,
         api.ReservationState,
         api.OutboxState,
+        api.ReservationLineAllocation,
+        api.PermitLineMechanicalBinding,
+        api.AuthorizationIssuerRevalidation,
         api.PermitEvaluationState,
         api.PermitCancellationBinding,
     ):
@@ -165,12 +179,15 @@ def test_cancel_reason_must_be_witnessed_by_current_evaluation_truth(
         )
 
 
-def test_stage_halt_cancel_binds_release_and_tombstone_transaction() -> None:
+def test_stage_halt_cancel_binds_release_without_inventing_outbox() -> None:
     api = _api()
     seal = _seal(api)
     clear = _permit_evaluation_state(api, seal)
     halted_stage = clear.stage_loss_bindings[0].model_copy(
-        update={"stage_loss_latch": api.StageLossLatchState.STAGE_LOSS_HALTED}
+        update={
+            "stage_loss_version": clear.stage_loss_bindings[0].stage_loss_version + 1,
+            "stage_loss_latch": api.StageLossLatchState.STAGE_LOSS_HALTED,
+        }
     )
     halted = _permit_evaluation_state(
         api,
@@ -201,7 +218,8 @@ def test_stage_halt_cancel_binds_release_and_tombstone_transaction() -> None:
     assert binding.post_reservation_state is api.ReservationState.RELEASED
     assert binding.released_cash_cents == halted.remaining_reserved_cash_cents
     assert binding.remaining_reserved_cash_cents == 0
-    assert binding.post_outbox_state is api.OutboxState.TOMBSTONED
+    assert binding.post_outbox_state is None
+    assert binding.outbox_batch_id is None
     assert binding.post_capital_version > halted.capital_version
     assert binding.post_capital_stream_version > halted.capital_stream_version
 
@@ -225,7 +243,11 @@ def test_allow_requires_current_truth_to_remain_sendable(cause: str) -> None:
         "authorization_revoked": {
             "authorization_lifecycle": api.AuthorizationLifecycle.REVOKED
         },
-        "authorization_revalidation": {"authorization_revalidation_required": True},
+        "authorization_revalidation": {
+            "authorization_lifecycle": (
+                api.AuthorizationLifecycle.REVALIDATION_REQUIRED
+            )
+        },
         "stale": {"risk_snapshot_freshness": api.RiskSnapshotFreshness.STALE},
         "incomplete": {
             "risk_snapshot_completeness": api.RiskSnapshotCompleteness.INCOMPLETE
@@ -272,13 +294,18 @@ def test_cancel_accepts_only_a_matching_current_truth_witness(cause: str) -> Non
     }[cause]
     changes = {
         "authorization": {
-            "authorization_lifecycle": api.AuthorizationLifecycle.REVOKED
+            "authorization_lifecycle": api.AuthorizationLifecycle.REVOKED,
+            "authorization_status_version": seal.authorization_status_version + 1,
+            "authorization_status_hash": HASH_A,
         },
         "stage": {
             "stage_loss_bindings": (
                 clear.stage_loss_bindings[0].model_copy(
                     update={
-                        "stage_loss_latch": (api.StageLossLatchState.STAGE_LOSS_HALTED)
+                        "stage_loss_version": (
+                            clear.stage_loss_bindings[0].stage_loss_version + 1
+                        ),
+                        "stage_loss_latch": (api.StageLossLatchState.STAGE_LOSS_HALTED),
                     }
                 ),
                 *clear.stage_loss_bindings[1:],
@@ -329,7 +356,7 @@ def test_cancel_accepts_only_a_matching_current_truth_witness(cause: str) -> Non
         ("post_capital_stream_version", "current_stream"),
     ],
 )
-def test_cancel_binding_must_prove_one_atomic_release_and_tombstone(
+def test_cancel_binding_must_prove_one_atomic_release_and_optional_tombstone(
     field: str, value_kind: str
 ) -> None:
     api = _api()
@@ -338,6 +365,8 @@ def test_cancel_binding_must_prove_one_atomic_release_and_tombstone(
         api,
         seal,
         authorization_lifecycle=api.AuthorizationLifecycle.REVOKED,
+        authorization_status_version=seal.authorization_status_version + 1,
+        authorization_status_hash=HASH_A,
     )
     lines = tuple(
         _permit_line(
@@ -385,11 +414,14 @@ def test_cancel_binding_must_prove_one_atomic_release_and_tombstone(
 def test_permit_predicate_policy_is_the_sealed_execution_policy() -> None:
     api = _api()
     permit = _permit(api)
-    assert {line.predicate_policy_version for line in permit.permit_lines} == {
-        permit.execution_window.execution_policy_version
-    }
-    changed = permit.permit_lines[0].model_copy(
+    assert {
+        line.mechanical_binding.predicate_policy_version for line in permit.permit_lines
+    } == {permit.execution_window.execution_policy_version}
+    changed_binding = permit.permit_lines[0].mechanical_binding.model_copy(
         update={"predicate_policy_version": "preopen-alpha.v1"}
+    )
+    changed = permit.permit_lines[0].model_copy(
+        update={"mechanical_binding": changed_binding}
     )
     with pytest.raises(ValidationError, match="predicate|execution|policy|sealed"):
         api.ExecutionPermit.model_validate(
@@ -421,7 +453,6 @@ def test_allow_rejects_current_fence_drift_even_when_hash_is_well_formed() -> No
     [
         ("policy_activation_hash", HASH_F),
         ("trust_bundle_hash", HASH_F),
-        ("registry_epoch", 8),
         ("policy_epoch", 5),
         ("authority_epoch", 6),
         ("risk_epoch", 7),
@@ -437,11 +468,11 @@ def test_allow_current_truth_preserves_every_immutable_seal_authority_binding(
 ) -> None:
     api = _api()
     seal = _seal(api)
-    current = _permit_evaluation_state(api, seal, **{field: changed})
     with pytest.raises(
         ValidationError,
         match="ALLOW|policy|trust|registry|epoch|authorization|evidence|writer|fence|seal",
     ):
+        current = _permit_evaluation_state(api, seal, **{field: changed})
         api.ExecutionPermit.model_validate(
             _permit_payload(api, seal=seal, evaluation_state=current)
         )

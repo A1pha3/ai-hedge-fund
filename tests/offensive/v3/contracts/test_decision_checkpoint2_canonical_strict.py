@@ -31,9 +31,12 @@ from tests.offensive.v3.contracts.checkpoint2_helpers import (
     SIGNAL_SESSION,
     TARGET_SESSION,
     _api,
+    _authorization_revalidation,
+    _cancellation_binding,
     _clock_observation,
     _gateway_expected_versions,
     _gateway_issuer,
+    _mechanical_binding,
     _permit,
     _permit_evaluation_state,
     _permit_line,
@@ -41,7 +44,9 @@ from tests.offensive.v3.contracts.checkpoint2_helpers import (
     _prior_seal_eligibility,
     _proposal,
     _proposal_line,
+    _receipt,
     _reserve_bindings,
+    _reservation_allocations,
     _seal,
     _seal_payload,
     _send_claim_versions,
@@ -129,6 +134,14 @@ INTEGER_FIELDS_BY_FIXTURE = {
         "remaining_reserve_cents",
         "released_reserve_cents",
     ),
+    "mechanical_binding": (
+        "availability_cap_units",
+        "price_cap_units",
+        "capacity_cap_units",
+        "cash_cap_units",
+        "capital_risk_cap_units",
+    ),
+    "reservation_allocation": ("reserved_cash_cents",),
     "send_claim": (
         "active_seal_revision",
         "permit_nonce_sequence",
@@ -141,7 +154,6 @@ INTEGER_FIELDS_BY_FIXTURE = {
         "entry_fence_version",
         "capital_version",
         "capital_stream_version",
-        "risk_snapshot_version",
         "reservation_version",
         "remaining_reserved_cash_cents",
         "writer_fencing_epoch",
@@ -156,9 +168,19 @@ INTEGER_FIELDS_BY_FIXTURE = {
         "entry_fence_version",
         "capital_version",
         "capital_stream_version",
-        "risk_snapshot_version",
         "reservation_version",
         "remaining_reserved_cash_cents",
+        "prior_permit_nonce_sequence",
+        "writer_fencing_epoch",
+    ),
+    "cancellation_binding": (
+        "post_permit_nonce_sequence",
+        "pre_reservation_version",
+        "post_reservation_version",
+        "released_cash_cents",
+        "remaining_reserved_cash_cents",
+        "post_capital_version",
+        "post_capital_stream_version",
         "writer_fencing_epoch",
     ),
     "permit": (
@@ -202,10 +224,18 @@ def _strict_fixture(api, fixture_name):
         instance = _shadow(api)
     elif fixture_name == "permit_line":
         instance = _permit(api).permit_lines[0]
+    elif fixture_name == "mechanical_binding":
+        instance = _mechanical_binding(api, _proposal(api).order_lines[0])
+    elif fixture_name == "reservation_allocation":
+        instance = _reservation_allocations(api, _seal(api))[0]
     elif fixture_name == "send_claim":
         instance = _permit(api).send_claim_expected_versions
     elif fixture_name == "permit_evaluation":
         instance = _permit_evaluation_state(api, _seal(api))
+    elif fixture_name == "cancellation_binding":
+        instance = _cancellation_binding(api, _seal(api))
+    elif fixture_name == "authorization_revalidation":
+        instance = _authorization_revalidation(api, _seal(api))
     elif fixture_name == "permit":
         instance = _permit(api)
     else:  # pragma: no cover - the parameter table is closed above
@@ -259,8 +289,9 @@ UTC_FIELDS_BY_FIXTURE = {
     "shadow_issuer": ("verified_at",),
     "seal": ("created_at",),
     "shadow": ("created_at", "available_at"),
-    "permit_line": ("preopen_fact_as_of",),
+    "mechanical_binding": ("preopen_fact_as_of",),
     "send_claim": ("effective_send_deadline",),
+    "authorization_revalidation": ("verified_at",),
     "permit": ("issued_at", "permit_expires_at"),
 }
 
@@ -398,12 +429,13 @@ def test_nested_binding_identities_are_unique_and_composite() -> None:
         )
 
 
-def test_seal_shadow_and_permit_have_stable_canonical_serialization_fixtures() -> None:
+def test_authority_artifacts_have_stable_canonical_serialization_fixtures() -> None:
     api = _api()
     fixtures = (
         ("seal", _seal(api)),
         ("shadow", _shadow(api)),
         ("permit", _permit(api)),
+        ("receipt", _receipt(api)),
     )
     for label, artifact in fixtures:
         approved_canonical_digest, approved_artifact_hash = (

@@ -21,6 +21,11 @@ from .base import (
     UtcInstant,
     domain_hash,
 )
+from ._decision_relations import (
+    ensure_equal_bindings,
+    ensure_seal_time_chain,
+    ensure_unique_stage_budget_mapping,
+)
 from .evidence import EvidenceEnvelope, NonEmptyStr
 from .risk import StageLossLatchState
 from .trust import ArtifactKind
@@ -43,6 +48,17 @@ class ClockHealth(StrEnum):
     ROLLBACK_DETECTED = "ROLLBACK_DETECTED"
 
 
+class TrustedClockObservation(CanonicalModel):
+    """One immutable trusted-clock reading with monotonic provenance."""
+
+    observation_id: NonEmptyStr
+    raw_payload_hash: Sha256
+    wall_clock_utc: UtcInstant
+    monotonic_observation_ns: NonNegativeExactInt
+    monotonic_sequence: PositiveExactInt
+    clock_health: ClockHealth
+
+
 class TrustedExecutionWindow(CanonicalModel):
     """Exact exchange calendar, cutoff, and trusted-clock deadline binding."""
 
@@ -59,12 +75,7 @@ class TrustedExecutionWindow(CanonicalModel):
     cutoff_snapshot_exchange_id: NonEmptyStr
     execution_policy_version: NonEmptyStr
     cutoff_policy_version: NonEmptyStr
-    clock_observation_id: NonEmptyStr
-    clock_observation_hash: Sha256
-    wall_clock_observed_at: UtcInstant
-    monotonic_observation_ns: NonNegativeExactInt
-    monotonic_sequence: PositiveExactInt
-    clock_health: ClockHealth
+    seal_clock_observation: TrustedClockObservation
     t0_close_finalized_at: UtcInstant
     seal_creation_deadline: UtcInstant
     permit_issue_deadline: UtcInstant
@@ -91,13 +102,33 @@ class TrustedExecutionWindow(CanonicalModel):
             )
         if not (
             self.t0_close_finalized_at
-            <= self.wall_clock_observed_at
+            <= self.seal_clock_observation.wall_clock_utc
             <= self.seal_creation_deadline
         ):
             raise ValueError(
                 "trusted clock observation must be between close finality and seal deadline"
             )
         return self
+
+
+class AuthorizationIssuanceBinding(CanonicalModel):
+    """Immutable authorization-envelope issuer claims consumed by a seal."""
+
+    HASH_DOMAIN: ClassVar[str] = (
+        "ai-hedge-fund.v3.decision.authorization-issuance-binding.v1"
+    )
+
+    authorization_envelope_hash: Sha256
+    authorization_issuer_id: NonEmptyStr
+    authorization_issuer_key_id: NonEmptyStr
+    authorization_issuer_capability: NonEmptyStr
+    authorization_issuer_capability_version: NonEmptyStr
+    authorization_issuer_identity_fingerprint: Sha256
+    registry_epoch: PositiveExactInt
+    trust_bundle_hash: Sha256
+
+    def artifact_hash(self) -> str:
+        return domain_hash(self.HASH_DOMAIN, 2, self)
 
 
 class GatewayIssuerBinding(CanonicalModel):
@@ -111,9 +142,17 @@ class GatewayIssuerBinding(CanonicalModel):
     capability_schema_major: SchemaVersion
     capability_version: NonEmptyStr
     capability_scope: NonEmptyStr
+    verification_result: Literal["VALID"]
     verified_at: UtcInstant
+    valid_until: UtcInstant
     trust_bundle_hash: Sha256
     registry_epoch: PositiveExactInt
+
+    @model_validator(mode="after")
+    def validate_validity_window(self) -> Self:
+        if self.valid_until <= self.verified_at:
+            raise ValueError("Gateway issuer validity must extend beyond verification")
+        return self
 
 
 class ShadowIssuerBinding(CanonicalModel):
@@ -127,9 +166,17 @@ class ShadowIssuerBinding(CanonicalModel):
     capability_schema_major: SchemaVersion
     capability_version: NonEmptyStr
     capability_scope: NonEmptyStr
+    verification_result: Literal["VALID"]
     verified_at: UtcInstant
+    valid_until: UtcInstant
     trust_bundle_hash: Sha256
     registry_epoch: PositiveExactInt
+
+    @model_validator(mode="after")
+    def validate_validity_window(self) -> Self:
+        if self.valid_until <= self.verified_at:
+            raise ValueError("shadow issuer validity must extend beyond verification")
+        return self
 
 
 class StageAdmissionBinding(CanonicalModel):
@@ -147,6 +194,8 @@ class StageAdmissionBinding(CanonicalModel):
     def validate_version_advance(self) -> Self:
         if self.post_stage_loss_version <= self.expected_stage_loss_version:
             raise ValueError("post stage-loss version must monotonically advance")
+        if self.stage_loss_latch is not StageLossLatchState.CLEAR:
+            raise ValueError("stage admission cannot seal a halted stage")
         return self
 
     def identity(self) -> tuple[str, str, str, str]:
@@ -314,6 +363,7 @@ class GatewayExpectedVersions(CanonicalModel):
     authorization_status_version: PositiveExactInt
     authorization_status_hash: Sha256
     evidence_set_merkle_root: Sha256
+    entry_fence_id: NonEmptyStr
     entry_fence_hash: Sha256
     entry_fence_version: NonNegativeExactInt
     risk_snapshot_id: NonEmptyStr
@@ -344,19 +394,10 @@ class GatewayExpectedVersions(CanonicalModel):
                 "expected active seal binding must be an all-or-none tuple"
             )
 
-        identities = [
-            (
-                item.research_program_id,
-                item.economic_lineage_id,
-                item.stage_id,
-                item.stage_loss_budget_id,
-            )
-            for item in self.stage_loss_expected_versions
-        ]
-        if len(identities) != len(set(identities)):
-            raise ValueError("stage loss expected versions must be unique")
-        if identities != sorted(identities):
-            raise ValueError("stage loss expected versions must use canonical order")
+        ensure_unique_stage_budget_mapping(
+            self.stage_loss_expected_versions,
+            label="stage loss expected versions",
+        )
         return self
 
     def artifact_hash(self) -> str:
@@ -516,8 +557,10 @@ def _validate_issuer_binding(
         raise ValueError(
             "issuer capability artifact, namespace, mode, schema, or scope mismatch"
         )
-    if binding.verified_at > issued_at:
-        raise ValueError("issuer capability must be verified before artifact issuance")
+    if not binding.verified_at <= issued_at < binding.valid_until:
+        raise ValueError(
+            "issuer capability must be verified and valid at artifact issuance"
+        )
     if trust_bundle_hash is not None and binding.trust_bundle_hash != trust_bundle_hash:
         raise ValueError("issuer current trust bundle hash mismatch")
     if registry_epoch is not None and binding.registry_epoch != registry_epoch:
@@ -556,6 +599,8 @@ class PortfolioDecisionSeal(CanonicalModel):
     authorization_id: NonEmptyStr
     authorization_version: PositiveExactInt
     authorization_envelope_hash: Sha256
+    authorization_issuance_binding: AuthorizationIssuanceBinding
+    authorization_issuance_binding_artifact_hash: Sha256
     authorization_status_version: PositiveExactInt
     authorization_status_hash: Sha256
     evidence_set_merkle_root: Sha256
@@ -579,7 +624,10 @@ class PortfolioDecisionSeal(CanonicalModel):
     ]
     total_reserved_cash_cents: PositiveCents
     post_admission_capital_version: PositiveExactInt
+    post_admission_capital_stream_version: PositiveExactInt
     post_admission_reservation_version: PositiveExactInt
+    post_admission_risk_snapshot_id: NonEmptyStr
+    post_admission_risk_snapshot_artifact_hash: Sha256
     execution_window: TrustedExecutionWindow
     created_at: UtcInstant
     issuer_binding: GatewayIssuerBinding
@@ -658,9 +706,32 @@ class PortfolioDecisionSeal(CanonicalModel):
                 proposal.writer_fencing_epoch,
             ),
         }
-        for label, (actual, expected) in bindings.items():
-            if actual != expected:
-                raise ValueError(f"seal {label} must exactly match proposal")
+        ensure_equal_bindings(bindings, prefix="seal proposal")
+        issuance = self.authorization_issuance_binding
+        if issuance.artifact_hash() != (
+            self.authorization_issuance_binding_artifact_hash
+        ):
+            raise ValueError("authorization issuance binding artifact hash mismatch")
+        ensure_equal_bindings(
+            {
+                "authorization envelope": (
+                    issuance.authorization_envelope_hash,
+                    self.authorization_envelope_hash,
+                ),
+            },
+            prefix="authorization issuance binding",
+        )
+        if issuance.registry_epoch > self.registry_epoch:
+            raise ValueError(
+                "authorization issuance registry epoch cannot exceed current epoch"
+            )
+        if (
+            issuance.registry_epoch == self.registry_epoch
+            and issuance.trust_bundle_hash != self.trust_bundle_hash
+        ):
+            raise ValueError(
+                "same authorization issuance registry epoch requires exact trust bundle"
+            )
 
     def _validate_consumed_expected_versions(self) -> None:
         expected = self.consumed_gateway_expected_versions
@@ -697,6 +768,7 @@ class PortfolioDecisionSeal(CanonicalModel):
                 expected.evidence_set_merkle_root,
                 self.evidence_set_merkle_root,
             ),
+            "entry fence ID": (expected.entry_fence_id, self.entry_fence_id),
             "entry fence": (expected.entry_fence_hash, self.entry_fence_hash),
             "entry fence version": (
                 expected.entry_fence_version,
@@ -720,9 +792,7 @@ class PortfolioDecisionSeal(CanonicalModel):
                 self.writer_fencing_epoch,
             ),
         }
-        for label, (actual, required) in bindings.items():
-            if actual != required:
-                raise ValueError(f"consumed expected {label} binding mismatches seal")
+        ensure_equal_bindings(bindings, prefix="consumed expected seal")
 
     def _validate_stage_and_reserve_bindings(self) -> None:
         proposal_identities = {
@@ -730,10 +800,10 @@ class PortfolioDecisionSeal(CanonicalModel):
             for line in self.proposal.order_lines
         }
         stage_identities = [item.identity() for item in self.stage_admission_bindings]
-        if len(stage_identities) != len(set(stage_identities)):
-            raise ValueError("stage admission identities must be unique")
-        if stage_identities != sorted(stage_identities):
-            raise ValueError("stage admission identities must use canonical order")
+        ensure_unique_stage_budget_mapping(
+            self.stage_admission_bindings,
+            label="stage admission",
+        )
         if {identity[:3] for identity in stage_identities} != proposal_identities:
             raise ValueError("stage admission coverage must exactly match proposal")
 
@@ -790,8 +860,20 @@ class PortfolioDecisionSeal(CanonicalModel):
             raise ValueError("aggregate reserve must exactly equal proposal reserves")
         if self.post_admission_capital_version <= self.capital_version:
             raise ValueError("post-admission capital version must strictly advance")
+        if self.post_admission_capital_stream_version <= self.capital_stream_version:
+            raise ValueError(
+                "post-admission capital stream version must strictly advance"
+            )
         if self.post_admission_reservation_version <= self.reservation_version:
             raise ValueError("post-admission reservation version must strictly advance")
+        if (
+            self.post_admission_risk_snapshot_id == self.risk_snapshot_id
+            or self.post_admission_risk_snapshot_artifact_hash
+            == self.risk_snapshot_artifact_hash
+        ):
+            raise ValueError(
+                "post-admission risk snapshot identity and hash must both be new"
+            )
 
     def _validate_supersede_binding(self) -> None:
         expected = self.consumed_gateway_expected_versions
@@ -849,20 +931,22 @@ class PortfolioDecisionSeal(CanonicalModel):
 
     def _validate_time_and_issuer(self) -> None:
         window = self.execution_window
-        if window.clock_health is not ClockHealth.HEALTHY:
+        observation = window.seal_clock_observation
+        if observation.clock_health is not ClockHealth.HEALTHY:
             raise ValueError("healthy trusted clock is required for a seal")
         if window.signal_session != self.logical_key.signal_session:
             raise ValueError("execution window signal session mismatches logical key")
         if window.target_entry_session != self.target_entry_session:
             raise ValueError("execution window target session mismatches seal")
-        if not (
-            window.t0_close_finalized_at
-            < self.created_at
-            <= window.seal_creation_deadline
-        ):
-            raise ValueError(
-                "seal created_at must follow close and not exceed seal deadline"
-            )
+        if self.created_at != observation.wall_clock_utc:
+            raise ValueError("seal created_at must equal its trusted clock observation")
+        ensure_seal_time_chain(
+            close_finalized_at=window.t0_close_finalized_at,
+            decision_cutoff=self.proposal.decision_cutoff,
+            proposal_created_at=self.proposal.proposal_created_at,
+            seal_created_at=self.created_at,
+            seal_creation_deadline=window.seal_creation_deadline,
+        )
         _validate_issuer_binding(
             self.issuer_binding,
             artifact_kind=self.artifact_kind,
@@ -1046,6 +1130,7 @@ class ShadowDecision(CanonicalModel):
 
 
 __all__ = [
+    "AuthorizationIssuanceBinding",
     "ClockHealth",
     "CounterfactualDecisionKey",
     "DecisionLogicalKey",
@@ -1063,5 +1148,6 @@ __all__ = [
     "ShadowStageBinding",
     "StageAdmissionBinding",
     "StageLossExpectedVersion",
+    "TrustedClockObservation",
     "TrustedExecutionWindow",
 ]

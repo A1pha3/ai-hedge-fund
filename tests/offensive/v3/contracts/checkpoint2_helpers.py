@@ -38,16 +38,20 @@ DIFFERENT_LOGICAL_KEY = object()
 # derived from the production model under test.
 APPROVED_SERIALIZATION_DIGESTS = {
     "seal": (
-        "794cf274a92d93e8c7b1833801c2d65b232934f4b1f5064157687d2c3feef69e",
-        "abc846695e00bfb6104b7f770318c23c3b230d8252bada03e2941af6a32f7d1b",
+        "dec733e2dc7b95ffb3ea5f8c2f6a34d4ed59a2459cff27ad7ef417f6259061ca",
+        "50acd9e9d3e2442a0751456d043c3ef4af1efab0324cbd6155b332f92223aa41",
     ),
     "shadow": (
-        "ef47050623a9627ff5366df0bb62d7440b5940672b0a5896fa8a77bf32534763",
-        "3df3714bc82d3b30b09e4917ccea0bd47ef4ea91842539483a3f8d871cc7b2ea",
+        "b184967439c18291684fd8d745bcf0028e987d9754de97da64fc28b59ea37036",
+        "c483bc0a4b00069c212384ab4d4dad4584d7ebb1d8a00fbd2551b9ea1f69a307",
     ),
     "permit": (
-        "3d9691aa3a5dbf1b456d76d50efaeb84ba6199393552290b55d1659c62d7bb66",
-        "5461184cedebcb75a4e0c8598e02cb6eb605b83670c345831e5beec21556dabf",
+        "eb4d978fa83b4593ed54556b1137e56f4f79caf03838ed37573f76cfb76304f1",
+        "8cc7c6625bae86af841d482f8d6c0485a515218cfef2e054f49185f3176366b0",
+    ),
+    "receipt": (
+        "ec9aff69cd0c5ba7b286eff541b00e6771d58bd8c8946c4d7c86420a623565b8",
+        "22cf63ac69973b695ed3a08d10ba24cf8146601c4cdbc9f227746b7326ecf120",
     ),
 }
 
@@ -72,11 +76,18 @@ CHECKPOINT2_NAMES = (
     "PermitNonceState",
     "ReservationState",
     "OutboxState",
+    "ActiveEntryClaimState",
+    "AuthorizationIssuanceBinding",
+    "AuthorizationIssuerVerificationResult",
+    "AuthorizationIssuerRevalidation",
+    "ReservationLineAllocation",
+    "PermitLineMechanicalBinding",
     "ExecutionPermitLine",
     "PermitEvaluationState",
     "PermitCancellationBinding",
     "SendClaimExpectedVersions",
     "ExecutionPermit",
+    "EntryCancellationReceipt",
 )
 
 
@@ -106,6 +117,11 @@ def _api() -> SimpleNamespace:
         },
         ArtifactKind=contracts.ArtifactKind,
         AuthorizationLifecycle=contracts.AuthorizationLifecycle,
+        CapitalRiskSnapshot=contracts.CapitalRiskSnapshot,
+        EntryReserveRiskComponent=contracts.EntryReserveRiskComponent,
+        ExposureScope=contracts.ExposureScope,
+        RiskExposureBucket=contracts.RiskExposureBucket,
+        StageLossLatchSnapshot=contracts.StageLossLatchSnapshot,
         DecisionLogicalKey=contracts.DecisionLogicalKey,
         EvidenceScope=contracts.EvidenceScope,
         ExecutionMode=contracts.ExecutionMode,
@@ -314,7 +330,16 @@ def _permit_clock_observation(api, **overrides):
     return _clock_observation(api, **values)
 
 
-def _gateway_issuer(api, artifact_kind, namespace, *, verified_at=CLOSE_FINALIZED):
+def _gateway_issuer(
+    api,
+    artifact_kind,
+    namespace,
+    *,
+    verified_at=CLOSE_FINALIZED,
+    valid_until=BROKER_CUTOFF,
+    trust_bundle_hash=HASH_B,
+    registry_epoch=7,
+):
     return api.GatewayIssuerBinding(
         issuer_id="capital-gateway.service",
         key_id="capital-gateway-key-1",
@@ -324,9 +349,11 @@ def _gateway_issuer(api, artifact_kind, namespace, *, verified_at=CLOSE_FINALIZE
         capability_schema_major=2,
         capability_version="capital-gateway.v1",
         capability_scope=f"portfolio:{PORTFOLIO_ID}",
+        verification_result="VALID",
         verified_at=verified_at,
-        trust_bundle_hash=HASH_B,
-        registry_epoch=7,
+        valid_until=valid_until,
+        trust_bundle_hash=trust_bundle_hash,
+        registry_epoch=registry_epoch,
     )
 
 
@@ -444,6 +471,70 @@ def _seal_payload(api, **overrides):
             expected_active_seal_artifact_hash=(eligibility.prior_seal_artifact_hash),
         )
     reserve_lines = _reserve_bindings(api, proposal)
+    stage_admissions = overrides.get(
+        "stage_admission_bindings",
+        tuple(
+            sorted(
+                (_stage_binding(api, line) for line in proposal.order_lines),
+                key=lambda item: (
+                    item.research_program_id,
+                    item.economic_lineage_id,
+                    item.stage_id,
+                    item.stage_loss_budget_id,
+                ),
+            )
+        ),
+    )
+    post_admission_capital_version = overrides.get(
+        "post_admission_capital_version", proposal.capital_version + 1
+    )
+    post_admission_capital_stream_version = overrides.get(
+        "post_admission_capital_stream_version",
+        proposal.capital_stream_version + 1,
+    )
+    post_snapshot_context = SimpleNamespace(
+        proposal=proposal,
+        portfolio_id=proposal.portfolio_id,
+        broker_account_id=proposal.broker_account_id,
+        base_currency=proposal.base_currency,
+        mode=proposal.mode,
+        policy_activation_hash=proposal.policy_activation_hash,
+        policy_epoch=proposal.policy_epoch,
+        authority_epoch=proposal.authority_epoch,
+        risk_epoch=proposal.risk_epoch,
+        registry_epoch=proposal.registry_epoch,
+        authorization_id=proposal.authorization_id,
+        authorization_version=proposal.authorization_version,
+        writer_fencing_epoch=proposal.writer_fencing_epoch,
+        stage_admission_bindings=stage_admissions,
+        post_admission_capital_version=post_admission_capital_version,
+    )
+    post_admission_snapshot = _capital_risk_snapshot(
+        api,
+        post_snapshot_context,
+        tuple(
+            api.ReservationLineAllocation(
+                order_line_id=item.order_line_id,
+                reservation_allocation_id=item.reservation_allocation_id,
+                reserved_cash_cents=item.reserved_cash_cents,
+            )
+            for item in reserve_lines
+        ),
+        snapshot_id="risk-snapshot-post-admission-1",
+        as_of=SEAL_CREATED,
+        valid_until=PERMIT_EXPIRES,
+        capital_version=post_admission_capital_version,
+    )
+    authorization_issuance_binding = api.AuthorizationIssuanceBinding(
+        authorization_envelope_hash=proposal.authorization_artifact_hash,
+        authorization_issuer_id="authorizer.service",
+        authorization_issuer_key_id="authorizer-key-1",
+        authorization_issuer_capability="capital-authorization.edge.v1",
+        authorization_issuer_capability_version="authorizer-capability.v1",
+        authorization_issuer_identity_fingerprint=HASH_A,
+        registry_epoch=proposal.registry_epoch,
+        trust_bundle_hash=proposal.trust_bundle_hash,
+    )
     values = {
         "artifact_kind": api.ArtifactKind.PORTFOLIO_DECISION_SEAL,
         "artifact_namespace": "capital-gateway.entry-seal.v1",
@@ -474,6 +565,10 @@ def _seal_payload(api, **overrides):
         "authorization_id": proposal.authorization_id,
         "authorization_version": proposal.authorization_version,
         "authorization_envelope_hash": proposal.authorization_artifact_hash,
+        "authorization_issuance_binding": authorization_issuance_binding,
+        "authorization_issuance_binding_artifact_hash": (
+            authorization_issuance_binding.artifact_hash()
+        ),
         "authorization_status_version": expected.authorization_status_version,
         "authorization_status_hash": expected.authorization_status_hash,
         "evidence_set_merkle_root": proposal.evidence_set_merkle_root,
@@ -484,17 +579,7 @@ def _seal_payload(api, **overrides):
         "risk_snapshot_artifact_hash": proposal.risk_snapshot_artifact_hash,
         "capital_version": proposal.capital_version,
         "capital_stream_version": proposal.capital_stream_version,
-        "stage_admission_bindings": tuple(
-            sorted(
-                (_stage_binding(api, line) for line in proposal.order_lines),
-                key=lambda item: (
-                    item.research_program_id,
-                    item.economic_lineage_id,
-                    item.stage_id,
-                    item.stage_loss_budget_id,
-                ),
-            )
-        ),
+        "stage_admission_bindings": stage_admissions,
         "writer_fencing_epoch": proposal.writer_fencing_epoch,
         "consumed_gateway_expected_versions": expected,
         "consumed_gateway_expected_versions_artifact_hash": (expected.artifact_hash()),
@@ -504,8 +589,15 @@ def _seal_payload(api, **overrides):
         "total_reserved_cash_cents": sum(
             item.reserved_cash_cents for item in reserve_lines
         ),
-        "post_admission_capital_version": proposal.capital_version + 1,
+        "post_admission_capital_version": post_admission_capital_version,
+        "post_admission_capital_stream_version": (
+            post_admission_capital_stream_version
+        ),
         "post_admission_reservation_version": 2,
+        "post_admission_risk_snapshot_id": post_admission_snapshot.risk_snapshot_id,
+        "post_admission_risk_snapshot_artifact_hash": (
+            post_admission_snapshot.artifact_hash()
+        ),
         "execution_window": _window(api),
         "created_at": SEAL_CREATED,
         "issuer_binding": _gateway_issuer(
@@ -532,7 +624,9 @@ def _shadow_issuer(api):
         capability_schema_major=2,
         capability_version="growth-kernel-shadow.v1",
         capability_scope=f"portfolio:{PORTFOLIO_ID}",
+        verification_result="VALID",
         verified_at=CLOSE_FINALIZED,
+        valid_until=BROKER_CUTOFF,
         trust_bundle_hash=HASH_B,
         registry_epoch=7,
     )
@@ -624,6 +718,337 @@ def _shadow(api, **overrides):
     return api.ShadowDecision.model_validate(_shadow_payload(api, **overrides))
 
 
+def _reservation_allocations(api, seal, *, current_cents_by_line=None):
+    current_cents_by_line = current_cents_by_line or {}
+    return tuple(
+        api.ReservationLineAllocation(
+            order_line_id=item.order_line_id,
+            reservation_allocation_id=item.reservation_allocation_id,
+            reserved_cash_cents=current_cents_by_line.get(
+                item.order_line_id, item.reserved_cash_cents
+            ),
+        )
+        for item in seal.line_reserve_bindings
+    )
+
+
+def _authorization_revalidation(
+    api,
+    seal,
+    *,
+    current_registry_epoch=None,
+    current_trust_bundle_hash=None,
+    **overrides,
+):
+    issuance = seal.authorization_issuance_binding
+    values = {
+        "revalidation_id": "authorization-revalidation-1",
+        "authorization_envelope_hash": seal.authorization_envelope_hash,
+        "authorization_issuance_binding_artifact_hash": (
+            seal.authorization_issuance_binding_artifact_hash
+        ),
+        "authorization_issuer_id": issuance.authorization_issuer_id,
+        "authorization_issuer_key_id": issuance.authorization_issuer_key_id,
+        "authorization_issuer_capability": issuance.authorization_issuer_capability,
+        "authorization_issuer_capability_version": (
+            issuance.authorization_issuer_capability_version
+        ),
+        "authorization_issuer_identity_fingerprint": (
+            issuance.authorization_issuer_identity_fingerprint
+        ),
+        "issuance_registry_epoch": issuance.registry_epoch,
+        "issuance_trust_bundle_hash": issuance.trust_bundle_hash,
+        "current_registry_epoch": (
+            seal.registry_epoch
+            if current_registry_epoch is None
+            else current_registry_epoch
+        ),
+        "current_trust_bundle_hash": (
+            seal.trust_bundle_hash
+            if current_trust_bundle_hash is None
+            else current_trust_bundle_hash
+        ),
+        "verification_result": api.AuthorizationIssuerVerificationResult.VALID,
+        "verified_at": PERMIT_DEADLINE,
+        "valid_until": PERMIT_EXPIRES,
+    }
+    values.update(overrides)
+    return api.AuthorizationIssuerRevalidation.model_validate(values)
+
+
+def _capital_risk_snapshot(
+    api,
+    seal,
+    allocations,
+    *,
+    snapshot_id="risk-snapshot-preopen-1",
+    as_of=PERMIT_DEADLINE,
+    valid_until=PERMIT_EXPIRES,
+    capital_version=None,
+    stage_loss_bindings=None,
+    policy_activation_hash=None,
+    policy_epoch=None,
+    authority_epoch=None,
+    risk_epoch=None,
+    registry_epoch=None,
+    authorization_id=None,
+    authorization_version=None,
+    writer_fencing_epoch=None,
+    extra_entry_reserves=(),
+    extra_stage_latches=(),
+):
+    if capital_version is None:
+        capital_version = seal.post_admission_capital_version
+    if stage_loss_bindings is None:
+        stage_loss_bindings = tuple(
+            api.StageLossExpectedVersion(
+                research_program_id=item.research_program_id,
+                economic_lineage_id=item.economic_lineage_id,
+                stage_id=item.stage_id,
+                stage_loss_budget_id=item.stage_loss_budget_id,
+                stage_loss_version=item.post_stage_loss_version,
+                stage_loss_latch=item.stage_loss_latch,
+            )
+            for item in seal.stage_admission_bindings
+        )
+    line_by_id = {line.order_line_id: line for line in seal.proposal.order_lines}
+    entry_reserves = tuple(
+        sorted(
+            (
+                *(
+                    api.EntryReserveRiskComponent(
+                        research_program_id=(
+                            line_by_id[item.order_line_id].research_program_id
+                        ),
+                        economic_lineage_id=(
+                            line_by_id[item.order_line_id].economic_lineage_id
+                        ),
+                        stage_id=line_by_id[item.order_line_id].stage_id,
+                        source_id=item.reservation_allocation_id,
+                        covered_live_order_id=None,
+                        reserved_entry_gross_cents=item.reserved_cash_cents,
+                    )
+                    for item in allocations
+                    if item.reserved_cash_cents > 0
+                ),
+                *extra_entry_reserves,
+            ),
+            key=lambda item: item.identity(),
+        )
+    )
+    total_reserved = sum(item.reserved_entry_gross_cents for item in entry_reserves)
+
+    def exposure(scope, *, program=None, lineage=None, stage=None):
+        if scope in {api.ExposureScope.GLOBAL, api.ExposureScope.PORTFOLIO}:
+            gross = total_reserved
+        else:
+            gross = sum(
+                item.reserved_entry_gross_cents
+                for item in entry_reserves
+                if item.research_program_id == program
+                and (
+                    scope is api.ExposureScope.RESEARCH_PROGRAM
+                    or item.economic_lineage_id == lineage
+                )
+                and (scope is not api.ExposureScope.STAGE or item.stage_id == stage)
+            )
+        return api.RiskExposureBucket(
+            scope=scope,
+            portfolio_id=(
+                None if scope is api.ExposureScope.GLOBAL else seal.portfolio_id
+            ),
+            research_program_id=(
+                program
+                if scope
+                in {
+                    api.ExposureScope.RESEARCH_PROGRAM,
+                    api.ExposureScope.ECONOMIC_LINEAGE,
+                    api.ExposureScope.STAGE,
+                }
+                else None
+            ),
+            economic_lineage_id=(
+                lineage
+                if scope
+                in {api.ExposureScope.ECONOMIC_LINEAGE, api.ExposureScope.STAGE}
+                else None
+            ),
+            stage_id=(stage if scope is api.ExposureScope.STAGE else None),
+            position_marked_gross_cents=0,
+            live_order_leaves_gross_cents=0,
+            reserved_entry_gross_cents=gross,
+            pending_stress_cents=0,
+            corporate_action_pending_risk_cents=0,
+            unattributed_risk_cents=0,
+            total_gross_cents=gross,
+        )
+
+    exposures = [
+        exposure(api.ExposureScope.GLOBAL),
+        exposure(api.ExposureScope.PORTFOLIO),
+    ]
+    seen_exposure_identities = set()
+    for reserve in entry_reserves:
+        for scope in (
+            api.ExposureScope.RESEARCH_PROGRAM,
+            api.ExposureScope.ECONOMIC_LINEAGE,
+            api.ExposureScope.STAGE,
+        ):
+            identity = (
+                scope,
+                reserve.research_program_id,
+                reserve.economic_lineage_id
+                if scope is not api.ExposureScope.RESEARCH_PROGRAM
+                else None,
+                reserve.stage_id if scope is api.ExposureScope.STAGE else None,
+            )
+            if identity in seen_exposure_identities:
+                continue
+            seen_exposure_identities.add(identity)
+            exposures.append(
+                exposure(
+                    scope,
+                    program=identity[1],
+                    lineage=identity[2],
+                    stage=identity[3],
+                )
+            )
+
+    stage_latches = tuple(
+        sorted(
+            (
+                *(
+                    api.StageLossLatchSnapshot(
+                        research_program_id=item.research_program_id,
+                        economic_lineage_id=item.economic_lineage_id,
+                        stage_id=item.stage_id,
+                        stage_loss_budget_id=item.stage_loss_budget_id,
+                        frozen_budget_cents=100_000,
+                        consumed_cents=(
+                            100_000
+                            if item.stage_loss_latch
+                            is api.StageLossLatchState.STAGE_LOSS_HALTED
+                            else 0
+                        ),
+                        stage_loss_version=item.stage_loss_version,
+                        state=item.stage_loss_latch,
+                    )
+                    for item in stage_loss_bindings
+                ),
+                *extra_stage_latches,
+            ),
+            key=lambda item: item.identity(),
+        )
+    )
+    return api.CapitalRiskSnapshot(
+        risk_snapshot_id=snapshot_id,
+        portfolio_id=seal.portfolio_id,
+        broker_account_id=seal.broker_account_id,
+        base_currency=seal.base_currency,
+        mode=seal.mode,
+        as_of=as_of,
+        valid_until=valid_until,
+        freshness=api.RiskSnapshotFreshness.FRESH,
+        completeness=api.RiskSnapshotCompleteness.COMPLETE,
+        available_cash_cents=1_000_000,
+        restricted_cash_cents=0,
+        unsettled_cash_cents=0,
+        cash_receivable_cents=0,
+        cash_payable_cents=0,
+        subscription_suspense_cents=0,
+        redemption_suspense_cents=0,
+        reserved_cash_cents=total_reserved,
+        issued_unit_quanta=1_000_000,
+        pending_redeemed_unit_quanta=0,
+        positions=(),
+        live_orders=(),
+        entry_reserves=entry_reserves,
+        pending_stress_components=(),
+        corporate_action_risk_components=(),
+        unattributed_risk_cents=0,
+        exposures=tuple(exposures),
+        total_gross_exposure_cents=total_reserved,
+        as_observed_nav_cents=1_000_000,
+        lifetime_high_water_mark_cents=1_000_000,
+        active_epoch_high_water_mark_cents=1_000_000,
+        lifetime_drawdown_ppm=0,
+        active_epoch_drawdown_ppm=0,
+        risk_latch=api.RiskLatchState.CLEAR,
+        stage_loss_latches=stage_latches,
+        reconciliation_latch=api.ReconciliationLatchState.CLEAR,
+        policy_activation_hash=(policy_activation_hash or seal.policy_activation_hash),
+        policy_epoch=policy_epoch or seal.policy_epoch,
+        authority_epoch=authority_epoch or seal.authority_epoch,
+        risk_epoch=risk_epoch or seal.risk_epoch,
+        registry_epoch=registry_epoch or seal.registry_epoch,
+        authorization_id=authorization_id or seal.authorization_id,
+        authorization_version=authorization_version or seal.authorization_version,
+        stage_loss_state_version=max(
+            item.stage_loss_version for item in stage_loss_bindings
+        ),
+        writer_fencing_epoch=writer_fencing_epoch or seal.writer_fencing_epoch,
+        capital_version=capital_version,
+        schema_major=2,
+    )
+
+
+def _normalized_reserve_delta_snapshot(current, candidate):
+    """Apply only the fields owned by an atomic reserve projection."""
+
+    mutable_fields = {
+        "risk_snapshot_id",
+        "as_of",
+        "valid_until",
+        "capital_version",
+        "entry_reserves",
+        "reserved_cash_cents",
+        "exposures",
+        "total_gross_exposure_cents",
+    }
+    payload = current.model_dump(mode="python", round_trip=True)
+    candidate_payload = candidate.model_dump(mode="python", round_trip=True)
+    payload.update({name: candidate_payload[name] for name in mutable_fields})
+    return type(current).model_validate(payload)
+
+
+def _mechanical_binding(
+    api,
+    sealed_line,
+    *,
+    permitted_quantity=None,
+    reason_code=None,
+    preopen_fact_as_of=PERMIT_DEADLINE,
+    **overrides,
+):
+    if permitted_quantity is None:
+        permitted_quantity = sealed_line.sealed_quantity_units
+    caps = {
+        "availability_cap_units": sealed_line.sealed_quantity_units,
+        "price_cap_units": sealed_line.sealed_quantity_units,
+        "capacity_cap_units": sealed_line.sealed_quantity_units,
+        "cash_cap_units": sealed_line.sealed_quantity_units,
+        "capital_risk_cap_units": sealed_line.sealed_quantity_units,
+    }
+    reason_to_cap = {
+        api.PermitReasonCode.AVAILABILITY_REDUCTION: "availability_cap_units",
+        api.PermitReasonCode.PRICE_REDUCTION: "price_cap_units",
+        api.PermitReasonCode.CAPACITY_REDUCTION: "capacity_cap_units",
+        api.PermitReasonCode.CASH_REDUCTION: "cash_cap_units",
+        api.PermitReasonCode.CAPITAL_RISK_REDUCTION: "capital_risk_cap_units",
+    }
+    if reason_code in reason_to_cap:
+        caps[reason_to_cap[reason_code]] = permitted_quantity
+    caps.update(overrides)
+    return api.PermitLineMechanicalBinding(
+        order_line_id=sealed_line.order_line_id,
+        predicate_policy_version="t1-open-t10-open.v1",
+        preopen_fact_snapshot_id="preopen-facts-1",
+        preopen_fact_snapshot_hash=HASH_A,
+        preopen_fact_as_of=preopen_fact_as_of,
+        **caps,
+    )
+
+
 def _permit_line(
     api,
     sealed_line,
@@ -633,38 +1058,47 @@ def _permit_line(
     reason_code=None,
     preopen_fact_as_of=PERMIT_DEADLINE,
     client_order_id="AUTO",
+    current_reserved_cents=None,
+    mechanical_binding=None,
 ):
     if disposition is None:
         disposition = api.PermitDisposition.ALLOW
     if permitted_quantity is None:
         permitted_quantity = sealed_line.sealed_quantity_units
-    remaining = sealed_line.worst_case_price_cents * permitted_quantity + (
-        sealed_line.worst_case_fee_reserve_cents if permitted_quantity else 0
-    )
-    released = sealed_line.worst_case_cash_reserve_cents - remaining
-    sendable = disposition is api.PermitDisposition.ALLOW and permitted_quantity > 0
     if reason_code is None:
         reason_code = (
             api.PermitReasonCode.UNCHANGED
             if permitted_quantity == sealed_line.sealed_quantity_units
             else (
                 api.PermitReasonCode.CAPITAL_RISK_REDUCTION
-                if permitted_quantity > 0
+                if disposition is api.PermitDisposition.ALLOW
                 else api.PermitReasonCode.AUTHORIZATION_CANCEL
             )
         )
+    remaining = sealed_line.worst_case_price_cents * permitted_quantity + (
+        sealed_line.worst_case_fee_reserve_cents if permitted_quantity else 0
+    )
+    if current_reserved_cents is None:
+        current_reserved_cents = sealed_line.worst_case_cash_reserve_cents
+    released = current_reserved_cents - remaining
+    sendable = disposition is api.PermitDisposition.ALLOW and permitted_quantity > 0
     if client_order_id == "AUTO":
         client_order_id = f"client-{sealed_line.order_line_id}" if sendable else None
+    if mechanical_binding is None and disposition is api.PermitDisposition.ALLOW:
+        mechanical_binding = _mechanical_binding(
+            api,
+            sealed_line,
+            permitted_quantity=permitted_quantity,
+            reason_code=reason_code,
+            preopen_fact_as_of=preopen_fact_as_of,
+        )
     return api.ExecutionPermitLine(
         order_line_id=sealed_line.order_line_id,
         security_id=sealed_line.security_id,
         sealed_quantity_units=sealed_line.sealed_quantity_units,
         permitted_quantity_units=permitted_quantity,
         reason_code=reason_code,
-        predicate_policy_version="t1-open-t10-open.v1",
-        preopen_fact_snapshot_id="preopen-facts-1",
-        preopen_fact_snapshot_hash=HASH_A,
-        preopen_fact_as_of=preopen_fact_as_of,
+        mechanical_binding=mechanical_binding,
         client_order_id=client_order_id,
         order_type=sealed_line.order_type,
         limit_price_cents=sealed_line.limit_price_cents,
@@ -679,6 +1113,93 @@ def _permit_line(
 
 
 def _permit_evaluation_state(api, seal, **overrides):
+    overrides = dict(overrides)
+    risk_snapshot_changes = {}
+    for public_name, snapshot_name in (
+        ("risk_snapshot_freshness", "freshness"),
+        ("risk_snapshot_completeness", "completeness"),
+        ("risk_latch", "risk_latch"),
+        ("reconciliation_latch", "reconciliation_latch"),
+    ):
+        if public_name in overrides:
+            risk_snapshot_changes[snapshot_name] = overrides.pop(public_name)
+    sealed_allocations = _reservation_allocations(api, seal)
+    reservation_allocations = overrides.get(
+        "reservation_allocations", sealed_allocations
+    )
+    sealed_stage_loss_bindings = tuple(
+        api.StageLossExpectedVersion(
+            research_program_id=item.research_program_id,
+            economic_lineage_id=item.economic_lineage_id,
+            stage_id=item.stage_id,
+            stage_loss_budget_id=item.stage_loss_budget_id,
+            stage_loss_version=item.post_stage_loss_version,
+            stage_loss_latch=api.StageLossLatchState.CLEAR,
+        )
+        for item in seal.stage_admission_bindings
+    )
+    stage_loss_bindings = overrides.get(
+        "stage_loss_bindings", sealed_stage_loss_bindings
+    )
+    snapshot_context_defaults = {
+        "policy_activation_hash": seal.policy_activation_hash,
+        "policy_epoch": seal.policy_epoch,
+        "authority_epoch": seal.authority_epoch,
+        "risk_epoch": seal.risk_epoch,
+        "registry_epoch": seal.registry_epoch,
+        "authorization_id": seal.authorization_id,
+        "authorization_version": seal.authorization_version,
+        "writer_fencing_epoch": seal.writer_fencing_epoch,
+    }
+    snapshot_truth_changed = bool(risk_snapshot_changes) or (
+        reservation_allocations != sealed_allocations
+        or stage_loss_bindings != sealed_stage_loss_bindings
+        or any(
+            name in overrides and overrides[name] != default
+            for name, default in snapshot_context_defaults.items()
+        )
+    )
+    capital_version = overrides.get(
+        "capital_version",
+        seal.post_admission_capital_version + int(snapshot_truth_changed),
+    )
+    if "risk_snapshot" in overrides:
+        risk_snapshot = overrides["risk_snapshot"]
+    else:
+        anchored = capital_version == seal.post_admission_capital_version
+        risk_snapshot = _capital_risk_snapshot(
+            api,
+            seal,
+            reservation_allocations,
+            snapshot_id=(
+                seal.post_admission_risk_snapshot_id
+                if anchored
+                else "risk-snapshot-preopen-1"
+            ),
+            as_of=seal.created_at if anchored else PERMIT_DEADLINE,
+            valid_until=PERMIT_EXPIRES,
+            capital_version=capital_version,
+            stage_loss_bindings=stage_loss_bindings,
+            policy_activation_hash=overrides.get(
+                "policy_activation_hash", seal.policy_activation_hash
+            ),
+            policy_epoch=overrides.get("policy_epoch", seal.policy_epoch),
+            authority_epoch=overrides.get("authority_epoch", seal.authority_epoch),
+            risk_epoch=overrides.get("risk_epoch", seal.risk_epoch),
+            registry_epoch=overrides.get("registry_epoch", seal.registry_epoch),
+            authorization_id=overrides.get("authorization_id", seal.authorization_id),
+            authorization_version=overrides.get(
+                "authorization_version", seal.authorization_version
+            ),
+            writer_fencing_epoch=overrides.get(
+                "writer_fencing_epoch", seal.writer_fencing_epoch
+            ),
+        )
+    if risk_snapshot_changes:
+        risk_snapshot = type(risk_snapshot).model_validate(
+            risk_snapshot.model_dump(mode="python", round_trip=True)
+            | risk_snapshot_changes
+        )
     values = {
         "policy_activation_hash": seal.policy_activation_hash,
         "trust_bundle_hash": seal.trust_bundle_hash,
@@ -690,37 +1211,46 @@ def _permit_evaluation_state(api, seal, **overrides):
         "authorization_version": seal.authorization_version,
         "authorization_envelope_hash": seal.authorization_envelope_hash,
         "authorization_lifecycle": api.AuthorizationLifecycle.ACTIVE,
-        "authorization_status_version": seal.authorization_status_version + 1,
-        "authorization_status_hash": HASH_A,
-        "authorization_revalidation_required": False,
+        "authorization_status_version": seal.authorization_status_version,
+        "authorization_status_hash": seal.authorization_status_hash,
+        "authorization_revalidation": _authorization_revalidation(
+            api,
+            seal,
+            current_registry_epoch=overrides.get("registry_epoch", seal.registry_epoch),
+            current_trust_bundle_hash=overrides.get(
+                "trust_bundle_hash", seal.trust_bundle_hash
+            ),
+        ),
         "evidence_set_merkle_root": seal.evidence_set_merkle_root,
         "entry_fence_id": seal.entry_fence_id,
         "entry_fence_hash": seal.entry_fence_hash,
         "entry_fence_version": seal.entry_fence_version,
-        "capital_version": seal.post_admission_capital_version + 1,
-        "capital_stream_version": seal.capital_stream_version + 2,
-        "risk_snapshot_id": "risk-snapshot-preopen-1",
-        "risk_snapshot_artifact_hash": HASH_E,
-        "risk_snapshot_version": 4,
-        "risk_snapshot_freshness": api.RiskSnapshotFreshness.FRESH,
-        "risk_snapshot_completeness": api.RiskSnapshotCompleteness.COMPLETE,
-        "risk_latch": api.RiskLatchState.CLEAR,
-        "reconciliation_latch": api.ReconciliationLatchState.CLEAR,
-        "stage_loss_bindings": tuple(
-            api.StageLossExpectedVersion(
-                research_program_id=item.research_program_id,
-                economic_lineage_id=item.economic_lineage_id,
-                stage_id=item.stage_id,
-                stage_loss_budget_id=item.stage_loss_budget_id,
-                stage_loss_version=item.post_stage_loss_version + 1,
-                stage_loss_latch=api.StageLossLatchState.CLEAR,
-            )
-            for item in seal.stage_admission_bindings
+        "capital_version": capital_version,
+        "capital_stream_version": overrides.get(
+            "capital_stream_version",
+            seal.post_admission_capital_stream_version + int(snapshot_truth_changed),
         ),
+        "risk_snapshot": risk_snapshot,
+        "risk_snapshot_artifact_hash": risk_snapshot.artifact_hash(),
+        "stage_loss_bindings": stage_loss_bindings,
         "reservation_id": seal.reservation_id,
-        "reservation_version": seal.post_admission_reservation_version + 1,
+        "reservation_version": seal.post_admission_reservation_version,
         "reservation_state": api.ReservationState.ACTIVE,
-        "remaining_reserved_cash_cents": seal.total_reserved_cash_cents,
+        "reservation_allocations": reservation_allocations,
+        "remaining_reserved_cash_cents": sum(
+            item.reserved_cash_cents for item in reservation_allocations
+        ),
+        "prior_permit_nonce_sequence": 0,
+        "active_permit_id": None,
+        "active_permit_artifact_hash": None,
+        "active_permit_nonce": None,
+        "active_permit_nonce_sequence": None,
+        "active_permit_nonce_state": None,
+        "active_outbox_batch_id": None,
+        "active_outbox_payload_hash": None,
+        "active_outbox_state": None,
+        "active_send_claim_state": api.ActiveEntryClaimState.UNCLAIMED,
+        "send_claim_sequence": 0,
         "writer_fencing_epoch": seal.writer_fencing_epoch,
     }
     values.update(overrides)
@@ -737,7 +1267,73 @@ def _send_claim_versions(
 ):
     if evaluation_state is None:
         evaluation_state = _permit_evaluation_state(api, seal)
-    remaining = sum(line.remaining_reserve_cents for line in permit_lines)
+    remaining = sum(
+        line.remaining_reserve_cents
+        for line, _ in zip(
+            permit_lines, evaluation_state.reservation_allocations, strict=False
+        )
+    )
+    post_allocations = tuple(
+        api.ReservationLineAllocation(
+            order_line_id=current_allocation.order_line_id,
+            reservation_allocation_id=(current_allocation.reservation_allocation_id),
+            reserved_cash_cents=line.remaining_reserve_cents,
+        )
+        for line, current_allocation in zip(
+            permit_lines, evaluation_state.reservation_allocations, strict=False
+        )
+    )
+    allocations_changed = post_allocations != evaluation_state.reservation_allocations
+    version_delta = 1 if allocations_changed else 0
+    owned_sources = {
+        item.reservation_allocation_id
+        for item in evaluation_state.reservation_allocations
+    }
+    required_stages = {
+        (
+            item.research_program_id,
+            item.economic_lineage_id,
+            item.stage_id,
+        )
+        for item in evaluation_state.stage_loss_bindings
+    }
+    extra_reserves = tuple(
+        item
+        for item in evaluation_state.risk_snapshot.entry_reserves
+        if item.source_id not in owned_sources
+    )
+    extra_latches = tuple(
+        item
+        for item in evaluation_state.risk_snapshot.stage_loss_latches
+        if item.identity() not in required_stages
+    )
+    post_snapshot = (
+        _normalized_reserve_delta_snapshot(
+            evaluation_state.risk_snapshot,
+            _capital_risk_snapshot(
+                api,
+                seal,
+                post_allocations,
+                snapshot_id="risk-snapshot-post-permit-1",
+                as_of=PERMIT_DEADLINE,
+                valid_until=PERMIT_EXPIRES,
+                capital_version=evaluation_state.capital_version + version_delta,
+                stage_loss_bindings=evaluation_state.stage_loss_bindings,
+                policy_activation_hash=evaluation_state.policy_activation_hash,
+                policy_epoch=evaluation_state.policy_epoch,
+                authority_epoch=evaluation_state.authority_epoch,
+                risk_epoch=evaluation_state.risk_epoch,
+                registry_epoch=evaluation_state.registry_epoch,
+                authorization_id=evaluation_state.authorization_id,
+                authorization_version=evaluation_state.authorization_version,
+                writer_fencing_epoch=evaluation_state.writer_fencing_epoch,
+                extra_entry_reserves=extra_reserves,
+                extra_stage_latches=extra_latches,
+            ),
+        )
+        if allocations_changed
+        else evaluation_state.risk_snapshot
+    )
     return api.SendClaimExpectedVersions(
         active_seal_id=seal.seal_id,
         active_seal_revision=seal.seal_revision,
@@ -758,29 +1354,22 @@ def _send_claim_versions(
         authorization_lifecycle=evaluation_state.authorization_lifecycle,
         authorization_status_version=evaluation_state.authorization_status_version,
         authorization_status_hash=evaluation_state.authorization_status_hash,
-        authorization_revalidation_required=(
-            evaluation_state.authorization_revalidation_required
-        ),
+        authorization_revalidation=evaluation_state.authorization_revalidation,
         evidence_set_merkle_root=evaluation_state.evidence_set_merkle_root,
         entry_fence_id=evaluation_state.entry_fence_id,
         entry_fence_hash=evaluation_state.entry_fence_hash,
         entry_fence_version=evaluation_state.entry_fence_version,
-        capital_version=evaluation_state.capital_version + 1,
-        capital_stream_version=evaluation_state.capital_stream_version + 1,
-        risk_snapshot_id=evaluation_state.risk_snapshot_id,
-        risk_snapshot_artifact_hash=evaluation_state.risk_snapshot_artifact_hash,
-        risk_snapshot_version=evaluation_state.risk_snapshot_version + 1,
-        risk_snapshot_freshness=evaluation_state.risk_snapshot_freshness,
-        risk_snapshot_completeness=evaluation_state.risk_snapshot_completeness,
-        risk_latch=evaluation_state.risk_latch,
-        reconciliation_latch=evaluation_state.reconciliation_latch,
-        stage_loss_bindings=tuple(
-            item.model_copy(update={"stage_loss_version": item.stage_loss_version + 1})
-            for item in evaluation_state.stage_loss_bindings
+        capital_version=evaluation_state.capital_version + version_delta,
+        capital_stream_version=(
+            evaluation_state.capital_stream_version + version_delta
         ),
+        post_risk_snapshot=post_snapshot,
+        post_risk_snapshot_artifact_hash=post_snapshot.artifact_hash(),
+        stage_loss_bindings=evaluation_state.stage_loss_bindings,
         reservation_id=evaluation_state.reservation_id,
-        reservation_version=evaluation_state.reservation_version + 1,
+        reservation_version=evaluation_state.reservation_version + version_delta,
         reservation_state=api.ReservationState.ACTIVE,
+        post_reservation_allocations=post_allocations,
         remaining_reserved_cash_cents=remaining,
         outbox_batch_id="outbox-batch-1",
         outbox_payload_hash=HASH_B,
@@ -791,22 +1380,90 @@ def _send_claim_versions(
     )
 
 
-def _cancellation_binding(api, seal, *, evaluation_state=None, nonce="permit-nonce-1"):
+def _cancellation_binding(
+    api,
+    seal,
+    *,
+    evaluation_state=None,
+    nonce="permit-nonce-1",
+    event_at=PERMIT_DEADLINE,
+):
     if evaluation_state is None:
         evaluation_state = _permit_evaluation_state(api, seal)
+    has_release = evaluation_state.remaining_reserved_cash_cents > 0
+    version_delta = 1 if has_release else 0
+    zero_allocations = tuple(
+        item.model_copy(update={"reserved_cash_cents": 0})
+        for item in evaluation_state.reservation_allocations
+    )
+    owned_sources = {
+        item.reservation_allocation_id
+        for item in evaluation_state.reservation_allocations
+    }
+    required_stages = {
+        (item.research_program_id, item.economic_lineage_id, item.stage_id)
+        for item in evaluation_state.stage_loss_bindings
+    }
+    extra_reserves = tuple(
+        item
+        for item in evaluation_state.risk_snapshot.entry_reserves
+        if item.source_id not in owned_sources
+    )
+    extra_latches = tuple(
+        item
+        for item in evaluation_state.risk_snapshot.stage_loss_latches
+        if item.identity() not in required_stages
+    )
+    post_snapshot = (
+        _normalized_reserve_delta_snapshot(
+            evaluation_state.risk_snapshot,
+            _capital_risk_snapshot(
+                api,
+                seal,
+                zero_allocations,
+                snapshot_id="risk-snapshot-post-cancel-1",
+                as_of=event_at,
+                valid_until=max(PERMIT_EXPIRES, event_at + timedelta(minutes=1)),
+                capital_version=evaluation_state.capital_version + version_delta,
+                stage_loss_bindings=evaluation_state.stage_loss_bindings,
+                policy_activation_hash=evaluation_state.policy_activation_hash,
+                policy_epoch=evaluation_state.policy_epoch,
+                authority_epoch=evaluation_state.authority_epoch,
+                risk_epoch=evaluation_state.risk_epoch,
+                registry_epoch=evaluation_state.registry_epoch,
+                authorization_id=evaluation_state.authorization_id,
+                authorization_version=evaluation_state.authorization_version,
+                writer_fencing_epoch=evaluation_state.writer_fencing_epoch,
+                extra_entry_reserves=extra_reserves,
+                extra_stage_latches=extra_latches,
+            ),
+        )
+        if has_release
+        else evaluation_state.risk_snapshot
+    )
     return api.PermitCancellationBinding(
         permit_nonce=nonce,
+        post_permit_nonce_sequence=2,
+        post_permit_nonce_state=api.PermitNonceState.INVALIDATED,
         reservation_id=evaluation_state.reservation_id,
         pre_reservation_version=evaluation_state.reservation_version,
         post_reservation_version=evaluation_state.reservation_version + 1,
         post_reservation_state=api.ReservationState.RELEASED,
         released_cash_cents=evaluation_state.remaining_reserved_cash_cents,
         remaining_reserved_cash_cents=0,
-        outbox_batch_id="outbox-batch-1",
-        outbox_payload_hash=HASH_B,
-        post_outbox_state=api.OutboxState.TOMBSTONED,
-        post_capital_version=evaluation_state.capital_version + 1,
-        post_capital_stream_version=evaluation_state.capital_stream_version + 1,
+        outbox_batch_id=evaluation_state.active_outbox_batch_id,
+        outbox_payload_hash=evaluation_state.active_outbox_payload_hash,
+        post_outbox_state=(
+            api.OutboxState.TOMBSTONED
+            if evaluation_state.active_outbox_batch_id is not None
+            else None
+        ),
+        post_capital_version=evaluation_state.capital_version + version_delta,
+        post_capital_stream_version=(
+            evaluation_state.capital_stream_version + version_delta
+        ),
+        post_risk_snapshot=post_snapshot,
+        post_risk_snapshot_artifact_hash=post_snapshot.artifact_hash(),
         writer_fencing_epoch=evaluation_state.writer_fencing_epoch,
     )
 
@@ -815,16 +1472,29 @@ def _permit_payload(api, **overrides):
     seal = overrides.pop("seal", _seal(api))
     disposition = overrides.pop("disposition", api.PermitDisposition.ALLOW)
     permit_nonce = overrides.pop("permit_nonce", "permit-nonce-1")
-    permit_lines = overrides.pop(
-        "permit_lines",
-        tuple(
-            _permit_line(api, line, disposition=disposition)
-            for line in seal.proposal.order_lines
-        ),
-    )
     evaluation_state = overrides.pop(
         "evaluation_state", _permit_evaluation_state(api, seal)
     )
+    current_by_line = {
+        item.order_line_id: item.reserved_cash_cents
+        for item in evaluation_state.reservation_allocations
+    }
+    if "permit_lines" in overrides:
+        permit_lines = overrides.pop("permit_lines")
+    else:
+        permit_lines = tuple(
+            _permit_line(
+                api,
+                line,
+                disposition=disposition,
+                current_reserved_cents=current_by_line[line.order_line_id],
+            )
+            for line in seal.proposal.order_lines
+        )
+    permit_clock_observation = overrides.pop(
+        "permit_clock_observation", _permit_clock_observation(api)
+    )
+    issued_at = overrides.pop("issued_at", PERMIT_DEADLINE)
     if disposition is api.PermitDisposition.ALLOW:
         expected = overrides.pop(
             "send_claim_expected_versions",
@@ -842,7 +1512,11 @@ def _permit_payload(api, **overrides):
         cancellation_binding = overrides.pop(
             "cancellation_binding",
             _cancellation_binding(
-                api, seal, evaluation_state=evaluation_state, nonce=permit_nonce
+                api,
+                seal,
+                evaluation_state=evaluation_state,
+                nonce=permit_nonce,
+                event_at=issued_at,
             ),
         )
     values = {
@@ -873,18 +1547,20 @@ def _permit_payload(api, **overrides):
         "total_released_reserve_cents": sum(
             line.released_reserve_cents for line in permit_lines
         ),
-        "permit_clock_observation": _permit_clock_observation(api),
+        "permit_clock_observation": permit_clock_observation,
         "evaluation_state": evaluation_state,
         "send_claim_expected_versions": expected,
         "cancellation_binding": cancellation_binding,
         "execution_window": seal.execution_window,
-        "issued_at": PERMIT_DEADLINE,
+        "issued_at": issued_at,
         "permit_expires_at": PERMIT_EXPIRES,
         "issuer_binding": _gateway_issuer(
             api,
             api.ArtifactKind.EXECUTION_PERMIT,
             "capital-gateway.entry-permit.v1",
             verified_at=CLOSE_FINALIZED,
+            trust_bundle_hash=evaluation_state.trust_bundle_hash,
+            registry_epoch=evaluation_state.registry_epoch,
         ),
     }
     values.update(overrides)
@@ -893,3 +1569,146 @@ def _permit_payload(api, **overrides):
 
 def _permit(api, **overrides):
     return api.ExecutionPermit.model_validate(_permit_payload(api, **overrides))
+
+
+def _active_permit_evaluation_state(api, prior_permit=None, **overrides):
+    if prior_permit is None:
+        prior_permit = _permit(api)
+    seal = prior_permit.seal
+    expected = prior_permit.send_claim_expected_versions
+    active_field_names = {
+        "active_permit_id",
+        "active_permit_artifact_hash",
+        "active_permit_nonce",
+        "active_permit_nonce_sequence",
+        "active_permit_nonce_state",
+        "active_outbox_batch_id",
+        "active_outbox_payload_hash",
+        "active_outbox_state",
+        "active_send_claim_state",
+        "send_claim_sequence",
+    }
+    active_overrides = {
+        name: overrides.pop(name)
+        for name in tuple(overrides)
+        if name in active_field_names
+    }
+    overrides.setdefault("risk_snapshot", expected.post_risk_snapshot)
+    overrides.setdefault(
+        "risk_snapshot_artifact_hash",
+        expected.post_risk_snapshot_artifact_hash,
+    )
+    base = _permit_evaluation_state(
+        api,
+        seal,
+        capital_version=expected.capital_version,
+        capital_stream_version=expected.capital_stream_version,
+        stage_loss_bindings=expected.stage_loss_bindings,
+        reservation_version=expected.reservation_version,
+        reservation_allocations=expected.post_reservation_allocations,
+        **overrides,
+    )
+    values = {
+        "prior_permit_nonce_sequence": prior_permit.permit_nonce_sequence,
+        "active_permit_id": prior_permit.permit_id,
+        "active_permit_artifact_hash": prior_permit.artifact_hash(),
+        "active_permit_nonce": prior_permit.permit_nonce,
+        "active_permit_nonce_sequence": prior_permit.permit_nonce_sequence,
+        "active_permit_nonce_state": api.PermitNonceState.ACTIVE,
+        "active_outbox_batch_id": expected.outbox_batch_id,
+        "active_outbox_payload_hash": expected.outbox_payload_hash,
+        "active_outbox_state": api.OutboxState.DURABLE,
+        "active_send_claim_state": api.ActiveEntryClaimState.UNCLAIMED,
+        "send_claim_sequence": 0,
+    }
+    values.update(active_overrides)
+    if (
+        values["active_send_claim_state"] is api.ActiveEntryClaimState.SEND_CLAIMED
+        and "active_permit_nonce_state" not in active_overrides
+    ):
+        values["active_permit_nonce_state"] = api.PermitNonceState.CONSUMED
+    return type(base).model_validate(
+        base.model_dump(mode="python", round_trip=True) | values
+    )
+
+
+def _receipt_clock_observation(api, **overrides):
+    values = {
+        "observation_id": "clock-observation-cancellation-1",
+        "raw_payload_hash": HASH_E,
+        "wall_clock_utc": PERMIT_EXPIRES + timedelta(seconds=1),
+        "monotonic_observation_ns": 3_000_000,
+        "monotonic_sequence": 10,
+        "clock_health": api.ClockHealth.HEALTHY,
+    }
+    values.update(overrides)
+    return _clock_observation(api, **values)
+
+
+def _receipt_payload(api, **overrides):
+    prior_permit = overrides.pop("prior_permit", None)
+    if prior_permit is None:
+        prior_permit = _permit(api)
+    observation = overrides.pop("cancellation_clock_observation", None)
+    if observation is None:
+        observation = _receipt_clock_observation(api)
+    current = overrides.pop("evaluation_state", None)
+    if current is None:
+        if prior_permit.send_claim_expected_versions is None:
+            current = _permit_evaluation_state(api, prior_permit.seal)
+        else:
+            current = _active_permit_evaluation_state(api, prior_permit)
+        revalidation = current.authorization_revalidation.model_copy(
+            update={
+                "verified_at": observation.wall_clock_utc,
+                "valid_until": observation.wall_clock_utc + timedelta(minutes=1),
+            }
+        )
+        current = type(current).model_validate(
+            current.model_dump(mode="python", round_trip=True)
+            | {"authorization_revalidation": revalidation}
+        )
+    kind = getattr(
+        api.ArtifactKind,
+        "ENTRY_CANCELLATION_RECEIPT",
+        api.ArtifactKind.EXECUTION_PERMIT,
+    )
+    values = {
+        "artifact_kind": kind,
+        "artifact_namespace": "capital-gateway.entry-cancellation.v1",
+        "schema_major": 2,
+        "cancellation_receipt_id": "entry-cancellation-receipt-1",
+        "reason_code": api.PermitReasonCode.DEADLINE_CANCEL,
+        "prior_permit": prior_permit,
+        "prior_permit_artifact_hash": prior_permit.artifact_hash(),
+        "permit_id": prior_permit.permit_id,
+        "permit_nonce": prior_permit.permit_nonce,
+        "permit_nonce_sequence": prior_permit.permit_nonce_sequence,
+        "logical_key": prior_permit.logical_key,
+        "evaluation_state": current,
+        "cancellation_binding": _cancellation_binding(
+            api,
+            prior_permit.seal,
+            evaluation_state=current,
+            nonce=prior_permit.permit_nonce,
+            event_at=observation.wall_clock_utc,
+        ),
+        "cancellation_clock_observation": observation,
+        "cancelled_at": observation.wall_clock_utc,
+        "issuer_binding": _gateway_issuer(
+            api,
+            kind,
+            "capital-gateway.entry-cancellation.v1",
+            verified_at=CLOSE_FINALIZED,
+            trust_bundle_hash=current.trust_bundle_hash,
+            registry_epoch=current.registry_epoch,
+        ),
+    }
+    values.update(overrides)
+    return values
+
+
+def _receipt(api, **overrides):
+    return api.EntryCancellationReceipt.model_validate(
+        _receipt_payload(api, **overrides)
+    )

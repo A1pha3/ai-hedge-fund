@@ -128,14 +128,20 @@ git commit -m "feat(v3): define governed portfolio authorization envelopes"
   - `SEALED -> PERMITTED -> OUTBOX_DURABLE -> SEND_CLAIMED -> SUBMISSION_AMBIGUOUS | BROKER_ACK`;
   - `close_finalized < seal_creation_deadline < permit_issue_deadline < permit_expires_at <= gateway_send_deadline < broker_auction_cutoff`;
   - `permitted_quantity <= sealed_quantity` and T+1 cannot increase;
+  - seal-owned post-admission capital/stream/snapshot anchors, exact same-version revalidation and bidirectionally unique stage/budget bindings;
+  - mutually exclusive all-line mechanical-zero versus portfolio-witness `CANCEL`, plus post-permit receipts that preserve exact prior permit/nonce ownership while cancelling monotonic authority/capital/fact drift or current durable-outbox drift;
+  - stable reservation allocation identities with monotonic shrink, positive-release capital/snapshot advance, and zero-release capital/snapshot quietness;
+  - healthy trusted-time future-snapshot rejection and unhealthy-clock monotonic fact-integrity cancellation;
+  - issuer revalidation against `current_registry_epoch >= issuance_registry_epoch`, rejecting same-epoch TrustBundle forks;
+  - flat/nonpositive-to-positive correction reopening a stable ExitMandate ID at a revision above all prior revisions;
   - ExitMandate has no entry authorization field and cannot sell unknown/untradable quantity;
   - order lifecycle terminal history may receive a higher execution revision.
-- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/contracts/test_{decision,capital,execution}.py -v`.
+- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/contracts -v` so every checkpoint/adversarial contract is included.
 - [ ] **Step 4: Implement exact models** in `decision.py`, `capital.py`, and `execution.py`; remove final-interface exports of the old generic names from `contracts/__init__.py`.
 - [ ] **Step 5: Verify stable serialization and commit**.
 
 ```bash
-uv run pytest tests/offensive/v3/contracts/test_{decision,capital,execution}.py -v
+uv run pytest tests/offensive/v3/contracts -v
 git add src/screening/offensive/v3/contracts tests/offensive/v3/contracts
 git commit -m "feat(v3): freeze portfolio decision and lifecycle contracts"
 ```

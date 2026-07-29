@@ -39,6 +39,7 @@ class ArtifactKind(StrEnum):
     DECISION_SEAL = "decision_seal"
     SHADOW_DECISION = "shadow_decision"
     EXECUTION_PERMIT = "execution_permit"
+    ENTRY_CANCELLATION_RECEIPT = "entry_cancellation_receipt"
 
 
 def _decode_canonical_base64(

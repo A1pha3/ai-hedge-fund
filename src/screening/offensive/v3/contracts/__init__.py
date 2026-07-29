@@ -64,6 +64,7 @@ from .capital import (
     EconomicEventLeg,
     EconomicLegDirection,
     ExitMandate,
+    ExitMandateRevisionKind,
     ExitQuantityKnowledge,
     EntryReserveRiskComponent,
     ExposureScope,
@@ -83,6 +84,7 @@ from .capital import (
     ValuationMarkEconomicEventLeg,
 )
 from .decision import (
+    AuthorizationIssuanceBinding,
     ClockHealth,
     CounterfactualDecisionKey,
     DecisionLogicalKey,
@@ -100,6 +102,7 @@ from .decision import (
     ShadowStageBinding,
     StageAdmissionBinding,
     StageLossExpectedVersion,
+    TrustedClockObservation,
     TrustedExecutionWindow,
 )
 from .evidence import (
@@ -112,22 +115,34 @@ from .evidence import (
 from .execution import (
     ORDER_STATE_TRANSITIONS,
     PLAN_STATE_TRANSITIONS,
+    ActiveEntryClaimState,
+    AuthorizationIssuerRevalidation,
+    AuthorizationIssuerVerificationResult,
     EconomicProjectionState,
     EffectivePositionState,
+    EntryCancellationReceipt,
     ExecutionPermit,
     ExecutionPermitLine,
     ExecutionRevision,
     ExecutionRevisionHistory,
     ExecutionRevisionKind,
     ExecutionSide,
+    OutboxState,
     OrderState,
+    PermitCancellationBinding,
     PermitDisposition,
+    PermitEvaluationState,
+    PermitLineMechanicalBinding,
+    PermitNonceState,
     PermitReasonCode,
     PlanState,
+    ReservationLineAllocation,
+    ReservationState,
     SendClaimExpectedVersions,
     validate_order_transition,
     validate_plan_transition,
 )
+
 from .ports import (
     CapitalViewPort,
     CapabilityVerifier,
@@ -142,11 +157,22 @@ from .risk import (
 )
 from .trust import ArtifactKind, Capability, SignedEnvelope, VerifiedIssuer
 
+_capital_snapshot_types = {"CapitalRiskSnapshot": CapitalRiskSnapshot}
+PermitEvaluationState.model_rebuild(_types_namespace=_capital_snapshot_types)
+PermitCancellationBinding.model_rebuild(_types_namespace=_capital_snapshot_types)
+SendClaimExpectedVersions.model_rebuild(_types_namespace=_capital_snapshot_types)
+ExecutionPermit.model_rebuild(_types_namespace=_capital_snapshot_types)
+EntryCancellationReceipt.model_rebuild(_types_namespace=_capital_snapshot_types)
+
 __all__ = [
     "AUTHORITY_STATE_TRANSITIONS",
+    "ActiveEntryClaimState",
     "ArtifactKind",
     "ApprovalAttestationBinding",
     "AuthorizationKind",
+    "AuthorizationIssuanceBinding",
+    "AuthorizationIssuerRevalidation",
+    "AuthorizationIssuerVerificationResult",
     "AuthorizationLifecycle",
     "AuthorizationStatus",
     "CapitalAuthorizationEnvelope",
@@ -180,6 +206,7 @@ __all__ = [
     "EconomicLegDirection",
     "EconomicProjectionState",
     "EffectivePositionState",
+    "EntryCancellationReceipt",
     "ExecutionMode",
     "ExecutionPermit",
     "ExecutionPermitLine",
@@ -188,6 +215,7 @@ __all__ = [
     "ExecutionRevisionKind",
     "ExecutionSide",
     "ExitMandate",
+    "ExitMandateRevisionKind",
     "ExitQuantityKnowledge",
     "EntryReserveRiskComponent",
     "ExposureScope",
@@ -199,6 +227,7 @@ __all__ = [
     "MigrationApprovalManifest",
     "MoneyCents",
     "ORDER_STATE_TRANSITIONS",
+    "OutboxState",
     "OutcomeEvidence",
     "PLAN_STATE_TRANSITIONS",
     "POSITION_STATE_TRANSITIONS",
@@ -207,6 +236,10 @@ __all__ = [
     "PlanSnapshot",
     "PlanState",
     "PermitDisposition",
+    "PermitCancellationBinding",
+    "PermitEvaluationState",
+    "PermitLineMechanicalBinding",
+    "PermitNonceState",
     "PermitReasonCode",
     "PositionSnapshot",
     "PositionState",
@@ -224,6 +257,8 @@ __all__ = [
     "RiskOrderSide",
     "RiskSnapshotCompleteness",
     "RiskSnapshotFreshness",
+    "ReservationState",
+    "ReservationLineAllocation",
     "SealReserveLineBinding",
     "QuantityUnits",
     "RationalQuantity",
@@ -254,6 +289,7 @@ __all__ = [
     "UtcInstant",
     "TrialManifest",
     "TrustBundle",
+    "TrustedClockObservation",
     "TrustedExecutionWindow",
     "UnitQuanta",
     "VerifiedIssuer",

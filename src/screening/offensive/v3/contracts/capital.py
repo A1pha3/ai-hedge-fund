@@ -10,6 +10,14 @@ from typing import Annotated, ClassVar, Literal, Self, TypeAlias
 
 from pydantic import Field, model_validator
 
+from ._capital_relations import (
+    EXPOSURE_COMPONENT_FIELDS,
+    canonical_exposure_identities,
+    component_matches_exposure,
+    drawdown_ppm,
+    ensure_unique_canonical,
+    validate_exposure_children,
+)
 from .base import (
     CanonicalModel,
     ExactInteger,
@@ -242,6 +250,12 @@ class ExitQuantityKnowledge(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class ExitMandateRevisionKind(StrEnum):
+    INITIAL = "INITIAL"
+    QUANTITY_REFRESH = "QUANTITY_REFRESH"
+    REOPENED_BY_CORRECTION = "REOPENED_BY_CORRECTION"
+
+
 def _validate_capital_account_mode(
     mode: ExecutionMode,
     broker_account_id: str | None,
@@ -440,21 +454,6 @@ class StageLossLatchSnapshot(CanonicalModel):
         )
 
 
-_EXPOSURE_COMPONENT_FIELDS = (
-    "position_marked_gross_cents",
-    "live_order_leaves_gross_cents",
-    "reserved_entry_gross_cents",
-    "pending_stress_cents",
-    "corporate_action_pending_risk_cents",
-)
-
-
-def _drawdown_ppm(nav_cents: int, high_water_mark_cents: int) -> int:
-    if high_water_mark_cents == 0:
-        return 0
-    return ((high_water_mark_cents - nav_cents) * 1_000_000) // high_water_mark_cents
-
-
 class CapitalRiskSnapshot(CanonicalModel):
     HASH_DOMAIN: ClassVar[str] = "ai-hedge-fund.v3.capital.risk-snapshot.v1"
 
@@ -483,7 +482,7 @@ class CapitalRiskSnapshot(CanonicalModel):
     pending_stress_components: tuple[PendingStressRiskComponent, ...]
     corporate_action_risk_components: tuple[CorporateActionRiskComponent, ...]
     unattributed_risk_cents: NonNegativeCents
-    exposures: Annotated[tuple[RiskExposureBucket, ...], Field(min_length=5)]
+    exposures: Annotated[tuple[RiskExposureBucket, ...], Field(min_length=2)]
     total_gross_exposure_cents: NonNegativeCents
     as_observed_nav_cents: NonNegativeCents
     lifetime_high_water_mark_cents: NonNegativeCents
@@ -541,8 +540,7 @@ class CapitalRiskSnapshot(CanonicalModel):
                 raise ValueError("capital component account does not match snapshot")
 
         latch_ids = [latch.identity() for latch in self.stage_loss_latches]
-        if len(latch_ids) != len(set(latch_ids)):
-            raise ValueError("duplicate stage loss latch identity")
+        ensure_unique_canonical(latch_ids, label="stage loss latch")
         budget_ids = [latch.stage_loss_budget_id for latch in self.stage_loss_latches]
         if len(budget_ids) != len(set(budget_ids)):
             raise ValueError("duplicate stage loss budget identity")
@@ -563,6 +561,10 @@ class CapitalRiskSnapshot(CanonicalModel):
                 raise ValueError(f"duplicate {label} composite identity")
             if identities != sorted(identities):
                 raise ValueError(f"{label} identities must be in canonical order")
+
+        reserve_source_ids = [reserve.source_id for reserve in self.entry_reserves]
+        if len(reserve_source_ids) != len(set(reserve_source_ids)):
+            raise ValueError("entry reserve source identity must be globally unique")
 
         live_entry_orders = {
             order.order_id: order
@@ -608,60 +610,17 @@ class CapitalRiskSnapshot(CanonicalModel):
             *self.pending_stress_components,
             *self.corporate_action_risk_components,
         )
-        program_ids = {
-            component.research_program_id for component in attributed_components
-        }
-        lineage_ids = {
-            (component.research_program_id, component.economic_lineage_id)
-            for component in attributed_components
-        }
-        stage_ids = {
-            (
-                component.research_program_id,
-                component.economic_lineage_id,
-                component.stage_id,
-            )
-            for component in attributed_components
-        }
-        expected_ids = {
-            (ExposureScope.GLOBAL, "", "", "", ""),
-            (ExposureScope.PORTFOLIO, self.portfolio_id, "", "", ""),
-            *{
-                (
-                    ExposureScope.RESEARCH_PROGRAM,
-                    self.portfolio_id,
-                    program_id,
-                    "",
-                    "",
-                )
-                for program_id in program_ids
-            },
-            *{
-                (
-                    ExposureScope.ECONOMIC_LINEAGE,
-                    self.portfolio_id,
-                    program_id,
-                    lineage_id,
-                    "",
-                )
-                for program_id, lineage_id in lineage_ids
-            },
-            *{
-                (
-                    ExposureScope.STAGE,
-                    self.portfolio_id,
-                    program_id,
-                    lineage_id,
-                    stage_id,
-                )
-                for program_id, lineage_id, stage_id in stage_ids
-            },
-        }
-        if set(exposure_ids) != expected_ids:
-            raise ValueError(
-                "exposure hierarchy is incomplete or contains an unknown scope"
-            )
-
+        expected_ids = canonical_exposure_identities(
+            attributed_components,
+            portfolio_id=self.portfolio_id,
+            global_scope=ExposureScope.GLOBAL,
+            portfolio_scope=ExposureScope.PORTFOLIO,
+            research_program_scope=ExposureScope.RESEARCH_PROGRAM,
+            economic_lineage_scope=ExposureScope.ECONOMIC_LINEAGE,
+            stage_scope=ExposureScope.STAGE,
+        )
+        if tuple(exposure_ids) != expected_ids:
+            raise ValueError("exposure identities must use canonical order")
         by_identity = {exposure.identity(): exposure for exposure in self.exposures}
         global_bucket = by_identity[(ExposureScope.GLOBAL, "", "", "", "")]
         portfolio_bucket = by_identity[
@@ -705,7 +664,7 @@ class CapitalRiskSnapshot(CanonicalModel):
             for exposure in self.exposures
             if exposure.scope is ExposureScope.RESEARCH_PROGRAM
         ]
-        for field_name in _EXPOSURE_COMPONENT_FIELDS:
+        for field_name in EXPOSURE_COMPONENT_FIELDS:
             if getattr(portfolio_bucket, field_name) != sum(
                 getattr(program, field_name) for program in program_buckets
             ):
@@ -726,29 +685,54 @@ class CapitalRiskSnapshot(CanonicalModel):
             matching_positions = [
                 position
                 for position in self.positions
-                if self._component_matches_exposure(position, exposure)
+                if component_matches_exposure(
+                    position,
+                    exposure,
+                    research_program_scope=ExposureScope.RESEARCH_PROGRAM,
+                    economic_lineage_scope=ExposureScope.ECONOMIC_LINEAGE,
+                )
             ]
             matching_orders = [
                 order
                 for order in self.live_orders
                 if order.side is RiskOrderSide.ENTRY
-                and self._component_matches_exposure(order, exposure)
+                and component_matches_exposure(
+                    order,
+                    exposure,
+                    research_program_scope=ExposureScope.RESEARCH_PROGRAM,
+                    economic_lineage_scope=ExposureScope.ECONOMIC_LINEAGE,
+                )
             ]
             matching_reserves = [
                 reserve
                 for reserve in self.entry_reserves
                 if reserve.covered_live_order_id is None
-                and self._component_matches_exposure(reserve, exposure)
+                and component_matches_exposure(
+                    reserve,
+                    exposure,
+                    research_program_scope=ExposureScope.RESEARCH_PROGRAM,
+                    economic_lineage_scope=ExposureScope.ECONOMIC_LINEAGE,
+                )
             ]
             matching_stresses = [
                 component
                 for component in self.pending_stress_components
-                if self._component_matches_exposure(component, exposure)
+                if component_matches_exposure(
+                    component,
+                    exposure,
+                    research_program_scope=ExposureScope.RESEARCH_PROGRAM,
+                    economic_lineage_scope=ExposureScope.ECONOMIC_LINEAGE,
+                )
             ]
             matching_corporate_actions = [
                 component
                 for component in self.corporate_action_risk_components
-                if self._component_matches_exposure(component, exposure)
+                if component_matches_exposure(
+                    component,
+                    exposure,
+                    research_program_scope=ExposureScope.RESEARCH_PROGRAM,
+                    economic_lineage_scope=ExposureScope.ECONOMIC_LINEAGE,
+                )
             ]
             if exposure.position_marked_gross_cents != sum(
                 position.marked_gross_cents for position in matching_positions
@@ -773,84 +757,26 @@ class CapitalRiskSnapshot(CanonicalModel):
             if exposure.unattributed_risk_cents != 0:
                 raise ValueError("attributed exposure cannot contain unattributed risk")
 
-        self._validate_exposure_children(by_identity)
-
-    @staticmethod
-    def _component_matches_exposure(
-        component: (
-            CapitalPositionRisk
-            | CapitalLiveOrderRisk
-            | EntryReserveRiskComponent
-            | PendingStressRiskComponent
-            | CorporateActionRiskComponent
-        ),
-        exposure: RiskExposureBucket,
-    ) -> bool:
-        if component.research_program_id != exposure.research_program_id:
-            return False
-        if exposure.scope is ExposureScope.RESEARCH_PROGRAM:
-            return True
-        if component.economic_lineage_id != exposure.economic_lineage_id:
-            return False
-        if exposure.scope is ExposureScope.ECONOMIC_LINEAGE:
-            return True
-        return component.stage_id == exposure.stage_id
-
-    @staticmethod
-    def _validate_exposure_children(
-        by_identity: dict[tuple[ExposureScope, str, str, str, str], RiskExposureBucket],
-    ) -> None:
-        for identity, parent in by_identity.items():
-            scope, portfolio_id, program_id, lineage_id, _ = identity
-            if scope is ExposureScope.RESEARCH_PROGRAM:
-                child_scope = ExposureScope.ECONOMIC_LINEAGE
-                children = [
-                    bucket
-                    for child_id, bucket in by_identity.items()
-                    if child_id[0] is child_scope
-                    and child_id[1] == portfolio_id
-                    and child_id[2] == program_id
-                ]
-            elif scope is ExposureScope.ECONOMIC_LINEAGE:
-                child_scope = ExposureScope.STAGE
-                children = [
-                    bucket
-                    for child_id, bucket in by_identity.items()
-                    if child_id[0] is child_scope
-                    and child_id[1] == portfolio_id
-                    and child_id[2] == program_id
-                    and child_id[3] == lineage_id
-                ]
-            else:
-                continue
-            for field_name in _EXPOSURE_COMPONENT_FIELDS:
-                if getattr(parent, field_name) != sum(
-                    getattr(child, field_name) for child in children
-                ):
-                    raise ValueError("exposure child aggregate is inconsistent")
-            if parent.total_gross_cents != (
-                sum(child.total_gross_cents for child in children)
-                + parent.unattributed_risk_cents
-            ):
-                raise ValueError("exposure hierarchy double-counts or omits risk")
-        if any(
-            bucket.unattributed_risk_cents != 0
-            for bucket in by_identity.values()
-            if bucket.scope not in {ExposureScope.GLOBAL, ExposureScope.PORTFOLIO}
-        ):
-            raise ValueError("program, lineage, and stage risk cannot be unattributed")
+        validate_exposure_children(
+            by_identity,
+            research_program_scope=ExposureScope.RESEARCH_PROGRAM,
+            economic_lineage_scope=ExposureScope.ECONOMIC_LINEAGE,
+            stage_scope=ExposureScope.STAGE,
+            global_scope=ExposureScope.GLOBAL,
+            portfolio_scope=ExposureScope.PORTFOLIO,
+        )
 
     def _validate_nav_and_latches(self) -> None:
         if self.as_observed_nav_cents > self.lifetime_high_water_mark_cents:
             raise ValueError("NAV cannot exceed lifetime high-water mark")
         if self.as_observed_nav_cents > self.active_epoch_high_water_mark_cents:
             raise ValueError("NAV cannot exceed active-epoch high-water mark")
-        if self.lifetime_drawdown_ppm != _drawdown_ppm(
+        if self.lifetime_drawdown_ppm != drawdown_ppm(
             self.as_observed_nav_cents,
             self.lifetime_high_water_mark_cents,
         ):
             raise ValueError("lifetime NAV drawdown is inconsistent")
-        if self.active_epoch_drawdown_ppm != _drawdown_ppm(
+        if self.active_epoch_drawdown_ppm != drawdown_ppm(
             self.as_observed_nav_cents,
             self.active_epoch_high_water_mark_cents,
         ):
@@ -897,6 +823,7 @@ class ExitMandate(CanonicalModel):
     live_exit_leaves_quantity: NonNegativeQuantity
     executable_quantity: NonNegativeQuantity
     mandate_revision: PositiveExactInt
+    revision_kind: ExitMandateRevisionKind
     supersedes_mandate_hash: Sha256 | None
     reopened_by_execution_revision_id: NonEmptyStr | None
     capital_version: PositiveExactInt
@@ -937,18 +864,25 @@ class ExitMandate(CanonicalModel):
                 )
 
         if self.mandate_revision == 1:
+            if self.revision_kind is not ExitMandateRevisionKind.INITIAL:
+                raise ValueError("first mandate revision kind must be INITIAL")
             if (
                 self.supersedes_mandate_hash is not None
                 or self.reopened_by_execution_revision_id is not None
             ):
                 raise ValueError("first mandate revision cannot supersede or reopen")
-        elif (
-            self.supersedes_mandate_hash is None
-            or self.reopened_by_execution_revision_id is None
-        ):
-            raise ValueError(
-                "reopened mandate revision requires supersedes hash and execution provenance"
-            )
+        else:
+            if self.revision_kind is ExitMandateRevisionKind.INITIAL:
+                raise ValueError("later mandate revision cannot be INITIAL")
+            if self.supersedes_mandate_hash is None:
+                raise ValueError("later mandate revision requires supersedes hash")
+            if self.revision_kind is ExitMandateRevisionKind.QUANTITY_REFRESH:
+                if self.reopened_by_execution_revision_id is not None:
+                    raise ValueError("quantity refresh cannot claim correction reopen")
+            elif self.reopened_by_execution_revision_id is None:
+                raise ValueError(
+                    "correction reopen requires execution revision provenance"
+                )
         return self
 
     def artifact_hash(self) -> str:
@@ -1295,6 +1229,7 @@ __all__ = [
     "EconomicEventLeg",
     "EconomicLegDirection",
     "ExitMandate",
+    "ExitMandateRevisionKind",
     "ExposureScope",
     "OrderSnapshot",
     "PlanSnapshot",
