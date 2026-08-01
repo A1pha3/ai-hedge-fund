@@ -108,7 +108,9 @@ from .decision import (
 from .evidence import (
     SUPPORTED_SCHEMA_MAJOR,
     EvidenceEnvelope,
+    EvidenceRecord,
     OutcomeEvidence,
+    ProviderPublicationState,
     SignalEvidence,
     SnapshotEvidence,
 )
@@ -155,7 +157,14 @@ from .risk import (
     RiskSnapshotFreshness,
     StageLossLatchState,
 )
-from .trust import ArtifactKind, Capability, SignedEnvelope, VerifiedIssuer
+from .trust import (
+    ArtifactKind,
+    Capability,
+    CurrentTrustHeadWitness,
+    IssuerKind,
+    SignedEnvelope,
+    VerifiedIssuer,
+)
 
 _capital_snapshot_types = {"CapitalRiskSnapshot": CapitalRiskSnapshot}
 PermitEvaluationState.model_rebuild(_types_namespace=_capital_snapshot_types)
@@ -182,6 +191,7 @@ __all__ = [
     "CapitalViewPort",
     "CapabilityVerifier",
     "Capability",
+    "CurrentTrustHeadWitness",
     "CanonicalModel",
     "ClockHealth",
     "CashEconomicEventLeg",
@@ -196,6 +206,7 @@ __all__ = [
     "EntryFenceRaised",
     "DecisionLogicalKey",
     "EvidenceEnvelope",
+    "EvidenceRecord",
     "EvidenceScope",
     "ExactInteger",
     "EvidenceQueryPort",
@@ -220,6 +231,7 @@ __all__ = [
     "EntryReserveRiskComponent",
     "ExposureScope",
     "Fraction",
+    "IssuerKind",
     "GatewayExpectedVersions",
     "GatewayIssuerBinding",
     "GrantKind",
@@ -232,6 +244,7 @@ __all__ = [
     "PLAN_STATE_TRANSITIONS",
     "POSITION_STATE_TRANSITIONS",
     "PlanEvidence",
+    "ProviderPublicationState",
     "PendingStressRiskComponent",
     "PlanSnapshot",
     "PlanState",

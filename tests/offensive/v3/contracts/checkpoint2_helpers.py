@@ -38,20 +38,20 @@ DIFFERENT_LOGICAL_KEY = object()
 # derived from the production model under test.
 APPROVED_SERIALIZATION_DIGESTS = {
     "seal": (
-        "dec733e2dc7b95ffb3ea5f8c2f6a34d4ed59a2459cff27ad7ef417f6259061ca",
-        "50acd9e9d3e2442a0751456d043c3ef4af1efab0324cbd6155b332f92223aa41",
+        "dfc448302773b47645e410139ebaa75e6f147168ed74c50f5e639cf407fcd8d2",
+        "6e7652cbd93395f244e70177a1cb8192b3105effd8cb5847deebd872ac933a8d",
     ),
     "shadow": (
         "b184967439c18291684fd8d745bcf0028e987d9754de97da64fc28b59ea37036",
         "c483bc0a4b00069c212384ab4d4dad4584d7ebb1d8a00fbd2551b9ea1f69a307",
     ),
     "permit": (
-        "eb4d978fa83b4593ed54556b1137e56f4f79caf03838ed37573f76cfb76304f1",
-        "8cc7c6625bae86af841d482f8d6c0485a515218cfef2e054f49185f3176366b0",
+        "81b4c813527ec6de0ab3b488723f0707010d16f7507f731e0ce084813e450170",
+        "a771715d05cf2afcd9008399d6bf4eb7b266f2f9b404de18dc47e94abe6f5019",
     ),
     "receipt": (
-        "ec9aff69cd0c5ba7b286eff541b00e6771d58bd8c8946c4d7c86420a623565b8",
-        "22cf63ac69973b695ed3a08d10ba24cf8146601c4cdbc9f227746b7326ecf120",
+        "77300ae676130de664ce953ee22f7e002da24ff9f4d107ac993ed67e39c86c72",
+        "0df134750710aebd33e4a4f647080e81e30642b85e12493d2d968d38aca307dc",
     ),
 }
 
@@ -123,6 +123,7 @@ def _api() -> SimpleNamespace:
         RiskExposureBucket=contracts.RiskExposureBucket,
         StageLossLatchSnapshot=contracts.StageLossLatchSnapshot,
         DecisionLogicalKey=contracts.DecisionLogicalKey,
+        EvidenceRecord=contracts.EvidenceRecord,
         EvidenceScope=contracts.EvidenceScope,
         ExecutionMode=contracts.ExecutionMode,
         PlanEvidence=contracts.PlanEvidence,
@@ -158,12 +159,13 @@ def _plan(
         execution_version="t1-open-t10-open.v1",
         cost_version="cn-a-share.v1",
         effective_at=CLOSE_FINALIZED,
+        provider_published_at=CLOSE_FINALIZED,
         observed_at=CLOSE_FINALIZED,
         available_at=CLOSE_FINALIZED,
         mode=api.ExecutionMode.BROKER_CONFIRMED,
         source_authority="btst-producer",
         payload_content_hash=HASH_B,
-        schema_major=1,
+        schema_major=2,
         evidence_kind="plan",
         portfolio_id=PORTFOLIO_ID,
         signal_session=SIGNAL_SESSION,
@@ -185,6 +187,14 @@ def _proposal_line(api, *, suffix: str = "1", security_id: str = "600000.SH"):
         security_id=security_id,
         economic_lineage_id=lineage,
     )
+    plan_record = api.EvidenceRecord[api.PlanEvidence](
+        evidence=plan,
+        ingested_at=plan.available_at,
+        commit_sequence=int(suffix),
+        revision=1,
+        supersedes_revision=None,
+        active_revision=1,
+    )
     quantity = 100 if suffix == "1" else 200
     price = 1_050 if suffix == "1" else 800
     fee = 50 if suffix == "1" else 75
@@ -202,8 +212,8 @@ def _proposal_line(api, *, suffix: str = "1", security_id: str = "600000.SH"):
         grant_certificate_hash=HASH_D,
         authorization_id=AUTHORIZATION_ID,
         authorization_version=AUTHORIZATION_VERSION,
-        plan_evidence=plan,
-        plan_evidence_artifact_hash=plan.content_hash(),
+        plan_evidence=plan_record,
+        plan_evidence_artifact_hash=plan_record.artifact_hash(),
         plan_payload_content_hash=plan.payload_content_hash,
         mode=api.ExecutionMode.BROKER_CONFIRMED,
         target_entry_session=TARGET_SESSION,

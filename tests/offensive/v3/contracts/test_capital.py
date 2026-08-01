@@ -2,6 +2,7 @@
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
+import hashlib
 
 import pytest
 from pydantic import ValidationError
@@ -9,6 +10,12 @@ from pydantic import ValidationError
 
 UTC = timezone.utc
 HASH = "d" * 64
+EXIT_MANDATE_CANONICAL_HASH = (
+    "88fc582eb8d0615c59fec4b7b464d4bd4e7c450ca207850bdfd9bdafa3dbf273"
+)
+EXIT_MANDATE_ARTIFACT_HASH = (
+    "b12a49af0cc8027e4439e99960ba9bfc98944530e3c84c81ccf3e03ccc1e9fd7"
+)
 
 
 def _contracts():
@@ -1298,7 +1305,7 @@ def _exit_mandate_payload(c, **overrides):
         "research_program_id": "program-btst",
         "economic_lineage_id": "lineage-btst",
         "stage_id": "stage-broker-2pct",
-        "entry_plan_evidence_hash": HASH,
+        "entry_plan_evidence_artifact_hash": HASH,
         "fixed_exit_policy_fingerprint": HASH,
         "exit_session_ordinal": 10,
         "due_session": date(2026, 7, 30),
@@ -1338,7 +1345,7 @@ def test_exit_mandate_has_exact_independent_schema_and_hash() -> None:
         "research_program_id",
         "economic_lineage_id",
         "stage_id",
-        "entry_plan_evidence_hash",
+        "entry_plan_evidence_artifact_hash",
         "fixed_exit_policy_fingerprint",
         "exit_session_ordinal",
         "due_session",
@@ -1386,7 +1393,10 @@ def test_exit_mandate_has_exact_independent_schema_and_hash() -> None:
     }
     mandate = c.ExitMandate(**_exit_mandate_payload(c))
     assert mandate.executable_quantity == 60
-    assert mandate.artifact_hash() == mandate.artifact_hash()
+    assert hashlib.sha256(mandate.canonical_bytes()).hexdigest() == (
+        EXIT_MANDATE_CANONICAL_HASH
+    )
+    assert mandate.artifact_hash() == EXIT_MANDATE_ARTIFACT_HASH
     changed = c.ExitMandate(
         **_exit_mandate_payload(c, stable_client_order_id="exit-client-changed")
     )

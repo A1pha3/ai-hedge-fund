@@ -205,18 +205,19 @@ def _plan_evidence(
         execution_version="t1-open-t10-open-v1",
         cost_version="broker-cost-v1",
         effective_at=datetime(2026, 7, 17, 7, 0, tzinfo=UTC),
+        provider_published_at=datetime(2026, 7, 19, 7, 55, tzinfo=UTC),
         observed_at=datetime(2026, 7, 19, 7, 56, tzinfo=UTC),
         available_at=datetime(2026, 7, 19, 7, 58, tzinfo=UTC),
         mode=ExecutionMode.BROKER_CONFIRMED,
         source_authority="evidence-store",
         payload_content_hash=payload_hash,
-        schema_major=1,
+        schema_major=2,
         portfolio_id=PORTFOLIO_ID,
         signal_session=SIGNAL_SESSION,
         economic_lineage_id=economic_lineage_id,
         snapshot_id="pit-snapshot-20260717",
         raw_target_fraction=Decimal("0.01"),
-        created_at=datetime(2026, 7, 19, 7, 58, tzinfo=UTC),
+        created_at=datetime(2026, 7, 19, 7, 56, tzinfo=UTC),
     )
 
 
@@ -242,6 +243,16 @@ def _line_payload(
         family_id=family_id,
         economic_lineage_id=economic_lineage_id,
     )
+    from src.screening.offensive.v3.contracts.evidence import EvidenceRecord
+
+    plan_record = EvidenceRecord[type(plan)](
+        evidence=plan,
+        ingested_at=plan.available_at,
+        commit_sequence=int(suffix),
+        revision=1,
+        supersedes_revision=None,
+        active_revision=1,
+    )
     if suffix == "1":
         sealed_quantity_units = 100
         limit_price_cents = 1_020
@@ -266,8 +277,8 @@ def _line_payload(
         "grant_certificate_hash": grant_certificate_hash,
         "authorization_id": AUTHORIZATION_ID,
         "authorization_version": AUTHORIZATION_VERSION,
-        "plan_evidence": plan,
-        "plan_evidence_artifact_hash": plan.content_hash(),
+        "plan_evidence": plan_record,
+        "plan_evidence_artifact_hash": plan_record.artifact_hash(),
         "plan_payload_content_hash": plan.payload_content_hash,
         "mode": ExecutionMode.BROKER_CONFIRMED,
         "target_entry_session": TARGET_ENTRY_SESSION,

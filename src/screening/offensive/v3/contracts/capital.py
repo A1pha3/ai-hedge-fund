@@ -797,7 +797,12 @@ class CapitalRiskSnapshot(CanonicalModel):
 
 
 class ExitMandate(CanonicalModel):
-    """Independent exit authority derived only from authoritative capital truth."""
+    """Independent exit DTO derived only from authoritative capital truth.
+
+    ``entry_plan_evidence_artifact_hash`` names the current
+    ``EvidenceRecord[PlanEvidence].artifact_hash()`` identity. The writer that
+    derives and revalidates this binding is outside the storage-free contract layer.
+    """
 
     HASH_DOMAIN: ClassVar[str] = "ai-hedge-fund.v3.capital.exit-mandate.v1"
 
@@ -813,7 +818,7 @@ class ExitMandate(CanonicalModel):
     research_program_id: NonEmptyStr
     economic_lineage_id: NonEmptyStr
     stage_id: NonEmptyStr
-    entry_plan_evidence_hash: Sha256
+    entry_plan_evidence_artifact_hash: Sha256
     fixed_exit_policy_fingerprint: Sha256
     exit_session_ordinal: PositiveExactInt
     due_session: date

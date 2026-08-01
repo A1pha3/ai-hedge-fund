@@ -26,7 +26,12 @@ from ._decision_relations import (
     ensure_seal_time_chain,
     ensure_unique_stage_budget_mapping,
 )
-from .evidence import EvidenceEnvelope, NonEmptyStr
+from .evidence import (
+    EvidenceEnvelope,
+    EvidenceRecord,
+    NonEmptyStr,
+    ProviderPublicationState,
+)
 from .risk import StageLossLatchState
 from .trust import ArtifactKind
 
@@ -252,6 +257,8 @@ class PlanEvidence(EvidenceEnvelope):
             raise ValueError("plan evidence requires strategy-lineage scope")
         if self.family_id == self.economic_lineage_id:
             raise ValueError("family_id must remain distinct from economic_lineage_id")
+        if self.created_at > self.observed_at:
+            raise ValueError("created_at must be at or before observed_at")
         return self
 
 
@@ -282,7 +289,7 @@ class PortfolioOrderLine(CanonicalModel):
     grant_certificate_hash: Sha256
     authorization_id: NonEmptyStr
     authorization_version: PositiveExactInt
-    plan_evidence: PlanEvidence
+    plan_evidence: EvidenceRecord[PlanEvidence]
     plan_evidence_artifact_hash: Sha256
     plan_payload_content_hash: Sha256
     mode: ExecutionMode
@@ -326,7 +333,14 @@ class PortfolioOrderLine(CanonicalModel):
                 "plus fee reserve"
             )
 
-        plan = self.plan_evidence
+        plan_record = self.plan_evidence
+        if not plan_record.is_active:
+            raise ValueError("historical plan evidence revision cannot enter")
+        plan = plan_record.evidence
+        if isinstance(plan.provider_published_at, ProviderPublicationState):
+            raise ValueError(
+                "executable plan PIT requires a known provider publication time"
+            )
         if plan.subject_producer != self.producer_namespace:
             raise ValueError("plan evidence producer must match order producer")
         if plan.family_id != self.family_id:
@@ -335,7 +349,7 @@ class PortfolioOrderLine(CanonicalModel):
             raise ValueError("plan evidence lineage must match order lineage")
         if plan.mode is not self.mode:
             raise ValueError("plan evidence mode must match order mode")
-        if plan.content_hash() != self.plan_evidence_artifact_hash:
+        if plan_record.artifact_hash() != self.plan_evidence_artifact_hash:
             raise ValueError("plan evidence artifact hash does not match evidence")
         if plan.payload_content_hash != self.plan_payload_content_hash:
             raise ValueError("plan payload content hash does not match evidence")
@@ -496,7 +510,8 @@ class PortfolioDecision(CanonicalModel):
                 raise ValueError("order mode does not match decision mode")
             if line.target_entry_session != self.target_entry_session:
                 raise ValueError("order target entry session does not match decision")
-            plan = line.plan_evidence
+            plan_record = line.plan_evidence
+            plan = plan_record.evidence
             if plan.portfolio_id != self.portfolio_id:
                 raise ValueError("plan portfolio does not match decision portfolio")
             if plan.signal_session != self.logical_key.signal_session:
@@ -504,7 +519,8 @@ class PortfolioDecision(CanonicalModel):
             if plan.policy_epoch != self.policy_epoch:
                 raise ValueError("plan policy epoch does not match decision policy")
             if (
-                plan.available_at > self.decision_cutoff
+                plan_record.ingested_at > self.decision_cutoff
+                or plan.available_at > self.decision_cutoff
                 or plan.created_at > self.decision_cutoff
             ):
                 raise ValueError(

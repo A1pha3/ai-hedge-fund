@@ -67,7 +67,10 @@ def test_rational_quantity_normalizes_to_unique_lowest_terms(
 ) -> None:
     from src.screening.offensive.v3.contracts.base import RationalQuantity
 
-    assert RationalQuantity(numerator=numerator, denominator=denominator).model_dump() == expected
+    assert (
+        RationalQuantity(numerator=numerator, denominator=denominator).model_dump()
+        == expected
+    )
 
 
 def test_equivalent_rational_quantities_have_identical_canonical_identity() -> None:
@@ -139,7 +142,9 @@ def test_same_payload_has_different_domain_hashes() -> None:
 
 
 @pytest.mark.parametrize("domain", ["", " policy-activation", "policy-activation "])
-def test_domain_hash_rejects_empty_or_whitespace_surrounded_domains(domain: str) -> None:
+def test_domain_hash_rejects_empty_or_whitespace_surrounded_domains(
+    domain: str,
+) -> None:
     from src.screening.offensive.v3.contracts.base import domain_hash
 
     with pytest.raises(ValueError, match="domain"):
@@ -147,7 +152,10 @@ def test_domain_hash_rejects_empty_or_whitespace_surrounded_domains(domain: str)
 
 
 def test_revision_one_unscoped_base_hash_fixture_is_frozen() -> None:
-    from src.screening.offensive.v3.contracts.base import canonical_json_bytes, content_hash
+    from src.screening.offensive.v3.contracts.revision1 import (
+        canonical_json_bytes,
+        content_hash,
+    )
 
     fixture_path = Path(__file__).parent / "fixtures" / "revision1" / "base_hash.json"
     fixture = json.loads(fixture_path.read_text(encoding="utf-8"))

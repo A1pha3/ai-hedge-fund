@@ -60,7 +60,7 @@ Run: `uv run pytest tests/offensive/v3/contracts/test_revision2_base.py -v`
 
 Expected: collection succeeds; tests fail because `domain_hash` and exact integer aliases are absent.
 
-- [ ] **Step 3: Implement minimal primitives** in `contracts/base.py`. Canonical serialization sorts keys, rejects NaN/Infinity/float, normalizes Decimal strings and binds domain plus schema major before SHA-256.
+- [ ] **Step 3: Implement minimal primitives** in `contracts/base.py`. Canonical serialization sorts keys, rejects NaN/Infinity/float, normalizes Decimal strings and binds domain plus schema major before SHA-256. Revision 1 imports none of these evolving R2 primitives: its used `ExecutionMode`/`EvidenceScope`/UTC/SHA-256/canonical serializer/content hash/`CanonicalModel` are copied from `dccb76c5` into a self-contained local primitive module, including the R1-only acceptance of finite float values.
 - [ ] **Step 4: Add frozen Revision 1 schema/hash fixtures** in `tests/offensive/v3/contracts/fixtures/revision1/` so import adapters can distinguish old payloads without silently reinterpreting them.
 - [ ] **Step 5: Verify and commit**.
 
@@ -134,7 +134,7 @@ git commit -m "feat(v3): define governed portfolio authorization envelopes"
   - healthy trusted-time future-snapshot rejection and unhealthy-clock monotonic fact-integrity cancellation;
   - issuer revalidation against `current_registry_epoch >= issuance_registry_epoch`, rejecting same-epoch TrustBundle forks;
   - flat/nonpositive-to-positive correction reopening a stable ExitMandate ID at a revision above all prior revisions;
-  - ExitMandate has no entry authorization field and cannot sell unknown/untradable quantity;
+  - ExitMandate has no entry authorization field, names `entry_plan_evidence_artifact_hash` as the current `EvidenceRecord[PlanEvidence].artifact_hash()` binding, and cannot sell unknown/untradable quantity;
   - order lifecycle terminal history may receive a higher execution revision.
 - [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/contracts -v` so every checkpoint/adversarial contract is included.
 - [ ] **Step 4: Implement exact models** in `decision.py`, `capital.py`, and `execution.py`; remove final-interface exports of the old generic names from `contracts/__init__.py`.
@@ -148,12 +148,14 @@ git commit -m "feat(v3): freeze portfolio decision and lifecycle contracts"
 
 ### Task 4: Upgrade PIT evidence and root-signed trust/policy candidates
 
-**Interfaces:** Evidence envelopes add `provider_published_at`; store-controlled records add `ingested_at`, `commit_sequence`, revision links and active-revision identity. Produces root-verified `TrustBundleVerifier`, candidate `load_policy_snapshot()` and `verify_policy_activation()` without activation side effects.
+**Interfaces:** Evidence envelopes add `provider_published_at`; store-controlled records add `ingested_at`, `commit_sequence`, revision links, active-revision identity and a schema-major domain-separated artifact hash. Produces root-verified `TrustBundleVerifier`, complete schema-major-2 signed control-artifact role routes, and candidate `load_policy_snapshot()` / `verify_policy_activation()` without activation side effects. Revision 1 trust, authorization, capital dependencies and ports remain locally frozen at the `dccb76c5` surface.
 
-- [ ] **Step 1: Add failing tests** in `test_evidence.py`, `test_trust_registry.py`, and `test_policy.py` for trusted clock ordering, store-controlled fields forbidden on producer input, root signature, registry epoch/predecessor rollback, revoked/expired issuer, policy predecessor/account/epoch mismatch, duplicate JSON key and symlink/non-regular files.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement verification only**. `TrustedRegistry.load()` becomes a compatibility parser; executable verification requires a valid `TrustBundle` chain and explicit `trusted_at`. `policy-v2.json` remains `runtime_mode="off"` and has no activation authority.
-- [ ] **Step 4: Run secret/capability scan**.
+**Implemented boundary (2026-08-01):** This task is implemented as storage-free candidate contracts and pure verification only. A raw `TrustedRegistry`, locally loaded policy, constructible `VerifiedTrustBundle`/`VerifiedIssuer`, or typed witness cannot confer authority. `TrustBundleVerifier` only exposes full root-signed chain verification; every executable capability check also consumes a future Authority-Store `CurrentTrustHeadWitness` and exact-matches the signed head. Policy successors consume a typed active-predecessor witness, never raw activation DTOs; each witness enforces `effective_from <= observed_at`, including strict revalidation plus a defensive verification check for unchecked instances. `verify_policy_activation()` accepts only the exact current `CapabilityVerifier`, not a subclass override, and calls `CapabilityVerifier.verify(verifier, ...)` through explicit base-class dispatch so an exact verifier instance cannot shadow `verify()` to bypass an invalid signature or wrong current head. The nested `CapabilityVerifier` constructor likewise accepts only the exact `TrustBundleVerifier`, and root-chain verification/helpers use explicit base-class dispatch so an inner subclass is rejected before its override can run and instance-level method shadowing cannot bypass root-signature verification. These are in-process type/dispatch boundaries and do not claim protection from malicious same-process class monkeypatching or verifier internal-state mutation. Current evidence is schema major 2 and executable plans bind active store-owned records with known provider publication time; `ExitMandate.entry_plan_evidence_artifact_hash` denotes the current plan record's domain-separated `artifact_hash()`. Revision 1 stays locally frozen at major 1, including its `dccb76c5` canonical primitives and finite-float behavior, without weakening current R2 float rejection. Per design §11.2, the behavior fingerprint binds `policy_epoch` but excludes the operational `authority_epoch` and `risk_epoch` fencing counters. `policy-v2.json` remains `off`. Evidence/Trust/Policy Store persistence, source-policy qualification of `NOT_APPLICABLE`, activation CAS, signing, capital authority, and all Task 5 final ports remain outside this task.
+
+- [x] **Step 1: Add failing tests** in `test_evidence.py`, `test_trust_registry.py`, and `test_policy.py` for trusted clock ordering, store-controlled fields forbidden on producer input, root signature, registry epoch/predecessor rollback, revoked/expired issuer, policy predecessor/account/epoch mismatch, duplicate JSON key and symlink/non-regular files.
+- [x] **Step 2: Verify RED**.
+- [x] **Step 3: Implement verification only**. `TrustedRegistry.load()` becomes a compatibility parser; executable verification requires a complete valid `TrustBundle` chain, exact current-head witness and explicit `trusted_at`. Policy successor verification requires an exact active-predecessor witness. `policy-v2.json` remains `runtime_mode="off"` and has no activation authority.
+- [x] **Step 4: Run secret/capability scan** and adversarial checks for superseded/forked trust heads, raw policy predecessors, schema routing, and executable UNKNOWN/NOT_APPLICABLE/historical evidence rejection.
 
 ```bash
 uv run pytest tests/offensive/v3/contracts/test_{evidence,trust_registry,policy}.py -v
@@ -162,7 +164,7 @@ rg -n "PRIVATE KEY|broker.*secret|authorizer.*secret|def sign\(" src/screening/o
 
 Expected: tests pass; scan has no output.
 
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): verify trusted evidence policy and registry chains"`.
+- [x] **Step 5: Prepare the verified Task 4 change set** for the parent session's approved commit workflow with message `feat(v3): verify trusted evidence policy and registry chains`.
 
 ### Task 5: Publish final ports and block obsolete-interface diffusion
 

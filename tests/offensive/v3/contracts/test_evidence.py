@@ -44,12 +44,13 @@ def _envelope(**overrides):
         "execution_version": "t1-open-t10-open.v1",
         "cost_version": "cn-a-share-costs.v1",
         "effective_at": datetime(2026, 7, 20, 1, 30, tzinfo=UTC),
+        "provider_published_at": datetime(2026, 7, 19, 8, 0, tzinfo=UTC),
         "observed_at": datetime(2026, 7, 19, 8, 1, tzinfo=UTC),
         "available_at": datetime(2026, 7, 19, 8, 2, tzinfo=UTC),
         "mode": ExecutionMode.DAILY_BAR_PROXY,
         "source_authority": "exchange-calendar",
         "payload_content_hash": HASH,
-        "schema_major": 1,
+        "schema_major": 2,
     }
     payload.update(overrides)
     return payload
@@ -70,6 +71,7 @@ def test_envelope_has_exact_required_keys_and_supports_future_effective_facts() 
         "execution_version",
         "cost_version",
         "effective_at",
+        "provider_published_at",
         "observed_at",
         "available_at",
         "mode",
@@ -78,6 +80,137 @@ def test_envelope_has_exact_required_keys_and_supports_future_effective_facts() 
         "schema_major",
     }
     assert item.effective_at > item.available_at
+    with pytest.raises(ValidationError, match="provider_published_at"):
+        envelope.model_validate(
+            {
+                key: value
+                for key, value in _envelope(schema_major=major).items()
+                if key != "provider_published_at"
+            }
+        )
+
+
+def test_revision2_evidence_types_are_public_but_grant_no_authority() -> None:
+    from src.screening.offensive.v3 import contracts
+
+    assert contracts.EvidenceRecord.__name__ == "EvidenceRecord"
+    assert contracts.ProviderPublicationState.UNKNOWN.value == "UNKNOWN"
+    assert not hasattr(contracts.EvidenceRecord, "authorize")
+
+
+def test_provider_publication_is_typed_and_cannot_follow_availability() -> None:
+    from src.screening.offensive.v3.contracts.evidence import (
+        ProviderPublicationState,
+    )
+
+    major, envelope, *_ = _contracts()
+    assert (
+        envelope.model_validate(
+            _envelope(
+                schema_major=major,
+                provider_published_at=ProviderPublicationState.UNKNOWN,
+            )
+        ).provider_published_at
+        is ProviderPublicationState.UNKNOWN
+    )
+    assert (
+        envelope.model_validate(
+            _envelope(
+                schema_major=major,
+                provider_published_at=ProviderPublicationState.NOT_APPLICABLE,
+            )
+        ).provider_published_at
+        is ProviderPublicationState.NOT_APPLICABLE
+    )
+    with pytest.raises(ValidationError, match="provider_published_at"):
+        envelope.model_validate(
+            _envelope(
+                schema_major=major,
+                provider_published_at=datetime(2026, 7, 19, 8, 3, tzinfo=UTC),
+            )
+        )
+
+
+def test_producer_input_cannot_claim_store_controlled_timeline_fields() -> None:
+    major, _, snapshot, *_ = _contracts()
+    raw = _envelope(schema_major=major) | {
+        "evidence_kind": "snapshot",
+        "ingested_at": datetime(2026, 7, 19, 8, 1, 30, tzinfo=UTC),
+        "commit_sequence": 41,
+        "revision": 1,
+        "supersedes_revision": None,
+        "active_revision": 1,
+    }
+
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        snapshot.model_validate(raw)
+
+
+def test_store_record_freezes_commit_and_revision_chain() -> None:
+    from src.screening.offensive.v3.contracts.evidence import EvidenceRecord
+
+    major, _, snapshot, *_ = _contracts()
+    producer = snapshot.model_validate(
+        _envelope(schema_major=major) | {"evidence_kind": "snapshot"}
+    )
+    record_type = EvidenceRecord[type(producer)]
+    record = record_type(
+        evidence=producer,
+        ingested_at=datetime(2026, 7, 19, 8, 1, 30, tzinfo=UTC),
+        commit_sequence=41,
+        revision=2,
+        supersedes_revision=1,
+        active_revision=2,
+    )
+
+    assert record.commit_sequence == 41
+    assert record.revision == record.active_revision == 2
+    assert record.is_active is True
+    historical = record_type(
+        evidence=producer,
+        ingested_at=datetime(2026, 7, 19, 8, 1, 30, tzinfo=UTC),
+        commit_sequence=40,
+        revision=1,
+        supersedes_revision=None,
+        active_revision=2,
+    )
+    assert historical.is_active is False
+    with pytest.raises(ValidationError, match="ingested_at"):
+        record_type(
+            evidence=producer,
+            ingested_at=datetime(2026, 7, 19, 8, 0, 30, tzinfo=UTC),
+            commit_sequence=41,
+            revision=2,
+            supersedes_revision=1,
+            active_revision=2,
+        )
+    with pytest.raises(ValidationError, match="ingested_at"):
+        record_type(
+            evidence=producer,
+            ingested_at=datetime(2026, 7, 19, 8, 2, 30, tzinfo=UTC),
+            commit_sequence=42,
+            revision=2,
+            supersedes_revision=1,
+            active_revision=2,
+        )
+    with pytest.raises(ValidationError, match="supersedes"):
+        record_type(
+            evidence=producer,
+            ingested_at=datetime(2026, 7, 19, 8, 1, 30, tzinfo=UTC),
+            commit_sequence=41,
+            revision=2,
+            supersedes_revision=None,
+            active_revision=2,
+        )
+    with pytest.raises(ValidationError, match="active_revision"):
+        record_type(
+            evidence=producer,
+            ingested_at=datetime(2026, 7, 19, 8, 1, 30, tzinfo=UTC),
+            commit_sequence=41,
+            revision=2,
+            supersedes_revision=1,
+            active_revision=1,
+        )
 
 
 def test_envelope_rejects_unknown_schema_major_and_late_observation() -> None:
@@ -122,9 +255,7 @@ def test_execution_mode_is_strict_and_not_coerced_from_text() -> None:
     major, envelope, *_ = _contracts()
 
     with pytest.raises(ValidationError):
-        envelope.model_validate(
-            _envelope(schema_major=major, mode="daily_bar_proxy")
-        )
+        envelope.model_validate(_envelope(schema_major=major, mode="daily_bar_proxy"))
 
 
 @pytest.mark.parametrize(
@@ -142,9 +273,7 @@ def test_producer_evidence_cannot_claim_execution_authority(index, extra) -> Non
     model = contracts[index]
     if "stage" in extra:
         extra["stage"] = SignalStage.SELECTED
-    raw = _envelope(schema_major=contracts[0]) | extra | {
-        "execution_authorized": True
-    }
+    raw = _envelope(schema_major=contracts[0]) | extra | {"execution_authorized": True}
     with pytest.raises(ValidationError, match="extra_forbidden"):
         model.model_validate(raw)
 
@@ -155,13 +284,17 @@ def test_signal_stage_and_evidence_discriminators_are_exact() -> None:
     major, _, snapshot, signal, outcome = _contracts()
     base = _envelope(schema_major=major)
 
-    assert snapshot.model_validate(base | {"evidence_kind": "snapshot"}).evidence_kind == "snapshot"
+    assert (
+        snapshot.model_validate(base | {"evidence_kind": "snapshot"}).evidence_kind
+        == "snapshot"
+    )
     selected = signal.model_validate(
         base | {"evidence_kind": "signal", "stage": SignalStage.SELECTED}
     )
     assert selected.stage is SignalStage.SELECTED
-    assert outcome.model_validate(base | {"evidence_kind": "outcome"}).evidence_kind == "outcome"
+    assert (
+        outcome.model_validate(base | {"evidence_kind": "outcome"}).evidence_kind
+        == "outcome"
+    )
     with pytest.raises(ValidationError):
-        signal.model_validate(
-            base | {"evidence_kind": "signal", "stage": "selected"}
-        )
+        signal.model_validate(base | {"evidence_kind": "signal", "stage": "selected"})

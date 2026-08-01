@@ -172,33 +172,45 @@ def _snapshot_evidence(api):
 
 
 def _authorization(api):
-    grant = api.LineageGrant(
-        grant_id="grant-1", grant_kind=api.GrantKind.EDGE, grant_certificate_hash=HASH,
-        grant_issuer_id="authorizer", subject_producer="btst", family_id="btst.limit-up-breakout",
-        economic_lineage_id="btst-economic-lineage", research_program_id="program-001",
-        behavior_fingerprint=HASH, execution_version="t1-open-t10-open.v1", cost_version="cost-v1",
-        capital_tier=2, lineage_gross_cap=Decimal("0.02"), trial_id="trial-1", trial_manifest_hash=HASH,
-        statistical_analysis_plan_hash=HASH, stage_id="stage-1", stage_manifest_hash=HASH,
-        stage_sample_reservation_id="reserve-1", stage_loss_budget_id="stage-budget", stage_loss_budget_cents=100,
-        stage_loss_version=1, assessment_result_hash=HASH, grant_evidence_set_merkle_root=HASH,
-        attempt_ledger_checkpoint_hash=HASH, alpha_or_evalue_budget_consumption_id="alpha-1",
-        alpha_sample_consumption_id="sample-1", schema_major=2,
+    edge = api.EdgeAuthorization(
+        evidence_id="auth-001",
+        subject_scope=api.EvidenceScope.STRATEGY_LINEAGE,
+        subject_producer="btst",
+        family_id="btst.limit-up-breakout",
+        strategy_semver="3.0.0",
+        behavior_fingerprint=HASH,
+        policy_epoch=3,
+        execution_version="t1-open-t10-open.v1",
+        cost_version="cost-v1",
+        effective_at=NOW,
+        observed_at=NOW,
+        available_at=NOW,
+        mode=api.ExecutionMode.DAILY_BAR_PROXY,
+        source_authority="authorizer",
+        payload_content_hash=HASH,
+        schema_major=1,
+        authorization_kind="edge",
+        authorization_version=4,
+        economic_lineage_id="btst-economic-lineage",
+        research_program_id="program-001",
+        baseline_portfolio_policy_fingerprint=HASH,
+        target_portfolio_policy_fingerprint=POLICY_HASH,
+        evidence_as_of=NOW,
+        evidence_set_merkle_root=HASH,
+        issued_at=NOW,
+        expires_at=datetime(2026, 7, 20, 8, tzinfo=UTC),
+        max_capital_tier=2,
+        issuer_id="authorizer.service",
+        issuer_capability="authorizer.edge.envelope.v1",
+        trial_id="trial-1",
+        trial_manifest_hash=HASH,
+        statistical_analysis_plan_hash=HASH,
+        assessment_result_hash=HASH,
+        attempt_ledger_checkpoint_hash=HASH,
+        alpha_sample_consumption_id="sample-1",
+        authorization_payload_hash=HASH,
     )
-    return api.CapitalAuthorizationEnvelope(
-        authorization_kind=api.AuthorizationKind.EDGE, authorization_id="auth-001", authorization_version=4,
-        mode=api.ExecutionMode.DAILY_BAR_PROXY, portfolio_id="paper-v3", broker_account_id=None,
-        broker_account_fingerprint=None, base_currency="CNY", policy_activation_hash=HASH, trust_bundle_hash=HASH,
-        registry_epoch=2, policy_epoch=3, authority_epoch=3, risk_epoch=8,
-        research_program_ids=("program-001",), baseline_portfolio_policy_fingerprint=HASH,
-        target_portfolio_policy_fingerprint=HASH, lineage_grants=(grant,), evidence_as_of=NOW,
-        evidence_set_merkle_root=HASH, issued_at=NOW, expires_at=datetime(2026, 7, 20, 8, tzinfo=UTC),
-        activation_capital_snapshot_id="capital-019", activation_capital_snapshot_hash=HASH,
-        portfolio_gross_cap=Decimal("0.02"), exploration_aggregate_gross_cap=Decimal("0"),
-        program_loss_budget_bindings=(api.ProgramLossBudgetBinding(research_program_id="program-001", budget_id="program-budget", budget_cents=100, consumed_cents=0, version=1, schema_major=2),),
-        issuer_id="authorizer.service", issuer_capability="authorizer.edge.envelope.v1",
-        portfolio_assessment_result_hash=HASH, global_attempt_ledger_checkpoint_hash=HASH,
-        global_multiplicity_budget_consumption_id="global-1", schema_major=2,
-    )
+    return api.CapitalAuthorization(root=edge)
 
 
 def _seal(api):
@@ -216,7 +228,9 @@ def _seal(api):
     )
 
 
-def test_publish_command_is_immutable_input_plus_reference_not_authority_or_seal() -> None:
+def test_publish_command_is_immutable_input_plus_reference_not_authority_or_seal() -> (
+    None
+):
     api = _api()
     command = api.PublishDecisionCommand(
         decision=_decision_input(api),
@@ -367,7 +381,9 @@ def test_decision_input_rejects_capital_identity_mismatch(
     if "mode" in capital_overrides and capital_overrides["mode"] is None:
         capital_overrides["mode"] = api.ExecutionMode.MANUAL_CONFIRMED
     with pytest.raises(ValidationError) as error:
-        _decision_input(api, capital_snapshot=_capital_snapshot(api, **capital_overrides))
+        _decision_input(
+            api, capital_snapshot=_capital_snapshot(api, **capital_overrides)
+        )
     validation_messages = {
         str(item.get("ctx", {}).get("error", ""))
         for item in error.value.errors(include_url=False)
@@ -417,8 +433,8 @@ def test_stable_ports_are_runtime_structural_and_return_domain_objects() -> None
             assert evidence_id == snapshot.evidence_id
             return snapshot
 
-        def authorization(self, authorization_id: str) -> api.CapitalAuthorizationEnvelope:
-            assert authorization_id == authorization.authorization_id
+        def authorization(self, authorization_id: str) -> api.CapitalAuthorization:
+            assert authorization_id == authorization.root.evidence_id
             return authorization
 
     class SealWriter:
@@ -432,26 +448,28 @@ def test_stable_ports_are_runtime_structural_and_return_domain_objects() -> None
     assert CapitalView().snapshot("paper-v3", NOW) is capital
     assert EvidenceQuery().snapshot("snapshot-001") is snapshot
     assert EvidenceQuery().authorization("auth-001") is authorization
-    assert SealWriter().publish(
-        api.PublishDecisionCommand(
-            decision=_decision_input(api),
-            authorization=_binding(api),
+    assert (
+        SealWriter().publish(
+            api.PublishDecisionCommand(
+                decision=_decision_input(api),
+                authorization=_binding(api),
+            )
         )
-    ) is seal
+        is seal
+    )
 
 
 def test_capability_verifier_port_preserves_explicit_verification_time() -> None:
     api = _api()
-    from src.screening.offensive.v3 import trust
 
     class Verifier:
         def verify(
             self,
-            signed: trust.SignedEnvelope,
-            required: trust.Capability,
+            signed: api.SignedEnvelope,
+            required: api.Capability,
             *,
             verification_time: datetime,
-        ) -> trust.VerifiedIssuer:
+        ) -> api.VerifiedIssuer:
             raise NotImplementedError
 
     assert isinstance(Verifier(), api.CapabilityVerifier)
@@ -462,17 +480,21 @@ def test_capability_verifier_port_preserves_explicit_verification_time() -> None
         "required",
         "verification_time",
     ]
-    assert signature.parameters["verification_time"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert (
+        signature.parameters["verification_time"].kind is inspect.Parameter.KEYWORD_ONLY
+    )
     assert signature.parameters["verification_time"].default is inspect.Parameter.empty
     assert get_type_hints(api.CapabilityVerifier.verify) == {
-        "signed": trust.SignedEnvelope,
-        "required": trust.Capability,
+        "signed": api.SignedEnvelope,
+        "required": api.Capability,
         "verification_time": datetime,
-        "return": trust.VerifiedIssuer,
+        "return": api.VerifiedIssuer,
     }
 
 
-def test_stable_port_annotations_are_exact_and_contain_no_mutable_or_any_boundary() -> None:
+def test_stable_port_annotations_are_exact_and_contain_no_mutable_or_any_boundary() -> (
+    None
+):
     api = _api()
     expected = {
         api.CapitalViewPort.snapshot: {
@@ -486,7 +508,7 @@ def test_stable_port_annotations_are_exact_and_contain_no_mutable_or_any_boundar
         },
         api.EvidenceQueryPort.authorization: {
             "authorization_id": str,
-            "return": api.CapitalAuthorizationEnvelope,
+            "return": api.CapitalAuthorization,
         },
         api.SealWriterPort.publish: {
             "command": api.PublishDecisionCommand,
@@ -511,13 +533,11 @@ def test_stable_port_annotations_are_exact_and_contain_no_mutable_or_any_boundar
             )
         )
 
-    from src.screening.offensive.v3 import trust
-
     expected[api.CapabilityVerifier.verify] = {
-        "signed": trust.SignedEnvelope,
-        "required": trust.Capability,
+        "signed": api.SignedEnvelope,
+        "required": api.Capability,
         "verification_time": datetime,
-        "return": trust.VerifiedIssuer,
+        "return": api.VerifiedIssuer,
     }
     forbidden_types = {Any, dict, list, set}
     forbidden_names = {

@@ -7,17 +7,24 @@ verified without changing their authority-epoch idempotency semantics.
 
 from __future__ import annotations
 
-from datetime import date
+from base64 import b64decode, b64encode
+import binascii
+from datetime import date, datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Annotated, Literal, Protocol, Self, runtime_checkable
 
-from pydantic import Field, model_validator
-
-from .authorization import (
-    AuthorizationKind,
-    CapitalAuthorizationEnvelope,
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    StringConstraints,
+    model_validator,
 )
-from .base import (
+
+from .revision1_primitives import (
     CanonicalModel,
     EvidenceScope,
     ExecutionMode,
@@ -26,22 +33,376 @@ from .base import (
     canonical_json_bytes,
     content_hash,
 )
-from .capital import CapitalSnapshot
-from .decision import PlanEvidence
-from .evidence import EvidenceEnvelope, NonEmptyStr, SnapshotEvidence
-from .governance import GrantKind, LineageGrant, ProgramLossBudgetBinding
-from .ports import (
-    CapitalViewPort,
-    CapabilityVerifier,
-    EvidenceQueryPort,
-)
-from .trust import ArtifactKind, SignedEnvelope
 
 
 PositiveInt = Annotated[int, Field(ge=1)]
 NonNegativeInt = Annotated[int, Field(ge=0)]
 PositiveDecimal = Annotated[Decimal, Field(gt=0)]
 NonNegativeDecimal = Annotated[Decimal, Field(ge=0)]
+NonEmptyStr = Annotated[str, StringConstraints(min_length=1, pattern=r".*\S.*")]
+
+
+class ArtifactKind(StrEnum):
+    """Exact Revision 1 signed-artifact discriminators from ``dccb76c5``."""
+
+    SNAPSHOT = "snapshot"
+    SIGNAL = "signal"
+    OUTCOME = "outcome"
+    PLAN = "plan"
+    EDGE_AUTHORIZATION = "edge"
+    EXPLORATION_AUTHORIZATION = "exploration"
+    DECISION_SEAL = "decision_seal"
+    SHADOW_DECISION = "shadow_decision"
+    EXECUTION_PERMIT = "execution_permit"
+
+
+def _decode_canonical_base64(
+    value: str,
+    *,
+    expected_length: int,
+    label: str,
+) -> bytes:
+    try:
+        decoded = b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError(f"{label} must be canonical base64") from exc
+    if len(decoded) != expected_length:
+        raise ValueError(f"{label} must decode to {expected_length} bytes")
+    if b64encode(decoded).decode("ascii") != value:
+        raise ValueError(f"{label} must be canonical base64")
+    return decoded
+
+
+def _validate_signature(value: str) -> str:
+    _decode_canonical_base64(value, expected_length=64, label="signature")
+    return value
+
+
+Signature = Annotated[
+    str,
+    StringConstraints(min_length=1),
+    AfterValidator(_validate_signature),
+]
+
+
+class Capability(CanonicalModel):
+    """Frozen Revision 1 capability request and registry-grant shape."""
+
+    artifact: ArtifactKind
+    namespace: NonEmptyStr
+    mode: ExecutionMode
+    schema_major: Annotated[int, Field(ge=1)]
+    capability_version: NonEmptyStr
+    scope: NonEmptyStr
+    valid_from: UtcInstant
+    valid_until: UtcInstant
+    revoked_at: UtcInstant | None
+
+    @model_validator(mode="after")
+    def validate_lifecycle(self) -> Self:
+        if self.schema_major != 1:
+            raise ValueError("unsupported Revision 1 capability schema major")
+        if self.valid_until <= self.valid_from:
+            raise ValueError("capability valid_until must be after valid_from")
+        return self
+
+    def context(self) -> tuple[ArtifactKind, str, ExecutionMode, int, str, str]:
+        return (
+            self.artifact,
+            self.namespace,
+            self.mode,
+            self.schema_major,
+            self.capability_version,
+            self.scope,
+        )
+
+
+class SignedEnvelope(BaseModel):
+    """Frozen Revision 1 protected wire; later majors and artifacts are invalid."""
+
+    model_config = ConfigDict(
+        strict=True,
+        frozen=True,
+        extra="forbid",
+        revalidate_instances="always",
+    )
+
+    issuer_id: NonEmptyStr
+    key_id: NonEmptyStr
+    schema_major: Annotated[int, Field(ge=1)]
+    artifact: ArtifactKind
+    namespace: NonEmptyStr
+    mode: ExecutionMode
+    capability_version: NonEmptyStr
+    capability_scope: NonEmptyStr
+    payload_hash: Sha256
+    payload: bytes
+    signature: Signature
+
+    @model_validator(mode="after")
+    def validate_schema_major(self) -> Self:
+        if self.schema_major != 1:
+            raise ValueError("unsupported Revision 1 signed-envelope schema major")
+        return self
+
+    def _protected_signing_input(self) -> bytes:
+        return canonical_json_bytes(
+            {
+                "artifact": self.artifact,
+                "capability_scope": self.capability_scope,
+                "capability_version": self.capability_version,
+                "issuer_id": self.issuer_id,
+                "key_id": self.key_id,
+                "mode": self.mode,
+                "namespace": self.namespace,
+                "payload": b64encode(self.payload).decode("ascii"),
+                "payload_hash": self.payload_hash,
+                "schema_major": self.schema_major,
+            }
+        )
+
+
+class VerifiedIssuer(CanonicalModel):
+    """Exact minimal Revision 1 verifier result."""
+
+    issuer_id: NonEmptyStr
+    capability: Capability
+
+
+@runtime_checkable
+class CapabilityVerifier(Protocol):
+    """Frozen Revision 1 verification port."""
+
+    def verify(
+        self,
+        signed: SignedEnvelope,
+        required: Capability,
+        *,
+        verification_time: datetime,
+    ) -> VerifiedIssuer: ...
+
+
+class EvidenceEnvelope(CanonicalModel):
+    """Frozen Revision 1 evidence shape, before provider release was added."""
+
+    evidence_id: NonEmptyStr
+    subject_scope: EvidenceScope
+    subject_producer: NonEmptyStr
+    family_id: NonEmptyStr | None
+    strategy_semver: NonEmptyStr
+    behavior_fingerprint: Sha256
+    policy_epoch: PositiveInt
+    execution_version: NonEmptyStr
+    cost_version: NonEmptyStr
+    effective_at: UtcInstant
+    observed_at: UtcInstant
+    available_at: UtcInstant
+    mode: ExecutionMode
+    source_authority: NonEmptyStr
+    payload_content_hash: Sha256
+    schema_major: int
+
+    @model_validator(mode="after")
+    def validate_envelope(self) -> Self:
+        if self.schema_major != 1:
+            raise ValueError("unsupported Revision 1 evidence schema major")
+        if self.observed_at > self.available_at:
+            raise ValueError("observed_at must be at or before available_at")
+        if self.subject_scope is EvidenceScope.GLOBAL and self.family_id is not None:
+            raise ValueError("GLOBAL evidence requires family_id=None")
+        if (
+            self.subject_scope is EvidenceScope.STRATEGY_LINEAGE
+            and self.family_id is None
+        ):
+            raise ValueError("STRATEGY_LINEAGE evidence requires a nonempty family_id")
+        return self
+
+
+class SnapshotEvidence(EvidenceEnvelope):
+    evidence_kind: Literal["snapshot"]
+
+
+class PlanEvidence(EvidenceEnvelope):
+    evidence_kind: Literal["plan"]
+    portfolio_id: NonEmptyStr
+    signal_session: date
+    economic_lineage_id: NonEmptyStr
+    snapshot_id: NonEmptyStr
+    raw_target_fraction: Annotated[Decimal, Field(gt=0, le=1)]
+    created_at: UtcInstant
+
+    @model_validator(mode="after")
+    def validate_plan_scope(self) -> Self:
+        if self.subject_scope is not EvidenceScope.STRATEGY_LINEAGE:
+            raise ValueError("plan evidence requires strategy-lineage scope")
+        if self.family_id == self.economic_lineage_id:
+            raise ValueError("family_id must remain distinct from economic_lineage_id")
+        return self
+
+
+AllowedCapitalTier = Literal[2, 5, 10]
+
+
+class EdgeAuthorization(EvidenceEnvelope):
+    """Frozen Revision 1 independent edge authorization."""
+
+    authorization_kind: Literal["edge"]
+    authorization_version: PositiveInt
+    economic_lineage_id: NonEmptyStr
+    research_program_id: NonEmptyStr
+    baseline_portfolio_policy_fingerprint: Sha256
+    target_portfolio_policy_fingerprint: Sha256
+    evidence_as_of: UtcInstant
+    evidence_set_merkle_root: Sha256
+    issued_at: UtcInstant
+    expires_at: UtcInstant
+    max_capital_tier: AllowedCapitalTier
+    issuer_id: NonEmptyStr
+    issuer_capability: NonEmptyStr
+    trial_id: NonEmptyStr
+    trial_manifest_hash: Sha256
+    statistical_analysis_plan_hash: Sha256
+    assessment_result_hash: Sha256
+    attempt_ledger_checkpoint_hash: Sha256
+    alpha_sample_consumption_id: NonEmptyStr
+    authorization_payload_hash: Sha256
+
+    @model_validator(mode="after")
+    def validate_authorization(self) -> Self:
+        if self.mode is ExecutionMode.RESEARCH_RECONSTRUCTION:
+            raise ValueError(
+                "research reconstruction cannot receive capital authorization"
+            )
+        if self.available_at > self.evidence_as_of:
+            raise ValueError("available_at must be at or before evidence_as_of")
+        if self.evidence_as_of > self.issued_at:
+            raise ValueError("evidence_as_of must be at or before issued_at")
+        if self.expires_at <= self.issued_at:
+            raise ValueError("expires_at must be after issued_at")
+        if self.subject_scope is not EvidenceScope.STRATEGY_LINEAGE:
+            raise ValueError("edge authorization requires strategy-lineage scope")
+        if self.family_id == self.economic_lineage_id:
+            raise ValueError("family_id must remain distinct from economic_lineage_id")
+        return self
+
+
+class ExplorationAuthorization(EvidenceEnvelope):
+    """Frozen Revision 1 one-shot broker exploration authorization."""
+
+    authorization_kind: Literal["exploration"]
+    authorization_version: PositiveInt
+    economic_lineage_id: NonEmptyStr
+    research_program_id: NonEmptyStr
+    portfolio_id: NonEmptyStr
+    evidence_set_merkle_root: Sha256
+    issued_at: UtcInstant
+    expires_at: UtcInstant
+    max_capital_tier: Literal[2]
+    portfolio_gross_risk_cap: Annotated[Decimal, Field(gt=0, le=Decimal("0.02"))]
+    stress_loss_budget: PositiveDecimal
+    issuer_id: NonEmptyStr
+    issuer_capability: NonEmptyStr
+    trial_id: NonEmptyStr
+    trial_manifest_hash: Sha256
+    one_shot: Literal[True]
+
+    @model_validator(mode="after")
+    def validate_authorization(self) -> Self:
+        if self.mode is not ExecutionMode.BROKER_CONFIRMED:
+            raise ValueError("exploration authorization requires broker-confirmed mode")
+        if self.available_at > self.issued_at:
+            raise ValueError("available_at must be at or before issued_at")
+        if self.expires_at <= self.issued_at:
+            raise ValueError("expires_at must be after issued_at")
+        if self.subject_scope is not EvidenceScope.STRATEGY_LINEAGE:
+            raise ValueError(
+                "exploration authorization requires strategy-lineage scope"
+            )
+        if self.family_id == self.economic_lineage_id:
+            raise ValueError("family_id must remain distinct from economic_lineage_id")
+        return self
+
+
+AuthorizationUnion = Annotated[
+    EdgeAuthorization | ExplorationAuthorization,
+    Field(discriminator="authorization_kind"),
+]
+
+
+class CapitalAuthorization(RootModel[AuthorizationUnion]):
+    """Frozen Revision 1 discriminated authorization read-port payload."""
+
+    model_config = ConfigDict(
+        strict=True,
+        frozen=True,
+        revalidate_instances="always",
+    )
+
+
+class PositionState(StrEnum):
+    """Frozen Revision 1 position states."""
+
+    OPEN = "OPEN"
+    EXIT_PENDING = "EXIT_PENDING"
+    CLOSED = "CLOSED"
+    LEGAL_TERMINAL = "LEGAL_TERMINAL"
+
+
+class PositionSnapshot(CanonicalModel):
+    """Frozen Revision 1 capital position dependency."""
+
+    position_lineage_id: NonEmptyStr
+    economic_lot_id: NonEmptyStr
+    security_id: NonEmptyStr
+    state: PositionState
+    settled_quantity: NonNegativeInt
+    tradable_quantity: NonNegativeInt
+    share_receivable_quantity: NonNegativeInt
+    cost_basis: NonNegativeDecimal
+
+    @model_validator(mode="after")
+    def validate_quantities(self) -> Self:
+        if self.tradable_quantity > self.settled_quantity:
+            raise ValueError("tradable quantity cannot exceed settled quantity")
+        return self
+
+
+class CapitalSnapshot(CanonicalModel):
+    """Frozen Revision 1 capital snapshot dependency."""
+
+    capital_snapshot_id: NonEmptyStr
+    portfolio_id: NonEmptyStr
+    authority_epoch: PositiveInt
+    risk_epoch: PositiveInt
+    capital_version: PositiveInt
+    stream_version: PositiveInt
+    mode: ExecutionMode
+    as_of: UtcInstant
+    cash: Decimal
+    nav: NonNegativeDecimal
+    gross_exposure: NonNegativeDecimal
+    high_water_mark: NonNegativeDecimal
+    positions: tuple[PositionSnapshot, ...]
+    payload_content_hash: Sha256
+
+
+@runtime_checkable
+class CapitalViewPort(Protocol):
+    """Frozen Revision 1 capital read port."""
+
+    def snapshot(self, portfolio_id: str, as_of: datetime) -> CapitalSnapshot: ...
+
+
+@runtime_checkable
+class EvidenceQueryPort(Protocol):
+    """Frozen Revision 1 read-port annotations."""
+
+    def snapshot(self, evidence_id: str) -> SnapshotEvidence: ...
+
+    def authorization(
+        self,
+        authorization_id: str,
+    ) -> CapitalAuthorization: ...
 
 
 class DecisionLogicalKey(CanonicalModel):
@@ -506,12 +867,14 @@ class SealWriterPort(Protocol):
 
 
 __all__ = [
+    "AllowedCapitalTier",
     "ArtifactKind",
-    "AuthorizationKind",
+    "AuthorizationUnion",
     "CapitalAuthorizationBinding",
-    "CapitalAuthorizationEnvelope",
+    "CapitalAuthorization",
     "CapitalSnapshot",
     "CapitalViewPort",
+    "Capability",
     "CapabilityVerifier",
     "DecisionInput",
     "DecisionLogicalKey",
@@ -521,10 +884,11 @@ __all__ = [
     "EvidenceScope",
     "ExecutionMode",
     "ExecutionPermit",
-    "GrantKind",
-    "LineageGrant",
+    "ExplorationAuthorization",
+    "EdgeAuthorization",
     "PlanEvidence",
-    "ProgramLossBudgetBinding",
+    "PositionSnapshot",
+    "PositionState",
     "PublishDecisionCommand",
     "SealWriterPort",
     "SealedOrderLine",
@@ -533,4 +897,5 @@ __all__ = [
     "SnapshotEvidence",
     "canonical_json_bytes",
     "content_hash",
+    "VerifiedIssuer",
 ]

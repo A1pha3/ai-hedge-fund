@@ -39,9 +39,11 @@ uv run python src/main.py --daily-action   # 读缓存, ~3 秒, 输出次日 BUY
 
 任何影响上述语义的代码变更，必须同步更新权威设计、机器可读策略快照（实现后）、契约/故障注入测试和迁移说明；不得通过修改报告文案掩盖台账、授权或证据冲突。
 
-### 当前 v3 已实现范围（2026-07-26）
+### 当前 v3 已实现范围（2026-08-01）
 
-当前只实现了 Plan 01 Revision 1 的无存储 strict/frozen v3 领域契约、默认 `off` 的版本化 PolicySnapshot 与行为指纹、只读 public-key trust registry/capability verifier，以及基础 ports。Revision 2 新增的 `TrustBundle`/activation、完整 `CapitalAuthorizationEnvelope`、`CapitalRiskSnapshot`、`PortfolioDecisionSeal`、`ExitMandate` 和各类治理 manifest 尚未实现，旧 `CapitalAuthorization`/`DecisionSeal` 接口不得作为最终实现继续向下扩散。**目标架构尚未上线，也没有资本授权。** 仍未实现 v3 capital repository/authoritative writer、Evidence Store、Authorizer、Growth Kernel、Capital Gateway、broker connection、authority flip 或任何可执行资本路径。
+已实现 Plan 01 Revision 2 Tasks 1–4 的无存储 strict/frozen **候选领域契约与纯验证**：治理/授权/资本/组合 decision/exit DTO，schema-major 2 的 PIT producer + store-record 边界，默认 `off` 的 `policy-v2`，root-signed 完整 TrustBundle chain、Authority-Store typed current-head witness、issuer/capability verification，以及 signed PolicyActivation candidate + typed active-predecessor witness 验证。Revision 1 实际使用的 `ExecutionMode`/`EvidenceScope`/UTC/SHA-256/canonical serializer/`CanonicalModel` 已按 `dccb76c5` 冻结在本地 primitive 模块中，不再跟随 current R2 canonical（R1 仍允许有限 float，R2 继续拒绝所有 float）。active policy witness 强制 `effective_from <= observed_at`，候选验证会 strict revalidate 后再次防御性检查，并只接受 exact current `CapabilityVerifier` 类型，拒绝覆写 `verify()` 的 subclass；候选入口还以 `CapabilityVerifier.verify(verifier, ...)` 基类级非虚分派拒绝 exact verifier 实例的 `verify` shadow。`CapabilityVerifier` 内部也只接受 exact `TrustBundleVerifier`，并以基类级非虚分派执行 root-chain 安全关键调用，inner subclass 会在 override 触发前被拒绝。这些只是进程内类型与 dispatch 边界，不声称抵御恶意同进程 class monkeypatch 或内部状态篡改。current executable `PortfolioOrderLine` 只能绑定 active `EvidenceRecord[PlanEvidence]`，`ExitMandate.entry_plan_evidence_artifact_hash` 明确指代该 current record 的 `artifact_hash()`；在 source-authority policy verifier 尚未实现时会拒绝 `UNKNOWN`/`NOT_APPLICABLE` provider publication。所有 witness 和 `Verified*` 结果都只是可重验输入/检查结果，不是 activation token 或权限。
+
+**目标架构仍未上线，也没有资本授权。** 仍未实现 Evidence/Trust/Policy/Capital Authority Store、activation CAS、authoritative writer、Authorizer、Growth Kernel、Capital Gateway、broker connection、authority flip、签名服务或任何可执行资本路径；Task 5 final ports 也尚未实现。现有 Revision 1 ports/`DecisionSeal` 只能留在显式 compatibility namespace，不得进入 final `CapabilityVerifier` 或继续作为最终接口扩散。
 
 ## 数据完整性（⚠ 最重要，曾因此误判）
 

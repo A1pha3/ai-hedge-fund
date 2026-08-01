@@ -135,7 +135,36 @@ def _signed(
 
 
 def _verifier(api: Any, issuer: Any) -> Any:
-    return api.CapabilityVerifier(api.TrustedRegistry(issuers=(issuer,)))
+    root_verifier, signed_chain = _root_verified_bundle(
+        api,
+        api.TrustedRegistry(issuers=(issuer,)),
+        return_context=True,
+    )
+    delegate = api.CapabilityVerifier(root_verifier, signed_chain)
+
+    class BoundCurrentHeadVerifier:
+        _signed_chain = delegate._signed_chain
+
+        def verify(self, signed: Any, required: Any, **kwargs: Any) -> Any:
+            return delegate.verify(
+                signed,
+                required,
+                current_head=_current_head(api, delegate),
+                **kwargs,
+            )
+
+    return BoundCurrentHeadVerifier()
+
+
+def _current_head(api: Any, verifier: Any) -> Any:
+    bundle = verifier._signed_chain[-1].bundle
+    return api.CurrentTrustHeadWitness(
+        active_trust_bundle_hash=bundle.artifact_hash(),
+        registry_epoch=bundle.registry_epoch,
+        head_version=bundle.registry_epoch,
+        store_version=1,
+        observed_at=NOW,
+    )
 
 
 def _registry_json(issuer: Any) -> str:
@@ -143,6 +172,252 @@ def _registry_json(issuer: Any) -> str:
         {"issuers": [issuer.model_dump(mode="json")]},
         separators=(",", ":"),
     )
+
+
+def _root_verified_bundle(
+    api: Any,
+    registry: Any,
+    *,
+    epoch: int = 1,
+    trusted_at: datetime = NOW,
+    root_valid_until: datetime | None = None,
+    bundle_expires_at: datetime | None = None,
+    root_revoked_at: datetime | None = None,
+    registry_hash_override: str | None = None,
+    tamper_signature: bool = False,
+    return_context: bool = False,
+) -> Any:
+    from src.screening.offensive.v3.contracts.governance import TrustBundle
+
+    root_key = Ed25519PrivateKey.generate()
+    root_public = _public_key_b64(root_key)
+    root_hash = hashlib.sha256(
+        root_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+    ).hexdigest()
+    anchor = api.RootTrustAnchor(
+        root_hash=root_hash,
+        root_key_id="offline-root-1",
+        public_key=root_public,
+        valid_from=NOW - timedelta(days=30),
+        valid_until=root_valid_until or NOW + timedelta(days=30),
+        revoked_at=root_revoked_at,
+    )
+    bundle = TrustBundle(
+        registry_epoch=epoch,
+        predecessor_bundle_hash="0" * 64,
+        root_hash=root_hash,
+        root_key_id=anchor.root_key_id,
+        trusted_issuer_registry_hash=(
+            registry_hash_override or registry.content_hash()
+        ),
+        issued_at=NOW - timedelta(minutes=5),
+        expires_at=bundle_expires_at or NOW + timedelta(days=1),
+        revoked_at=None,
+        issuer_id="offline-governance-root",
+        issuer_capability="root.trust.bundle.v1",
+        schema_major=2,
+    )
+    signature = b64encode(
+        root_key.sign(api.trust_bundle_signature_preimage(bundle, registry))
+    ).decode("ascii")
+    candidate = api.SignedTrustBundle(
+        bundle=bundle,
+        registry=registry,
+        signature=(
+            b64encode(b"\0" * 64).decode("ascii") if tamper_signature else signature
+        ),
+    )
+    verifier = api.TrustBundleVerifier((anchor,))
+    if return_context:
+        return verifier, (candidate,)
+    return verifier.verify_chain((candidate,), trusted_at=trusted_at)
+
+
+def test_root_signature_and_exact_trusted_at_are_required_for_bundle() -> None:
+    api = _api()
+    issuer_key = Ed25519PrivateKey.generate()
+    capability = _capability(api)
+    registry = api.TrustedRegistry(issuers=(_issuer(api, issuer_key, capability),))
+
+    verified = _root_verified_bundle(api, registry)
+
+    assert verified.registry == registry
+    assert verified.trusted_at == NOW
+    with pytest.raises(api.TrustVerificationError, match="trusted_at|UTC"):
+        _root_verified_bundle(api, registry, trusted_at=NOW.replace(tzinfo=None))
+
+
+def test_bundle_chain_rejects_rollback_and_wrong_predecessor() -> None:
+    api = _api()
+    issuer_key = Ed25519PrivateKey.generate()
+    capability = _capability(api)
+    registry = api.TrustedRegistry(issuers=(_issuer(api, issuer_key, capability),))
+    from src.screening.offensive.v3.contracts.governance import TrustBundle
+
+    root_key = Ed25519PrivateKey.generate()
+    root_bytes = root_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    anchor = api.RootTrustAnchor(
+        root_hash=hashlib.sha256(root_bytes).hexdigest(),
+        root_key_id="offline-root-2",
+        public_key=b64encode(root_bytes).decode("ascii"),
+        valid_from=NOW - timedelta(days=1),
+        valid_until=NOW + timedelta(days=1),
+        revoked_at=None,
+    )
+    bad = TrustBundle(
+        registry_epoch=2,
+        predecessor_bundle_hash="f" * 64,
+        root_hash=anchor.root_hash,
+        root_key_id=anchor.root_key_id,
+        trusted_issuer_registry_hash=registry.content_hash(),
+        issued_at=NOW - timedelta(minutes=1),
+        expires_at=NOW + timedelta(days=1),
+        revoked_at=None,
+        issuer_id="offline-governance-root",
+        issuer_capability="root.trust.bundle.v1",
+        schema_major=2,
+    )
+    signed = api.SignedTrustBundle(
+        bundle=bad,
+        registry=registry,
+        signature=b64encode(
+            root_key.sign(api.trust_bundle_signature_preimage(bad, registry))
+        ).decode("ascii"),
+    )
+    with pytest.raises(api.TrustVerificationError, match="genesis|predecessor"):
+        api.TrustBundleVerifier((anchor,)).verify_chain(
+            (signed,),
+            trusted_at=NOW,
+        )
+
+
+def test_bundle_verification_rejects_expired_root_and_bundle() -> None:
+    api = _api()
+    issuer_key = Ed25519PrivateKey.generate()
+    capability = _capability(api)
+    registry = api.TrustedRegistry(issuers=(_issuer(api, issuer_key, capability),))
+
+    with pytest.raises(api.TrustVerificationError, match="root.*expired"):
+        _root_verified_bundle(
+            api,
+            registry,
+            root_valid_until=NOW,
+        )
+    with pytest.raises(api.TrustVerificationError, match="bundle.*expired"):
+        _root_verified_bundle(
+            api,
+            registry,
+            bundle_expires_at=NOW,
+        )
+    with pytest.raises(api.TrustVerificationError, match="root.*revoked"):
+        _root_verified_bundle(api, registry, root_revoked_at=NOW)
+
+
+def test_bundle_verification_rejects_registry_hash_drift_and_signature_tamper() -> None:
+    api = _api()
+    issuer_key = Ed25519PrivateKey.generate()
+    capability = _capability(api)
+    registry = api.TrustedRegistry(issuers=(_issuer(api, issuer_key, capability),))
+
+    with pytest.raises(api.TrustVerificationError, match="registry hash"):
+        _root_verified_bundle(
+            api,
+            registry,
+            registry_hash_override="f" * 64,
+        )
+    with pytest.raises(api.TrustVerificationError, match="root signature"):
+        _root_verified_bundle(api, registry, tamper_signature=True)
+
+
+def test_chain_allows_expired_historical_bundle_but_requires_live_head() -> None:
+    from src.screening.offensive.v3.contracts.governance import TrustBundle
+
+    api = _api()
+    issuer_key = Ed25519PrivateKey.generate()
+    capability = _capability(api)
+    registry = api.TrustedRegistry(issuers=(_issuer(api, issuer_key, capability),))
+    root_key = Ed25519PrivateKey.generate()
+    root_bytes = root_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    anchor = api.RootTrustAnchor(
+        root_hash=hashlib.sha256(root_bytes).hexdigest(),
+        root_key_id="offline-root-rotation",
+        public_key=b64encode(root_bytes).decode("ascii"),
+        valid_from=NOW - timedelta(days=10),
+        valid_until=NOW + timedelta(days=10),
+        revoked_at=None,
+    )
+
+    def signed_bundle(
+        epoch: int,
+        predecessor_hash: str,
+        issued_at: datetime,
+        expires_at: datetime,
+    ) -> Any:
+        bundle = TrustBundle(
+            registry_epoch=epoch,
+            predecessor_bundle_hash=predecessor_hash,
+            root_hash=anchor.root_hash,
+            root_key_id=anchor.root_key_id,
+            trusted_issuer_registry_hash=registry.content_hash(),
+            issued_at=issued_at,
+            expires_at=expires_at,
+            revoked_at=None,
+            issuer_id="offline-governance-root",
+            issuer_capability="root.trust.bundle.v1",
+            schema_major=2,
+        )
+        return api.SignedTrustBundle(
+            bundle=bundle,
+            registry=registry,
+            signature=b64encode(
+                root_key.sign(api.trust_bundle_signature_preimage(bundle, registry))
+            ).decode("ascii"),
+        )
+
+    historical = signed_bundle(
+        1,
+        "0" * 64,
+        NOW - timedelta(days=3),
+        NOW - timedelta(days=1),
+    )
+    head = signed_bundle(
+        2,
+        historical.bundle.artifact_hash(),
+        NOW - timedelta(days=2),
+        NOW + timedelta(days=1),
+    )
+
+    verified = api.TrustBundleVerifier((anchor,)).verify_chain(
+        (historical, head),
+        trusted_at=NOW,
+    )
+    assert verified.bundle == head.bundle
+
+
+def test_raw_registry_is_only_a_parser_and_cannot_verify_capabilities() -> None:
+    api = _api()
+    issuer_key = Ed25519PrivateKey.generate()
+    capability = _capability(api)
+    registry = api.TrustedRegistry(issuers=(_issuer(api, issuer_key, capability),))
+
+    with pytest.raises(TypeError, match="TrustBundleVerifier|signed_chain"):
+        api.CapabilityVerifier(registry)
+    forged = api.VerifiedTrustBundle(
+        bundle=_root_verified_bundle(api, registry).bundle,
+        registry=registry,
+        trusted_at=NOW,
+    )
+    with pytest.raises(TypeError, match="signed.*chain|TrustBundleVerifier"):
+        api.CapabilityVerifier(forged)
 
 
 def _unchecked_mutation(model: Any, method: str, **updates: Any) -> Any:
@@ -165,14 +440,30 @@ def test_valid_signature_returns_only_verified_issuer_and_required_capability() 
         verification_time=NOW,
     )
 
-    assert verified == api.VerifiedIssuer(
-        issuer_id="authorizer.service",
-        capability=required,
-    )
-    assert set(api.VerifiedIssuer.model_fields) == {"issuer_id", "capability"}
+    assert verified.issuer_id == "authorizer.service"
+    assert verified.key_id == "authorizer-key-2026-07"
+    assert verified.issuer_kind is api.IssuerKind.AUTHORIZER
+    assert verified.capability == required
+    assert verified.registry_epoch == 1
+    assert verified.trusted_at == NOW
+    assert verified.valid_from == NOW - timedelta(minutes=5)
+    assert verified.valid_until == NOW + timedelta(days=1)
+    assert set(api.VerifiedIssuer.model_fields) == {
+        "issuer_id",
+        "key_id",
+        "issuer_kind",
+        "public_key_fingerprint",
+        "identity_fingerprint",
+        "capability",
+        "trust_bundle_hash",
+        "registry_epoch",
+        "trusted_at",
+        "valid_from",
+        "valid_until",
+    }
 
 
-def test_trust_verification_does_not_substitute_for_decision_seal_parsing() -> None:
+def test_final_trust_verifier_does_not_accept_revision1_decision_seals() -> None:
     from src.screening.offensive.v3.contracts.revision1 import DecisionSeal
 
     api = _api()
@@ -202,11 +493,12 @@ def test_trust_verification_does_not_substitute_for_decision_seal_parsing() -> N
         payload=opaque_payload,
     )
 
-    assert _verifier(api, issuer).verify(
-        signed,
-        required,
-        verification_time=NOW,
-    ).issuer_id == issuer.issuer_id
+    with pytest.raises(api.TrustVerificationError, match="legacy|unsupported"):
+        _verifier(api, issuer).verify(
+            signed,
+            required,
+            verification_time=NOW,
+        )
     with pytest.raises(ValidationError):
         DecisionSeal.model_validate_json(signed.payload, strict=True)
 
@@ -458,8 +750,8 @@ def test_unknown_schema_major_fails_even_if_registry_claims_to_grant_it() -> Non
 @pytest.mark.parametrize(
     ("issuer_kind", "capability_changes", "match"),
     [
-        ("shadow", {"artifact": "decision_seal"}, "shadow"),
-        ("authorizer", {"artifact": "decision_seal"}, "authorizer"),
+        ("shadow", {"artifact": "decision_seal"}, "legacy|unsupported"),
+        ("authorizer", {"artifact": "decision_seal"}, "legacy|unsupported"),
         ("manual", {"mode": "broker_confirmed"}, "manual"),
     ],
 )
@@ -526,6 +818,69 @@ def test_growth_kernel_cannot_sign_shadow_decisions() -> None:
             required,
             verification_time=NOW,
         )
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    [
+        "PORTFOLIO_DECISION_SEAL",
+        "EXECUTION_PERMIT",
+        "ENTRY_CANCELLATION_RECEIPT",
+    ],
+)
+def test_only_capital_gateway_can_issue_entry_authority_artifacts(
+    artifact: str,
+) -> None:
+    api = _api()
+    gateway_key = Ed25519PrivateKey.generate()
+    artifact_kind = getattr(api.ArtifactKind, artifact)
+    required = _capability(
+        api,
+        artifact=artifact_kind,
+        namespace=f"capital-gateway.{artifact.lower()}",
+        schema_major=2,
+        capability_version="capital-gateway.authority.v1",
+        scope="portfolio:paper-v3",
+    )
+    signed = _signed(
+        api,
+        gateway_key,
+        required,
+        issuer_id="capital-gateway.service",
+        key_id="capital-gateway-key-1",
+    )
+    gateway = _issuer(
+        api,
+        gateway_key,
+        required,
+        issuer_id="capital-gateway.service",
+        key_id="capital-gateway-key-1",
+        issuer_kind=api.IssuerKind.CAPITAL_GATEWAY,
+    )
+
+    assert (
+        _verifier(api, gateway)
+        .verify(
+            signed,
+            required,
+            trusted_at=NOW,
+        )
+        .issuer_id
+        == gateway.issuer_id
+    )
+
+    for forbidden_role in (
+        api.IssuerKind.GROWTH_KERNEL,
+        api.IssuerKind.BROKER_GATEWAY,
+        api.IssuerKind.SHADOW,
+    ):
+        forbidden = gateway.model_copy(update={"issuer_kind": forbidden_role})
+        with pytest.raises(api.TrustVerificationError, match="cannot sign"):
+            _verifier(api, forbidden).verify(
+                signed,
+                required,
+                trusted_at=NOW,
+            )
 
 
 def test_registry_loads_only_strict_public_key_truth(tmp_path: Path) -> None:
@@ -925,11 +1280,16 @@ def test_manual_outcome_issuer_is_isolated_to_manual_confirmed_mode(
     )
 
     if accepted:
-        assert _verifier(api, issuer).verify(
-            signed,
-            required,
-            verification_time=NOW,
-        ).issuer_id == issuer.issuer_id
+        assert (
+            _verifier(api, issuer)
+            .verify(
+                signed,
+                required,
+                verification_time=NOW,
+            )
+            .issuer_id
+            == issuer.issuer_id
+        )
     else:
         with pytest.raises(api.TrustVerificationError, match="manual"):
             _verifier(api, issuer).verify(
@@ -972,17 +1332,8 @@ def test_verifier_revalidates_registry_instances_at_the_public_boundary(
         mutation_method,
         issuers=(poisoned_issuer,),
     )
-    signed = _signed(
-        api,
-        private_key,
-        required,
-        issuer_id=manual_issuer.issuer_id,
-        key_id=manual_issuer.key_id,
-    )
-
-    with pytest.raises(api.TrustVerificationError, match="registry"):
-        verifier = api.CapabilityVerifier(poisoned_registry)
-        verifier.verify(signed, required, verification_time=NOW)
+    with pytest.raises(TypeError, match="TrustBundleVerifier|signed_chain"):
+        api.CapabilityVerifier(poisoned_registry)
 
 
 @pytest.mark.parametrize("mutation_method", ["model_copy", "model_construct"])
