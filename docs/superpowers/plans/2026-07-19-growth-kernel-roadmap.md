@@ -134,7 +134,7 @@ Evidence/Authorizer 与 Capital Gateway 可以分库，但不得声称跨库同�
 
 ## 总体验收门
 
-- [ ] Plan 01 Revision 2 schema/ports 完成验收仍 pending；implementation is present，仓库内不再有下游代码依赖旧 `CapitalAuthorization`/`DecisionSeal` 作为最终接口，但 full checked-in snapshot acceptance remains open，故 Plan 01 completion gate 尚未关闭。
+- [ ] Plan 01 Revision 2 schema/ports implementation 与 completion gate 已完成（含 full checked-in snapshot matrix），仓库内不再有下游代码依赖旧 `CapitalAuthorization`/`DecisionSeal` 作为最终接口；验收勾选待独立审阅通过并合并后更新。
 - [ ] Plan 02–05 在 `off|shadow` 下完成，`uv run pytest tests/offensive/v3/ -q` 全绿，且不生成 executable entry。
 - [ ] 资本属性测试覆盖 genesis、subscription/redemption、TERMINATING/INSOLVENT、fill/fee/reserve、公司行动、bust/correction、stage loss、as-observed/restated-final。
 - [ ] 权限测试证明本地配置、producer、CLI、shadow、manual issuer 和旧 epoch 无法激活 policy/envelope、写 Capital Gateway 或发送 broker entry。

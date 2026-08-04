@@ -39,7 +39,7 @@ uv run python src/main.py --daily-action   # 读缓存, ~3 秒, 输出次日 BUY
 
 任何影响上述语义的代码变更，必须同步更新权威设计、机器可读策略快照（实现后）、契约/故障注入测试和迁移说明；不得通过修改报告文案掩盖台账、授权或证据冲突。
 
-### 当前 v3 已实现范围（2026-08-01）
+### 当前 v3 已实现范围（2026-08-04）
 
 已实现 Plan 01 Revision 2 Tasks 1–5 的无存储 strict/frozen **候选领域契约、纯验证与 final structural ports**：六个 current runtime-checkable ports 只提供结构接口，不提供实现或权限；active evidence query 是四种 concrete `EvidenceRecord` 的闭合 union，verifier 显式标注 current-head witness 与 trusted time。Plan 04 前，production `src` 的 `*.py`/`*.pyi` 必须保持 zero static `GrowthKernelPort` references；仅允许 `contracts/ports.py` 的 top-level Protocol 定义/精确 list-or-tuple `__all__`，以及 `contracts/__init__.py` 的 top-level 精确 import/`__all__`。There is no downstream typing or runtime exception：import、attribute、alias、annotation、runtime check、quoted/reflection token、stub 与 contracts star import 均拒绝。Plan 04 只有在 concrete strict/frozen `KernelInput`/`NoTradeDecision`、真实入口重验及独立审阅的 replacement gate 同时落地后才能改变此边界，不能把 generic port 当作预授权。Revision 1 primitives 继续按 `dccb76c5` 冻结；current policy/trust verifier 的 exact-type/non-virtual-dispatch 防御、active plan-record 绑定和 unknown publication fail-closed 语义不变。所有 witness、`Verified*` 结果和 ports 都不是 activation token 或权限。
 
@@ -47,7 +47,7 @@ Dynamic or fragmented string construction is outside this static proof. Plan 04 
 
 旧 Revision 1 接口的 repository acceptance scan 覆盖整个 production `src`，只排除两个冻结 compatibility 模块；`tests` 不属于这项生产扫描。控制文档另用 token-aware lexical historical-context guard，保证旧名称同一行带历史标记；该 guard 只是词法约束，不是自然语言语义证明。
 
-Tasks 1–5 implementation is present, but the Plan 01 completion gate is not closed: checked-in snapshots currently cover only governance schema/hash cases and decimal samples, while the full checked-in snapshot matrix for decision/capital/execution/evidence/trust/policy/ports remains future remediation. This documentation status does not make any port, policy candidate, or verified witness active authority.
+Tasks 1–5 implementation is present and the Plan 01 completion gate is closed (2026-08-04): the checked-in snapshot matrix (`tests/offensive/v3/contracts/test_revision2_snapshot_matrix.py` + `fixtures/revision2/`) covers all public decision/capital/execution/evidence/trust/policy model schema goldens, strict round-trip and canonical hashes, independently recomputed artifact hashes, protected domain preimages, public enum/alias types and port signatures. Gate closure is a re-verifiable documentation statement; it does not make any port, policy candidate, or verified witness active authority.
 
 **目标架构仍未上线，也没有资本授权。** 仍未实现 Evidence/Trust/Policy/Capital Authority Store、activation CAS、authoritative writer、Authorizer、Growth Kernel、Capital Gateway、broker connection、authority flip、签名服务或任何可执行资本路径。现有 Revision 1 ports/`DecisionSeal` 只能留在显式 compatibility namespace，不得进入 final `CapabilityVerifier` 或继续作为最终接口扩散。
 

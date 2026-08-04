@@ -1,0 +1,365 @@
+{
+  "behavior_fingerprint": {
+    "fingerprint": "cc5aae605fadfdf623eddd38e709ff996c1f4da2e38bdfc595a45fe4117cc5e7",
+    "preimage": {
+      "policy": {
+        "adv": {
+          "lookback_sessions": 20,
+          "max_participation_rate": "0.05",
+          "missing_data_behavior": "fail_closed"
+        },
+        "capital": {
+          "daily_entry_gross_cap": "0",
+          "exploration_aggregate_gross_cap": "0",
+          "governed_tiers": [
+            2,
+            5,
+            10
+          ],
+          "industry_gross_cap": "0",
+          "portfolio_gross_cap": "0",
+          "single_name_gross_cap": "0",
+          "stage_loss_budget_cap": "0"
+        },
+        "evidence_gates": {
+          "adverse_window_required": true,
+          "capacity_stress_required": true,
+          "chronological_fold_gate_required": true,
+          "fresh_evidence_per_tier_required": true,
+          "incremental_minimum_economic_effect": "0.001",
+          "min_decision_days": 60,
+          "min_distinct_tickers": 80,
+          "min_effective_sample_size": "60",
+          "min_forward_months": 12,
+          "min_mature_outcomes": 150,
+          "minimum_economic_effect": "0.001",
+          "slippage_stress_multiple": "2",
+          "tail_risk_gate_required": true
+        },
+        "execution": {
+          "broker_auction_submission_cutoff_cn": "09:20:00",
+          "entry_session_ordinal": 1,
+          "exit_session_ordinal": 10,
+          "gateway_send_deadline_before_auction_minutes": 10,
+          "order_type": "opening_auction_limit",
+          "permit_deadline_before_auction_minutes": 20,
+          "seal_deadline_after_t0_close_minutes": 240,
+          "time_in_force": "opening_auction",
+          "worst_case_cost_multiplier": "2"
+        },
+        "policy_epoch": 1,
+        "producers": {
+          "btst_enabled": false,
+          "composite_sizing_enabled": false,
+          "oversold_bounce_enabled": false,
+          "regime_sizing_enabled": false,
+          "streak_sizing_enabled": false,
+          "trigger_strength_sizing_enabled": false
+        },
+        "risk": {
+          "drawdown_halt": "0.15",
+          "drawdown_scale_start": "0.1",
+          "halt_is_latched": true,
+          "inherited_risk_counts_on_restart": true
+        },
+        "runtime_mode": "off",
+        "versions": {
+          "board_rule_version": "ashare-board-prefix-v1",
+          "calendar_version": "sse-szse-official-sessions.v1",
+          "cost_version": "cn-a-share-costs.v1",
+          "execution_contract_version": "t0-close-t1-open-t10-open.v1",
+          "exit_policy_version": "t10-open.v1",
+          "governance_version": "growth-kernel-governance.v2",
+          "lot_rule_version": "cn-board-lot.v1",
+          "price_boundary_version": "sse-szse-price-limits.v1",
+          "setup_version": "daily-action-setups-v1"
+        }
+      },
+      "producer": {
+        "producer_namespace": "daily-action.btst",
+        "strategy_semver": "3.0.0"
+      }
+    },
+    "sha256": "cc5aae605fadfdf623eddd38e709ff996c1f4da2e38bdfc595a45fe4117cc5e7"
+  },
+  "broker_enablement_approval_preimage": {
+    "approval_preimage_hash": "8a9526f1b0a6dbba9ee4961faa8a347cf0e0c50ec42b9277dcb681eea9ddbc3f",
+    "domain": "ai-hedge-fund.v3.governance.broker-enablement-manifest.approval-preimage.v1",
+    "preimage": {
+      "domain": "ai-hedge-fund.v3.governance.broker-enablement-manifest.approval-preimage.v1",
+      "payload": {
+        "auction_tif_cutoff_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authenticated_raw_envelope_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "base_currency": "CNY",
+        "broker_account_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "broker_account_id": "account-1",
+        "broker_environment_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "client_order_idempotency_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "credential_session_network_fencing_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "currency_definition_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "exit_rate_limit_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "expires_at": "2026-07-19T09:00:00Z",
+        "issued_at": "2026-07-19T08:00:00Z",
+        "issuer_capability": "governance.broker.enablement.v1",
+        "issuer_id": "governance",
+        "manifest_id": "broker_enablement_manifest-1",
+        "one_shot": true,
+        "pagination_cursor_retention_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "portfolio_id": "portfolio-1",
+        "schema_major": 2,
+        "trusted_clock_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "schema_major": 2
+    },
+    "sha256": "8a9526f1b0a6dbba9ee4961faa8a347cf0e0c50ec42b9277dcb681eea9ddbc3f"
+  },
+  "disaster_recovery_approval_preimage": {
+    "approval_preimage_hash": "a29fda7c70b2f781865a6bc1d378dd1910e9a36da602384cbc05077706ef8758",
+    "domain": "ai-hedge-fund.v3.governance.disaster-recovery-manifest.approval-preimage.v1",
+    "preimage": {
+      "domain": "ai-hedge-fund.v3.governance.disaster-recovery-manifest.approval-preimage.v1",
+      "payload": {
+        "authority_epoch": 2,
+        "authorization_status_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authorization_status_version": 4,
+        "backup_root_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "broker_account_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "broker_account_id": "account-1",
+        "broker_cursor": "broker-1",
+        "durable_cursor_proof_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "durable_inbox_cursor": "inbox-1",
+        "durable_outbox_cursor": "outbox-1",
+        "entry_fence_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "entry_fence_version": 5,
+        "expires_at": "2026-07-19T09:00:00Z",
+        "fencing_epoch": 2,
+        "issued_at": "2026-07-19T08:00:00Z",
+        "issuer_capability": "governance.disaster.recovery.v1",
+        "issuer_id": "governance",
+        "manifest_id": "disaster_recovery_manifest-1",
+        "one_shot": true,
+        "policy_activation_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_epoch": 2,
+        "portfolio_id": "portfolio-1",
+        "reconcile_before_entry": true,
+        "reconciliation_proof_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "recovery_epoch": 2,
+        "registry_epoch": 2,
+        "risk_epoch": 2,
+        "schema_major": 2,
+        "source_writer_id": "source-writer",
+        "target_writer_id": "recovery-writer",
+        "trust_bundle_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "schema_major": 2
+    },
+    "sha256": "a29fda7c70b2f781865a6bc1d378dd1910e9a36da602384cbc05077706ef8758"
+  },
+  "issuer_identity_fingerprint": {
+    "domain": "ai-hedge-fund.v3.trust.issuer-identity.v1",
+    "identity_fingerprint": "37a521ce8c6df21e3f6a56018940102708d373066b755901572536eb3fdbbf98",
+    "preimage": {
+      "domain": "ai-hedge-fund.v3.trust.issuer-identity.v1",
+      "payload": {
+        "issuer_id": "authorizer.service",
+        "issuer_kind": "authorizer",
+        "key_id": "authorizer-key-2026-07",
+        "public_key_fingerprint": "e8e4dab67b8a2c3ac6821d433f33506fb37b6d141675a8272e717d79c8b2995b"
+      },
+      "schema_major": 2
+    },
+    "public_key_fingerprint": "e8e4dab67b8a2c3ac6821d433f33506fb37b6d141675a8272e717d79c8b2995b",
+    "sha256": "37a521ce8c6df21e3f6a56018940102708d373066b755901572536eb3fdbbf98"
+  },
+  "migration_approval_preimage": {
+    "approval_preimage_hash": "eb7c310bd4078a44cae3766a650e66e28f6373fd72b196e02179d5720b5cef71",
+    "domain": "ai-hedge-fund.v3.governance.migration-approval-manifest.approval-preimage.v1",
+    "preimage": {
+      "domain": "ai-hedge-fund.v3.governance.migration-approval-manifest.approval-preimage.v1",
+      "payload": {
+        "allowed_from": "2026-07-19T08:00:00Z",
+        "allowed_until": "2026-07-19T08:30:00Z",
+        "broker_account_id": "account-1",
+        "conservation_formula_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "credential_fencing_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "expires_at": "2026-07-19T09:00:00Z",
+        "handoff_cursor": "handoff-1",
+        "issued_at": "2026-07-19T08:00:00Z",
+        "issuer_capability": "governance.migration.approval.v1",
+        "issuer_id": "governance",
+        "live_order_adoption_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "manifest_id": "migration_approval_manifest-1",
+        "migration_program_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "one_shot": true,
+        "portfolio_id": "portfolio-1",
+        "rollback_dr_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "schema_major": 2,
+        "shared_inbox_cursor": "shared-1",
+        "source_active_authorization_envelope_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_active_authorization_id": "v2-auth",
+        "source_active_authorization_status_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_active_authorization_status_version": 5,
+        "source_active_authorization_version": 5,
+        "source_authority_epoch": 2,
+        "source_broker_account_id": "legacy-account",
+        "source_capital_root_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_capital_version": 20,
+        "source_entry_fence_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_entry_fence_version": 4,
+        "source_policy_activation_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_policy_epoch": 2,
+        "source_portfolio_id": "legacy-portfolio",
+        "source_registry_epoch": 2,
+        "source_risk_epoch": 2,
+        "source_schema_major": 2,
+        "source_stream_root_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_stream_version": 20,
+        "source_trust_bundle_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_writer_fencing_epoch": 8,
+        "source_writer_id": "v2-writer",
+        "target_active_authorization_envelope_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "target_active_authorization_id": "v3-auth",
+        "target_active_authorization_status_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "target_active_authorization_status_version": 1,
+        "target_active_authorization_version": 1,
+        "target_authority_epoch": 3,
+        "target_broker_account_id": "account-1",
+        "target_capital_root_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "target_capital_version": 1,
+        "target_entry_fence_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "target_entry_fence_version": 1,
+        "target_policy_activation_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "target_policy_epoch": 3,
+        "target_portfolio_id": "portfolio-1",
+        "target_registry_epoch": 3,
+        "target_risk_epoch": 3,
+        "target_schema_major": 3,
+        "target_stream_root_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "target_stream_version": 1,
+        "target_trust_bundle_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "target_writer_fencing_epoch": 9,
+        "target_writer_id": "v3-writer"
+      },
+      "schema_major": 2
+    },
+    "sha256": "eb7c310bd4078a44cae3766a650e66e28f6373fd72b196e02179d5720b5cef71"
+  },
+  "policy_fingerprint": {
+    "fingerprint": "47bd095bcfaed7166c941cf5641f72252dc4e0ffb3026718a3d3b02bc5860abc",
+    "preimage": {
+      "adv": {
+        "lookback_sessions": 20,
+        "max_participation_rate": "0.05",
+        "missing_data_behavior": "fail_closed"
+      },
+      "authority_epoch": 1,
+      "capital": {
+        "daily_entry_gross_cap": "0",
+        "exploration_aggregate_gross_cap": "0",
+        "governed_tiers": [
+          2,
+          5,
+          10
+        ],
+        "industry_gross_cap": "0",
+        "portfolio_gross_cap": "0",
+        "single_name_gross_cap": "0",
+        "stage_loss_budget_cap": "0"
+      },
+      "evidence_gates": {
+        "adverse_window_required": true,
+        "capacity_stress_required": true,
+        "chronological_fold_gate_required": true,
+        "fresh_evidence_per_tier_required": true,
+        "incremental_minimum_economic_effect": "0.001",
+        "min_decision_days": 60,
+        "min_distinct_tickers": 80,
+        "min_effective_sample_size": "60",
+        "min_forward_months": 12,
+        "min_mature_outcomes": 150,
+        "minimum_economic_effect": "0.001",
+        "slippage_stress_multiple": "2",
+        "tail_risk_gate_required": true
+      },
+      "execution": {
+        "broker_auction_submission_cutoff_cn": "09:20:00",
+        "entry_session_ordinal": 1,
+        "exit_session_ordinal": 10,
+        "gateway_send_deadline_before_auction_minutes": 10,
+        "order_type": "opening_auction_limit",
+        "permit_deadline_before_auction_minutes": 20,
+        "seal_deadline_after_t0_close_minutes": 240,
+        "time_in_force": "opening_auction",
+        "worst_case_cost_multiplier": "2"
+      },
+      "policy_epoch": 1,
+      "policy_id": "growth-kernel-v3",
+      "policy_version": "policy-v2",
+      "producers": {
+        "btst_enabled": false,
+        "composite_sizing_enabled": false,
+        "oversold_bounce_enabled": false,
+        "regime_sizing_enabled": false,
+        "streak_sizing_enabled": false,
+        "trigger_strength_sizing_enabled": false
+      },
+      "risk": {
+        "drawdown_halt": "0.15",
+        "drawdown_scale_start": "0.1",
+        "halt_is_latched": true,
+        "inherited_risk_counts_on_restart": true
+      },
+      "risk_epoch": 1,
+      "runtime_mode": "off",
+      "schema_major": 1,
+      "versions": {
+        "board_rule_version": "ashare-board-prefix-v1",
+        "calendar_version": "sse-szse-official-sessions.v1",
+        "cost_version": "cn-a-share-costs.v1",
+        "execution_contract_version": "t0-close-t1-open-t10-open.v1",
+        "exit_policy_version": "t10-open.v1",
+        "governance_version": "growth-kernel-governance.v2",
+        "lot_rule_version": "cn-board-lot.v1",
+        "price_boundary_version": "sse-szse-price-limits.v1",
+        "setup_version": "daily-action-setups-v1"
+      }
+    },
+    "sha256": "47bd095bcfaed7166c941cf5641f72252dc4e0ffb3026718a3d3b02bc5860abc"
+  },
+  "signed_envelope_signing_input": {
+    "preimage": {
+      "artifact": "edge",
+      "capability_scope": "portfolio:paper-v3/lineage:btst",
+      "capability_version": "edge-authorizer.v1",
+      "issuer_id": "authorizer.service",
+      "key_id": "authorizer-key-2026-07",
+      "mode": "daily_bar_proxy",
+      "namespace": "capital.edge.btst",
+      "payload": "eyJhdXRob3JpemF0aW9uX2tpbmQiOiJlZGdlIiwiYXV0aG9yaXphdGlvbl9pZCI6ImF1dGgtMSJ9",
+      "payload_hash": "c9a49d50d265793ec367670f725cf2c4ab38b0f2d9a5fb00269ef43672f2475b",
+      "schema_major": 2
+    },
+    "sha256": "87979375400be71c03e97a2fb4a51361b2a1a9396b2ca83078aea4e1aa4b4f1d"
+  },
+  "trust_bundle_signature_preimage": {
+    "preimage": {
+      "bundle": {
+        "expires_at": "2026-07-20T08:00:00Z",
+        "issued_at": "2026-07-19T07:55:00Z",
+        "issuer_capability": "root.trust.bundle.v1",
+        "issuer_id": "offline-governance-root",
+        "predecessor_bundle_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "registry_epoch": 1,
+        "revoked_at": null,
+        "root_hash": "79792405940bf3fd5d0f367efb10e4c52f95259122d32f3db2cd0cbde4eb7873",
+        "root_key_id": "offline-root-1",
+        "schema_major": 2,
+        "trusted_issuer_registry_hash": "a6a1ee0afb785e4527a8846609497401c88d00e6208cfc5a5979b6799aee1770"
+      },
+      "domain": "ai-hedge-fund.v3.trust-bundle-root-signature.v1",
+      "registry_hash": "a6a1ee0afb785e4527a8846609497401c88d00e6208cfc5a5979b6799aee1770"
+    },
+    "sha256": "604ba35752772d20e7a2e911ceaa417a78fedb8482a56e41f065a1a585fe08a1"
+  }
+}
+

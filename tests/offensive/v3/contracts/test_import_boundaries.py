@@ -1402,17 +1402,17 @@ def test_control_documents_publish_the_completed_final_port_boundary() -> None:
     assert "**Implemented boundary (2026-08-01):**" in task5
     assert "- [ ]" not in task5
     assert task5.count("- [x]") == 5
-    assert completion_gate.count("- [ ]") == 1
-    assert completion_gate.count("- [x]") == 5
+    assert completion_gate.count("- [ ]") == 0
+    assert completion_gate.count("- [x]") == 6
     assert (
-        "- [ ] Every Revision 2 schema has strict validation, canonical "
+        "- [x] Every Revision 2 schema has strict validation, canonical "
         "serialization, hash, and snapshot tests."
     ) in completion_gate
-    assert "governance schemas/hashes and decimal samples only" in completion_gate
-    assert "decision/capital/execution/evidence/trust/policy/ports" in completion_gate
-    assert "- [ ] Plan 01 Revision 2 schema/ports 完成" in roadmap
-    assert "implementation is present" in roadmap
-    assert "full checked-in snapshot acceptance remains open" in roadmap
+    assert "checked-in snapshot matrix" in completion_gate
+    assert "decision/capital/execution/evidence/trust/policy" in completion_gate
+    assert "- [ ] Plan 01 Revision 2 schema/ports implementation" in roadmap
+    assert "completion gate 已完成" in roadmap
+    assert "独立审阅通过并合并后更新" in roadmap
     assert "Tasks 1–5" in agents
     assert "Task 5 final ports 也尚未实现" not in agents
     assert "Tasks 1–4 candidate contracts/pure verification" not in design
@@ -1421,8 +1421,8 @@ def test_control_documents_publish_the_completed_final_port_boundary() -> None:
     assert "Plan 01 Task 5" in design
     for document in (design, agents):
         assert "Tasks 1–5 implementation is present" in document
-        assert "Plan 01 completion gate is not closed" in document
-        assert "full checked-in snapshot matrix" in document
+        assert "Plan 01 completion gate is closed" in document
+        assert "snapshot matrix" in document
     for document in (plan01, roadmap, design, agents):
         assert "zero static `GrowthKernelPort` references" in document
         assert "no downstream typing or runtime exception" in document

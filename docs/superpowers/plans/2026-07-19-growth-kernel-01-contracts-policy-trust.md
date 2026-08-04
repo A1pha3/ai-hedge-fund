@@ -192,7 +192,7 @@ Expected: all tests pass; policy remains off; no capital/authority file is creat
 
 ## Completion Gate
 
-- [ ] Every Revision 2 schema has strict validation, canonical serialization, hash, and snapshot tests. Current checked-in snapshots cover governance schemas/hashes and decimal samples only; the full checked-in snapshot matrix for decision/capital/execution/evidence/trust/policy/ports remains follow-up remediation.
+- [x] Every Revision 2 schema has strict validation, canonical serialization, hash, and snapshot tests. The checked-in snapshot matrix (`tests/offensive/v3/contracts/test_revision2_snapshot_matrix.py` + `fixtures/revision2/`) covers all 99 public decision/capital/execution/evidence/trust/policy model schema goldens, strict JSON round-trip and canonical hashes, independently recomputed artifact hashes, protected domain preimages, public enum/alias types and port signatures; runtime discovery only alarms on new, removed, or misclassified public contracts.
 - [x] Unknown schema, extra field, float, empty fingerprint, naive time, wrong mode/account/capability/epoch and invalid predecessor fail closed.
 - [x] `ShadowDecision` cannot parse or sign as `PortfolioDecisionSeal`.
 - [x] `CapitalAuthorizationEnvelope` is the only final entry authorization type and represents one complete target portfolio policy.
