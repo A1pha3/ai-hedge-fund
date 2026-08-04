@@ -38,7 +38,10 @@ EXPECTED_TABLES = frozenset(
         "reserves",
         "risk_epoch_history",
         "risk_latches",
+        "risk_snapshot_seals",
         "session_checkpoints",
+        "stage_loss_budget_activations",
+        "stage_loss_charges",
         "stage_loss_state",
     }
 )
@@ -54,7 +57,10 @@ IMMUTABLE_TABLES = frozenset(
         "execution_revisions",
         "nav_observations",
         "risk_epoch_history",
+        "risk_snapshot_seals",
         "session_checkpoints",
+        "stage_loss_budget_activations",
+        "stage_loss_charges",
     }
 )
 
@@ -122,6 +128,23 @@ INTEGER_QUANTA_COLUMNS = {
     ("corporate_actions", "fractional_remainder_denominator"),
     ("corporate_actions", "cash_in_lieu_cents"),
     ("corporate_actions", "successor_quantity_units"),
+    ("stage_loss_state", "stage_loss_version"),
+    ("stage_loss_budget_activations", "frozen_budget_cents"),
+    ("stage_loss_charges", "realized_market_losses_ex_fees_cents"),
+    ("stage_loss_charges", "cumulative_fees_and_taxes_cents"),
+    ("stage_loss_charges", "marked_unrealized_pnl_cents"),
+    ("stage_loss_charges", "unrealized_loss_charge_cents"),
+    ("stage_loss_charges", "incremental_pending_stress_beyond_mark_cents"),
+    ("stage_loss_charges", "instantaneous_charge_cents"),
+    ("stage_loss_charges", "consumed_before_cents"),
+    ("stage_loss_charges", "consumed_after_cents"),
+    ("stage_loss_charges", "frozen_budget_cents"),
+    ("stage_loss_charges", "stage_loss_version_before"),
+    ("stage_loss_charges", "stage_loss_version_after"),
+    ("stage_loss_charges", "capital_version_after"),
+    ("risk_snapshot_seals", "capital_version"),
+    ("risk_snapshot_seals", "stream_version"),
+    ("risk_snapshot_seals", "entry_scaling_multiplier_ppm"),
 }
 
 
@@ -238,6 +261,51 @@ def _seed_history(conn: sa.engine.Connection) -> None:
             " 'test.seed', '2026-08-03T09:00:00+00:00')"
         )
     )
+    conn.execute(
+        sa.text(
+            "INSERT INTO stage_loss_budget_activations ("
+            " stage_loss_budget_id, idempotency_key, research_program_id,"
+            " economic_lineage_id, stage_id, frozen_budget_cents,"
+            " source_authority, authorization_reference, activated_at"
+            ") VALUES ('budget-seed', 'budget-key-1', 'prog-schema',"
+            " 'eline-schema', 'stage-schema', 100, 'test.seed', 'gov-1',"
+            " '2026-08-03T09:00:00+00:00')"
+        )
+    )
+    conn.execute(
+        sa.text(
+            "INSERT INTO stage_loss_charges ("
+            " stage_loss_charge_id, idempotency_key,"
+            " payload_content_fingerprint, research_program_id,"
+            " economic_lineage_id, stage_id, source_authority,"
+            " realized_market_losses_ex_fees_cents,"
+            " cumulative_fees_and_taxes_cents, marked_unrealized_pnl_cents,"
+            " unrealized_loss_charge_cents,"
+            " incremental_pending_stress_beyond_mark_cents,"
+            " instantaneous_charge_cents, consumed_before_cents,"
+            " consumed_after_cents, frozen_budget_cents,"
+            " stage_loss_version_before, stage_loss_version_after,"
+            " latch_state_after, capital_version_after, recorded_at"
+            ") VALUES ('slc-seed', 'charge-key-1', :fingerprint, 'prog-schema',"
+            " 'eline-schema', 'stage-schema', 'test.seed', 0, 0, 0, 0, 0, 0,"
+            " 0, 0, 100, 1, 1, 'CLEAR', 1, '2026-08-03T09:00:00+00:00')"
+        ),
+        {"fingerprint": "a" * 64},
+    )
+    conn.execute(
+        sa.text(
+            "INSERT INTO risk_snapshot_seals ("
+            " risk_snapshot_seal_id, portfolio_id, session, risk_snapshot_id,"
+            " capital_version, stream_version, snapshot_content_hash,"
+            " snapshot_json, entry_scaling_multiplier_ppm, as_of, sealed_at,"
+            " source_authority"
+            ") VALUES ('seal-seed', 'pf-schema', '2026-08-03',"
+            " 'cap-risk-seed', 1, 1, :snapshot_hash, '{}', 1000000,"
+            " '2026-08-03T09:00:00+00:00', '2026-08-03T09:00:00+00:00',"
+            " 'test.seed')"
+        ),
+        {"snapshot_hash": "b" * 64},
+    )
 
 
 def test_initialize_creates_exact_table_set(repository: CapitalRepository) -> None:
@@ -281,7 +349,7 @@ def test_schema_version_is_exact_and_persisted(
     repository: CapitalRepository,
 ) -> None:
     assert metadata.SCHEMA_MAJOR == 2
-    assert metadata.LEDGER_SCHEMA_VERSION == 3
+    assert metadata.LEDGER_SCHEMA_VERSION == 4
     assert repository.schema_version() == metadata.LEDGER_SCHEMA_VERSION
     with repository.engine.connect() as conn:
         stored = conn.execute(
@@ -380,6 +448,14 @@ def test_immutable_tables_reject_update_and_delete(
         " SET nav_cents = 0 WHERE nav_observation_id = 'navobs-seed'",
         "risk_epoch_history": "UPDATE risk_epoch_history"
         " SET audited_nav_cents = 0 WHERE risk_epoch = 1",
+        "risk_snapshot_seals": "UPDATE risk_snapshot_seals"
+        " SET snapshot_content_hash = 'x' WHERE risk_snapshot_seal_id ="
+        " 'seal-seed'",
+        "stage_loss_budget_activations": "UPDATE stage_loss_budget_activations"
+        " SET frozen_budget_cents = 0 WHERE stage_loss_budget_id ="
+        " 'budget-seed'",
+        "stage_loss_charges": "UPDATE stage_loss_charges"
+        " SET consumed_after_cents = 0 WHERE stage_loss_charge_id = 'slc-seed'",
     }
     deletes = {
         table: f"DELETE FROM {table}" for table in IMMUTABLE_TABLES
@@ -443,10 +519,13 @@ def test_alembic_layout_chains_the_ledger_revisions() -> None:
     config.set_main_option("script_location", str(migrations))
     script = ScriptDirectory.from_config(config)
     revisions = list(script.walk_revisions())
-    assert len(revisions) == 3
+    assert len(revisions) == 4
     assert script.get_current_head() == metadata.CURRENT_MIGRATION_REVISION
     bases = {revision.revision: revision.down_revision for revision in revisions}
     assert bases[metadata.CURRENT_MIGRATION_REVISION] == (
+        metadata.CORPORATE_ACTIONS_MIGRATION_REVISION
+    )
+    assert bases[metadata.CORPORATE_ACTIONS_MIGRATION_REVISION] == (
         metadata.NAV_FLOWS_MIGRATION_REVISION
     )
     assert bases[metadata.NAV_FLOWS_MIGRATION_REVISION] == (

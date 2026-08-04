@@ -146,6 +146,29 @@ from src.screening.offensive.v3.capital.reserves import (
     ReserveReleaseReason,
     ReserveReleaseRequest,
 )
+from src.screening.offensive.v3.capital.risk_snapshot import (
+    BuildRiskSnapshotRequest,
+    CloseRiskSnapshotRequest,
+    RiskSnapshotCloseReceipt,
+    StageLossBudgetActivationRequest,
+    StageLossChargeReceipt,
+    StageLossChargeRequest,
+)
+from src.screening.offensive.v3.capital.risk_snapshot import (
+    activate_stage_loss_budget as _activate_stage_loss_budget,
+)
+from src.screening.offensive.v3.capital.risk_snapshot import (
+    build_capital_risk_snapshot as _build_capital_risk_snapshot,
+)
+from src.screening.offensive.v3.capital.risk_snapshot import (
+    close_risk_snapshot as _close_risk_snapshot,
+)
+from src.screening.offensive.v3.capital.risk_snapshot import (
+    record_stage_loss as _record_stage_loss,
+)
+from src.screening.offensive.v3.capital.risk_snapshot import (
+    recompute_global_stage_loss_floor,
+)
 from src.screening.offensive.v3.capital.rounding import (
     MICROS_PER_CENT,
     fill_gross_cents,
@@ -2107,33 +2130,56 @@ class GatewayTransactionContext:
     def recompute_risk_and_stage_loss(self, as_of: datetime, event_id: str) -> None:
         projection = self._connection.execute(
             self._table("capital_projection").select()
-        ).one()
+        ).first()
+        if projection is None:
+            return
+        # The 10%/15% trading authority operates on the active-epoch
+        # operational baseline (charter item 11 / spec 11.2); the lifetime
+        # drawdown remains performance/disclosure only.
         drawdown = drawdown_ppm(
             int(projection.as_observed_nav_cents),
-            int(projection.lifetime_high_water_mark_cents),
+            int(projection.active_epoch_high_water_mark_cents),
         )
-        halted = drawdown >= DRAWDOWN_HALT_PPM
-        latch_state = RiskLatchState.RISK_HALTED if halted else RiskLatchState.CLEAR
-        reason = (
-            "drawdown reached the 15 percent halt threshold" if halted else None
+        risk_latch_table = self._table("risk_latches")
+        existing_risk = self._connection.execute(
+            risk_latch_table.select().where(
+                risk_latch_table.c.latch_kind == "RISK"
+            )
+        ).first()
+        already_halted = (
+            existing_risk is not None
+            and existing_risk.state == RiskLatchState.RISK_HALTED.value
         )
-        self._connection.execute(
-            sa.text(
-                "INSERT INTO risk_latches (latch_kind, state, reason, set_at,"
-                " set_by_event_id) VALUES ('RISK', :state, :reason, :set_at,"
-                " :event_id)"
-                " ON CONFLICT(latch_kind) DO UPDATE SET"
-                " state = excluded.state, reason = excluded.reason,"
-                " set_at = excluded.set_at,"
-                " set_by_event_id = excluded.set_by_event_id"
-            ),
-            {
-                "state": latch_state.value,
-                "reason": reason,
-                "set_at": utc_iso(as_of),
-                "event_id": event_id,
-            },
-        )
+        # The latch is one-way within the risk epoch: once halted, only a new
+        # governance risk epoch (start_risk_epoch) clears it; NAV recovery in
+        # the same epoch never does.
+        if not already_halted:
+            halted = drawdown >= DRAWDOWN_HALT_PPM
+            latch_state = (
+                RiskLatchState.RISK_HALTED if halted else RiskLatchState.CLEAR
+            )
+            reason = (
+                "active-epoch drawdown reached the 15 percent halt threshold"
+                if halted
+                else None
+            )
+            self._connection.execute(
+                sa.text(
+                    "INSERT INTO risk_latches (latch_kind, state, reason,"
+                    " set_at, set_by_event_id) VALUES ('RISK', :state,"
+                    " :reason, :set_at, :event_id)"
+                    " ON CONFLICT(latch_kind) DO UPDATE SET"
+                    " state = excluded.state, reason = excluded.reason,"
+                    " set_at = excluded.set_at,"
+                    " set_by_event_id = excluded.set_by_event_id"
+                ),
+                {
+                    "state": latch_state.value,
+                    "reason": reason,
+                    "set_at": utc_iso(as_of),
+                    "event_id": event_id,
+                },
+            )
 
         # Reconciliation latch (Task 2 scope): unattributed or plan-violating
         # fills are preserved under sentinel attribution and flag the account
@@ -2176,9 +2222,12 @@ class GatewayTransactionContext:
             },
         )
         # Stage-loss budgets are frozen at activation and consumed in the same
-        # capital transaction as fills/fees/marks/reserves by Task 5's
-        # StageLossEngine. Kernel revision 1 has no frozen budget rows, so the
-        # recompute is a no-op that keeps the hook atomic with the projection.
+        # capital transaction as fills/fees/marks/reserves. The derived
+        # worst-case floor (cumulative fees plus mark-to-market unrealized
+        # loss) lands in the portfolio-global budget because those ledger
+        # facts carry no stage attribution. The floor is a no-op until
+        # governance freezes a global budget row.
+        recompute_global_stage_loss_floor(self, as_of, event_id)
 
     def tombstone_unclaimed_entries_if_versions_changed(self) -> None:
         """Tombstone entry claims that never reached a send claim.
@@ -3025,6 +3074,121 @@ class CapitalRepository:
             context = GatewayTransactionContext(self, conn)
             return context.read_capital_risk_snapshot(as_of)
 
+    # -- Plan 02 Task 5: complete risk snapshot, drawdown latch, stage loss ---
+
+    def build_capital_risk_snapshot(
+        self, request: BuildRiskSnapshotRequest
+    ) -> CapitalRiskSnapshot:
+        """Build the complete DERIVED risk snapshot with fail-closed marks.
+
+        Unlike ``capital_risk_snapshot`` (which is quiet and lenient for
+        audit reads), this builder validates that every open position has a
+        current, authorized, valid mark and refuses to emit a snapshot when
+        any component is unknown or stale. The read is quiet: it never grows
+        the stream or capital version.
+        """
+
+        def operation(context: GatewayTransactionContext) -> CapitalRiskSnapshot:
+            self._stored_binding(context)
+            return _build_capital_risk_snapshot(context, request)
+
+        conn = self._engine.connect()
+        try:
+            context = GatewayTransactionContext(self, conn)
+            return operation(context)
+        finally:
+            conn.close()
+
+    def activate_stage_loss_budget(
+        self, request: StageLossBudgetActivationRequest
+    ) -> CapitalRiskSnapshot:
+        """Freeze one non-replenishable stage-loss budget in integer cents."""
+
+        def operation(context: GatewayTransactionContext) -> CapitalRiskSnapshot:
+            self._stored_binding(context)
+            # A budget gates new entry risk; only an ACTIVE account can have
+            # one frozen. TERMINATING/INSOLVENT drain without new budgets.
+            context.require_lifecycle(frozenset({LifecycleState.ACTIVE}))
+            return _activate_stage_loss_budget(context, request)
+
+        return self._run_write_transaction(operation)
+
+    def record_stage_loss(
+        self, request: StageLossChargeRequest
+    ) -> tuple[StageLossChargeReceipt, CapitalRiskSnapshot]:
+        """Consume one attributed stage-loss charge monotonically."""
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[StageLossChargeReceipt, CapitalRiskSnapshot]:
+            self._stored_binding(context)
+            # Stage-loss measurement continues through drain and insolvency
+            # (exits and reconciliation never stop); only TERMINATED rejects.
+            context.require_lifecycle(
+                frozenset(
+                    {
+                        LifecycleState.ACTIVE,
+                        LifecycleState.TERMINATING,
+                        LifecycleState.INSOLVENT,
+                    }
+                )
+            )
+            return _record_stage_loss(context, request)
+
+        return self._run_write_transaction(operation)
+
+    def close_risk_snapshot(
+        self, request: CloseRiskSnapshotRequest
+    ) -> tuple[RiskSnapshotCloseReceipt, CapitalRiskSnapshot]:
+        """Seal the session snapshot as one append-only RISK_SNAPSHOT record.
+
+        Identical closes converge on the sealed artifact; divergent closes
+        conflict and never overwrite. Sealing is a finalization fact: it
+        records the observed capital/stream versions without growing them.
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[RiskSnapshotCloseReceipt, CapitalRiskSnapshot]:
+            self._stored_binding(context)
+            context.require_lifecycle(
+                frozenset(
+                    {
+                        LifecycleState.ACTIVE,
+                        LifecycleState.TERMINATING,
+                        LifecycleState.INSOLVENT,
+                    }
+                )
+            )
+            return _close_risk_snapshot(context, request)
+
+        return self._run_write_transaction(operation)
+
+    def stage_loss_latches(self) -> tuple[StageLossLatchSnapshot, ...]:
+        """Read the current per-stage loss consumption/latch projection."""
+
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT * FROM stage_loss_state"
+                    " ORDER BY research_program_id, economic_lineage_id,"
+                    " stage_id"
+                )
+            ).all()
+        return tuple(
+            StageLossLatchSnapshot(
+                research_program_id=row.research_program_id,
+                economic_lineage_id=row.economic_lineage_id,
+                stage_id=row.stage_id,
+                stage_loss_budget_id=row.stage_loss_budget_id,
+                frozen_budget_cents=int(row.frozen_budget_cents),
+                consumed_cents=int(row.consumed_cents),
+                stage_loss_version=int(row.stage_loss_version),
+                state=StageLossLatchState(row.state),
+            )
+            for row in rows
+        )
+
     def reserve_entry(self, request: ReserveEntryRequest) -> CapitalRiskSnapshot:
         """Create a LIVE entry reserve consuming available capital."""
 
@@ -3103,6 +3267,11 @@ class CapitalRepository:
                     created_at=now,
                 )
             )
+            # Reserves are risk: latch and stage-loss state update in the
+            # same transaction as the reserve fact.
+            context.recompute_risk_and_stage_loss(
+                request.as_of, f"reserve:{request.source_id}:entry"
+            )
             return context.read_capital_risk_snapshot(request.as_of)
 
         return self._run_write_transaction(operation)
@@ -3175,6 +3344,10 @@ class CapitalRepository:
                         updated_by_event_id=None,
                     )
                 )
+                context.recompute_risk_and_stage_loss(
+                    request.as_of,
+                    f"reserve:{request.source_id}:cancel_requested",
+                )
                 return context.read_capital_risk_snapshot(request.as_of)
 
             # Confirmed terminal reasons release LIVE and CANCEL_PENDING alike.
@@ -3204,6 +3377,10 @@ class CapitalRepository:
                         updated_at=now,
                         updated_by_event_id=None,
                     )
+                )
+                context.recompute_risk_and_stage_loss(
+                    request.as_of,
+                    f"reserve:{request.source_id}:released:{reason.value}",
                 )
                 return context.read_capital_risk_snapshot(request.as_of)
             if state is CapitalReserveState.RELEASED:
@@ -5588,6 +5765,26 @@ class CapitalRepository:
                     value=str(request.risk_epoch),
                     updated_at=utc_iso(request.as_of),
                 )
+            )
+            # The RISK latch is one-way WITHIN an epoch; starting the
+            # successor epoch is the governance recovery act that clears it
+            # against the new audited operational baseline. Stage-loss
+            # consumption/latches are never reset by a risk epoch.
+            context._connection.execute(
+                sa.text(
+                    "INSERT INTO risk_latches (latch_kind, state, reason,"
+                    " set_at, set_by_event_id) VALUES ('RISK', :state,"
+                    " :reason, :set_at, NULL)"
+                    " ON CONFLICT(latch_kind) DO UPDATE SET"
+                    " state = excluded.state, reason = excluded.reason,"
+                    " set_at = excluded.set_at,"
+                    " set_by_event_id = excluded.set_by_event_id"
+                ),
+                {
+                    "state": RiskLatchState.CLEAR.value,
+                    "reason": "risk epoch recovery cleared the halt",
+                    "set_at": utc_iso(request.as_of),
+                },
             )
             snapshot = context.read_capital_risk_snapshot(request.as_of)
             receipt = RiskEpochReceipt(

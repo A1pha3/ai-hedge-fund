@@ -23,7 +23,10 @@ IMMUTABLE_TABLES: tuple[str, ...] = (
     "execution_revisions",
     "nav_observations",
     "risk_epoch_history",
+    "risk_snapshot_seals",
     "session_checkpoints",
+    "stage_loss_budget_activations",
+    "stage_loss_charges",
 )
 
 
@@ -449,6 +452,90 @@ def build_metadata() -> sa.MetaData:
         sa.Column("opened_by_event_id", sa.Text, nullable=False),
         sa.Column("updated_by_event_id", sa.Text, nullable=False),
         sa.Column("updated_at", sa.Text, nullable=False),
+    )
+
+    # -- Plan 02 Task 5: append-only stage-loss and risk-snapshot facts ------
+    #
+    # Stage-loss budgets freeze at activation and are consumed monotonically;
+    # session snapshots seal the complete CapitalRiskSnapshot once per
+    # session. Both are append-only facts (immutability triggers apply); the
+    # mutable ``stage_loss_state`` projection above them is rebuildable from
+    # these rows.
+
+    sa.Table(
+        "stage_loss_budget_activations",
+        meta,
+        sa.Column("stage_loss_budget_id", sa.Text, primary_key=True),
+        sa.Column("idempotency_key", sa.Text, nullable=False, unique=True),
+        sa.Column("research_program_id", sa.Text, nullable=False),
+        sa.Column("economic_lineage_id", sa.Text, nullable=False),
+        sa.Column("stage_id", sa.Text, nullable=False),
+        sa.Column("frozen_budget_cents", sa.BigInteger, nullable=False),
+        sa.Column("source_authority", sa.Text, nullable=False),
+        sa.Column("authorization_reference", sa.Text, nullable=False),
+        sa.Column("activated_at", sa.Text, nullable=False),
+        sa.UniqueConstraint(
+            "research_program_id",
+            "economic_lineage_id",
+            "stage_id",
+            name="uq_stage_loss_budget_identity",
+        ),
+    )
+
+    sa.Table(
+        "stage_loss_charges",
+        meta,
+        sa.Column("stage_loss_charge_id", sa.Text, primary_key=True),
+        sa.Column("idempotency_key", sa.Text, nullable=False, unique=True),
+        sa.Column(
+            "payload_content_fingerprint", sa.Text, nullable=False
+        ),
+        sa.Column("research_program_id", sa.Text, nullable=False),
+        sa.Column("economic_lineage_id", sa.Text, nullable=False),
+        sa.Column("stage_id", sa.Text, nullable=False),
+        sa.Column("source_authority", sa.Text, nullable=False),
+        sa.Column(
+            "realized_market_losses_ex_fees_cents",
+            sa.BigInteger,
+            nullable=False,
+        ),
+        sa.Column("cumulative_fees_and_taxes_cents", sa.BigInteger, nullable=False),
+        sa.Column("marked_unrealized_pnl_cents", sa.BigInteger, nullable=False),
+        sa.Column("unrealized_loss_charge_cents", sa.BigInteger, nullable=False),
+        sa.Column(
+            "incremental_pending_stress_beyond_mark_cents",
+            sa.BigInteger,
+            nullable=False,
+        ),
+        sa.Column("instantaneous_charge_cents", sa.BigInteger, nullable=False),
+        sa.Column("consumed_before_cents", sa.BigInteger, nullable=False),
+        sa.Column("consumed_after_cents", sa.BigInteger, nullable=False),
+        sa.Column("frozen_budget_cents", sa.BigInteger, nullable=False),
+        sa.Column("stage_loss_version_before", sa.BigInteger, nullable=False),
+        sa.Column("stage_loss_version_after", sa.BigInteger, nullable=False),
+        sa.Column("latch_state_after", sa.Text, nullable=False),
+        sa.Column("capital_version_after", sa.BigInteger, nullable=False),
+        sa.Column("recorded_at", sa.Text, nullable=False),
+    )
+
+    sa.Table(
+        "risk_snapshot_seals",
+        meta,
+        sa.Column("risk_snapshot_seal_id", sa.Text, primary_key=True),
+        sa.Column("portfolio_id", sa.Text, nullable=False),
+        sa.Column("session", sa.Text, nullable=False),
+        sa.Column("risk_snapshot_id", sa.Text, nullable=False),
+        sa.Column("capital_version", sa.BigInteger, nullable=False),
+        sa.Column("stream_version", sa.BigInteger, nullable=False),
+        sa.Column("snapshot_content_hash", sa.Text, nullable=False),
+        sa.Column("snapshot_json", sa.Text, nullable=False),
+        sa.Column("entry_scaling_multiplier_ppm", sa.BigInteger, nullable=False),
+        sa.Column("as_of", sa.Text, nullable=False),
+        sa.Column("sealed_at", sa.Text, nullable=False),
+        sa.Column("source_authority", sa.Text, nullable=False),
+        sa.UniqueConstraint(
+            "portfolio_id", "session", name="uq_risk_snapshot_seal_session"
+        ),
     )
 
     return meta
