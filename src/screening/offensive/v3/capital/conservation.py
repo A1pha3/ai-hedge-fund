@@ -146,7 +146,8 @@ def _replay_economic_events(
             " l.direction AS direction,"
             " l.cash_amount_cents AS cash_amount_cents,"
             " l.quantity_units AS quantity_units,"
-            " l.receivable_id AS receivable_id"
+            " l.receivable_id AS receivable_id,"
+            " l.security_id AS security_id"
             " FROM economic_events e"
             " JOIN economic_event_legs l"
             " ON l.economic_event_id = e.economic_event_id"
@@ -169,6 +170,9 @@ def _replay_economic_events(
     basis_by_lot: dict[tuple[str, str], int] = {}
     consumed_basis_total = 0
     receivable_by_id: dict[str, int] = {}
+    share_receivable_by_id: dict[str, int] = {}
+    share_receivable_by_lot: dict[tuple[str, str], int] = {}
+    receivable_origin_dividend: dict[str, bool] = {}
     trade_event_hashes: set[str] = set()
     fee_event_hashes: set[str] = set()
 
@@ -186,92 +190,469 @@ def _replay_economic_events(
                 + int(row.cash_amount_cents)
             )
 
+    def book_cash_receivable(
+        receivable_id: str, amount: int, *, income: bool
+    ) -> None:
+        nonlocal dividend_income
+        if receivable_id in receivable_by_id:
+            _fail("receivable credited twice", receivable_id=receivable_id)
+        receivable_by_id[receivable_id] = amount
+        receivable_origin_dividend[receivable_id] = income
+        if income:
+            dividend_income += amount
+
+    def settle_cash_receivable(
+        receivable_id: str, amount: int, *, reverse_income: bool
+    ) -> None:
+        nonlocal dividend_income
+        outstanding = receivable_by_id.get(receivable_id)
+        if outstanding is None:
+            _fail(
+                "receivable debit against unknown receivable",
+                receivable_id=receivable_id,
+            )
+        if outstanding != amount:
+            _fail(
+                "receivable settlement amount mismatch",
+                receivable_id=receivable_id,
+            )
+        del receivable_by_id[receivable_id]
+        was_dividend = receivable_origin_dividend.pop(receivable_id, False)
+        if reverse_income and was_dividend:
+            dividend_income -= amount
+
+    def book_share_receivable(
+        key: tuple[str, str], receivable_id: str, quantity: int
+    ) -> None:
+        if receivable_id in share_receivable_by_id:
+            _fail(
+                "share receivable credited twice",
+                receivable_id=receivable_id,
+            )
+        share_receivable_by_id[receivable_id] = quantity
+        share_receivable_by_lot[key] = (
+            share_receivable_by_lot.get(key, 0) + quantity
+        )
+
+    def settle_share_receivable(
+        key: tuple[str, str], receivable_id: str, quantity: int
+    ) -> None:
+        outstanding = share_receivable_by_id.get(receivable_id)
+        if outstanding is None:
+            _fail(
+                "share receivable debit against unknown receivable",
+                receivable_id=receivable_id,
+            )
+        if outstanding != quantity:
+            _fail(
+                "share receivable settlement quantity mismatch",
+                receivable_id=receivable_id,
+            )
+        del share_receivable_by_id[receivable_id]
+        share_receivable_by_lot[key] = (
+            share_receivable_by_lot.get(key, 0) - quantity
+        )
+
+    def consume_basis_for_lot(key: tuple[str, str], full: bool) -> None:
+        """Consume lot basis: whole-lot takes the exact remainder."""
+
+        nonlocal consumed_basis_total
+        basis_before = basis_by_lot.get(key, 0)
+        if full:
+            consumed = basis_before
+        else:
+            consumed = basis_before  # pragma: no cover - callers use full
+        basis_by_lot[key] = basis_before - consumed
+        consumed_basis_total += consumed
+
+    # Plan 02 Task 4: corporate action replay is event-shaped, because
+    # conversion shapes, correction origin inheritance, and whole-lot
+    # sweeps are event-level invariants.
+    events: list[dict[str, object]] = []
     for row in rows:
-        event_kind = EconomicEventKind(row.event_kind)
-        asset_kind = EconomicAssetKind(row.asset_kind)
-        if asset_kind is EconomicAssetKind.VALUATION_MARK:
+        if not events or events[-1]["stream_version"] != row.stream_version:
+            events.append(
+                {
+                    "stream_version": row.stream_version,
+                    "event_kind": row.event_kind,
+                    "lineage": row.position_lineage_id,
+                    "lot": row.economic_lot_id,
+                    "hash": row.payload_content_hash,
+                    "legs": [],
+                }
+            )
+        events[-1]["legs"].append(row)  # type: ignore[union-attr]
+
+    for event in events:
+        event_kind = EconomicEventKind(event["event_kind"])  # type: ignore[arg-type]
+        event_legs = event["legs"]  # type: ignore[assignment]
+        key = (event["lineage"], event["lot"])  # type: ignore[assignment]
+
+        if event_kind is EconomicEventKind.VALUATION:
             # Mark-only legs carry no direction and move no cash, shares,
             # or receivables: conservation ignores them (NAV consistency is
             # verified against the observation path instead).
             continue
-        direction = EconomicLegDirection(row.direction)
 
-        if asset_kind is EconomicAssetKind.CASH:
-            amount = int(row.cash_amount_cents)
-            if direction is EconomicLegDirection.CREDIT:
-                cash_credit_total += amount
-            else:
-                cash_debit_total += amount
-            if event_kind is EconomicEventKind.TRADE_EXECUTED:
-                key = (row.position_lineage_id, row.economic_lot_id)
-                if direction is EconomicLegDirection.DEBIT:
-                    entry_gross += amount
-                else:
-                    exit_gross += amount
-                trade_event_hashes.add(row.payload_content_hash)
-            elif event_kind is EconomicEventKind.FEE_CHARGED:
-                if direction is not EconomicLegDirection.DEBIT:
-                    _fail(
-                        "fee event cash leg must be a debit",
-                        stream_version=row.stream_version,
-                    )
-                fee_total += amount
-                fee_event_hashes.add(row.payload_content_hash)
+        for row in event_legs:
+            if EconomicAssetKind(row.asset_kind) is EconomicAssetKind.COST_BASIS:
+                _fail(
+                    "COST_BASIS legs remain fail-closed in conservation",
+                    stream_version=event["stream_version"],
+                )
 
-        elif asset_kind is EconomicAssetKind.SECURITY:
-            key = (row.position_lineage_id, row.economic_lot_id)
-            quantity = int(row.quantity_units)
-            if direction is EconomicLegDirection.CREDIT:
-                quantity_by_lot[key] = quantity_by_lot.get(key, 0) + quantity
-                if event_kind is EconomicEventKind.TRADE_EXECUTED:
-                    # Entry gross cash becomes cost basis (one fact, one
-                    # event: the cash debit of the same event).
-                    gross = trade_cash_debit_by_version.get(row.stream_version, 0)
-                    basis_by_lot[key] = basis_by_lot.get(key, 0) + gross
-            else:
-                before = quantity_by_lot.get(key, 0)
-                if quantity > before:
-                    _fail(
-                        "security debit exceeds replayed position quantity",
-                        position_lineage_id=key[0],
-                        economic_lot_id=key[1],
-                    )
-                quantity_by_lot[key] = before - quantity
-                if event_kind is EconomicEventKind.TRADE_EXECUTED:
-                    basis_before = basis_by_lot.get(key, 0)
-                    if quantity == before:
-                        consumed = basis_before
-                    else:
-                        consumed = round_half_even_div(
-                            basis_before * quantity, before
+        if event_kind is EconomicEventKind.LATE_CORRECTION:
+            cash_debit_ids = [
+                row.receivable_id
+                for row in event_legs
+                if EconomicAssetKind(row.asset_kind)
+                is EconomicAssetKind.CASH_RECEIVABLE
+                and EconomicLegDirection(row.direction)
+                is EconomicLegDirection.DEBIT
+            ]
+            inherited = bool(cash_debit_ids) and all(
+                receivable_origin_dividend.get(receivable_id, False)
+                for receivable_id in cash_debit_ids
+            )
+            for row in event_legs:
+                asset_kind = EconomicAssetKind(row.asset_kind)
+                direction = EconomicLegDirection(row.direction)
+                if asset_kind is EconomicAssetKind.CASH_RECEIVABLE:
+                    amount = int(row.cash_amount_cents)
+                    if direction is EconomicLegDirection.CREDIT:
+                        book_cash_receivable(
+                            row.receivable_id, amount, income=inherited
                         )
-                    basis_by_lot[key] = basis_before - consumed
-                    consumed_basis_total += consumed
+                    else:
+                        settle_cash_receivable(
+                            row.receivable_id, amount, reverse_income=True
+                        )
+                elif asset_kind is EconomicAssetKind.SHARE_RECEIVABLE:
+                    quantity = int(row.quantity_units)
+                    if direction is EconomicLegDirection.CREDIT:
+                        book_share_receivable(key, row.receivable_id, quantity)
+                    else:
+                        settle_share_receivable(
+                            key, row.receivable_id, quantity
+                        )
+                else:
+                    _fail(
+                        "corporate action corrections are limited to"
+                        " receivable deltas",
+                        stream_version=event["stream_version"],
+                        asset_kind=row.asset_kind,
+                    )
+            continue
 
-        elif asset_kind is EconomicAssetKind.CASH_RECEIVABLE:
-            amount = int(row.cash_amount_cents)
-            if direction is EconomicLegDirection.CREDIT:
-                if row.receivable_id in receivable_by_id:
+        if event_kind is EconomicEventKind.SECURITY_CONVERTED:
+            security_legs = [
+                row
+                for row in event_legs
+                if EconomicAssetKind(row.asset_kind)
+                is EconomicAssetKind.SECURITY
+            ]
+            security_debits = [
+                row
+                for row in security_legs
+                if EconomicLegDirection(row.direction)
+                is EconomicLegDirection.DEBIT
+            ]
+            security_credits = [
+                row
+                for row in security_legs
+                if EconomicLegDirection(row.direction)
+                is EconomicLegDirection.CREDIT
+            ]
+            share_debits = [
+                row
+                for row in event_legs
+                if EconomicAssetKind(row.asset_kind)
+                is EconomicAssetKind.SHARE_RECEIVABLE
+                and EconomicLegDirection(row.direction)
+                is EconomicLegDirection.DEBIT
+            ]
+            share_credits = [
+                row
+                for row in event_legs
+                if EconomicAssetKind(row.asset_kind)
+                is EconomicAssetKind.SHARE_RECEIVABLE
+                and EconomicLegDirection(row.direction)
+                is EconomicLegDirection.CREDIT
+            ]
+            representation_change = (
+                len(security_debits) == 1
+                and len(security_credits) == 1
+                and security_debits[0].security_id
+                == security_credits[0].security_id
+                and int(security_debits[0].quantity_units)
+                == int(security_credits[0].quantity_units)
+                and bool(share_debits)
+                and not share_credits
+            )
+            if representation_change:
+                quantity = int(security_debits[0].quantity_units)
+                share_debit_total = sum(
+                    int(row.quantity_units) for row in share_debits
+                )
+                if share_debit_total != quantity:
                     _fail(
-                        "receivable credited twice",
-                        receivable_id=row.receivable_id,
+                        "tradable-date conversion legs do not balance",
+                        stream_version=event["stream_version"],
                     )
-                receivable_by_id[row.receivable_id] = amount
-                if event_kind is EconomicEventKind.DIVIDEND_RECEIVABLE:
-                    dividend_income += amount
-            else:
-                outstanding = receivable_by_id.get(row.receivable_id)
-                if outstanding is None:
+                for row in share_debits:
+                    settle_share_receivable(
+                        key, row.receivable_id, int(row.quantity_units)
+                    )
+                    # Vested receivable shares become settled tradable
+                    # quantity; the same-security pair is a representation
+                    # change only and nets to zero settled shares.
+                    quantity_by_lot[key] = (
+                        quantity_by_lot.get(key, 0) + int(row.quantity_units)
+                    )
+                continue
+            # Whole-lot conversion: the security debits sweep the whole
+            # economic holding (settled shares plus vested receivable
+            # shares), the share debits settle every outstanding share
+            # receivable row, and the single destination credit carries
+            # the lot forward. Conversions preserve the aggregate cost
+            # basis: the lot identity and its basis move through to the
+            # successor untouched.
+            settled_before = quantity_by_lot.get(key, 0)
+            receivable_before = share_receivable_by_lot.get(key, 0)
+            security_debit_total = sum(
+                int(row.quantity_units) for row in security_debits
+            )
+            if security_debit_total != settled_before + receivable_before:
+                _fail(
+                    "conversion must sweep the whole economic holding",
+                    position_lineage_id=key[0],
+                    economic_lot_id=key[1],
+                    replayed_settled_units=settled_before,
+                    replayed_receivable_units=receivable_before,
+                    debited_units=security_debit_total,
+                )
+            share_debit_total = 0
+            for row in share_debits:
+                settle_share_receivable(
+                    key, row.receivable_id, int(row.quantity_units)
+                )
+                share_debit_total += int(row.quantity_units)
+            if share_debit_total != receivable_before:
+                _fail(
+                    "conversion must settle every outstanding share"
+                    " receivable of the lot",
+                    position_lineage_id=key[0],
+                    economic_lot_id=key[1],
+                    replayed_receivable_units=receivable_before,
+                    settled_units=share_debit_total,
+                )
+            quantity_by_lot[key] = 0
+            for row in security_credits:
+                quantity_by_lot[key] = quantity_by_lot.get(key, 0) + int(
+                    row.quantity_units
+                )
+            for row in share_credits:
+                book_share_receivable(
+                    key, row.receivable_id, int(row.quantity_units)
+                )
+            continue
+
+        if event_kind in (EconomicEventKind.SPLIT, EconomicEventKind.MERGE):
+            for row in event_legs:
+                asset_kind = EconomicAssetKind(row.asset_kind)
+                if asset_kind is not EconomicAssetKind.SECURITY:
                     _fail(
-                        "receivable debit against unknown receivable",
-                        receivable_id=row.receivable_id,
+                        "split/merge events carry security legs only",
+                        stream_version=event["stream_version"],
                     )
-                if outstanding != amount:
+                quantity = int(row.quantity_units)
+                if EconomicLegDirection(row.direction) is (
+                    EconomicLegDirection.CREDIT
+                ):
+                    quantity_by_lot[key] = (
+                        quantity_by_lot.get(key, 0) + quantity
+                    )
+                else:
+                    before = quantity_by_lot.get(key, 0)
+                    if quantity > before:
+                        _fail(
+                            "security debit exceeds replayed position"
+                            " quantity",
+                            position_lineage_id=key[0],
+                            economic_lot_id=key[1],
+                        )
+                    # Splits/merges preserve the aggregate basis exactly.
+                    quantity_by_lot[key] = before - quantity
+            continue
+
+        if event_kind in (
+            EconomicEventKind.CORPORATE_CASH_SETTLED,
+            EconomicEventKind.LEGAL_WRITE_OFF,
+        ):
+            cash_settled = (
+                event_kind is EconomicEventKind.CORPORATE_CASH_SETTLED
+            )
+            security_debit_total = 0
+            for row in event_legs:
+                asset_kind = EconomicAssetKind(row.asset_kind)
+                direction = EconomicLegDirection(row.direction)
+                if asset_kind is EconomicAssetKind.SECURITY:
+                    if direction is not EconomicLegDirection.DEBIT:
+                        _fail(
+                            "terminal corporate action security legs must be"
+                            " debits",
+                            stream_version=event["stream_version"],
+                        )
+                    security_debit_total += int(row.quantity_units)
+                elif asset_kind is EconomicAssetKind.SHARE_RECEIVABLE:
+                    if direction is not EconomicLegDirection.DEBIT:
+                        _fail(
+                            "terminal corporate action share receivable legs"
+                            " must be debits",
+                            stream_version=event["stream_version"],
+                        )
+                    settle_share_receivable(
+                        key, row.receivable_id, int(row.quantity_units)
+                    )
+                elif asset_kind is EconomicAssetKind.CASH_RECEIVABLE:
+                    if direction is not EconomicLegDirection.DEBIT:
+                        _fail(
+                            "terminal corporate action receivable legs must"
+                            " be debits",
+                            stream_version=event["stream_version"],
+                        )
+                    # The swept receivable never pays as its own cash leg:
+                    # a cash settlement folds it into the proceeds and a
+                    # write-off loses it outright. Both reverse the income
+                    # accrued at the ex date, so the proceeds (or the loss)
+                    # carry the whole economic result exactly once.
+                    settle_cash_receivable(
+                        row.receivable_id,
+                        int(row.cash_amount_cents),
+                        reverse_income=True,
+                    )
+                elif asset_kind is EconomicAssetKind.CASH:
+                    if direction is not EconomicLegDirection.CREDIT:
+                        _fail(
+                            "terminal corporate action cash legs must be"
+                            " credits",
+                            stream_version=event["stream_version"],
+                        )
+                    if not cash_settled:
+                        _fail(
+                            "legal write-off cannot move cash",
+                            stream_version=event["stream_version"],
+                        )
+                    amount = int(row.cash_amount_cents)
+                    cash_credit_total += amount
+                    # Terminal disposal proceeds are realized results.
+                    exit_gross += amount
+                else:  # pragma: no cover - matrix is closed
                     _fail(
-                        "receivable settlement amount mismatch",
-                        receivable_id=row.receivable_id,
+                        "unsupported terminal corporate action leg",
+                        asset_kind=row.asset_kind,
                     )
-                del receivable_by_id[row.receivable_id]
+            before = quantity_by_lot.get(key, 0)
+            if security_debit_total != before:
+                _fail(
+                    "terminal corporate action must sweep the whole lot",
+                    position_lineage_id=key[0],
+                    economic_lot_id=key[1],
+                    replayed_units=before,
+                    debited_units=security_debit_total,
+                )
+            quantity_by_lot[key] = 0
+            consume_basis_for_lot(key, full=True)
+            continue
+
+        for row in event_legs:
+            asset_kind = EconomicAssetKind(row.asset_kind)
+            if asset_kind is EconomicAssetKind.VALUATION_MARK:
+                continue
+            direction = EconomicLegDirection(row.direction)
+
+            if asset_kind is EconomicAssetKind.CASH:
+                amount = int(row.cash_amount_cents)
+                if direction is EconomicLegDirection.CREDIT:
+                    cash_credit_total += amount
+                else:
+                    cash_debit_total += amount
+                if event_kind is EconomicEventKind.TRADE_EXECUTED:
+                    if direction is EconomicLegDirection.DEBIT:
+                        entry_gross += amount
+                    else:
+                        exit_gross += amount
+                    trade_event_hashes.add(event["hash"])  # type: ignore[arg-type]
+                elif event_kind is EconomicEventKind.FEE_CHARGED:
+                    if direction is not EconomicLegDirection.DEBIT:
+                        _fail(
+                            "fee event cash leg must be a debit",
+                            stream_version=event["stream_version"],
+                        )
+                    fee_total += amount
+                    fee_event_hashes.add(event["hash"])  # type: ignore[arg-type]
+
+            elif asset_kind is EconomicAssetKind.SECURITY:
+                quantity = int(row.quantity_units)
+                if direction is EconomicLegDirection.CREDIT:
+                    quantity_by_lot[key] = (
+                        quantity_by_lot.get(key, 0) + quantity
+                    )
+                    if event_kind is EconomicEventKind.TRADE_EXECUTED:
+                        # Entry gross cash becomes cost basis (one fact, one
+                        # event: the cash debit of the same event).
+                        gross = trade_cash_debit_by_version.get(
+                            event["stream_version"], 0  # type: ignore[arg-type]
+                        )
+                        basis_by_lot[key] = basis_by_lot.get(key, 0) + gross
+                else:
+                    before = quantity_by_lot.get(key, 0)
+                    if quantity > before:
+                        _fail(
+                            "security debit exceeds replayed position"
+                            " quantity",
+                            position_lineage_id=key[0],
+                            economic_lot_id=key[1],
+                        )
+                    quantity_by_lot[key] = before - quantity
+                    if event_kind is EconomicEventKind.TRADE_EXECUTED:
+                        basis_before = basis_by_lot.get(key, 0)
+                        if quantity == before:
+                            consumed = basis_before
+                        else:
+                            consumed = round_half_even_div(
+                                basis_before * quantity, before
+                            )
+                        basis_by_lot[key] = basis_before - consumed
+                        consumed_basis_total += consumed
+
+            elif asset_kind is EconomicAssetKind.CASH_RECEIVABLE:
+                amount = int(row.cash_amount_cents)
+                if direction is EconomicLegDirection.CREDIT:
+                    book_cash_receivable(
+                        row.receivable_id,
+                        amount,
+                        income=(
+                            event_kind
+                            is EconomicEventKind.DIVIDEND_RECEIVABLE
+                        ),
+                    )
+                else:
+                    # Payment of a booked entitlement is an asset swap: the
+                    # income was recognized at the ex date and is never
+                    # reversed by settlement.
+                    settle_cash_receivable(
+                        row.receivable_id, amount, reverse_income=False
+                    )
+
+            elif asset_kind is EconomicAssetKind.SHARE_RECEIVABLE:
+                quantity = int(row.quantity_units)
+                if direction is EconomicLegDirection.CREDIT:
+                    book_share_receivable(key, row.receivable_id, quantity)
+                else:
+                    settle_share_receivable(
+                        key, row.receivable_id, quantity
+                    )
 
     return {
         "cash_delta": cash_credit_total - cash_debit_total,
@@ -283,6 +664,8 @@ def _replay_economic_events(
         "basis_by_lot": basis_by_lot,
         "consumed_basis_total": consumed_basis_total,
         "receivable_by_id": receivable_by_id,
+        "share_receivable_by_id": share_receivable_by_id,
+        "share_receivable_by_lot": share_receivable_by_lot,
         "trade_event_hashes": trade_event_hashes,
         "fee_event_hashes": fee_event_hashes,
     }
@@ -618,6 +1001,8 @@ def verify_conservation(
     quantity_by_lot = economic["quantity_by_lot"]
     basis_by_lot = economic["basis_by_lot"]
     receivable_by_id = economic["receivable_by_id"]
+    share_receivable_by_id = economic["share_receivable_by_id"]
+    share_receivable_by_lot = economic["share_receivable_by_lot"]
 
     # -- stored projections ------------------------------------------------------
 
@@ -771,6 +1156,18 @@ def verify_conservation(
                 position_lineage_id=key[0],
                 economic_lot_id=key[1],
             )
+        expected_share_receivable = share_receivable_by_lot.get(key, 0)
+        if (
+            int(row.share_receivable_quantity_units)
+            != expected_share_receivable
+        ):
+            _fail(
+                "share receivable quantity drifted from event history",
+                position_lineage_id=key[0],
+                economic_lot_id=key[1],
+                stored_units=int(row.share_receivable_quantity_units),
+                recomputed_units=expected_share_receivable,
+            )
         expected_basis = basis_by_lot.get(key, 0)
         if int(row.cost_basis_cents) != expected_basis:
             _fail(
@@ -780,20 +1177,35 @@ def verify_conservation(
                 stored_cents=int(row.cost_basis_cents),
                 recomputed_cents=expected_basis,
             )
-        if expected_quantity == 0 and row.state not in ("CLOSED", "LEGAL_TERMINAL"):
+        # A lot is live while it holds settled OR vested-not-yet-tradable
+        # shares (a restricted successor keeps the economic obligation).
+        total_held = expected_quantity + expected_share_receivable
+        if total_held == 0 and row.state not in ("CLOSED", "LEGAL_TERMINAL"):
             _fail("flat position must be terminal", position=key, state=row.state)
-        if expected_quantity > 0 and row.state not in ("OPEN", "EXIT_PENDING"):
+        if total_held > 0 and row.state not in ("OPEN", "EXIT_PENDING"):
             _fail("open position must be live", position=key, state=row.state)
     for key, quantity in quantity_by_lot.items():
-        if quantity > 0 and key not in stored_lots:
+        share_quantity = share_receivable_by_lot.get(key, 0)
+        if (quantity > 0 or share_quantity > 0) and key not in stored_lots:
+            _fail("replayed position missing its projection row", position=key)
+    for key, share_quantity in share_receivable_by_lot.items():
+        if share_quantity > 0 and key not in stored_lots:
             _fail("replayed position missing its projection row", position=key)
 
     receivable_rows = connection.execute(
         sa.text("SELECT * FROM receivables")
     ).all()
+    cash_receivable_rows = [
+        row for row in receivable_rows if row.receivable_kind == "CASH"
+    ]
+    share_receivable_rows = [
+        row for row in receivable_rows if row.receivable_kind == "SHARE"
+    ]
     recomputed_outstanding = sum(receivable_by_id.values())
     stored_outstanding = sum(
-        int(row.amount_cents) for row in receivable_rows if int(row.settled) == 0
+        int(row.amount_cents)
+        for row in cash_receivable_rows
+        if int(row.settled) == 0
     )
     if recomputed_outstanding != stored_outstanding:
         _fail(
@@ -801,7 +1213,7 @@ def verify_conservation(
             recomputed_cents=recomputed_outstanding,
             stored_cents=stored_outstanding,
         )
-    for row in receivable_rows:
+    for row in cash_receivable_rows:
         if int(row.settled) == 0:
             expected = receivable_by_id.get(row.receivable_id)
             if expected is None or int(row.amount_cents) != expected:
@@ -809,6 +1221,21 @@ def verify_conservation(
                     "outstanding receivable drifted from event history",
                     receivable_id=row.receivable_id,
                 )
+    for row in share_receivable_rows:
+        if int(row.settled) == 0:
+            expected = share_receivable_by_id.get(row.receivable_id)
+            if expected is None or int(row.quantity_units) != expected:
+                _fail(
+                    "outstanding share receivable drifted from event history",
+                    receivable_id=row.receivable_id,
+                )
+    outstanding_share_ids = {
+        row.receivable_id
+        for row in share_receivable_rows
+        if int(row.settled) == 0
+    }
+    if outstanding_share_ids != set(share_receivable_by_id):
+        _fail("share receivable projection drifted from event history")
 
     # Fee registry linkage: every fee event must have exactly one registry
     # row and every fill row must link back to a trade event.

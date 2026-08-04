@@ -23,6 +23,7 @@ EXPECTED_TABLES = frozenset(
         "account_capital_truth",
         "capital_flow_events",
         "capital_projection",
+        "corporate_actions",
         "economic_event_legs",
         "economic_events",
         "entry_tombstones",
@@ -114,6 +115,13 @@ INTEGER_QUANTA_COLUMNS = {
     ("payables", "amount_cents"),
     ("stage_loss_state", "frozen_budget_cents"),
     ("stage_loss_state", "consumed_cents"),
+    ("corporate_actions", "revision"),
+    ("corporate_actions", "entitlement_numerator"),
+    ("corporate_actions", "entitlement_denominator"),
+    ("corporate_actions", "fractional_remainder_numerator"),
+    ("corporate_actions", "fractional_remainder_denominator"),
+    ("corporate_actions", "cash_in_lieu_cents"),
+    ("corporate_actions", "successor_quantity_units"),
 }
 
 
@@ -273,7 +281,7 @@ def test_schema_version_is_exact_and_persisted(
     repository: CapitalRepository,
 ) -> None:
     assert metadata.SCHEMA_MAJOR == 2
-    assert metadata.LEDGER_SCHEMA_VERSION == 2
+    assert metadata.LEDGER_SCHEMA_VERSION == 3
     assert repository.schema_version() == metadata.LEDGER_SCHEMA_VERSION
     with repository.engine.connect() as conn:
         stored = conn.execute(
@@ -435,10 +443,13 @@ def test_alembic_layout_chains_the_ledger_revisions() -> None:
     config.set_main_option("script_location", str(migrations))
     script = ScriptDirectory.from_config(config)
     revisions = list(script.walk_revisions())
-    assert len(revisions) == 2
+    assert len(revisions) == 3
     assert script.get_current_head() == metadata.CURRENT_MIGRATION_REVISION
     bases = {revision.revision: revision.down_revision for revision in revisions}
     assert bases[metadata.CURRENT_MIGRATION_REVISION] == (
+        metadata.NAV_FLOWS_MIGRATION_REVISION
+    )
+    assert bases[metadata.NAV_FLOWS_MIGRATION_REVISION] == (
         metadata.INITIAL_MIGRATION_REVISION
     )
     assert bases[metadata.INITIAL_MIGRATION_REVISION] is None

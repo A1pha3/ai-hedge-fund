@@ -41,6 +41,45 @@ from src.screening.offensive.v3.capital.conservation import (
     ConservationReport,
     verify_conservation,
 )
+from src.screening.offensive.v3.capital.corporate_actions import (
+    ENTITLEMENT_KINDS,
+    SOURCE_AUTHORITY_RANK,
+    CashInLieuReceipt,
+    CashInLieuRequest,
+    ConversionDestination,
+    ConversionReceipt,
+    ConversionRequest,
+    CorporateActionFact,
+    CorporateActionKind,
+    CorporateActionRecord,
+    CorporateActionState,
+    EntitlementReceipt,
+    EntitlementRequest,
+    SharesTradableReceipt,
+    SharesTradableRequest,
+    SourceAuthorityTier,
+    SplitMergeReceipt,
+    SplitMergeRequest,
+    TerminalCashReceipt,
+    TerminalCashRequest,
+    WriteOffReceipt,
+    WriteOffRequest,
+    cash_in_lieu_receivable_id,
+    cash_receivable_id,
+    conversion_idempotency_key,
+    entitlement_idempotency_key,
+    exact_entitlement_cents,
+    exact_quantity,
+    lowest_terms,
+    settlement_idempotency_key,
+    share_receivable_id,
+    split_entitlement,
+    split_merge_idempotency_key,
+    successor_share_receivable_id,
+    terminal_cash_idempotency_key,
+    tradable_idempotency_key,
+    write_off_idempotency_key,
+)
 from src.screening.offensive.v3.capital.fees import (
     FeePolicy,
     compute_fee_components,
@@ -130,6 +169,7 @@ from src.screening.offensive.v3.contracts import (
     ExposureScope,
     content_hash,
     PositionState,
+    RationalQuantity,
     ReconciliationLatchState,
     RiskExposureBucket,
     RiskLatchState,
@@ -212,9 +252,23 @@ class CapitalCommandPayload(CanonicalModel):
     research_program_id: NonEmptyStr | None = None
     economic_lineage_id: NonEmptyStr | None = None
     stage_id: NonEmptyStr | None = None
+    # Plan 02 Task 4: the action-level corporate fact context (entitlement
+    # rationals, authority tier, recorded inputs) persisted with the event.
+    corporate_action: CorporateActionFact | None = None
 
     @model_validator(mode="after")
     def validate_security_attribution(self) -> "CapitalCommandPayload":
+        if any(
+            leg.asset_kind is EconomicAssetKind.SHARE_RECEIVABLE
+            for leg in self.legs
+        ):
+            if (
+                self.position_lineage_id is None
+                or self.economic_lot_id is None
+            ):
+                raise ValueError(
+                    "share receivable legs require an economic lot identity"
+                )
         if not any(
             leg.asset_kind is EconomicAssetKind.SECURITY for leg in self.legs
         ):
@@ -247,6 +301,33 @@ class CapitalCommand(CanonicalModel):
 
 
 ProjectorHook: TypeAlias = Callable[["GatewayTransactionContext"], None]
+
+
+# Event kinds whose legs are projected by the Plan 02 Task 4 corporate
+# action rules instead of the trade/fee loop. DIVIDEND_RECEIVABLE and
+# DIVIDEND_CASH_SETTLED keep the generic receivable/cash projection, and
+# SHARE_RECEIVABLE bookings use the generic loop with a dedicated leg
+# handler (the projection difference lives in the share bucket only).
+_CORPORATE_PROJECTION_KINDS = frozenset(
+    {
+        EconomicEventKind.SPLIT,
+        EconomicEventKind.MERGE,
+        EconomicEventKind.SECURITY_CONVERTED,
+        EconomicEventKind.CORPORATE_CASH_SETTLED,
+        EconomicEventKind.LEGAL_WRITE_OFF,
+        EconomicEventKind.LATE_CORRECTION,
+    }
+)
+
+
+class _SentinelType:
+    """Distinguishes 'argument omitted' from an explicit None."""
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid only
+        return "<unset>"
+
+
+_SENTINEL_UNSET = _SentinelType()
 
 
 class GatewayTransactionContext:
@@ -464,6 +545,13 @@ class GatewayTransactionContext:
             self._apply_valuation_event(event, command)
             return
 
+        if event.event_kind in _CORPORATE_PROJECTION_KINDS:
+            # Splits, conversions, terminal settlements, write-offs and
+            # their corrections own dedicated projection rules (Plan 02
+            # Task 4): trade state-machine and basis rules never apply.
+            self._apply_corporate_action_event(event, command)
+            return
+
         projection_table = self._table("capital_projection")
         projection = self._connection.execute(projection_table.select()).one()
         available_cash_cents = int(projection.available_cash_cents)
@@ -479,6 +567,18 @@ class GatewayTransactionContext:
                 self._apply_security_leg(event, command, leg)
             elif leg.asset_kind is EconomicAssetKind.CASH_RECEIVABLE:
                 self._apply_cash_receivable_leg(event, leg)
+            elif leg.asset_kind is EconomicAssetKind.SHARE_RECEIVABLE:
+                # Ex-date bonus/transfer entitlements book vested but not
+                # yet tradable shares (Plan 02 Task 4); every other event
+                # kind routes share receivable legs through the corporate
+                # action projection instead.
+                if event.event_kind is not EconomicEventKind.SHARE_RECEIVABLE:
+                    raise CapitalConflict(
+                        "projection_rejected",
+                        "share receivable legs require a SHARE_RECEIVABLE event",
+                        economic_event_id=event.economic_event_id,
+                    )
+                self._apply_share_receivable_leg(event, leg)
             else:
                 raise CapitalConflict(
                     "projection_rejected",
@@ -729,6 +829,725 @@ class GatewayTransactionContext:
                 updated_at=now,
             )
         )
+
+    # -- Plan 02 Task 4: corporate action projection --------------------------
+
+    def corporate_action_row(
+        self, action_id: str, position_lineage_id: str, economic_lot_id: str
+    ) -> Any | None:
+        table = self._table("corporate_actions")
+        return self._connection.execute(
+            table.select().where(
+                sa.and_(
+                    table.c.action_id == action_id,
+                    table.c.position_lineage_id == position_lineage_id,
+                    table.c.economic_lot_id == economic_lot_id,
+                )
+            )
+        ).first()
+
+    def position_row(self, position_lineage_id: str, economic_lot_id: str) -> Any | None:
+        table = self._table("positions")
+        return self._connection.execute(
+            table.select().where(
+                sa.and_(
+                    table.c.position_lineage_id == position_lineage_id,
+                    table.c.economic_lot_id == economic_lot_id,
+                )
+            )
+        ).first()
+
+    def receivable_row(self, receivable_id: str) -> Any | None:
+        table = self._table("receivables")
+        return self._connection.execute(
+            table.select().where(table.c.receivable_id == receivable_id)
+        ).first()
+
+    def unsettled_share_receivable_rows(
+        self, position_lineage_id: str
+    ) -> tuple[Any, ...]:
+        return tuple(
+            self._connection.execute(
+                sa.text(
+                    "SELECT * FROM receivables"
+                    " WHERE receivable_kind = 'SHARE' AND settled = 0"
+                    " AND position_lineage_id = :lineage"
+                    " ORDER BY receivable_id"
+                ),
+                {"lineage": position_lineage_id},
+            ).all()
+        )
+
+    def _book_share_receivable_row(
+        self, event: EconomicEvent, receivable_id: str, security_id: str, quantity: int
+    ) -> None:
+        if self.receivable_row(receivable_id) is not None:
+            raise CapitalConflict(
+                "projection_rejected",
+                "share receivable already exists",
+                receivable_id=receivable_id,
+            )
+        self._connection.execute(
+            self._table("receivables").insert().values(
+                receivable_id=receivable_id,
+                receivable_kind="SHARE",
+                security_id=security_id,
+                position_lineage_id=event.position_lineage_id,
+                amount_cents=None,
+                quantity_units=quantity,
+                settled=0,
+                created_by_event_id=event.economic_event_id,
+                settled_by_event_id=None,
+                updated_at=utc_iso(event.recorded_at),
+            )
+        )
+
+    def _settle_share_receivable_row(
+        self, event: EconomicEvent, receivable_id: str, quantity: int
+    ) -> None:
+        row = self.receivable_row(receivable_id)
+        if row is None:
+            raise CapitalConflict(
+                "projection_rejected",
+                "share receivable debit against unknown receivable",
+                receivable_id=receivable_id,
+            )
+        if int(row.settled) != 0:
+            raise CapitalConflict(
+                "projection_rejected",
+                "share receivable already settled",
+                receivable_id=receivable_id,
+            )
+        if int(row.quantity_units) != quantity:
+            raise CapitalConflict(
+                "projection_rejected",
+                "share receivable settlement quantity mismatch",
+                receivable_id=receivable_id,
+                expected_units=int(row.quantity_units),
+                requested_units=quantity,
+            )
+        self._connection.execute(
+            self._table("receivables").update()
+            .where(self._table("receivables").c.receivable_id == receivable_id)
+            .values(
+                settled=1,
+                settled_by_event_id=event.economic_event_id,
+                updated_at=utc_iso(event.recorded_at),
+            )
+        )
+
+    def _adjust_position_share_buckets(
+        self,
+        event: EconomicEvent,
+        *,
+        settled_delta: int = 0,
+        tradable_delta: int = 0,
+        share_receivable_delta: int = 0,
+    ) -> Any:
+        """Apply share-bucket deltas to the lot row, never clamping.
+
+        Impossible negative states are preserved for reconciliation (they
+        fail closed here instead of being hidden), mirroring the trade
+        projection rule.
+        """
+
+        positions_table = self._table("positions")
+        row = self.position_row(
+            event.position_lineage_id, event.economic_lot_id
+        )
+        if row is None:
+            raise CapitalConflict(
+                "projection_rejected",
+                "corporate action references an unknown economic lot",
+                economic_lot_id=event.economic_lot_id,
+            )
+        new_settled = int(row.settled_quantity_units) + settled_delta
+        new_tradable = int(row.tradable_quantity_units) + tradable_delta
+        new_receivable = (
+            int(row.share_receivable_quantity_units) + share_receivable_delta
+        )
+        if new_settled < 0 or new_tradable < 0 or new_receivable < 0:
+            raise CapitalConflict(
+                "projection_rejected",
+                "corporate action share projection would become negative;"
+                " impossible states are preserved for reconciliation, never"
+                " clamped",
+                economic_lot_id=event.economic_lot_id,
+            )
+        self._connection.execute(
+            positions_table.update()
+            .where(
+                sa.and_(
+                    positions_table.c.position_lineage_id
+                    == event.position_lineage_id,
+                    positions_table.c.economic_lot_id == event.economic_lot_id,
+                )
+            )
+            .values(
+                settled_quantity_units=new_settled,
+                tradable_quantity_units=new_tradable,
+                share_receivable_quantity_units=new_receivable,
+                updated_by_event_id=event.economic_event_id,
+                updated_at=utc_iso(event.recorded_at),
+            )
+        )
+        return row
+
+    def _apply_share_receivable_leg(self, event: EconomicEvent, leg: Any) -> None:
+        """Book one vested-but-untradable share entitlement (ex date)."""
+
+        positions_table = self._table("positions")
+        row = self.position_row(
+            event.position_lineage_id, event.economic_lot_id
+        )
+        if row is None:
+            raise CapitalConflict(
+                "projection_rejected",
+                "share entitlement references an unknown economic lot",
+                economic_lot_id=event.economic_lot_id,
+            )
+        if row.state not in (
+            PositionState.OPEN.value,
+            PositionState.EXIT_PENDING.value,
+        ):
+            raise CapitalConflict(
+                "projection_rejected",
+                "share entitlement against a terminal economic lot",
+                economic_lot_id=event.economic_lot_id,
+                state=row.state,
+            )
+        if row.security_id != leg.security_id:
+            raise CapitalConflict(
+                "projection_rejected",
+                "share entitlement security does not match the economic lot",
+                economic_lot_id=event.economic_lot_id,
+            )
+        quantity = int(leg.quantity)
+        self._book_share_receivable_row(
+            event, leg.receivable_id, leg.security_id, quantity
+        )
+        self._connection.execute(
+            positions_table.update()
+            .where(
+                sa.and_(
+                    positions_table.c.position_lineage_id
+                    == event.position_lineage_id,
+                    positions_table.c.economic_lot_id == event.economic_lot_id,
+                )
+            )
+            .values(
+                share_receivable_quantity_units=(
+                    positions_table.c.share_receivable_quantity_units + quantity
+                ),
+                updated_by_event_id=event.economic_event_id,
+                updated_at=utc_iso(event.recorded_at),
+            )
+        )
+
+    def _apply_corporate_action_event(
+        self, event: EconomicEvent, command: CapitalCommand
+    ) -> None:
+        kind = event.event_kind
+        if kind in (EconomicEventKind.SPLIT, EconomicEventKind.MERGE):
+            self._apply_split_merge(event)
+        elif kind is EconomicEventKind.SECURITY_CONVERTED:
+            self._apply_security_conversion(event)
+        elif kind is EconomicEventKind.CORPORATE_CASH_SETTLED:
+            self._apply_corporate_cash_settlement(event)
+        elif kind is EconomicEventKind.LEGAL_WRITE_OFF:
+            self._apply_legal_write_off(event)
+        elif kind is EconomicEventKind.LATE_CORRECTION:
+            self._apply_late_correction(event)
+        else:  # pragma: no cover - dispatch table is closed
+            raise CapitalConflict(
+                "projection_rejected",
+                f"unsupported corporate action event kind {kind.value}",
+            )
+
+        # One capital fact changed: bump the capital version exactly once,
+        # in the same transaction as the projection update.
+        projection_table = self._table("capital_projection")
+        projection = self._connection.execute(projection_table.select()).one()
+        self._connection.execute(
+            projection_table.update()
+            .where(projection_table.c.portfolio_id == projection.portfolio_id)
+            .values(
+                capital_version=int(projection.capital_version) + 1,
+                updated_at=utc_iso(command.as_of),
+                updated_by_event_id=event.economic_event_id,
+            )
+        )
+
+    def _apply_split_merge(self, event: EconomicEvent) -> None:
+        """Quantity transformation with the aggregate basis preserved."""
+
+        for leg in event.legs:
+            if leg.asset_kind is EconomicAssetKind.COST_BASIS:
+                raise CapitalConflict(
+                    "projection_rejected",
+                    "COST_BASIS legs remain fail-closed; the aggregate basis"
+                    " is preserved by the position projection instead",
+                    economic_event_id=event.economic_event_id,
+                )
+        debits = [
+            leg
+            for leg in event.legs
+            if leg.asset_kind is EconomicAssetKind.SECURITY
+            and leg.direction is EconomicLegDirection.DEBIT
+        ]
+        credits = [
+            leg
+            for leg in event.legs
+            if leg.asset_kind is EconomicAssetKind.SECURITY
+            and leg.direction is EconomicLegDirection.CREDIT
+        ]
+        if len(debits) != 1 or len(credits) != 1:
+            raise CapitalConflict(
+                "projection_rejected",
+                "split/merge requires exactly one security debit and one"
+                " security credit leg",
+                economic_event_id=event.economic_event_id,
+            )
+        debit, credit = debits[0], credits[0]
+        row = self.position_row(
+            event.position_lineage_id, event.economic_lot_id
+        )
+        if row is None:
+            raise CapitalConflict(
+                "projection_rejected",
+                "split/merge references an unknown economic lot",
+                economic_lot_id=event.economic_lot_id,
+            )
+        if row.state not in (
+            PositionState.OPEN.value,
+            PositionState.EXIT_PENDING.value,
+        ):
+            raise CapitalConflict(
+                "projection_rejected",
+                "split/merge against a terminal economic lot",
+                economic_lot_id=event.economic_lot_id,
+                state=row.state,
+            )
+        if debit.security_id != row.security_id or (
+            credit.security_id != row.security_id
+        ):
+            raise CapitalConflict(
+                "projection_rejected",
+                "split/merge security does not match the economic lot",
+                economic_lot_id=event.economic_lot_id,
+            )
+        if int(debit.quantity) != int(row.settled_quantity_units):
+            raise CapitalConflict(
+                "projection_rejected",
+                "split/merge must transform the whole settled quantity",
+                economic_lot_id=event.economic_lot_id,
+            )
+        # Aggregate basis is untouched: the per-share basis becomes the
+        # exact rational basis / new quantity (never a float). Position
+        # state is preserved, so a due exit obligation survives the split.
+        self._adjust_position_share_buckets(
+            event,
+            settled_delta=int(credit.quantity) - int(debit.quantity),
+            tradable_delta=int(credit.quantity) - int(debit.quantity),
+        )
+
+    def _apply_security_conversion(self, event: EconomicEvent) -> None:
+        """Successor mapping or the tradable-date representation change.
+
+        Two validated shapes:
+
+        - tradable date (representation change): one same-security
+          debit/credit pair of equal quantity plus one or more share
+          receivable debits. The pair nets to zero settled shares; the
+          share receivable debits move vested shares into settled
+          tradable quantity. The pair never consumes settled shares, so
+          a bonus larger than the holding still converts cleanly.
+        - whole-lot conversion: the security debits sweep the whole
+          economic holding (settled plus vested receivable), and the
+          single destination representation is either a successor
+          security credit (tradable) or a successor share receivable
+          credit (restricted).
+        """
+
+        for leg in event.legs:
+            if leg.asset_kind is EconomicAssetKind.COST_BASIS:
+                raise CapitalConflict(
+                    "projection_rejected",
+                    "COST_BASIS legs remain fail-closed; conversion carries"
+                    " the aggregate basis through the position projection",
+                    economic_event_id=event.economic_event_id,
+                )
+        security_debits = [
+            leg
+            for leg in event.legs
+            if leg.asset_kind is EconomicAssetKind.SECURITY
+            and leg.direction is EconomicLegDirection.DEBIT
+        ]
+        security_credits = [
+            leg
+            for leg in event.legs
+            if leg.asset_kind is EconomicAssetKind.SECURITY
+            and leg.direction is EconomicLegDirection.CREDIT
+        ]
+        share_debits = [
+            leg
+            for leg in event.legs
+            if leg.asset_kind is EconomicAssetKind.SHARE_RECEIVABLE
+            and leg.direction is EconomicLegDirection.DEBIT
+        ]
+        share_credits = [
+            leg
+            for leg in event.legs
+            if leg.asset_kind is EconomicAssetKind.SHARE_RECEIVABLE
+            and leg.direction is EconomicLegDirection.CREDIT
+        ]
+        row = self.position_row(
+            event.position_lineage_id, event.economic_lot_id
+        )
+        if row is None:
+            raise CapitalConflict(
+                "projection_rejected",
+                "conversion references an unknown economic lot",
+                economic_lot_id=event.economic_lot_id,
+            )
+        if row.state not in (
+            PositionState.OPEN.value,
+            PositionState.EXIT_PENDING.value,
+        ):
+            raise CapitalConflict(
+                "projection_rejected",
+                "conversion against a terminal economic lot",
+                economic_lot_id=event.economic_lot_id,
+                state=row.state,
+            )
+
+        representation_change = (
+            len(security_debits) == 1
+            and len(security_credits) == 1
+            and security_debits[0].security_id == security_credits[0].security_id
+            and int(security_debits[0].quantity)
+            == int(security_credits[0].quantity)
+            and bool(share_debits)
+            and not share_credits
+        )
+        if representation_change:
+            quantity = int(security_debits[0].quantity)
+            share_debit_total = sum(int(leg.quantity) for leg in share_debits)
+            if share_debit_total != quantity:
+                raise CapitalConflict(
+                    "projection_rejected",
+                    "tradable-date conversion legs do not balance",
+                    economic_lot_id=event.economic_lot_id,
+                )
+            for leg in share_debits:
+                self._settle_share_receivable_row(
+                    event, leg.receivable_id, int(leg.quantity)
+                )
+            # Vested receivable shares become settled AND tradable; the
+            # same-security pair is a representation change only and never
+            # touches settled quantity.
+            self._adjust_position_share_buckets(
+                event,
+                settled_delta=quantity,
+                tradable_delta=quantity,
+                share_receivable_delta=-quantity,
+            )
+            return
+
+        total_held = int(row.settled_quantity_units) + int(
+            row.share_receivable_quantity_units
+        )
+        debit_total = sum(int(leg.quantity) for leg in security_debits)
+        if debit_total != total_held:
+            raise CapitalConflict(
+                "projection_rejected",
+                "conversion must sweep the whole economic holding of the lot",
+                economic_lot_id=event.economic_lot_id,
+                expected_units=total_held,
+                requested_units=debit_total,
+            )
+        for leg in security_debits:
+            if leg.security_id != row.security_id:
+                raise CapitalConflict(
+                    "projection_rejected",
+                    "conversion source security does not match the lot",
+                    economic_lot_id=event.economic_lot_id,
+                )
+        if len(security_credits) > 1 or len(share_credits) > 1:
+            raise CapitalConflict(
+                "projection_rejected",
+                "conversion requires exactly one destination representation",
+                economic_lot_id=event.economic_lot_id,
+            )
+        share_debit_total = sum(int(leg.quantity) for leg in share_debits)
+        if share_debit_total != int(row.share_receivable_quantity_units):
+            raise CapitalConflict(
+                "projection_rejected",
+                "conversion must settle every outstanding share receivable"
+                " of the lot",
+                economic_lot_id=event.economic_lot_id,
+            )
+        for leg in share_debits:
+            self._settle_share_receivable_row(
+                event, leg.receivable_id, int(leg.quantity)
+            )
+
+        positions_table = self._table("positions")
+        now = utc_iso(event.recorded_at)
+        if security_credits:
+            destination = security_credits[0]
+            if destination.security_id == row.security_id:
+                raise CapitalConflict(
+                    "projection_rejected",
+                    "conversion successor must differ from the source"
+                    " security",
+                    economic_lot_id=event.economic_lot_id,
+                )
+            new_quantity = int(destination.quantity)
+            # The successor inherits the lot identity, attribution, cost
+            # basis, and state (the due exit obligation). Only the
+            # security and the quantities move.
+            self._connection.execute(
+                positions_table.update()
+                .where(
+                    sa.and_(
+                        positions_table.c.position_lineage_id
+                        == event.position_lineage_id,
+                        positions_table.c.economic_lot_id
+                        == event.economic_lot_id,
+                    )
+                )
+                .values(
+                    security_id=destination.security_id,
+                    settled_quantity_units=new_quantity,
+                    tradable_quantity_units=new_quantity,
+                    share_receivable_quantity_units=0,
+                    updated_by_event_id=event.economic_event_id,
+                    updated_at=now,
+                )
+            )
+            return
+
+        destination = share_credits[0]
+        if destination.security_id == row.security_id:
+            raise CapitalConflict(
+                "projection_rejected",
+                "conversion successor must differ from the source security",
+                economic_lot_id=event.economic_lot_id,
+            )
+        new_quantity = int(destination.quantity)
+        self._book_share_receivable_row(
+            event,
+            destination.receivable_id,
+            destination.security_id,
+            new_quantity,
+        )
+        self._connection.execute(
+            positions_table.update()
+            .where(
+                sa.and_(
+                    positions_table.c.position_lineage_id
+                    == event.position_lineage_id,
+                    positions_table.c.economic_lot_id == event.economic_lot_id,
+                )
+            )
+            .values(
+                security_id=destination.security_id,
+                settled_quantity_units=0,
+                tradable_quantity_units=0,
+                share_receivable_quantity_units=new_quantity,
+                updated_by_event_id=event.economic_event_id,
+                updated_at=now,
+            )
+        )
+
+    def _apply_terminal_lot_sweep(
+        self, event: EconomicEvent, *, consume_cash_legs: bool
+    ) -> tuple[Any, int]:
+        """Sweep every remaining share asset of the lot and terminate it.
+
+        Shared by CORPORATE_CASH_SETTLED (proceeds credit follows) and
+        LEGAL_WRITE_OFF (no proceeds). The aggregate basis is consumed in
+        full: the lot is legally gone, so its basis becomes a realized
+        result, never a lingering asset.
+        """
+
+        positions_table = self._table("positions")
+        row = self.position_row(
+            event.position_lineage_id, event.economic_lot_id
+        )
+        if row is None:
+            raise CapitalConflict(
+                "projection_rejected",
+                "terminal corporate action references an unknown economic lot",
+                economic_lot_id=event.economic_lot_id,
+            )
+        if row.state not in (
+            PositionState.OPEN.value,
+            PositionState.EXIT_PENDING.value,
+        ):
+            raise CapitalConflict(
+                "projection_rejected",
+                "terminal corporate action against a terminal economic lot",
+                economic_lot_id=event.economic_lot_id,
+                state=row.state,
+            )
+        security_debits = [
+            leg
+            for leg in event.legs
+            if leg.asset_kind is EconomicAssetKind.SECURITY
+            and leg.direction is EconomicLegDirection.DEBIT
+        ]
+        share_debits = [
+            leg
+            for leg in event.legs
+            if leg.asset_kind is EconomicAssetKind.SHARE_RECEIVABLE
+            and leg.direction is EconomicLegDirection.DEBIT
+        ]
+        security_debit_total = sum(int(leg.quantity) for leg in security_debits)
+        if security_debit_total != int(row.settled_quantity_units):
+            raise CapitalConflict(
+                "projection_rejected",
+                "terminal corporate action must sweep the whole settled"
+                " quantity",
+                economic_lot_id=event.economic_lot_id,
+            )
+        for leg in security_debits:
+            if leg.security_id != row.security_id:
+                raise CapitalConflict(
+                    "projection_rejected",
+                    "terminal corporate action security does not match the lot",
+                    economic_lot_id=event.economic_lot_id,
+                )
+        share_debit_total = sum(int(leg.quantity) for leg in share_debits)
+        if share_debit_total != int(row.share_receivable_quantity_units):
+            raise CapitalConflict(
+                "projection_rejected",
+                "terminal corporate action must settle every outstanding"
+                " share receivable of the lot",
+                economic_lot_id=event.economic_lot_id,
+            )
+        for leg in share_debits:
+            self._settle_share_receivable_row(
+                event, leg.receivable_id, int(leg.quantity)
+            )
+        for leg in event.legs:
+            if leg.asset_kind is EconomicAssetKind.CASH_RECEIVABLE:
+                self._apply_cash_receivable_leg(event, leg)
+            elif leg.asset_kind is EconomicAssetKind.COST_BASIS:
+                raise CapitalConflict(
+                    "projection_rejected",
+                    "COST_BASIS legs remain fail-closed; terminal settlement"
+                    " consumes the aggregate basis through the position"
+                    " projection",
+                    economic_event_id=event.economic_event_id,
+                )
+
+        cash_credit_cents = 0
+        for leg in event.legs:
+            if leg.asset_kind is not EconomicAssetKind.CASH:
+                continue
+            if leg.direction is not EconomicLegDirection.CREDIT:
+                raise CapitalConflict(
+                    "projection_rejected",
+                    "terminal corporate action cash legs must be credits",
+                    economic_event_id=event.economic_event_id,
+                )
+            if not consume_cash_legs:
+                raise CapitalConflict(
+                    "projection_rejected",
+                    "legal write-off cannot move cash",
+                    economic_event_id=event.economic_event_id,
+                )
+            cash_credit_cents += scaled_int(
+                leg.cash_amount, CENT_SCALE, "cash_amount"
+            )
+        if consume_cash_legs:
+            projection_table = self._table("capital_projection")
+            projection = self._connection.execute(
+                projection_table.select()
+            ).one()
+            self._connection.execute(
+                projection_table.update()
+                .where(
+                    projection_table.c.portfolio_id == projection.portfolio_id
+                )
+                .values(
+                    available_cash_cents=(
+                        int(projection.available_cash_cents) + cash_credit_cents
+                    )
+                )
+            )
+
+        # OPEN -> EXIT_PENDING -> LEGAL_TERMINAL walked atomically inside
+        # this one capital transaction (the frozen transition map admits no
+        # direct OPEN -> LEGAL_TERMINAL edge).
+        self._connection.execute(
+            positions_table.update()
+            .where(
+                sa.and_(
+                    positions_table.c.position_lineage_id
+                    == event.position_lineage_id,
+                    positions_table.c.economic_lot_id == event.economic_lot_id,
+                )
+            )
+            .values(
+                settled_quantity_units=0,
+                tradable_quantity_units=0,
+                share_receivable_quantity_units=0,
+                cost_basis_cents=0,
+                state=PositionState.LEGAL_TERMINAL.value,
+                updated_by_event_id=event.economic_event_id,
+                updated_at=utc_iso(event.recorded_at),
+            )
+        )
+        return row, cash_credit_cents
+
+    def _apply_corporate_cash_settlement(self, event: EconomicEvent) -> None:
+        self._apply_terminal_lot_sweep(event, consume_cash_legs=True)
+
+    def _apply_legal_write_off(self, event: EconomicEvent) -> None:
+        self._apply_terminal_lot_sweep(event, consume_cash_legs=False)
+
+    def _apply_late_correction(self, event: EconomicEvent) -> None:
+        """Apply a corrected entitlement: settle the superseded receivable
+        and book its replacement, preserving both facts in the stream.
+
+        Corrections touch receivables only; quantity/basis corrections of
+        executions are Plan 02 Task 6 compensation territory.
+        """
+
+        share_credit_total = 0
+        share_debit_total = 0
+        for leg in event.legs:
+            if leg.asset_kind is EconomicAssetKind.CASH_RECEIVABLE:
+                self._apply_cash_receivable_leg(event, leg)
+            elif leg.asset_kind is EconomicAssetKind.SHARE_RECEIVABLE:
+                if leg.direction is EconomicLegDirection.CREDIT:
+                    self._book_share_receivable_row(
+                        event,
+                        leg.receivable_id,
+                        leg.security_id,
+                        int(leg.quantity),
+                    )
+                    share_credit_total += int(leg.quantity)
+                else:
+                    self._settle_share_receivable_row(
+                        event, leg.receivable_id, int(leg.quantity)
+                    )
+                    share_debit_total += int(leg.quantity)
+            else:
+                raise CapitalConflict(
+                    "projection_rejected",
+                    "corporate action corrections are limited to receivable"
+                    " deltas; execution corrections land in Plan 02 Task 6",
+                    economic_event_id=event.economic_event_id,
+                )
+        if share_credit_total or share_debit_total:
+            self._adjust_position_share_buckets(
+                event,
+                share_receivable_delta=share_credit_total - share_debit_total,
+            )
 
     # -- Plan 02 Task 3: valuation, NAV, lifecycle, and flow helpers ----------
 
@@ -4784,3 +5603,2747 @@ class CapitalRepository:
             return receipt, snapshot
 
         return self._run_write_transaction(operation)
+
+    # -- Plan 02 Task 4: corporate actions and lot continuity -----------------
+    #
+    # One fact / one event per action revision. Corporate actions keep
+    # running through TERMINATING and INSOLVENT (exits, corporate actions
+    # and reconciliation are never blocked by a risk halt); only a
+    # TERMINATED account rejects them. The source-authority matrix is
+    # monotonic: AS_OBSERVED -> CONFIRMED upgrades are allowed, downgrades
+    # fail closed, and a confirmation changes only the unresolved delta
+    # (settled legs/cash are never rewritten).
+
+    def _economic_event_row(
+        self, context: GatewayTransactionContext, idempotency_key: str
+    ) -> Any | None:
+        return context._connection.execute(
+            sa.text(
+                "SELECT * FROM economic_events WHERE idempotency_key = :key"
+            ),
+            {"key": idempotency_key},
+        ).first()
+
+    def _outstanding_lot_share_receivable_rows(
+        self, context: GatewayTransactionContext, lineage: str, lot: str
+    ) -> tuple[Any, ...]:
+        """Unsettled SHARE receivables attached to one economic lot.
+
+        Share receivables only enter through Task 4 corporate actions, so
+        the ``corporate_actions`` projection is the lot-scoped index.
+        """
+
+        rows = context._connection.execute(
+            sa.text(
+                "SELECT receivable_id FROM corporate_actions"
+                " WHERE position_lineage_id = :lineage"
+                " AND economic_lot_id = :lot"
+                " AND receivable_id IS NOT NULL"
+                " ORDER BY rowid"
+            ),
+            {"lineage": lineage, "lot": lot},
+        ).all()
+        outstanding = []
+        for row in rows:
+            receivable = context.receivable_row(row.receivable_id)
+            if (
+                receivable is not None
+                and receivable.receivable_kind == "SHARE"
+                and int(receivable.settled) == 0
+            ):
+                outstanding.append(receivable)
+        return tuple(outstanding)
+
+    @staticmethod
+    def _require_fact_fields_match(
+        checks: tuple[tuple[str, object, object], ...]
+    ) -> None:
+        for name, requested, committed in checks:
+            if requested != committed:
+                raise CapitalConflict(
+                    "payload_conflict",
+                    "corporate action identity already committed with"
+                    " different content",
+                    field=name,
+                )
+
+    def record_entitlement(
+        self, request: EntitlementRequest
+    ) -> tuple[EntitlementReceipt, CapitalRiskSnapshot]:
+        """Record one ex-date entitlement fact (or correction revision)."""
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[EntitlementReceipt, CapitalRiskSnapshot]:
+            binding = self._stored_binding(context)
+            context.require_lifecycle(
+                frozenset(
+                    {
+                        LifecycleState.ACTIVE,
+                        LifecycleState.TERMINATING,
+                        LifecycleState.INSOLVENT,
+                    }
+                )
+            )
+            position = context.position_row(
+                request.position_lineage_id, request.economic_lot_id
+            )
+            if position is None:
+                raise CapitalConflict(
+                    "lot_unknown",
+                    "entitlement references an unknown economic lot",
+                    economic_lot_id=request.economic_lot_id,
+                )
+            if position.state not in (
+                PositionState.OPEN.value,
+                PositionState.EXIT_PENDING.value,
+            ):
+                raise CapitalConflict(
+                    "lot_not_live",
+                    "entitlement against a terminal economic lot",
+                    economic_lot_id=request.economic_lot_id,
+                    state=position.state,
+                )
+            if position.security_id != request.security_id:
+                raise CapitalConflict(
+                    "security_mismatch",
+                    "entitlement security does not match the economic lot",
+                    economic_lot_id=request.economic_lot_id,
+                    lot_security_id=position.security_id,
+                    requested_security_id=request.security_id,
+                )
+            if request.entitlement.numerator < 1:
+                raise CapitalConflict(
+                    "entitlement_must_be_positive",
+                    "entitlement ratio must be positive",
+                )
+
+            key = entitlement_idempotency_key(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+                revision=request.revision,
+            )
+            existing = self._economic_event_row(context, key)
+            if existing is not None:
+                committed_payload = CapitalCommandPayload.model_validate_json(
+                    existing.payload_json
+                )
+                fact = committed_payload.corporate_action
+                assert fact is not None
+                self._require_fact_fields_match(
+                    (
+                        ("action_kind", request.action_kind, fact.action_kind),
+                        ("entitlement", request.entitlement, fact.entitlement),
+                        (
+                            "cash_in_lieu_cents",
+                            request.cash_in_lieu_cents,
+                            fact.cash_in_lieu_cents,
+                        ),
+                        ("tier", request.tier, fact.tier),
+                    )
+                )
+                receipt = self._entitlement_receipt_from_committed(
+                    context, request, existing, committed_payload
+                )
+                return receipt, context.read_capital_risk_snapshot(request.as_of)
+
+            row = context.corporate_action_row(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+            )
+            if request.revision == 1:
+                if row is not None:
+                    raise CapitalConflict(
+                        "corporate_action_revision_conflict",
+                        "entitlement revision 1 already committed",
+                        action_id=request.action_id,
+                    )
+                return self._record_initial_entitlement(
+                    context, binding, request, position
+                )
+            return self._record_entitlement_correction(
+                context, binding, request, position, row
+            )
+
+        return self._run_write_transaction(operation)
+
+    def _entitlement_payloads(
+        self,
+        request: EntitlementRequest,
+        recorded_quantity: int,
+    ) -> tuple[tuple[str, CapitalCommandPayload], ...]:
+        """Deterministic entitlement payloads for one recorded quantity.
+
+        Pure function of (request, recorded quantity): the committed fact
+        stores the quantity consumed at record time so idempotent retries
+        rebuild the identical payload after later splits or settlements.
+        """
+
+        key = entitlement_idempotency_key(
+            request.action_id,
+            request.position_lineage_id,
+            request.economic_lot_id,
+            revision=request.revision,
+        )
+        numerator = request.entitlement.numerator
+        denominator = request.entitlement.denominator
+
+        if request.action_kind is CorporateActionKind.CASH_DIVIDEND:
+            try:
+                cents = exact_entitlement_cents(
+                    recorded_quantity, numerator, denominator
+                )
+            except ValueError as exc:
+                raise CapitalConflict(
+                    "entitlement_not_exact",
+                    "cash entitlement does not divide to exact cents; the"
+                    " kernel has no frozen sub-cent rounding policy",
+                    detail=str(exc),
+                ) from exc
+            if cents < 1:
+                raise CapitalConflict(
+                    "entitlement_must_be_positive",
+                    "entitlement rounds to zero whole cents",
+                )
+            receivable_id = cash_receivable_id(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+                revision=request.revision,
+            )
+            payload = CapitalCommandPayload(
+                event_kind=EconomicEventKind.DIVIDEND_RECEIVABLE,
+                effective_at=request.effective_at,
+                source_authority=request.source_authority,
+                position_lineage_id=request.position_lineage_id,
+                economic_lot_id=request.economic_lot_id,
+                legs=(
+                    CashReceivableEconomicEventLeg(
+                        leg_id=f"{key}:cash",
+                        direction=EconomicLegDirection.CREDIT,
+                        asset_kind=EconomicAssetKind.CASH_RECEIVABLE,
+                        receivable_id=receivable_id,
+                        security_id=request.security_id,
+                        cash_amount=Decimal(cents) / CENT_SCALE,
+                    ),
+                ),
+                corporate_action=CorporateActionFact(
+                    action_id=request.action_id,
+                    action_kind=request.action_kind,
+                    revision=request.revision,
+                    tier=request.tier,
+                    entitlement=request.entitlement,
+                    recorded_quantity_units=recorded_quantity,
+                ),
+            )
+            return ((key, payload),)
+
+        whole, remainder_num, remainder_den = split_entitlement(
+            recorded_quantity, numerator, denominator
+        )
+        fact = CorporateActionFact(
+            action_id=request.action_id,
+            action_kind=request.action_kind,
+            revision=request.revision,
+            tier=request.tier,
+            entitlement=request.entitlement,
+            fractional_remainder=RationalQuantity(
+                numerator=remainder_num, denominator=remainder_den
+            ),
+            cash_in_lieu_cents=request.cash_in_lieu_cents,
+            recorded_quantity_units=recorded_quantity,
+        )
+        payloads: list[tuple[str, CapitalCommandPayload]] = []
+        if whole > 0:
+            share_id = share_receivable_id(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+                revision=request.revision,
+            )
+            payloads.append(
+                (
+                    key,
+                    CapitalCommandPayload(
+                        event_kind=EconomicEventKind.SHARE_RECEIVABLE,
+                        effective_at=request.effective_at,
+                        source_authority=request.source_authority,
+                        position_lineage_id=request.position_lineage_id,
+                        economic_lot_id=request.economic_lot_id,
+                        legs=(
+                            ShareReceivableEconomicEventLeg(
+                                leg_id=f"{key}:share",
+                                direction=EconomicLegDirection.CREDIT,
+                                asset_kind=EconomicAssetKind.SHARE_RECEIVABLE,
+                                receivable_id=share_id,
+                                security_id=request.security_id,
+                                quantity=whole,
+                            ),
+                        ),
+                        corporate_action=fact,
+                    ),
+                )
+            )
+        if request.cash_in_lieu_cents is not None:
+            cash_in_lieu_id = cash_in_lieu_receivable_id(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+                revision=request.revision,
+            )
+            payloads.append(
+                (
+                    f"{key}:cil",
+                    CapitalCommandPayload(
+                        event_kind=EconomicEventKind.DIVIDEND_RECEIVABLE,
+                        effective_at=request.effective_at,
+                        source_authority=request.source_authority,
+                        position_lineage_id=request.position_lineage_id,
+                        economic_lot_id=request.economic_lot_id,
+                        legs=(
+                            CashReceivableEconomicEventLeg(
+                                leg_id=f"{key}:cil",
+                                direction=EconomicLegDirection.CREDIT,
+                                asset_kind=EconomicAssetKind.CASH_RECEIVABLE,
+                                receivable_id=cash_in_lieu_id,
+                                security_id=request.security_id,
+                                cash_amount=(
+                                    Decimal(request.cash_in_lieu_cents)
+                                    / CENT_SCALE
+                                ),
+                            ),
+                        ),
+                        corporate_action=fact,
+                    ),
+                )
+            )
+        if not payloads:
+            raise CapitalConflict(
+                "entitlement_must_be_positive",
+                "fractional entitlement has no recordable leg; declare a"
+                " cash-in-lieu amount for the remainder",
+            )
+        return tuple(payloads)
+
+    def _append_entitlement_payloads(
+        self,
+        context: GatewayTransactionContext,
+        binding: AccountBinding,
+        request: EntitlementRequest,
+        payloads: tuple[tuple[str, CapitalCommandPayload], ...],
+        revision_links: tuple[tuple[str, str], ...] = (),
+        row_updater: Callable[[GatewayTransactionContext, str], None] | None = None,
+    ) -> CapitalRiskSnapshot:
+        snapshot: CapitalRiskSnapshot | None = None
+        primary_event_id: str | None = None
+        for index, (idem_key, payload) in enumerate(payloads):
+            command = CapitalCommand(
+                idempotency_key=idem_key,
+                account_binding=binding,
+                expected_stream_version=(
+                    request.expected_stream_version
+                    if index == 0
+                    else context.current_stream_version()
+                ),
+                as_of=request.as_of,
+                payload=payload,
+            )
+            event_id = derive_event_id(idem_key)
+
+            def register(tx: GatewayTransactionContext) -> None:
+                for canonical_id, _ in revision_links:
+                    tx._connection.execute(
+                        tx._table("event_revisions").insert().values(
+                            canonical_event_id=canonical_id,
+                            revision_event_id=event_id,
+                            revision_kind="LATE_CORRECTION",
+                            recorded_at=utc_iso(request.as_of),
+                        )
+                    )
+                if index == 0 and row_updater is not None:
+                    row_updater(tx, event_id)
+
+            snapshot = context.run_append(
+                command,
+                after_event_insert_hook=None,
+                after_projection_hook=register,
+            )
+            if primary_event_id is None:
+                primary_event_id = event_id
+        assert snapshot is not None
+        return snapshot
+
+    def _record_initial_entitlement(
+        self,
+        context: GatewayTransactionContext,
+        binding: AccountBinding,
+        request: EntitlementRequest,
+        position: Any,
+    ) -> tuple[EntitlementReceipt, CapitalRiskSnapshot]:
+        recorded_quantity = int(position.settled_quantity_units)
+        payloads = self._entitlement_payloads(request, recorded_quantity)
+
+        def insert_row(tx: GatewayTransactionContext, event_id: str) -> None:
+            entitlement = request.entitlement
+            fractional = payloads[0][1].corporate_action
+            assert fractional is not None
+            remainder = fractional.fractional_remainder
+            share_id = share_receivable_id(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+                revision=request.revision,
+            )
+            cash_id = cash_receivable_id(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+                revision=request.revision,
+            )
+            cil_id = cash_in_lieu_receivable_id(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+                revision=request.revision,
+            )
+            receivable_id = (
+                cash_id
+                if request.action_kind is CorporateActionKind.CASH_DIVIDEND
+                else (share_id if tx.receivable_row(share_id) is not None else None)
+            )
+            tx._connection.execute(
+                tx._table("corporate_actions").insert().values(
+                    action_id=request.action_id,
+                    position_lineage_id=request.position_lineage_id,
+                    economic_lot_id=request.economic_lot_id,
+                    action_kind=request.action_kind.value,
+                    state=CorporateActionState.PENDING.value,
+                    source_authority_tier=request.tier.value,
+                    source_authority=request.source_authority,
+                    security_id=request.security_id,
+                    revision=request.revision,
+                    entitlement_numerator=entitlement.numerator,
+                    entitlement_denominator=entitlement.denominator,
+                    fractional_remainder_numerator=(
+                        remainder.numerator if remainder is not None else None
+                    ),
+                    fractional_remainder_denominator=(
+                        remainder.denominator if remainder is not None else None
+                    ),
+                    cash_in_lieu_cents=request.cash_in_lieu_cents,
+                    receivable_id=receivable_id,
+                    cash_in_lieu_receivable_id=(
+                        cil_id
+                        if request.cash_in_lieu_cents is not None
+                        else None
+                    ),
+                    ex_effective_at=utc_iso(request.effective_at),
+                    pay_effective_at=None,
+                    tradable_effective_at=None,
+                    successor_security_id=None,
+                    successor_quantity_units=None,
+                    successor_receivable_id=None,
+                    inherited_position_state=None,
+                    opened_by_event_id=event_id,
+                    updated_by_event_id=event_id,
+                    updated_at=utc_iso(request.as_of),
+                )
+            )
+
+        snapshot = self._append_entitlement_payloads(
+            context, binding, request, payloads, row_updater=insert_row
+        )
+        event_id = derive_event_id(
+            entitlement_idempotency_key(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+                revision=request.revision,
+            )
+        )
+        receipt = self._entitlement_receipt(
+            context,
+            request,
+            payloads,
+            event_id=event_id,
+            correction=False,
+            supersedes_event_id=None,
+        )
+        return receipt, snapshot
+
+    def _record_entitlement_correction(
+        self,
+        context: GatewayTransactionContext,
+        binding: AccountBinding,
+        request: EntitlementRequest,
+        position: Any,
+        row: Any,
+    ) -> tuple[EntitlementReceipt, CapitalRiskSnapshot]:
+        if row is None:
+            raise CapitalConflict(
+                "corporate_action_unknown",
+                "correction references no recorded corporate action",
+                action_id=request.action_id,
+            )
+        committed_tier = SourceAuthorityTier(row.source_authority_tier)
+        if SOURCE_AUTHORITY_RANK[request.tier] < SOURCE_AUTHORITY_RANK[
+            committed_tier
+        ]:
+            raise CapitalConflict(
+                "source_authority_downgrade",
+                "a confirmed corporate action fact cannot be downgraded by a"
+                " later as-observed one",
+                action_id=request.action_id,
+                committed_tier=committed_tier.value,
+                requested_tier=request.tier.value,
+            )
+        if request.revision == int(row.revision):
+            # Idempotent re-recording of the active revision. An identical
+            # confirmation appends no event (no capital fact changes), so
+            # the idempotency-key lookup above cannot see it; converge on
+            # the committed projection row instead. Divergent content under
+            # the same revision identity fails closed.
+            self._require_fact_fields_match(
+                (
+                    (
+                        "action_kind",
+                        request.action_kind.value,
+                        row.action_kind,
+                    ),
+                    (
+                        "entitlement",
+                        request.entitlement,
+                        RationalQuantity(
+                            numerator=int(row.entitlement_numerator),
+                            denominator=int(row.entitlement_denominator),
+                        ),
+                    ),
+                    (
+                        "cash_in_lieu_cents",
+                        request.cash_in_lieu_cents,
+                        (
+                            int(row.cash_in_lieu_cents)
+                            if row.cash_in_lieu_cents is not None
+                            else None
+                        ),
+                    ),
+                    ("tier", request.tier, committed_tier),
+                )
+            )
+            return self._receipt_for_active_revision(
+                context, request, position, row
+            )
+        if request.revision != int(row.revision) + 1:
+            raise CapitalConflict(
+                "revision_sequence_conflict",
+                "corporate action revisions are monotonic",
+                action_id=request.action_id,
+                active_revision=int(row.revision),
+                requested_revision=request.revision,
+            )
+        if row.action_kind == CorporateActionKind.CASH_DIVIDEND.value:
+            return self._correct_cash_entitlement(
+                context, binding, request, position, row
+            )
+        return self._correct_share_entitlement(
+            context, binding, request, position, row
+        )
+
+    def _receipt_for_active_revision(
+        self,
+        context: GatewayTransactionContext,
+        request: EntitlementRequest,
+        position: Any,
+        row: Any,
+    ) -> tuple[EntitlementReceipt, CapitalRiskSnapshot]:
+        """Converge an idempotent re-recording of the active revision.
+
+        Provenance-only confirmations append no event (no capital fact
+        changed), so the receipt rebuilds from the committed projection
+        row and its receivable instead of an event payload. Nothing is
+        written: the stream, capital, and risk versions stay quiet.
+        """
+
+        receivable = (
+            context.receivable_row(row.receivable_id)
+            if row.receivable_id is not None
+            else None
+        )
+        if receivable is None:
+            raise CapitalConflict(
+                "corporate_action_unknown",
+                "corporate action lost its entitlement receivable",
+                action_id=request.action_id,
+            )
+        if request.action_kind is CorporateActionKind.CASH_DIVIDEND:
+            cash_amount: int | None = int(receivable.amount_cents)
+            share_quantity: int | None = None
+            remainder_numerator, remainder_denominator = 0, 1
+        else:
+            cash_amount = None
+            share_quantity = int(receivable.quantity_units)
+            # The provenance-only path is only reachable while the
+            # recomputed entitlement matches the committed receivable, so
+            # the remainder recomputes exactly as the original receipt.
+            _, remainder_numerator, remainder_denominator = split_entitlement(
+                int(position.settled_quantity_units),
+                request.entitlement.numerator,
+                request.entitlement.denominator,
+            )
+        snapshot = context.read_capital_risk_snapshot(request.as_of)
+        receipt = EntitlementReceipt(
+            action_id=request.action_id,
+            revision=request.revision,
+            event_id=receivable.created_by_event_id,
+            receivable_id=row.receivable_id,
+            cash_amount_cents=cash_amount,
+            share_quantity=share_quantity,
+            fractional_remainder_numerator=remainder_numerator,
+            fractional_remainder_denominator=remainder_denominator,
+            cash_in_lieu_cents=(
+                int(row.cash_in_lieu_cents)
+                if row.cash_in_lieu_cents is not None
+                else None
+            ),
+            cash_in_lieu_receivable_id=row.cash_in_lieu_receivable_id,
+            source_authority_tier=request.tier,
+            correction=True,
+            supersedes_event_id=receivable.created_by_event_id,
+            capital_version=snapshot.capital_version,
+            stream_version=context.current_stream_version(),
+        )
+        return receipt, snapshot
+
+    def _correct_cash_entitlement(
+        self,
+        context: GatewayTransactionContext,
+        binding: AccountBinding,
+        request: EntitlementRequest,
+        position: Any,
+        row: Any,
+    ) -> tuple[EntitlementReceipt, CapitalRiskSnapshot]:
+        receivable = context.receivable_row(row.receivable_id)
+        if receivable is None:
+            raise CapitalConflict(
+                "corporate_action_unknown",
+                "corporate action lost its entitlement receivable",
+                action_id=request.action_id,
+            )
+        recorded_quantity = int(position.settled_quantity_units)
+        try:
+            new_cents = exact_entitlement_cents(
+                recorded_quantity,
+                request.entitlement.numerator,
+                request.entitlement.denominator,
+            )
+        except ValueError as exc:
+            raise CapitalConflict(
+                "entitlement_not_exact",
+                "corrected cash entitlement does not divide to exact cents",
+                detail=str(exc),
+            ) from exc
+        prior_amount = int(receivable.amount_cents)
+        key = entitlement_idempotency_key(
+            request.action_id,
+            request.position_lineage_id,
+            request.economic_lot_id,
+            revision=request.revision,
+        )
+        superseded_event_id = receivable.created_by_event_id
+
+        if new_cents == prior_amount:
+            # Provenance upgrade only: no capital fact changed, so the
+            # stream and capital version stay quiet.
+            self._update_corporate_action_row(
+                context,
+                request,
+                row,
+                event_id=superseded_event_id,
+                receivable_id=row.receivable_id,
+            )
+            snapshot = context.read_capital_risk_snapshot(request.as_of)
+            receipt = EntitlementReceipt(
+                action_id=request.action_id,
+                revision=request.revision,
+                event_id=superseded_event_id,
+                receivable_id=row.receivable_id,
+                cash_amount_cents=prior_amount,
+                share_quantity=None,
+                fractional_remainder_numerator=0,
+                fractional_remainder_denominator=1,
+                cash_in_lieu_cents=None,
+                cash_in_lieu_receivable_id=None,
+                source_authority_tier=request.tier,
+                correction=True,
+                supersedes_event_id=superseded_event_id,
+                capital_version=snapshot.capital_version,
+                stream_version=context.current_stream_version(),
+            )
+            return receipt, snapshot
+
+        if int(receivable.settled) == 0:
+            new_receivable_id = cash_receivable_id(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+                revision=request.revision,
+            )
+            payload = CapitalCommandPayload(
+                event_kind=EconomicEventKind.LATE_CORRECTION,
+                effective_at=request.effective_at,
+                source_authority=request.source_authority,
+                position_lineage_id=request.position_lineage_id,
+                economic_lot_id=request.economic_lot_id,
+                correction_of_event_id=superseded_event_id,
+                legs=(
+                    CashReceivableEconomicEventLeg(
+                        leg_id=f"{key}:supersede",
+                        direction=EconomicLegDirection.DEBIT,
+                        asset_kind=EconomicAssetKind.CASH_RECEIVABLE,
+                        receivable_id=row.receivable_id,
+                        security_id=request.security_id,
+                        cash_amount=Decimal(prior_amount) / CENT_SCALE,
+                    ),
+                    CashReceivableEconomicEventLeg(
+                        leg_id=f"{key}:corrected",
+                        direction=EconomicLegDirection.CREDIT,
+                        asset_kind=EconomicAssetKind.CASH_RECEIVABLE,
+                        receivable_id=new_receivable_id,
+                        security_id=request.security_id,
+                        cash_amount=Decimal(new_cents) / CENT_SCALE,
+                    ),
+                ),
+                corporate_action=CorporateActionFact(
+                    action_id=request.action_id,
+                    action_kind=request.action_kind,
+                    revision=request.revision,
+                    tier=request.tier,
+                    entitlement=request.entitlement,
+                    recorded_quantity_units=recorded_quantity,
+                    superseded_receivable_id=row.receivable_id,
+                    superseded_amount_cents=prior_amount,
+                ),
+            )
+
+            def update_row(tx: GatewayTransactionContext, event_id: str) -> None:
+                self._update_corporate_action_row(
+                    tx,
+                    request,
+                    row,
+                    event_id=event_id,
+                    receivable_id=new_receivable_id,
+                )
+
+            snapshot = self._append_entitlement_payloads(
+                context,
+                binding,
+                request,
+                ((key, payload),),
+                revision_links=((superseded_event_id, ""),),
+                row_updater=update_row,
+            )
+            event_id = derive_event_id(key)
+            receipt = EntitlementReceipt(
+                action_id=request.action_id,
+                revision=request.revision,
+                event_id=event_id,
+                receivable_id=new_receivable_id,
+                cash_amount_cents=new_cents,
+                share_quantity=None,
+                fractional_remainder_numerator=0,
+                fractional_remainder_denominator=1,
+                cash_in_lieu_cents=None,
+                cash_in_lieu_receivable_id=None,
+                source_authority_tier=request.tier,
+                correction=True,
+                supersedes_event_id=superseded_event_id,
+                capital_version=snapshot.capital_version,
+                stream_version=context.current_stream_version(),
+            )
+            return receipt, snapshot
+
+        # Settled: the paid leg is never rewritten. Only a positive
+        # unresolved delta is booked as a fresh receivable; a negative
+        # delta is a compensation obligation the kernel cannot yet
+        # represent (Plan 02 Task 6).
+        if new_cents < prior_amount:
+            raise CapitalConflict(
+                "confirmation_delta_unsupported",
+                "confirmed amount is below the settled amount; the"
+                " compensation obligation lands with Plan 02 Task 6",
+                action_id=request.action_id,
+                settled_cents=prior_amount,
+                confirmed_cents=new_cents,
+            )
+        delta_cents = new_cents - prior_amount
+        delta_receivable_id = cash_receivable_id(
+            request.action_id,
+            request.position_lineage_id,
+            request.economic_lot_id,
+            revision=request.revision,
+        )
+        payload = CapitalCommandPayload(
+            event_kind=EconomicEventKind.DIVIDEND_RECEIVABLE,
+            effective_at=request.effective_at,
+            source_authority=request.source_authority,
+            position_lineage_id=request.position_lineage_id,
+            economic_lot_id=request.economic_lot_id,
+            correction_of_event_id=superseded_event_id,
+            legs=(
+                CashReceivableEconomicEventLeg(
+                    leg_id=f"{key}:delta",
+                    direction=EconomicLegDirection.CREDIT,
+                    asset_kind=EconomicAssetKind.CASH_RECEIVABLE,
+                    receivable_id=delta_receivable_id,
+                    security_id=request.security_id,
+                    cash_amount=Decimal(delta_cents) / CENT_SCALE,
+                ),
+            ),
+            corporate_action=CorporateActionFact(
+                action_id=request.action_id,
+                action_kind=request.action_kind,
+                revision=request.revision,
+                tier=request.tier,
+                entitlement=request.entitlement,
+                recorded_quantity_units=recorded_quantity,
+                superseded_receivable_id=row.receivable_id,
+                superseded_amount_cents=prior_amount,
+                delta_amount_cents=delta_cents,
+            ),
+        )
+
+        def update_row(tx: GatewayTransactionContext, event_id: str) -> None:
+            self._update_corporate_action_row(
+                tx,
+                request,
+                row,
+                event_id=event_id,
+                receivable_id=delta_receivable_id,
+            )
+
+        snapshot = self._append_entitlement_payloads(
+            context,
+            binding,
+            request,
+            ((key, payload),),
+            revision_links=((superseded_event_id, ""),),
+            row_updater=update_row,
+        )
+        event_id = derive_event_id(key)
+        receipt = EntitlementReceipt(
+            action_id=request.action_id,
+            revision=request.revision,
+            event_id=event_id,
+            receivable_id=delta_receivable_id,
+            cash_amount_cents=delta_cents,
+            share_quantity=None,
+            fractional_remainder_numerator=0,
+            fractional_remainder_denominator=1,
+            cash_in_lieu_cents=None,
+            cash_in_lieu_receivable_id=None,
+            source_authority_tier=request.tier,
+            correction=True,
+            supersedes_event_id=superseded_event_id,
+            capital_version=snapshot.capital_version,
+            stream_version=context.current_stream_version(),
+        )
+        return receipt, snapshot
+
+    def _correct_share_entitlement(
+        self,
+        context: GatewayTransactionContext,
+        binding: AccountBinding,
+        request: EntitlementRequest,
+        position: Any,
+        row: Any,
+    ) -> tuple[EntitlementReceipt, CapitalRiskSnapshot]:
+        receivable = (
+            context.receivable_row(row.receivable_id)
+            if row.receivable_id is not None
+            else None
+        )
+        if receivable is None or int(receivable.settled) != 0:
+            raise CapitalConflict(
+                "corporate_action_correction_unsupported",
+                "share entitlement corrections apply only while the share"
+                " receivable is unsettled; later corrections land with Plan"
+                " 02 Task 6",
+                action_id=request.action_id,
+            )
+        recorded_quantity = int(position.settled_quantity_units)
+        whole, remainder_num, remainder_den = split_entitlement(
+            recorded_quantity,
+            request.entitlement.numerator,
+            request.entitlement.denominator,
+        )
+        old_quantity = int(receivable.quantity_units)
+        old_cil = int(row.cash_in_lieu_cents or 0)
+        new_cil = request.cash_in_lieu_cents or 0
+        key = entitlement_idempotency_key(
+            request.action_id,
+            request.position_lineage_id,
+            request.economic_lot_id,
+            revision=request.revision,
+        )
+        superseded_event_id = receivable.created_by_event_id
+
+        if whole == old_quantity and new_cil == old_cil:
+            self._update_corporate_action_row(
+                context,
+                request,
+                row,
+                event_id=superseded_event_id,
+                receivable_id=row.receivable_id,
+            )
+            snapshot = context.read_capital_risk_snapshot(request.as_of)
+            receipt = EntitlementReceipt(
+                action_id=request.action_id,
+                revision=request.revision,
+                event_id=superseded_event_id,
+                receivable_id=row.receivable_id,
+                cash_amount_cents=None,
+                share_quantity=old_quantity,
+                fractional_remainder_numerator=remainder_num,
+                fractional_remainder_denominator=remainder_den,
+                cash_in_lieu_cents=request.cash_in_lieu_cents,
+                cash_in_lieu_receivable_id=row.cash_in_lieu_receivable_id,
+                source_authority_tier=request.tier,
+                correction=True,
+                supersedes_event_id=superseded_event_id,
+                capital_version=snapshot.capital_version,
+                stream_version=context.current_stream_version(),
+            )
+            return receipt, snapshot
+
+        legs: list[EconomicEventLeg] = [
+            ShareReceivableEconomicEventLeg(
+                leg_id=f"{key}:supersede",
+                direction=EconomicLegDirection.DEBIT,
+                asset_kind=EconomicAssetKind.SHARE_RECEIVABLE,
+                receivable_id=row.receivable_id,
+                security_id=request.security_id,
+                quantity=old_quantity,
+            )
+        ]
+        new_share_id: str | None = None
+        if whole > 0:
+            new_share_id = share_receivable_id(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+                revision=request.revision,
+            )
+            legs.append(
+                ShareReceivableEconomicEventLeg(
+                    leg_id=f"{key}:corrected",
+                    direction=EconomicLegDirection.CREDIT,
+                    asset_kind=EconomicAssetKind.SHARE_RECEIVABLE,
+                    receivable_id=new_share_id,
+                    security_id=request.security_id,
+                    quantity=whole,
+                )
+            )
+        new_cil_id = row.cash_in_lieu_receivable_id
+        if new_cil != old_cil:
+            cil_receivable = (
+                context.receivable_row(row.cash_in_lieu_receivable_id)
+                if row.cash_in_lieu_receivable_id is not None
+                else None
+            )
+            if cil_receivable is not None and int(cil_receivable.settled) != 0:
+                raise CapitalConflict(
+                    "corporate_action_correction_unsupported",
+                    "the settled cash-in-lieu leg is never rewritten",
+                    action_id=request.action_id,
+                )
+            if cil_receivable is not None:
+                legs.append(
+                    CashReceivableEconomicEventLeg(
+                        leg_id=f"{key}:cil-supersede",
+                        direction=EconomicLegDirection.DEBIT,
+                        asset_kind=EconomicAssetKind.CASH_RECEIVABLE,
+                        receivable_id=row.cash_in_lieu_receivable_id,
+                        security_id=request.security_id,
+                        cash_amount=(
+                            Decimal(int(cil_receivable.amount_cents))
+                            / CENT_SCALE
+                        ),
+                    )
+                )
+            if new_cil > 0:
+                new_cil_id = cash_in_lieu_receivable_id(
+                    request.action_id,
+                    request.position_lineage_id,
+                    request.economic_lot_id,
+                    revision=request.revision,
+                )
+                legs.append(
+                    CashReceivableEconomicEventLeg(
+                        leg_id=f"{key}:cil-corrected",
+                        direction=EconomicLegDirection.CREDIT,
+                        asset_kind=EconomicAssetKind.CASH_RECEIVABLE,
+                        receivable_id=new_cil_id,
+                        security_id=request.security_id,
+                        cash_amount=Decimal(new_cil) / CENT_SCALE,
+                    )
+                )
+            else:
+                new_cil_id = None
+
+        payload = CapitalCommandPayload(
+            event_kind=EconomicEventKind.LATE_CORRECTION,
+            effective_at=request.effective_at,
+            source_authority=request.source_authority,
+            position_lineage_id=request.position_lineage_id,
+            economic_lot_id=request.economic_lot_id,
+            correction_of_event_id=superseded_event_id,
+            legs=tuple(legs),
+            corporate_action=CorporateActionFact(
+                action_id=request.action_id,
+                action_kind=request.action_kind,
+                revision=request.revision,
+                tier=request.tier,
+                entitlement=request.entitlement,
+                fractional_remainder=RationalQuantity(
+                    numerator=remainder_num, denominator=remainder_den
+                ),
+                cash_in_lieu_cents=request.cash_in_lieu_cents,
+                recorded_quantity_units=recorded_quantity,
+                superseded_receivable_id=row.receivable_id,
+                superseded_quantity_units=old_quantity,
+                superseded_cash_in_lieu_cents=old_cil or None,
+            ),
+        )
+
+        def update_row(tx: GatewayTransactionContext, event_id: str) -> None:
+            self._update_corporate_action_row(
+                tx,
+                request,
+                row,
+                event_id=event_id,
+                receivable_id=new_share_id,
+                cash_in_lieu_receivable_id=new_cil_id,
+            )
+
+        snapshot = self._append_entitlement_payloads(
+            context,
+            binding,
+            request,
+            ((key, payload),),
+            revision_links=((superseded_event_id, ""),),
+            row_updater=update_row,
+        )
+        event_id = derive_event_id(key)
+        receipt = EntitlementReceipt(
+            action_id=request.action_id,
+            revision=request.revision,
+            event_id=event_id,
+            receivable_id=new_share_id,
+            cash_amount_cents=None,
+            share_quantity=whole if whole > 0 else None,
+            fractional_remainder_numerator=remainder_num,
+            fractional_remainder_denominator=remainder_den,
+            cash_in_lieu_cents=request.cash_in_lieu_cents,
+            cash_in_lieu_receivable_id=new_cil_id,
+            source_authority_tier=request.tier,
+            correction=True,
+            supersedes_event_id=superseded_event_id,
+            capital_version=snapshot.capital_version,
+            stream_version=context.current_stream_version(),
+        )
+        return receipt, snapshot
+
+    def _update_corporate_action_row(
+        self,
+        context: GatewayTransactionContext,
+        request: EntitlementRequest,
+        row: Any,
+        *,
+        event_id: str,
+        receivable_id: str | None,
+        cash_in_lieu_receivable_id: str | None | object = _SENTINEL_UNSET,
+    ) -> None:
+        values: dict[str, Any] = {
+            "revision": request.revision,
+            "source_authority_tier": request.tier.value,
+            "source_authority": request.source_authority,
+            "entitlement_numerator": request.entitlement.numerator,
+            "entitlement_denominator": request.entitlement.denominator,
+            "receivable_id": receivable_id,
+            "updated_by_event_id": event_id,
+            "updated_at": utc_iso(request.as_of),
+        }
+        if cash_in_lieu_receivable_id is not _SENTINEL_UNSET:
+            values["cash_in_lieu_receivable_id"] = cash_in_lieu_receivable_id
+        context._connection.execute(
+            context._table("corporate_actions").update()
+            .where(
+                sa.and_(
+                    context._table("corporate_actions").c.action_id
+                    == row.action_id,
+                    context._table("corporate_actions").c.position_lineage_id
+                    == row.position_lineage_id,
+                    context._table("corporate_actions").c.economic_lot_id
+                    == row.economic_lot_id,
+                )
+            )
+            .values(**values)
+        )
+
+    def _entitlement_receipt(
+        self,
+        context: GatewayTransactionContext,
+        request: EntitlementRequest,
+        payloads: tuple[tuple[str, CapitalCommandPayload], ...],
+        *,
+        event_id: str,
+        correction: bool,
+        supersedes_event_id: str | None,
+    ) -> EntitlementReceipt:
+        cash_amount: int | None = None
+        share_quantity: int | None = None
+        receivable_id: str | None = None
+        cil_amount: int | None = None
+        cil_receivable_id: str | None = None
+        remainder = (0, 1)
+        for _key, payload in payloads:
+            fact = payload.corporate_action
+            assert fact is not None
+            if fact.fractional_remainder is not None:
+                remainder = (
+                    fact.fractional_remainder.numerator,
+                    fact.fractional_remainder.denominator,
+                )
+            for leg in payload.legs:
+                if leg.asset_kind is EconomicAssetKind.CASH_RECEIVABLE:
+                    amount = scaled_int(
+                        leg.cash_amount, CENT_SCALE, "cash_amount"
+                    )
+                    if (
+                        request.action_kind
+                        is CorporateActionKind.CASH_DIVIDEND
+                    ):
+                        cash_amount = amount
+                        receivable_id = leg.receivable_id
+                    else:
+                        cil_amount = amount
+                        cil_receivable_id = leg.receivable_id
+                elif leg.asset_kind is EconomicAssetKind.SHARE_RECEIVABLE:
+                    share_quantity = int(leg.quantity)
+                    receivable_id = leg.receivable_id
+        snapshot = context.read_capital_risk_snapshot(request.as_of)
+        return EntitlementReceipt(
+            action_id=request.action_id,
+            revision=request.revision,
+            event_id=event_id,
+            receivable_id=receivable_id,
+            cash_amount_cents=cash_amount,
+            share_quantity=share_quantity,
+            fractional_remainder_numerator=remainder[0],
+            fractional_remainder_denominator=remainder[1],
+            cash_in_lieu_cents=cil_amount,
+            cash_in_lieu_receivable_id=cil_receivable_id,
+            source_authority_tier=request.tier,
+            correction=correction,
+            supersedes_event_id=supersedes_event_id,
+            capital_version=snapshot.capital_version,
+            stream_version=context.current_stream_version(),
+        )
+
+    def _entitlement_receipt_from_committed(
+        self,
+        context: GatewayTransactionContext,
+        request: EntitlementRequest,
+        event_row: Any,
+        committed_payload: CapitalCommandPayload,
+    ) -> EntitlementReceipt:
+        """Rebuild the receipt from the committed event's own legs.
+
+        Reading the canonical legs (never recomputing them) keeps an
+        idempotent retry byte-identical to the original receipt for every
+        committed shape, including post-settlement delta corrections whose
+        legs differ from a fresh entitlement booking.
+        """
+
+        fact = committed_payload.corporate_action
+        assert fact is not None
+        cash_amount: int | None = None
+        share_quantity: int | None = None
+        receivable_id: str | None = None
+        cil_amount: int | None = None
+        cil_receivable_id: str | None = None
+        for leg in committed_payload.legs:
+            if leg.direction is not EconomicLegDirection.CREDIT:
+                continue
+            if leg.asset_kind is EconomicAssetKind.CASH_RECEIVABLE:
+                amount = scaled_int(
+                    leg.cash_amount, CENT_SCALE, "cash_amount"
+                )
+                if (
+                    request.action_kind
+                    is CorporateActionKind.CASH_DIVIDEND
+                ):
+                    cash_amount = amount
+                    receivable_id = leg.receivable_id
+                else:
+                    cil_amount = amount
+                    cil_receivable_id = leg.receivable_id
+            elif leg.asset_kind is EconomicAssetKind.SHARE_RECEIVABLE:
+                share_quantity = int(leg.quantity)
+                receivable_id = leg.receivable_id
+        remainder = fact.fractional_remainder
+        snapshot = context.read_capital_risk_snapshot(request.as_of)
+        return EntitlementReceipt(
+            action_id=request.action_id,
+            revision=request.revision,
+            event_id=event_row.economic_event_id,
+            receivable_id=receivable_id,
+            cash_amount_cents=cash_amount,
+            share_quantity=share_quantity,
+            fractional_remainder_numerator=(
+                remainder.numerator if remainder is not None else 0
+            ),
+            fractional_remainder_denominator=(
+                remainder.denominator if remainder is not None else 1
+            ),
+            cash_in_lieu_cents=cil_amount,
+            cash_in_lieu_receivable_id=cil_receivable_id,
+            source_authority_tier=request.tier,
+            correction=request.revision > 1,
+            supersedes_event_id=event_row.correction_of_event_id,
+            capital_version=snapshot.capital_version,
+            stream_version=context.current_stream_version(),
+        )
+
+    def settle_cash_in_lieu(
+        self, request: CashInLieuRequest
+    ) -> tuple[CashInLieuReceipt, CapitalRiskSnapshot]:
+        """Settle the action's outstanding cash entitlement receivable.
+
+        One fact per receivable (pay date / cash-in-lieu receipt): the
+        receivable debit and the cash credit land atomically as one
+        DIVIDEND_CASH_SETTLED event. The settled amount always equals the
+        outstanding receivable; the pay date cannot precede the ex date.
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[CashInLieuReceipt, CapitalRiskSnapshot]:
+            binding = self._stored_binding(context)
+            context.require_lifecycle(
+                frozenset(
+                    {
+                        LifecycleState.ACTIVE,
+                        LifecycleState.TERMINATING,
+                        LifecycleState.INSOLVENT,
+                    }
+                )
+            )
+            row = context.corporate_action_row(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+            )
+            if row is None:
+                raise CapitalConflict(
+                    "corporate_action_unknown",
+                    "settlement references no recorded corporate action",
+                    action_id=request.action_id,
+                )
+            if row.action_kind not in (
+                CorporateActionKind.CASH_DIVIDEND.value,
+                CorporateActionKind.SHARE_ENTITLEMENT.value,
+            ):
+                raise CapitalConflict(
+                    "corporate_action_kind_conflict",
+                    "cash settlement applies to entitlement actions only",
+                    action_id=request.action_id,
+                    action_kind=row.action_kind,
+                )
+            receivable_id = (
+                row.receivable_id
+                if row.action_kind == CorporateActionKind.CASH_DIVIDEND.value
+                else row.cash_in_lieu_receivable_id
+            )
+            if receivable_id is None:
+                raise CapitalConflict(
+                    "corporate_action_nothing_to_settle",
+                    "the action carries no cash entitlement receivable",
+                    action_id=request.action_id,
+                )
+            receivable = context.receivable_row(receivable_id)
+            if receivable is None:
+                raise CapitalConflict(
+                    "corporate_action_nothing_to_settle",
+                    "the action lost its cash entitlement receivable",
+                    action_id=request.action_id,
+                )
+            idempotency_key = settlement_idempotency_key(receivable_id)
+            if int(receivable.settled) != 0:
+                existing = self._economic_event_row(context, idempotency_key)
+                if existing is None:
+                    raise CapitalConflict(
+                        "corporate_action_settlement_conflict",
+                        "receivable settled outside this settlement fact",
+                        receivable_id=receivable_id,
+                    )
+                snapshot = context.read_capital_risk_snapshot(request.as_of)
+                receipt = CashInLieuReceipt(
+                    action_id=request.action_id,
+                    receivable_id=receivable_id,
+                    event_id=existing.economic_event_id,
+                    amount_cents=int(receivable.amount_cents),
+                    capital_version=snapshot.capital_version,
+                    stream_version=context.current_stream_version(),
+                )
+                return receipt, snapshot
+
+            if request.tier is not SourceAuthorityTier.CONFIRMED:
+                raise CapitalConflict(
+                    "source_authority_insufficient",
+                    "cash settlement is a confirmed broker/legal fact",
+                    action_id=request.action_id,
+                    tier=request.tier.value,
+                )
+            ex_effective_at = parse_utc(row.ex_effective_at)
+            if request.effective_at < ex_effective_at:
+                raise CapitalConflict(
+                    "corporate_action_ordering_violation",
+                    "the pay date cannot precede the ex date",
+                    action_id=request.action_id,
+                )
+
+            amount_cents = int(receivable.amount_cents)
+            payload = CapitalCommandPayload(
+                event_kind=EconomicEventKind.DIVIDEND_CASH_SETTLED,
+                effective_at=request.effective_at,
+                source_authority=request.source_authority,
+                position_lineage_id=request.position_lineage_id,
+                economic_lot_id=request.economic_lot_id,
+                legs=(
+                    CashReceivableEconomicEventLeg(
+                        leg_id=f"{idempotency_key}:receivable",
+                        direction=EconomicLegDirection.DEBIT,
+                        asset_kind=EconomicAssetKind.CASH_RECEIVABLE,
+                        receivable_id=receivable_id,
+                        security_id=receivable.security_id,
+                        cash_amount=Decimal(amount_cents) / CENT_SCALE,
+                    ),
+                    CashEconomicEventLeg(
+                        leg_id=f"{idempotency_key}:cash",
+                        direction=EconomicLegDirection.CREDIT,
+                        asset_kind=EconomicAssetKind.CASH,
+                        cash_amount=Decimal(amount_cents) / CENT_SCALE,
+                    ),
+                ),
+                corporate_action=CorporateActionFact(
+                    action_id=request.action_id,
+                    action_kind=CorporateActionKind(row.action_kind),
+                    revision=int(row.revision),
+                    tier=request.tier,
+                    superseded_receivable_id=receivable_id,
+                    superseded_amount_cents=amount_cents,
+                ),
+            )
+            command = CapitalCommand(
+                idempotency_key=idempotency_key,
+                account_binding=binding,
+                expected_stream_version=request.expected_stream_version,
+                as_of=request.as_of,
+                payload=payload,
+            )
+            event_id = derive_event_id(idempotency_key)
+
+            def update_row(tx: GatewayTransactionContext) -> None:
+                tx._connection.execute(
+                    tx._table("corporate_actions").update()
+                    .where(
+                        sa.and_(
+                            tx._table("corporate_actions").c.action_id
+                            == request.action_id,
+                            tx._table("corporate_actions")
+                            .c.position_lineage_id
+                            == request.position_lineage_id,
+                            tx._table("corporate_actions").c.economic_lot_id
+                            == request.economic_lot_id,
+                        )
+                    )
+                    .values(
+                        state=CorporateActionState.CASH_SETTLED.value,
+                        source_authority_tier=request.tier.value,
+                        source_authority=request.source_authority,
+                        pay_effective_at=utc_iso(request.effective_at),
+                        updated_by_event_id=event_id,
+                        updated_at=utc_iso(request.as_of),
+                    )
+                )
+
+            snapshot = context.run_append(
+                command,
+                after_event_insert_hook=None,
+                after_projection_hook=update_row,
+            )
+            receipt = CashInLieuReceipt(
+                action_id=request.action_id,
+                receivable_id=receivable_id,
+                event_id=event_id,
+                amount_cents=amount_cents,
+                capital_version=snapshot.capital_version,
+                stream_version=context.current_stream_version(),
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def make_shares_tradable(
+        self, request: SharesTradableRequest
+    ) -> tuple[SharesTradableReceipt, CapitalRiskSnapshot]:
+        """Move the action's vested share receivable into settled tradable
+        shares on the tradable date.
+
+        Represented as a same-security SECURITY_CONVERTED representation
+        change: the debit/credit pair nets to zero settled shares while
+        the share receivable debit moves the vested shares into settled
+        tradable quantity (never consuming pre-existing settled shares).
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[SharesTradableReceipt, CapitalRiskSnapshot]:
+            binding = self._stored_binding(context)
+            context.require_lifecycle(
+                frozenset(
+                    {
+                        LifecycleState.ACTIVE,
+                        LifecycleState.TERMINATING,
+                        LifecycleState.INSOLVENT,
+                    }
+                )
+            )
+            row = context.corporate_action_row(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+            )
+            if row is None:
+                raise CapitalConflict(
+                    "corporate_action_unknown",
+                    "tradable date references no recorded corporate action",
+                    action_id=request.action_id,
+                )
+            if row.action_kind not in (
+                CorporateActionKind.SHARE_ENTITLEMENT.value,
+                CorporateActionKind.SECURITY_CONVERSION.value,
+            ):
+                raise CapitalConflict(
+                    "corporate_action_kind_conflict",
+                    "tradable dates apply to share entitlements and"
+                    " restricted conversions only",
+                    action_id=request.action_id,
+                    action_kind=row.action_kind,
+                )
+            receivable_id = row.receivable_id
+            receivable = (
+                context.receivable_row(receivable_id)
+                if receivable_id is not None
+                else None
+            )
+            if receivable is None or receivable.receivable_kind != "SHARE":
+                raise CapitalConflict(
+                    "corporate_action_nothing_to_settle",
+                    "the action carries no share receivable",
+                    action_id=request.action_id,
+                )
+            idempotency_key = tradable_idempotency_key(receivable_id)
+            if int(receivable.settled) != 0:
+                existing = self._economic_event_row(context, idempotency_key)
+                if existing is None:
+                    raise CapitalConflict(
+                        "corporate_action_settlement_conflict",
+                        "share receivable settled outside this tradable fact",
+                        receivable_id=receivable_id,
+                    )
+                snapshot = context.read_capital_risk_snapshot(request.as_of)
+                receipt = SharesTradableReceipt(
+                    action_id=request.action_id,
+                    receivable_id=receivable_id,
+                    event_id=existing.economic_event_id,
+                    quantity=int(receivable.quantity_units),
+                    shares_became_tradable_at=parse_utc(
+                        row.tradable_effective_at
+                    ),
+                    capital_version=snapshot.capital_version,
+                    stream_version=context.current_stream_version(),
+                )
+                return receipt, snapshot
+
+            if request.tier is not SourceAuthorityTier.CONFIRMED:
+                raise CapitalConflict(
+                    "source_authority_insufficient",
+                    "tradable dates are confirmed exchange facts",
+                    action_id=request.action_id,
+                    tier=request.tier.value,
+                )
+            ex_effective_at = parse_utc(row.ex_effective_at)
+            if request.effective_at < ex_effective_at:
+                raise CapitalConflict(
+                    "corporate_action_ordering_violation",
+                    "the tradable date cannot precede the ex date",
+                    action_id=request.action_id,
+                )
+
+            quantity = int(receivable.quantity_units)
+            security_id = receivable.security_id
+            position = context.position_row(
+                request.position_lineage_id, request.economic_lot_id
+            )
+            if position is None:
+                raise CapitalConflict(
+                    "lot_unknown",
+                    "tradable date references an unknown economic lot",
+                    economic_lot_id=request.economic_lot_id,
+                )
+            payload = CapitalCommandPayload(
+                event_kind=EconomicEventKind.SECURITY_CONVERTED,
+                effective_at=request.effective_at,
+                source_authority=request.source_authority,
+                position_lineage_id=request.position_lineage_id,
+                economic_lot_id=request.economic_lot_id,
+                legs=(
+                    SecurityEconomicEventLeg(
+                        leg_id=f"{idempotency_key}:source",
+                        direction=EconomicLegDirection.DEBIT,
+                        asset_kind=EconomicAssetKind.SECURITY,
+                        security_id=security_id,
+                        quantity=quantity,
+                    ),
+                    SecurityEconomicEventLeg(
+                        leg_id=f"{idempotency_key}:tradable",
+                        direction=EconomicLegDirection.CREDIT,
+                        asset_kind=EconomicAssetKind.SECURITY,
+                        security_id=security_id,
+                        quantity=quantity,
+                    ),
+                    ShareReceivableEconomicEventLeg(
+                        leg_id=f"{idempotency_key}:receivable",
+                        direction=EconomicLegDirection.DEBIT,
+                        asset_kind=EconomicAssetKind.SHARE_RECEIVABLE,
+                        receivable_id=receivable_id,
+                        security_id=security_id,
+                        quantity=quantity,
+                    ),
+                ),
+                producer_namespace=position.producer_namespace,
+                research_program_id=position.research_program_id,
+                economic_lineage_id=position.economic_lineage_id,
+                stage_id=position.stage_id,
+                corporate_action=CorporateActionFact(
+                    action_id=request.action_id,
+                    action_kind=CorporateActionKind(row.action_kind),
+                    revision=int(row.revision),
+                    tier=request.tier,
+                    superseded_receivable_id=receivable_id,
+                    superseded_quantity_units=quantity,
+                ),
+            )
+            command = CapitalCommand(
+                idempotency_key=idempotency_key,
+                account_binding=binding,
+                expected_stream_version=request.expected_stream_version,
+                as_of=request.as_of,
+                payload=payload,
+            )
+            event_id = derive_event_id(idempotency_key)
+
+            def update_row(tx: GatewayTransactionContext) -> None:
+                tx._connection.execute(
+                    tx._table("corporate_actions").update()
+                    .where(
+                        sa.and_(
+                            tx._table("corporate_actions").c.action_id
+                            == request.action_id,
+                            tx._table("corporate_actions")
+                            .c.position_lineage_id
+                            == request.position_lineage_id,
+                            tx._table("corporate_actions").c.economic_lot_id
+                            == request.economic_lot_id,
+                        )
+                    )
+                    .values(
+                        state=CorporateActionState.SHARES_TRADABLE.value,
+                        source_authority_tier=request.tier.value,
+                        source_authority=request.source_authority,
+                        tradable_effective_at=utc_iso(request.effective_at),
+                        updated_by_event_id=event_id,
+                        updated_at=utc_iso(request.as_of),
+                    )
+                )
+
+            snapshot = context.run_append(
+                command,
+                after_event_insert_hook=None,
+                after_projection_hook=update_row,
+            )
+            receipt = SharesTradableReceipt(
+                action_id=request.action_id,
+                receivable_id=receivable_id,
+                event_id=event_id,
+                quantity=quantity,
+                shares_became_tradable_at=request.effective_at,
+                capital_version=snapshot.capital_version,
+                stream_version=context.current_stream_version(),
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def apply_split_merge(
+        self, request: SplitMergeRequest
+    ) -> tuple[SplitMergeReceipt, CapitalRiskSnapshot]:
+        """Transform lot quantity with the aggregate basis preserved.
+
+        The ratio must divide the settled quantity exactly (the kernel has
+        no frozen fractional-share rounding policy); the per-share basis
+        becomes the exact rational ``basis / new_quantity``. Position state
+        is preserved, so a due exit obligation survives the split/merge.
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[SplitMergeReceipt, CapitalRiskSnapshot]:
+            binding = self._stored_binding(context)
+            context.require_lifecycle(
+                frozenset(
+                    {
+                        LifecycleState.ACTIVE,
+                        LifecycleState.TERMINATING,
+                        LifecycleState.INSOLVENT,
+                    }
+                )
+            )
+            position = context.position_row(
+                request.position_lineage_id, request.economic_lot_id
+            )
+            if position is None:
+                raise CapitalConflict(
+                    "lot_unknown",
+                    "split/merge references an unknown economic lot",
+                    economic_lot_id=request.economic_lot_id,
+                )
+            if position.state not in (
+                PositionState.OPEN.value,
+                PositionState.EXIT_PENDING.value,
+            ):
+                raise CapitalConflict(
+                    "lot_not_live",
+                    "split/merge against a terminal economic lot",
+                    economic_lot_id=request.economic_lot_id,
+                    state=position.state,
+                )
+            if position.security_id != request.security_id:
+                raise CapitalConflict(
+                    "security_mismatch",
+                    "split/merge security does not match the economic lot",
+                    economic_lot_id=request.economic_lot_id,
+                )
+            if (
+                context._connection.execute(
+                    sa.text(
+                        "SELECT 1 FROM receivables"
+                        " WHERE receivable_kind = 'SHARE' AND settled = 0"
+                        " AND position_lineage_id = :lineage LIMIT 1"
+                    ),
+                    {"lineage": request.position_lineage_id},
+                ).first()
+                is not None
+            ):
+                raise CapitalConflict(
+                    "entitlement_pending",
+                    "split/merge while a share entitlement receivable is"
+                    " unsettled; make the shares tradable first",
+                    economic_lot_id=request.economic_lot_id,
+                )
+            split_kind = request.action_kind is CorporateActionKind.SPLIT
+            ratio_gt_one = (
+                request.ratio.numerator > request.ratio.denominator
+            )
+            if split_kind != ratio_gt_one:
+                raise CapitalConflict(
+                    "split_ratio_conflict",
+                    "split ratios must exceed one and merge ratios must be"
+                    " below one",
+                    action_kind=request.action_kind.value,
+                )
+
+            prior_quantity = int(position.settled_quantity_units)
+            basis_cents = int(position.cost_basis_cents)
+            idempotency_key = split_merge_idempotency_key(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+            )
+            existing = self._economic_event_row(context, idempotency_key)
+            if existing is not None:
+                committed_payload = CapitalCommandPayload.model_validate_json(
+                    existing.payload_json
+                )
+                fact = committed_payload.corporate_action
+                assert fact is not None
+                self._require_fact_fields_match(
+                    (
+                        ("action_kind", request.action_kind, fact.action_kind),
+                        ("ratio", request.ratio, fact.entitlement),
+                        ("tier", request.tier, fact.tier),
+                    )
+                )
+                snapshot = context.read_capital_risk_snapshot(request.as_of)
+                committed_prior = int(fact.recorded_quantity_units or 0)
+                new_quantity = exact_quantity(
+                    committed_prior,
+                    request.ratio.numerator,
+                    request.ratio.denominator,
+                )
+                basis_num, basis_den = lowest_terms(
+                    basis_cents, new_quantity
+                )
+                receipt = SplitMergeReceipt(
+                    action_id=request.action_id,
+                    event_id=existing.economic_event_id,
+                    prior_quantity=committed_prior,
+                    new_quantity=new_quantity,
+                    cost_basis_cents=basis_cents,
+                    per_share_basis_numerator=basis_num,
+                    per_share_basis_denominator=basis_den,
+                    capital_version=snapshot.capital_version,
+                    stream_version=context.current_stream_version(),
+                )
+                return receipt, snapshot
+
+            try:
+                new_quantity = exact_quantity(
+                    prior_quantity,
+                    request.ratio.numerator,
+                    request.ratio.denominator,
+                )
+            except ValueError as exc:
+                raise CapitalConflict(
+                    "split_quantity_not_exact",
+                    "ratio does not divide the lot quantity into exact"
+                    " share units",
+                    detail=str(exc),
+                ) from exc
+
+            payload = CapitalCommandPayload(
+                event_kind=EconomicEventKind.SPLIT
+                if split_kind
+                else EconomicEventKind.MERGE,
+                effective_at=request.effective_at,
+                source_authority=request.source_authority,
+                position_lineage_id=request.position_lineage_id,
+                economic_lot_id=request.economic_lot_id,
+                legs=(
+                    SecurityEconomicEventLeg(
+                        leg_id=f"{idempotency_key}:prior",
+                        direction=EconomicLegDirection.DEBIT,
+                        asset_kind=EconomicAssetKind.SECURITY,
+                        security_id=request.security_id,
+                        quantity=prior_quantity,
+                    ),
+                    SecurityEconomicEventLeg(
+                        leg_id=f"{idempotency_key}:new",
+                        direction=EconomicLegDirection.CREDIT,
+                        asset_kind=EconomicAssetKind.SECURITY,
+                        security_id=request.security_id,
+                        quantity=new_quantity,
+                    ),
+                ),
+                producer_namespace=position.producer_namespace,
+                research_program_id=position.research_program_id,
+                economic_lineage_id=position.economic_lineage_id,
+                stage_id=position.stage_id,
+                corporate_action=CorporateActionFact(
+                    action_id=request.action_id,
+                    action_kind=request.action_kind,
+                    revision=1,
+                    tier=request.tier,
+                    entitlement=request.ratio,
+                    recorded_quantity_units=prior_quantity,
+                ),
+            )
+            command = CapitalCommand(
+                idempotency_key=idempotency_key,
+                account_binding=binding,
+                expected_stream_version=request.expected_stream_version,
+                as_of=request.as_of,
+                payload=payload,
+            )
+            event_id = derive_event_id(idempotency_key)
+
+            def insert_row(tx: GatewayTransactionContext) -> None:
+                tx._connection.execute(
+                    tx._table("corporate_actions").insert().values(
+                        action_id=request.action_id,
+                        position_lineage_id=request.position_lineage_id,
+                        economic_lot_id=request.economic_lot_id,
+                        action_kind=request.action_kind.value,
+                        state=CorporateActionState.APPLIED.value,
+                        source_authority_tier=request.tier.value,
+                        source_authority=request.source_authority,
+                        security_id=request.security_id,
+                        revision=1,
+                        entitlement_numerator=request.ratio.numerator,
+                        entitlement_denominator=request.ratio.denominator,
+                        fractional_remainder_numerator=None,
+                        fractional_remainder_denominator=None,
+                        cash_in_lieu_cents=None,
+                        receivable_id=None,
+                        cash_in_lieu_receivable_id=None,
+                        ex_effective_at=utc_iso(request.effective_at),
+                        pay_effective_at=None,
+                        tradable_effective_at=None,
+                        successor_security_id=None,
+                        successor_quantity_units=None,
+                        successor_receivable_id=None,
+                        inherited_position_state=None,
+                        opened_by_event_id=event_id,
+                        updated_by_event_id=event_id,
+                        updated_at=utc_iso(request.as_of),
+                    )
+                )
+
+            snapshot = context.run_append(
+                command,
+                after_event_insert_hook=None,
+                after_projection_hook=insert_row,
+            )
+            basis_num, basis_den = lowest_terms(basis_cents, new_quantity)
+            receipt = SplitMergeReceipt(
+                action_id=request.action_id,
+                event_id=event_id,
+                prior_quantity=prior_quantity,
+                new_quantity=new_quantity,
+                cost_basis_cents=basis_cents,
+                per_share_basis_numerator=basis_num,
+                per_share_basis_denominator=basis_den,
+                capital_version=snapshot.capital_version,
+                stream_version=context.current_stream_version(),
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def convert_security(
+        self, request: ConversionRequest
+    ) -> tuple[ConversionReceipt, CapitalRiskSnapshot]:
+        """Convert a whole economic lot into a successor security.
+
+        The successor inherits the lot identity, entry provenance,
+        attribution, cost basis, and the due exit obligation (position
+        state is preserved through the conversion and recorded on the
+        action row for Task 6 / Plan 04 consumption).
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[ConversionReceipt, CapitalRiskSnapshot]:
+            binding = self._stored_binding(context)
+            context.require_lifecycle(
+                frozenset(
+                    {
+                        LifecycleState.ACTIVE,
+                        LifecycleState.TERMINATING,
+                        LifecycleState.INSOLVENT,
+                    }
+                )
+            )
+            position = context.position_row(
+                request.position_lineage_id, request.economic_lot_id
+            )
+            if position is None:
+                raise CapitalConflict(
+                    "lot_unknown",
+                    "conversion references an unknown economic lot",
+                    economic_lot_id=request.economic_lot_id,
+                )
+            if position.state not in (
+                PositionState.OPEN.value,
+                PositionState.EXIT_PENDING.value,
+            ):
+                raise CapitalConflict(
+                    "lot_not_live",
+                    "conversion against a terminal economic lot",
+                    economic_lot_id=request.economic_lot_id,
+                    state=position.state,
+                )
+            if position.security_id != request.source_security_id:
+                raise CapitalConflict(
+                    "security_mismatch",
+                    "conversion source security does not match the lot",
+                    economic_lot_id=request.economic_lot_id,
+                )
+            if request.successor_security_id == request.source_security_id:
+                raise CapitalConflict(
+                    "conversion_identity_conflict",
+                    "successor security must differ from the source",
+                    security_id=request.source_security_id,
+                )
+            outstanding_shares = (
+                self._outstanding_lot_share_receivable_rows(
+                    context,
+                    request.position_lineage_id,
+                    request.economic_lot_id,
+                )
+            )
+            if (
+                request.destination is ConversionDestination.RESTRICTED
+                and outstanding_shares
+            ):
+                raise CapitalConflict(
+                    "entitlement_pending",
+                    "restricted conversions cannot sweep outstanding share"
+                    " receivables; make the shares tradable first",
+                    economic_lot_id=request.economic_lot_id,
+                )
+
+            prior_settled = int(position.settled_quantity_units)
+            prior_receivable = int(position.share_receivable_quantity_units)
+            total_held = prior_settled + prior_receivable
+            basis_cents = int(position.cost_basis_cents)
+            idempotency_key = conversion_idempotency_key(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+            )
+            existing = self._economic_event_row(context, idempotency_key)
+            if existing is not None:
+                committed_payload = CapitalCommandPayload.model_validate_json(
+                    existing.payload_json
+                )
+                fact = committed_payload.corporate_action
+                assert fact is not None
+                self._require_fact_fields_match(
+                    (
+                        ("ratio", request.ratio, fact.entitlement),
+                        (
+                            "successor_security_id",
+                            request.successor_security_id,
+                            fact.successor_security_id,
+                        ),
+                        ("destination", request.destination, fact.destination),
+                        ("tier", request.tier, fact.tier),
+                    )
+                )
+                snapshot = context.read_capital_risk_snapshot(request.as_of)
+                committed_total = int(fact.recorded_quantity_units or 0)
+                successor_quantity = exact_quantity(
+                    committed_total,
+                    request.ratio.numerator,
+                    request.ratio.denominator,
+                )
+                # Reconstruct the committed prior split from the canonical
+                # legs: the position row already carries the successor.
+                committed_share_debits = sum(
+                    int(leg.quantity)
+                    for leg in committed_payload.legs
+                    if leg.asset_kind is EconomicAssetKind.SHARE_RECEIVABLE
+                    and leg.direction is EconomicLegDirection.DEBIT
+                )
+                receipt = ConversionReceipt(
+                    action_id=request.action_id,
+                    event_id=existing.economic_event_id,
+                    source_security_id=request.source_security_id,
+                    successor_security_id=request.successor_security_id,
+                    prior_settled_quantity=(
+                        committed_total - committed_share_debits
+                    ),
+                    prior_share_receivable_quantity=committed_share_debits,
+                    successor_quantity=successor_quantity,
+                    destination=request.destination,
+                    successor_receivable_id=(
+                        successor_share_receivable_id(
+                            request.action_id,
+                            request.position_lineage_id,
+                            request.economic_lot_id,
+                        )
+                        if request.destination
+                        is ConversionDestination.RESTRICTED
+                        else None
+                    ),
+                    inherited_position_state=PositionState(position.state),
+                    cost_basis_cents=basis_cents,
+                    capital_version=snapshot.capital_version,
+                    stream_version=context.current_stream_version(),
+                )
+                return receipt, snapshot
+
+            try:
+                successor_quantity = exact_quantity(
+                    total_held,
+                    request.ratio.numerator,
+                    request.ratio.denominator,
+                )
+            except ValueError as exc:
+                raise CapitalConflict(
+                    "successor_quantity_not_exact",
+                    "ratio does not divide the lot holding into exact"
+                    " successor share units",
+                    detail=str(exc),
+                ) from exc
+            if successor_quantity < 1:
+                raise CapitalConflict(
+                    "successor_quantity_not_exact",
+                    "conversion rounds to zero successor shares",
+                )
+
+            legs: list[EconomicEventLeg] = [
+                SecurityEconomicEventLeg(
+                    leg_id=f"{idempotency_key}:source",
+                    direction=EconomicLegDirection.DEBIT,
+                    asset_kind=EconomicAssetKind.SECURITY,
+                    security_id=request.source_security_id,
+                    quantity=total_held,
+                )
+            ]
+            for receivable in outstanding_shares:
+                legs.append(
+                    ShareReceivableEconomicEventLeg(
+                        leg_id=(
+                            f"{idempotency_key}:receivable:"
+                            f"{receivable.receivable_id}"
+                        ),
+                        direction=EconomicLegDirection.DEBIT,
+                        asset_kind=EconomicAssetKind.SHARE_RECEIVABLE,
+                        receivable_id=receivable.receivable_id,
+                        security_id=receivable.security_id,
+                        quantity=int(receivable.quantity_units),
+                    )
+                )
+            successor_receivable_id: str | None = None
+            if request.destination is ConversionDestination.TRADABLE:
+                legs.append(
+                    SecurityEconomicEventLeg(
+                        leg_id=f"{idempotency_key}:successor",
+                        direction=EconomicLegDirection.CREDIT,
+                        asset_kind=EconomicAssetKind.SECURITY,
+                        security_id=request.successor_security_id,
+                        quantity=successor_quantity,
+                    )
+                )
+            else:
+                successor_receivable_id = successor_share_receivable_id(
+                    request.action_id,
+                    request.position_lineage_id,
+                    request.economic_lot_id,
+                )
+                legs.append(
+                    ShareReceivableEconomicEventLeg(
+                        leg_id=f"{idempotency_key}:successor-receivable",
+                        direction=EconomicLegDirection.CREDIT,
+                        asset_kind=EconomicAssetKind.SHARE_RECEIVABLE,
+                        receivable_id=successor_receivable_id,
+                        security_id=request.successor_security_id,
+                        quantity=successor_quantity,
+                    )
+                )
+
+            payload = CapitalCommandPayload(
+                event_kind=EconomicEventKind.SECURITY_CONVERTED,
+                effective_at=request.effective_at,
+                source_authority=request.source_authority,
+                position_lineage_id=request.position_lineage_id,
+                economic_lot_id=request.economic_lot_id,
+                legs=tuple(legs),
+                producer_namespace=position.producer_namespace,
+                research_program_id=position.research_program_id,
+                economic_lineage_id=position.economic_lineage_id,
+                stage_id=position.stage_id,
+                corporate_action=CorporateActionFact(
+                    action_id=request.action_id,
+                    action_kind=CorporateActionKind.SECURITY_CONVERSION,
+                    revision=1,
+                    tier=request.tier,
+                    entitlement=request.ratio,
+                    recorded_quantity_units=total_held,
+                    successor_security_id=request.successor_security_id,
+                    destination=request.destination,
+                ),
+            )
+            command = CapitalCommand(
+                idempotency_key=idempotency_key,
+                account_binding=binding,
+                expected_stream_version=request.expected_stream_version,
+                as_of=request.as_of,
+                payload=payload,
+            )
+            event_id = derive_event_id(idempotency_key)
+
+            def insert_row(tx: GatewayTransactionContext) -> None:
+                tx._connection.execute(
+                    tx._table("corporate_actions").insert().values(
+                        action_id=request.action_id,
+                        position_lineage_id=request.position_lineage_id,
+                        economic_lot_id=request.economic_lot_id,
+                        action_kind=(
+                            CorporateActionKind.SECURITY_CONVERSION.value
+                        ),
+                        state=CorporateActionState.CONVERTED.value,
+                        source_authority_tier=request.tier.value,
+                        source_authority=request.source_authority,
+                        security_id=request.source_security_id,
+                        revision=1,
+                        entitlement_numerator=request.ratio.numerator,
+                        entitlement_denominator=request.ratio.denominator,
+                        fractional_remainder_numerator=None,
+                        fractional_remainder_denominator=None,
+                        cash_in_lieu_cents=None,
+                        receivable_id=successor_receivable_id,
+                        cash_in_lieu_receivable_id=None,
+                        ex_effective_at=utc_iso(request.effective_at),
+                        pay_effective_at=None,
+                        tradable_effective_at=None,
+                        successor_security_id=request.successor_security_id,
+                        successor_quantity_units=successor_quantity,
+                        successor_receivable_id=successor_receivable_id,
+                        inherited_position_state=position.state,
+                        opened_by_event_id=event_id,
+                        updated_by_event_id=event_id,
+                        updated_at=utc_iso(request.as_of),
+                    )
+                )
+
+            snapshot = context.run_append(
+                command,
+                after_event_insert_hook=None,
+                after_projection_hook=insert_row,
+            )
+            receipt = ConversionReceipt(
+                action_id=request.action_id,
+                event_id=event_id,
+                source_security_id=request.source_security_id,
+                successor_security_id=request.successor_security_id,
+                prior_settled_quantity=prior_settled,
+                prior_share_receivable_quantity=prior_receivable,
+                successor_quantity=successor_quantity,
+                destination=request.destination,
+                successor_receivable_id=successor_receivable_id,
+                inherited_position_state=PositionState(position.state),
+                cost_basis_cents=basis_cents,
+                capital_version=snapshot.capital_version,
+                stream_version=context.current_stream_version(),
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def settle_terminal_cash(
+        self, request: TerminalCashRequest
+    ) -> tuple[TerminalCashReceipt, CapitalRiskSnapshot]:
+        """Legal terminal cash settlement of one lot (CORPORATE_CASH_SETTLED).
+
+        One of the only two facts that may terminate a lot's economic
+        obligation. Requires CONFIRMED authority; sweeps the whole settled
+        quantity, every outstanding share receivable of the lot, and any
+        cash receivables named by the request. The aggregate basis is
+        consumed in full, so the master identity sees the proceeds as a
+        realized result.
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[TerminalCashReceipt, CapitalRiskSnapshot]:
+            binding = self._stored_binding(context)
+            context.require_lifecycle(
+                frozenset(
+                    {
+                        LifecycleState.ACTIVE,
+                        LifecycleState.TERMINATING,
+                        LifecycleState.INSOLVENT,
+                    }
+                )
+            )
+            if request.tier is not SourceAuthorityTier.CONFIRMED:
+                raise CapitalConflict(
+                    "source_authority_insufficient",
+                    "legal terminal settlement is a confirmed fact",
+                    action_id=request.action_id,
+                    tier=request.tier.value,
+                )
+            position = context.position_row(
+                request.position_lineage_id, request.economic_lot_id
+            )
+            if position is None:
+                raise CapitalConflict(
+                    "lot_unknown",
+                    "terminal settlement references an unknown economic lot",
+                    economic_lot_id=request.economic_lot_id,
+                )
+            if position.state not in (
+                PositionState.OPEN.value,
+                PositionState.EXIT_PENDING.value,
+            ):
+                raise CapitalConflict(
+                    "lot_not_live",
+                    "terminal settlement against a terminal economic lot",
+                    economic_lot_id=request.economic_lot_id,
+                    state=position.state,
+                )
+            if position.security_id != request.security_id:
+                raise CapitalConflict(
+                    "security_mismatch",
+                    "terminal settlement security does not match the lot",
+                    economic_lot_id=request.economic_lot_id,
+                )
+
+            idempotency_key = terminal_cash_idempotency_key(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+            )
+            existing = self._economic_event_row(context, idempotency_key)
+            if existing is not None:
+                committed_payload = CapitalCommandPayload.model_validate_json(
+                    existing.payload_json
+                )
+                fact = committed_payload.corporate_action
+                assert fact is not None
+                self._require_fact_fields_match(
+                    (
+                        (
+                            "proceeds_cents",
+                            request.proceeds_cents,
+                            fact.proceeds_cents,
+                        ),
+                        ("tier", request.tier, fact.tier),
+                    )
+                )
+                snapshot = context.read_capital_risk_snapshot(request.as_of)
+                consumed = int(fact.superseded_amount_cents or 0)
+                receipt = TerminalCashReceipt(
+                    action_id=request.action_id,
+                    event_id=existing.economic_event_id,
+                    proceeds_cents=request.proceeds_cents,
+                    swept_quantity=int(fact.recorded_quantity_units or 0),
+                    consumed_basis_cents=consumed,
+                    realized_pnl_cents=request.proceeds_cents - consumed,
+                    capital_version=snapshot.capital_version,
+                    stream_version=context.current_stream_version(),
+                )
+                return receipt, snapshot
+
+            settled = int(position.settled_quantity_units)
+            share_receivable = int(position.share_receivable_quantity_units)
+            basis_cents = int(position.cost_basis_cents)
+            outstanding_shares = (
+                self._outstanding_lot_share_receivable_rows(
+                    context,
+                    request.position_lineage_id,
+                    request.economic_lot_id,
+                )
+            )
+            if share_receivable != sum(
+                int(item.quantity_units) for item in outstanding_shares
+            ):
+                raise CapitalConflict(
+                    "projection_rejected",
+                    "share receivable projection drifted from its receivable"
+                    " rows",
+                    economic_lot_id=request.economic_lot_id,
+                )
+
+            legs: list[EconomicEventLeg] = [
+                SecurityEconomicEventLeg(
+                    leg_id=f"{idempotency_key}:security",
+                    direction=EconomicLegDirection.DEBIT,
+                    asset_kind=EconomicAssetKind.SECURITY,
+                    security_id=request.security_id,
+                    quantity=settled,
+                )
+            ]
+            for receivable in outstanding_shares:
+                legs.append(
+                    ShareReceivableEconomicEventLeg(
+                        leg_id=(
+                            f"{idempotency_key}:share:"
+                            f"{receivable.receivable_id}"
+                        ),
+                        direction=EconomicLegDirection.DEBIT,
+                        asset_kind=EconomicAssetKind.SHARE_RECEIVABLE,
+                        receivable_id=receivable.receivable_id,
+                        security_id=receivable.security_id,
+                        quantity=int(receivable.quantity_units),
+                    )
+                )
+            for receivable_id in request.sweep_receivable_ids:
+                receivable = context.receivable_row(receivable_id)
+                if (
+                    receivable is None
+                    or receivable.receivable_kind != "CASH"
+                    or int(receivable.settled) != 0
+                    or receivable.position_lineage_id
+                    != request.position_lineage_id
+                ):
+                    raise CapitalConflict(
+                        "receivable_unknown",
+                        "terminal settlement may only sweep outstanding lot"
+                        " cash receivables",
+                        receivable_id=receivable_id,
+                    )
+                legs.append(
+                    CashReceivableEconomicEventLeg(
+                        leg_id=(
+                            f"{idempotency_key}:cash-receivable:"
+                            f"{receivable_id}"
+                        ),
+                        direction=EconomicLegDirection.DEBIT,
+                        asset_kind=EconomicAssetKind.CASH_RECEIVABLE,
+                        receivable_id=receivable_id,
+                        security_id=receivable.security_id,
+                        cash_amount=(
+                            Decimal(int(receivable.amount_cents)) / CENT_SCALE
+                        ),
+                    )
+                )
+            legs.append(
+                CashEconomicEventLeg(
+                    leg_id=f"{idempotency_key}:proceeds",
+                    direction=EconomicLegDirection.CREDIT,
+                    asset_kind=EconomicAssetKind.CASH,
+                    cash_amount=(
+                        Decimal(request.proceeds_cents) / CENT_SCALE
+                    ),
+                )
+            )
+
+            payload = CapitalCommandPayload(
+                event_kind=EconomicEventKind.CORPORATE_CASH_SETTLED,
+                effective_at=request.effective_at,
+                source_authority=request.source_authority,
+                position_lineage_id=request.position_lineage_id,
+                economic_lot_id=request.economic_lot_id,
+                legs=tuple(legs),
+                producer_namespace=position.producer_namespace,
+                research_program_id=position.research_program_id,
+                economic_lineage_id=position.economic_lineage_id,
+                stage_id=position.stage_id,
+                corporate_action=CorporateActionFact(
+                    action_id=request.action_id,
+                    action_kind=CorporateActionKind.CASH_SETTLEMENT,
+                    revision=1,
+                    tier=request.tier,
+                    recorded_quantity_units=settled + share_receivable,
+                    superseded_amount_cents=basis_cents,
+                    proceeds_cents=request.proceeds_cents,
+                    legal_evidence_reference=(
+                        request.legal_evidence_reference
+                    ),
+                ),
+            )
+            command = CapitalCommand(
+                idempotency_key=idempotency_key,
+                account_binding=binding,
+                expected_stream_version=request.expected_stream_version,
+                as_of=request.as_of,
+                payload=payload,
+            )
+            event_id = derive_event_id(idempotency_key)
+
+            def insert_row(tx: GatewayTransactionContext) -> None:
+                tx._connection.execute(
+                    tx._table("corporate_actions").insert().values(
+                        action_id=request.action_id,
+                        position_lineage_id=request.position_lineage_id,
+                        economic_lot_id=request.economic_lot_id,
+                        action_kind=CorporateActionKind.CASH_SETTLEMENT.value,
+                        state=CorporateActionState.TERMINAL_SETTLED.value,
+                        source_authority_tier=request.tier.value,
+                        source_authority=request.source_authority,
+                        security_id=request.security_id,
+                        revision=1,
+                        entitlement_numerator=None,
+                        entitlement_denominator=None,
+                        fractional_remainder_numerator=None,
+                        fractional_remainder_denominator=None,
+                        cash_in_lieu_cents=None,
+                        receivable_id=None,
+                        cash_in_lieu_receivable_id=None,
+                        ex_effective_at=utc_iso(request.effective_at),
+                        pay_effective_at=utc_iso(request.effective_at),
+                        tradable_effective_at=None,
+                        successor_security_id=None,
+                        successor_quantity_units=None,
+                        successor_receivable_id=None,
+                        inherited_position_state=None,
+                        opened_by_event_id=event_id,
+                        updated_by_event_id=event_id,
+                        updated_at=utc_iso(request.as_of),
+                    )
+                )
+
+            snapshot = context.run_append(
+                command,
+                after_event_insert_hook=None,
+                after_projection_hook=insert_row,
+            )
+            receipt = TerminalCashReceipt(
+                action_id=request.action_id,
+                event_id=event_id,
+                proceeds_cents=request.proceeds_cents,
+                swept_quantity=settled + share_receivable,
+                consumed_basis_cents=basis_cents,
+                realized_pnl_cents=request.proceeds_cents - basis_cents,
+                capital_version=snapshot.capital_version,
+                stream_version=context.current_stream_version(),
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def legal_write_off(
+        self, request: WriteOffRequest
+    ) -> tuple[WriteOffReceipt, CapitalRiskSnapshot]:
+        """Legal derecognition of a worthless lot (LEGAL_WRITE_OFF).
+
+        The second of the only two facts that may terminate a lot's
+        economic obligation. Requires CONFIRMED authority and an explicit
+        legal evidence reference. The remaining basis leaves as a realized
+        loss with zero proceeds; swept entitlement receivables reverse the
+        income that was never paid.
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[WriteOffReceipt, CapitalRiskSnapshot]:
+            binding = self._stored_binding(context)
+            context.require_lifecycle(
+                frozenset(
+                    {
+                        LifecycleState.ACTIVE,
+                        LifecycleState.TERMINATING,
+                        LifecycleState.INSOLVENT,
+                    }
+                )
+            )
+            if request.tier is not SourceAuthorityTier.CONFIRMED:
+                raise CapitalConflict(
+                    "source_authority_insufficient",
+                    "legal write-off is a confirmed fact",
+                    action_id=request.action_id,
+                    tier=request.tier.value,
+                )
+            position = context.position_row(
+                request.position_lineage_id, request.economic_lot_id
+            )
+            if position is None:
+                raise CapitalConflict(
+                    "lot_unknown",
+                    "write-off references an unknown economic lot",
+                    economic_lot_id=request.economic_lot_id,
+                )
+            if position.state not in (
+                PositionState.OPEN.value,
+                PositionState.EXIT_PENDING.value,
+            ):
+                raise CapitalConflict(
+                    "lot_not_live",
+                    "write-off against a terminal economic lot",
+                    economic_lot_id=request.economic_lot_id,
+                    state=position.state,
+                )
+            if position.security_id != request.security_id:
+                raise CapitalConflict(
+                    "security_mismatch",
+                    "write-off security does not match the lot",
+                    economic_lot_id=request.economic_lot_id,
+                )
+
+            idempotency_key = write_off_idempotency_key(
+                request.action_id,
+                request.position_lineage_id,
+                request.economic_lot_id,
+            )
+            existing = self._economic_event_row(context, idempotency_key)
+            if existing is not None:
+                committed_payload = CapitalCommandPayload.model_validate_json(
+                    existing.payload_json
+                )
+                fact = committed_payload.corporate_action
+                assert fact is not None
+                self._require_fact_fields_match(
+                    (
+                        ("tier", request.tier, fact.tier),
+                        (
+                            "legal_evidence_reference",
+                            request.legal_evidence_reference,
+                            fact.legal_evidence_reference,
+                        ),
+                    )
+                )
+                snapshot = context.read_capital_risk_snapshot(request.as_of)
+                written_off = int(fact.recorded_quantity_units or 0)
+                share_written = int(fact.superseded_quantity_units or 0)
+                receipt = WriteOffReceipt(
+                    action_id=request.action_id,
+                    event_id=existing.economic_event_id,
+                    written_off_quantity=written_off,
+                    share_receivable_written_off=share_written,
+                    written_off_basis_cents=int(
+                        fact.superseded_amount_cents or 0
+                    ),
+                    receivables_written_off=tuple(
+                        leg.receivable_id
+                        for leg in committed_payload.legs
+                        if leg.asset_kind
+                        is EconomicAssetKind.CASH_RECEIVABLE
+                    ),
+                    capital_version=snapshot.capital_version,
+                    stream_version=context.current_stream_version(),
+                )
+                return receipt, snapshot
+
+            settled = int(position.settled_quantity_units)
+            share_receivable = int(position.share_receivable_quantity_units)
+            basis_cents = int(position.cost_basis_cents)
+            outstanding_shares = (
+                self._outstanding_lot_share_receivable_rows(
+                    context,
+                    request.position_lineage_id,
+                    request.economic_lot_id,
+                )
+            )
+            if settled == 0 and not outstanding_shares and not (
+                request.sweep_receivable_ids
+            ):
+                raise CapitalConflict(
+                    "corporate_action_nothing_to_settle",
+                    "write-off requires remaining shares or receivables",
+                    economic_lot_id=request.economic_lot_id,
+                )
+
+            legs: list[EconomicEventLeg] = []
+            if settled > 0:
+                legs.append(
+                    SecurityEconomicEventLeg(
+                        leg_id=f"{idempotency_key}:security",
+                        direction=EconomicLegDirection.DEBIT,
+                        asset_kind=EconomicAssetKind.SECURITY,
+                        security_id=request.security_id,
+                        quantity=settled,
+                    )
+                )
+            for receivable in outstanding_shares:
+                legs.append(
+                    ShareReceivableEconomicEventLeg(
+                        leg_id=(
+                            f"{idempotency_key}:share:"
+                            f"{receivable.receivable_id}"
+                        ),
+                        direction=EconomicLegDirection.DEBIT,
+                        asset_kind=EconomicAssetKind.SHARE_RECEIVABLE,
+                        receivable_id=receivable.receivable_id,
+                        security_id=receivable.security_id,
+                        quantity=int(receivable.quantity_units),
+                    )
+                )
+            receivables_written_off: list[str] = []
+            for receivable_id in request.sweep_receivable_ids:
+                receivable = context.receivable_row(receivable_id)
+                if (
+                    receivable is None
+                    or receivable.receivable_kind != "CASH"
+                    or int(receivable.settled) != 0
+                    or receivable.position_lineage_id
+                    != request.position_lineage_id
+                ):
+                    raise CapitalConflict(
+                        "receivable_unknown",
+                        "write-off may only sweep outstanding lot cash"
+                        " receivables",
+                        receivable_id=receivable_id,
+                    )
+                receivables_written_off.append(receivable_id)
+                legs.append(
+                    CashReceivableEconomicEventLeg(
+                        leg_id=(
+                            f"{idempotency_key}:cash-receivable:"
+                            f"{receivable_id}"
+                        ),
+                        direction=EconomicLegDirection.DEBIT,
+                        asset_kind=EconomicAssetKind.CASH_RECEIVABLE,
+                        receivable_id=receivable_id,
+                        security_id=receivable.security_id,
+                        cash_amount=(
+                            Decimal(int(receivable.amount_cents)) / CENT_SCALE
+                        ),
+                    )
+                )
+
+            payload = CapitalCommandPayload(
+                event_kind=EconomicEventKind.LEGAL_WRITE_OFF,
+                effective_at=request.effective_at,
+                source_authority=request.source_authority,
+                position_lineage_id=request.position_lineage_id,
+                economic_lot_id=request.economic_lot_id,
+                legs=tuple(legs),
+                producer_namespace=position.producer_namespace,
+                research_program_id=position.research_program_id,
+                economic_lineage_id=position.economic_lineage_id,
+                stage_id=position.stage_id,
+                corporate_action=CorporateActionFact(
+                    action_id=request.action_id,
+                    action_kind=CorporateActionKind.LEGAL_WRITE_OFF,
+                    revision=1,
+                    tier=request.tier,
+                    recorded_quantity_units=settled,
+                    superseded_quantity_units=share_receivable,
+                    superseded_amount_cents=basis_cents,
+                    legal_evidence_reference=(
+                        request.legal_evidence_reference
+                    ),
+                ),
+            )
+            command = CapitalCommand(
+                idempotency_key=idempotency_key,
+                account_binding=binding,
+                expected_stream_version=request.expected_stream_version,
+                as_of=request.as_of,
+                payload=payload,
+            )
+            event_id = derive_event_id(idempotency_key)
+
+            def insert_row(tx: GatewayTransactionContext) -> None:
+                tx._connection.execute(
+                    tx._table("corporate_actions").insert().values(
+                        action_id=request.action_id,
+                        position_lineage_id=request.position_lineage_id,
+                        economic_lot_id=request.economic_lot_id,
+                        action_kind=(
+                            CorporateActionKind.LEGAL_WRITE_OFF.value
+                        ),
+                        state=CorporateActionState.WRITTEN_OFF.value,
+                        source_authority_tier=request.tier.value,
+                        source_authority=request.source_authority,
+                        security_id=request.security_id,
+                        revision=1,
+                        entitlement_numerator=None,
+                        entitlement_denominator=None,
+                        fractional_remainder_numerator=None,
+                        fractional_remainder_denominator=None,
+                        cash_in_lieu_cents=None,
+                        receivable_id=None,
+                        cash_in_lieu_receivable_id=None,
+                        ex_effective_at=utc_iso(request.effective_at),
+                        pay_effective_at=None,
+                        tradable_effective_at=None,
+                        successor_security_id=None,
+                        successor_quantity_units=None,
+                        successor_receivable_id=None,
+                        inherited_position_state=None,
+                        opened_by_event_id=event_id,
+                        updated_by_event_id=event_id,
+                        updated_at=utc_iso(request.as_of),
+                    )
+                )
+
+            snapshot = context.run_append(
+                command,
+                after_event_insert_hook=None,
+                after_projection_hook=insert_row,
+            )
+            receipt = WriteOffReceipt(
+                action_id=request.action_id,
+                event_id=event_id,
+                written_off_quantity=settled,
+                share_receivable_written_off=share_receivable,
+                written_off_basis_cents=basis_cents,
+                receivables_written_off=tuple(receivables_written_off),
+                capital_version=snapshot.capital_version,
+                stream_version=context.current_stream_version(),
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def corporate_action_record(
+        self, action_id: str, position_lineage_id: str, economic_lot_id: str
+    ) -> CorporateActionRecord | None:
+        """Typed read of one corporate action projection row."""
+
+        with self._engine.connect() as conn:
+            context = GatewayTransactionContext(self, conn)
+            row = context.corporate_action_row(
+                action_id, position_lineage_id, economic_lot_id
+            )
+            if row is None:
+                return None
+            return _corporate_action_record(row)
+
+    def corporate_action_records(self) -> tuple[CorporateActionRecord, ...]:
+        """All corporate action projection rows in canonical order."""
+
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT * FROM corporate_actions"
+                    " ORDER BY position_lineage_id, economic_lot_id, action_id"
+                )
+            ).all()
+        return tuple(_corporate_action_record(row) for row in rows)
+
+
+def _corporate_action_record(row: Any) -> CorporateActionRecord:
+    def rational(
+        numerator: Any, denominator: Any
+    ) -> tuple[int, int] | None:
+        if numerator is None or denominator is None:
+            return None
+        return (int(numerator), int(denominator))
+
+    return CorporateActionRecord(
+        action_id=row.action_id,
+        position_lineage_id=row.position_lineage_id,
+        economic_lot_id=row.economic_lot_id,
+        action_kind=CorporateActionKind(row.action_kind),
+        state=CorporateActionState(row.state),
+        source_authority_tier=SourceAuthorityTier(row.source_authority_tier),
+        source_authority=row.source_authority,
+        security_id=row.security_id,
+        revision=int(row.revision),
+        entitlement=rational(
+            row.entitlement_numerator, row.entitlement_denominator
+        ),
+        fractional_remainder=rational(
+            row.fractional_remainder_numerator,
+            row.fractional_remainder_denominator,
+        ),
+        cash_in_lieu_cents=(
+            int(row.cash_in_lieu_cents)
+            if row.cash_in_lieu_cents is not None
+            else None
+        ),
+        receivable_id=row.receivable_id,
+        cash_in_lieu_receivable_id=row.cash_in_lieu_receivable_id,
+        ex_effective_at=parse_utc(row.ex_effective_at),
+        pay_effective_at=(
+            parse_utc(row.pay_effective_at)
+            if row.pay_effective_at is not None
+            else None
+        ),
+        tradable_effective_at=(
+            parse_utc(row.tradable_effective_at)
+            if row.tradable_effective_at is not None
+            else None
+        ),
+        successor_security_id=row.successor_security_id,
+        successor_quantity_units=(
+            int(row.successor_quantity_units)
+            if row.successor_quantity_units is not None
+            else None
+        ),
+        successor_receivable_id=row.successor_receivable_id,
+        inherited_position_state=row.inherited_position_state,
+        opened_by_event_id=row.opened_by_event_id,
+        updated_by_event_id=row.updated_by_event_id,
+        updated_at=parse_utc(row.updated_at),
+    )

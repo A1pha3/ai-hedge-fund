@@ -411,6 +411,46 @@ def build_metadata() -> sa.MetaData:
         sa.Column("started_at", sa.Text, nullable=False),
     )
 
+    # -- Plan 02 Task 4: corporate action fact projection ---------------------
+    # Mutable projection (rebuildable from the economic event stream). One
+    # row per (action_id, lot); revisions update the row in place while the
+    # append-only events/event_revisions history preserves every fact.
+
+    sa.Table(
+        "corporate_actions",
+        meta,
+        sa.Column("action_id", sa.Text, primary_key=True),
+        sa.Column("position_lineage_id", sa.Text, primary_key=True),
+        sa.Column("economic_lot_id", sa.Text, primary_key=True),
+        sa.Column("action_kind", sa.Text, nullable=False),
+        sa.Column("state", sa.Text, nullable=False),
+        sa.Column("source_authority_tier", sa.Text, nullable=False),
+        sa.Column("source_authority", sa.Text, nullable=False),
+        sa.Column("security_id", sa.Text, nullable=False),
+        sa.Column("revision", sa.BigInteger, nullable=False),
+        sa.Column("entitlement_numerator", sa.BigInteger, nullable=True),
+        sa.Column("entitlement_denominator", sa.BigInteger, nullable=True),
+        sa.Column(
+            "fractional_remainder_numerator", sa.BigInteger, nullable=True
+        ),
+        sa.Column(
+            "fractional_remainder_denominator", sa.BigInteger, nullable=True
+        ),
+        sa.Column("cash_in_lieu_cents", sa.BigInteger, nullable=True),
+        sa.Column("receivable_id", sa.Text, nullable=True),
+        sa.Column("cash_in_lieu_receivable_id", sa.Text, nullable=True),
+        sa.Column("ex_effective_at", sa.Text, nullable=False),
+        sa.Column("pay_effective_at", sa.Text, nullable=True),
+        sa.Column("tradable_effective_at", sa.Text, nullable=True),
+        sa.Column("successor_security_id", sa.Text, nullable=True),
+        sa.Column("successor_quantity_units", sa.BigInteger, nullable=True),
+        sa.Column("successor_receivable_id", sa.Text, nullable=True),
+        sa.Column("inherited_position_state", sa.Text, nullable=True),
+        sa.Column("opened_by_event_id", sa.Text, nullable=False),
+        sa.Column("updated_by_event_id", sa.Text, nullable=False),
+        sa.Column("updated_at", sa.Text, nullable=False),
+    )
+
     return meta
 
 

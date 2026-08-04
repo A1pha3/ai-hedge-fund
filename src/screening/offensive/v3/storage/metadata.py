@@ -18,19 +18,27 @@ from src.screening.offensive.v3.contracts import content_hash
 SCHEMA_MAJOR: Final[int] = 2
 """The Revision 2 contract schema major persisted into snapshots."""
 
-LEDGER_SCHEMA_VERSION: Final[int] = 2
+LEDGER_SCHEMA_VERSION: Final[int] = 3
 """The capital ledger storage schema revision managed by migrations.
 
 Revision 2 (Plan 02 Task 3) adds the unit/NAV/lifecycle surface:
 ``capital_flow_events``, ``flow_requests``, ``nav_observations``,
 ``risk_epoch_history`` and the subscription/redemption suspense cash
 columns on ``capital_projection``.
+
+Revision 3 (Plan 02 Task 4) adds the corporate action fact projection
+(``corporate_actions``): entitlement ratios, fractional remainders,
+source-authority tiers, settlement instants, and the successor lot
+mapping that keeps exit obligations alive across conversions.
 """
 
 INITIAL_MIGRATION_REVISION: Final[str] = "0001"
 """Alembic revision identifier of the initial ledger migration."""
 
-CURRENT_MIGRATION_REVISION: Final[str] = "0002"
+NAV_FLOWS_MIGRATION_REVISION: Final[str] = "0002"
+"""Alembic revision identifier of the Task 3 unit/NAV/lifecycle migration."""
+
+CURRENT_MIGRATION_REVISION: Final[str] = "0003"
 """Alembic revision identifier of the newest ledger migration."""
 
 UNACTIVATED_POLICY_ACTIVATION_HASH: Final[str] = "0" * 64
@@ -60,6 +68,7 @@ EXPECTED_TABLE_NAMES: Final[frozenset[str]] = frozenset(
         "account_capital_truth",
         "capital_flow_events",
         "capital_projection",
+        "corporate_actions",
         "economic_event_legs",
         "economic_events",
         "entry_tombstones",
