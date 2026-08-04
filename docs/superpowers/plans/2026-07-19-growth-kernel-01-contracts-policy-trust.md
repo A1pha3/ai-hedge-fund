@@ -33,7 +33,7 @@
 - Modify `src/screening/offensive/v3/contracts/ports.py`
 - Create `src/screening/offensive/v3/contracts/governance.py`
 - Create `src/screening/offensive/v3/contracts/execution.py`
-- Create `src/screening/offensive/v3/contracts/migration.py`
+- （历史注记：原计划列了独立 `contracts/migration.py`；三个迁移/broker/DR manifest 实际并入 `contracts/governance.py`，无独立模块）
 - Modify `src/screening/offensive/v3/contracts/trust.py`
 - Modify `src/screening/offensive/v3/policy/models.py`
 - Modify `src/screening/offensive/v3/policy/loader.py`
