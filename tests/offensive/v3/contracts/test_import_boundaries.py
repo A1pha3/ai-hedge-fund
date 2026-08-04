@@ -1410,9 +1410,9 @@ def test_control_documents_publish_the_completed_final_port_boundary() -> None:
     ) in completion_gate
     assert "checked-in snapshot matrix" in completion_gate
     assert "decision/capital/execution/evidence/trust/policy" in completion_gate
-    assert "- [ ] Plan 01 Revision 2 schema/ports implementation" in roadmap
-    assert "completion gate 已完成" in roadmap
-    assert "独立审阅通过并合并后更新" in roadmap
+    assert "- [x] Plan 01 Revision 2 schema/ports implementation" in roadmap
+    assert "completion gate 已验收" in roadmap
+    assert "2026-08-04 独立审阅" in roadmap
     assert "Tasks 1–5" in agents
     assert "Task 5 final ports 也尚未实现" not in agents
     assert "Tasks 1–4 candidate contracts/pure verification" not in design
