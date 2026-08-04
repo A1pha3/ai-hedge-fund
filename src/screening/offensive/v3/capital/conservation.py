@@ -1,38 +1,55 @@
 """Exact conservation recomputation for the append-only capital ledger.
 
-Plan 02 Task 2: ``assert_conservation`` recomputes every stored projection
-from the economic event stream and fails loudly on any unexplained cent,
-share, or unit.
+Plan 02 Task 2 established the master identity; Plan 02 Task 3 extends it
+with genesis units, external flows, suspense cash, payables, and the NAV
+observation paths. ``assert_conservation`` recomputes every stored
+projection from the economic event stream **and** the financing flow
+stream and fails loudly on any unexplained cent, share, or unit.
 
 The master identity (all terms integer cents) is::
 
     opening_capital + external_flows + economic_pnl
         == closing_assets - liabilities
 
-with, in kernel revision 2 (genesis units and external flows land in
-Task 3, so the first two terms are exactly zero here)::
+with::
 
+    opening_capital  = genesis cash received
+    external_flows   = subscription consumed cash - redemption settled
+                       payouts (equity leaves the unit holders when the
+                       redemption payable is confirmed; the later cash
+                       payment is equity-neutral)
     economic_pnl     = realized_pnl_ex_fees + dividend_income - total_fees
     realized_pnl_ex_fees = exit_gross - cost_basis_consumed_on_exits
     closing_assets   = cash + outstanding_receivables + open_cost_basis
 
-The identity holds by construction for any correct projection of the event
-stream: fees are kept out of realized market P&L (they are a separate
-charge), and cost basis is consumed on exits with the same versioned
-average-cost rule the projector applies. Conservation additionally checks
-the cash split (available/restricted against live reserves), per-lot share
-and basis equality, receivable equality, fee registry/event linkage, and
-stream contiguity — so any tampered or drifted projection row breaks at
-least one check.
+Cash replay covers both streams: economic cash legs plus the flow stream
+(genesis and subscription receipts in; refunds and redemption payments
+out). The identity holds by construction for any correct projection:
+subscription suspense always equals open subscription payables,
+redemption suspense equals the ring-fenced portion of open redemption
+payables, units replay exactly from flow events, and the NAV observation
+paths stay internally consistent (exact rational unit prices, typed
+log-growth sentinels, and append-only restatement links).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import gcd
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 
+from src.screening.offensive.v3.capital.flows import (
+    REDEMPTION_PAYABLE,
+    SUBSCRIPTION_PAYABLE,
+    FlowKind,
+    PayableState,
+)
+from src.screening.offensive.v3.capital.nav import (
+    LogGrowthKind,
+    ObservationKind,
+)
 from src.screening.offensive.v3.capital.rounding import round_half_even_div
 from src.screening.offensive.v3.contracts import (
     EconomicAssetKind,
@@ -49,6 +66,7 @@ class ConservationReport:
     """Every recomputed term of the conservation identity."""
 
     event_count: int
+    flow_event_count: int
     opening_capital_cents: int
     external_flow_cents: int
     entry_gross_cents: int
@@ -66,6 +84,10 @@ class ConservationReport:
     available_cash_cents: int
     restricted_cash_cents: int
     reserved_cash_cents: int
+    subscription_suspense_cents: int
+    redemption_suspense_cents: int
+    issued_unit_quanta: int
+    pending_redeemed_unit_quanta: int
 
 
 def _violation(message: str, **details: object) -> Exception:
@@ -80,42 +102,38 @@ def _fail(message: str, **details: object) -> None:
     raise _violation(message, **details)
 
 
-def verify_conservation(
+def _empty_report() -> ConservationReport:
+    return ConservationReport(
+        event_count=0,
+        flow_event_count=0,
+        opening_capital_cents=0,
+        external_flow_cents=0,
+        entry_gross_cents=0,
+        exit_gross_cents=0,
+        consumed_cost_basis_cents=0,
+        realized_pnl_ex_fees_cents=0,
+        dividend_income_cents=0,
+        total_fee_cents=0,
+        economic_pnl_cents=0,
+        closing_cash_cents=0,
+        closing_receivable_cents=0,
+        closing_cost_basis_cents=0,
+        closing_assets_cents=0,
+        liabilities_cents=0,
+        available_cash_cents=0,
+        restricted_cash_cents=0,
+        reserved_cash_cents=0,
+        subscription_suspense_cents=0,
+        redemption_suspense_cents=0,
+        issued_unit_quanta=0,
+        pending_redeemed_unit_quanta=0,
+    )
+
+
+def _replay_economic_events(
     connection: "sqlalchemy.engine.Connection",
-    metadata: sa.MetaData,
-) -> ConservationReport:
-    """Recompute all identities on one connection; raise on any mismatch."""
-
-    events_table = metadata.tables["economic_events"]
-    legs_table = metadata.tables["economic_event_legs"]
-
-    binding_row = connection.execute(
-        metadata.tables["account_capital_truth"].select()
-    ).first()
-    if binding_row is None:
-        # An unbound ledger holds no economic facts: conservation is void.
-        return ConservationReport(
-            event_count=0,
-            opening_capital_cents=0,
-            external_flow_cents=0,
-            entry_gross_cents=0,
-            exit_gross_cents=0,
-            consumed_cost_basis_cents=0,
-            realized_pnl_ex_fees_cents=0,
-            dividend_income_cents=0,
-            total_fee_cents=0,
-            economic_pnl_cents=0,
-            closing_cash_cents=0,
-            closing_receivable_cents=0,
-            closing_cost_basis_cents=0,
-            closing_assets_cents=0,
-            liabilities_cents=0,
-            available_cash_cents=0,
-            restricted_cash_cents=0,
-            reserved_cash_cents=0,
-        )
-
-    # -- replay inputs ---------------------------------------------------------
+) -> dict[str, object]:
+    """Replay the economic event legs exactly as Task 2 did."""
 
     rows = connection.execute(
         sa.text(
@@ -135,9 +153,6 @@ def verify_conservation(
             " ORDER BY e.stream_version, l.sequence"
         )
     ).all()
-    event_count = connection.execute(
-        sa.text("SELECT COUNT(*) AS n FROM economic_events")
-    ).scalar()
     versions = connection.execute(
         sa.text("SELECT stream_version FROM economic_events ORDER BY stream_version")
     ).scalars().all()
@@ -174,6 +189,11 @@ def verify_conservation(
     for row in rows:
         event_kind = EconomicEventKind(row.event_kind)
         asset_kind = EconomicAssetKind(row.asset_kind)
+        if asset_kind is EconomicAssetKind.VALUATION_MARK:
+            # Mark-only legs carry no direction and move no cash, shares,
+            # or receivables: conservation ignores them (NAV consistency is
+            # verified against the observation path instead).
+            continue
         direction = EconomicLegDirection(row.direction)
 
         if asset_kind is EconomicAssetKind.CASH:
@@ -253,6 +273,352 @@ def verify_conservation(
                     )
                 del receivable_by_id[row.receivable_id]
 
+    return {
+        "cash_delta": cash_credit_total - cash_debit_total,
+        "entry_gross": entry_gross,
+        "exit_gross": exit_gross,
+        "fee_total": fee_total,
+        "dividend_income": dividend_income,
+        "quantity_by_lot": quantity_by_lot,
+        "basis_by_lot": basis_by_lot,
+        "consumed_basis_total": consumed_basis_total,
+        "receivable_by_id": receivable_by_id,
+        "trade_event_hashes": trade_event_hashes,
+        "fee_event_hashes": fee_event_hashes,
+    }
+
+
+def _replay_flow_events(
+    connection: "sqlalchemy.engine.Connection",
+) -> dict[str, object]:
+    """Replay the append-only financing flow stream.
+
+    Cash deltas: genesis and subscription receipts add cash; subscription
+    refunds/cancellations and redemption payments remove cash. Unit quanta
+    and payables replay from the same rows, and the redemption-suspense
+    bucket follows the deterministic pay-from-suspense-first rule.
+    """
+
+    rows = connection.execute(
+        sa.text("SELECT * FROM capital_flow_events ORDER BY flow_version")
+    ).all()
+    versions = [int(row.flow_version) for row in rows]
+    if versions != list(range(1, len(versions) + 1)):
+        _fail("flow event stream is not contiguous", versions=versions)
+
+    opening_capital = 0
+    external_flows = 0
+    cash_delta = 0
+    issued_units = 0
+    pending_units = 0
+    sub_suspense = 0
+    red_suspense = 0
+    payables: dict[str, dict[str, object]] = {}
+
+    for row in rows:
+        kind = FlowKind(row.flow_kind)
+        if kind is FlowKind.GENESIS:
+            opening_capital += int(row.cash_amount_cents)
+            cash_delta += int(row.cash_amount_cents)
+            issued_units += int(row.issued_unit_quanta)
+        elif kind is FlowKind.SUBSCRIPTION_RECEIVED:
+            cash_delta += int(row.cash_amount_cents)
+            sub_suspense += int(row.cash_amount_cents)
+            payable_id = row.payable_id
+            if payable_id is None or payable_id in payables:
+                _fail(
+                    "subscription receipt payable identity conflict",
+                    flow_version=row.flow_version,
+                )
+            payables[payable_id] = {
+                "kind": SUBSCRIPTION_PAYABLE,
+                "amount": int(row.cash_amount_cents),
+                "open": True,
+            }
+        elif kind is FlowKind.SUBSCRIPTION_SETTLED:
+            consumed = int(row.cash_amount_cents)
+            refund = int(row.refund_cents or 0)
+            cash_delta -= refund
+            external_flows += consumed
+            issued_units += int(row.issued_unit_quanta)
+            sub_suspense -= consumed + refund
+            payable = payables.get(row.payable_id)
+            if payable is None or not payable["open"]:
+                _fail(
+                    "subscription settle references no open payable",
+                    flow_version=row.flow_version,
+                )
+            payable["open"] = False
+        elif kind is FlowKind.SUBSCRIPTION_CANCELLED:
+            refund = int(row.refund_cents)
+            cash_delta -= refund
+            sub_suspense -= refund
+            payable = payables.get(row.payable_id)
+            if payable is None or not payable["open"]:
+                _fail(
+                    "subscription cancellation references no open payable",
+                    flow_version=row.flow_version,
+                )
+            payable["open"] = False
+        elif kind is FlowKind.REDEMPTION_SETTLED:
+            payout = int(row.cash_amount_cents)
+            reserved = int(row.reserved_cents or 0)
+            red_suspense += reserved
+            # Equity leaves the unit holders when the payable is confirmed,
+            # not when the cash is later paid out: the payment discharges
+            # assets and liabilities together and is equity-neutral.
+            external_flows -= payout
+            cancelled = int(row.cancelled_unit_quanta or 0)
+            pending = int(row.pending_unit_quanta or 0)
+            issued_units -= cancelled
+            pending_units += pending
+            payable_id = row.payable_id
+            if payable_id is None or payable_id in payables:
+                _fail(
+                    "redemption settle payable identity conflict",
+                    flow_version=row.flow_version,
+                )
+            payables[payable_id] = {
+                "kind": REDEMPTION_PAYABLE,
+                "amount": payout,
+                "open": True,
+            }
+        elif kind is FlowKind.REDEMPTION_PAID:
+            paid = int(row.cash_amount_cents)
+            from_suspense = min(red_suspense, paid)
+            red_suspense -= from_suspense
+            cash_delta -= paid
+            payable = payables.get(row.payable_id)
+            if payable is None or not payable["open"]:
+                _fail(
+                    "redemption payment references no open payable",
+                    flow_version=row.flow_version,
+                )
+            remaining = int(payable["amount"]) - paid
+            if remaining < 0:
+                _fail(
+                    "redemption payment exceeds the open payable",
+                    flow_version=row.flow_version,
+                )
+            payable["amount"] = remaining
+            if remaining == 0:
+                payable["open"] = False
+            pending_units -= int(row.burnt_unit_quanta or 0)
+            issued_units -= int(row.burnt_unit_quanta or 0)
+        else:  # pragma: no cover - FlowKind is a closed enum
+            _fail("unknown flow kind", flow_kind=row.flow_kind)
+
+        if sub_suspense < 0 or red_suspense < 0:
+            _fail(
+                "suspense replay went negative",
+                flow_version=row.flow_version,
+            )
+        if pending_units < 0 or issued_units < 0:
+            _fail(
+                "unit replay went negative",
+                flow_version=row.flow_version,
+            )
+
+    return {
+        "flow_event_count": len(rows),
+        "opening_capital": opening_capital,
+        "external_flows": external_flows,
+        "cash_delta": cash_delta,
+        "issued_units": issued_units,
+        "pending_units": pending_units,
+        "sub_suspense": sub_suspense,
+        "red_suspense": red_suspense,
+        "payables": payables,
+    }
+
+
+def _verify_nav_observations(
+    connection: "sqlalchemy.engine.Connection",
+) -> None:
+    """Internal consistency of the two preserved NAV paths.
+
+    Unit prices are exact lowest-terms rationals; log growth uses the typed
+    sentinels with integer ratio fields; restated observations carry an
+    explicit append-only link back to the as-observed row and the matching
+    ``event_revisions`` entry.
+    """
+
+    rows = connection.execute(
+        sa.text("SELECT * FROM nav_observations ORDER BY rowid")
+    ).all()
+    by_id = {row.nav_observation_id: row for row in rows}
+    series: dict[str, list[object]] = {
+        ObservationKind.AS_OBSERVED.value: [],
+        ObservationKind.RESTATED_FINAL.value: [],
+    }
+    for row in rows:
+        series[row.observation_kind].append(row)
+
+    event_by_id = {
+        event_row.economic_event_id: event_row
+        for event_row in connection.execute(
+            sa.text(
+                "SELECT economic_event_id, event_kind, correction_of_event_id"
+                " FROM economic_events"
+            )
+        ).all()
+    }
+    revision_links = {
+        (revision.canonical_event_id, revision.revision_event_id)
+        for revision in connection.execute(
+            sa.text("SELECT canonical_event_id, revision_event_id FROM event_revisions")
+        ).all()
+    }
+
+    for kind_name, observations in series.items():
+        prior_nav: int | None = None
+        for row in observations:
+            nav = int(row.nav_cents)
+            live = int(row.live_unit_quanta)
+            if live > 0:
+                if (
+                    row.unit_price_numerator is None
+                    or row.unit_price_denominator is None
+                ):
+                    _fail(
+                        "NAV observation missing its unit price rational",
+                        nav_observation_id=row.nav_observation_id,
+                    )
+                numerator = int(row.unit_price_numerator)
+                denominator = int(row.unit_price_denominator)
+                if nav == 0:
+                    expected = (0, 1)
+                else:
+                    divisor = gcd(abs(nav), live)
+                    expected = (nav // divisor, live // divisor)
+                if (numerator, denominator) != expected:
+                    _fail(
+                        "unit price is not the exact lowest-terms rational",
+                        nav_observation_id=row.nav_observation_id,
+                        stored=(numerator, denominator),
+                        expected=expected,
+                    )
+            elif (
+                row.unit_price_numerator is not None
+                or row.unit_price_denominator is not None
+            ):
+                _fail(
+                    "empty live denominator cannot carry a unit price",
+                    nav_observation_id=row.nav_observation_id,
+                )
+
+            growth = LogGrowthKind(row.log_growth_kind)
+            if growth is LogGrowthKind.NO_PRIOR_OBSERVATION:
+                if (
+                    row.log_growth_nav_numerator is not None
+                    or row.log_growth_nav_denominator is not None
+                ):
+                    _fail(
+                        "first observation cannot carry a growth ratio",
+                        nav_observation_id=row.nav_observation_id,
+                    )
+            else:
+                if (
+                    row.log_growth_nav_numerator is None
+                    or row.log_growth_nav_denominator is None
+                ):
+                    _fail(
+                        "log growth requires integer ratio fields",
+                        nav_observation_id=row.nav_observation_id,
+                    )
+                numerator = int(row.log_growth_nav_numerator)
+                denominator = int(row.log_growth_nav_denominator)
+                if growth is LogGrowthKind.NEGATIVE_INFINITY:
+                    if numerator != 0:
+                        _fail(
+                            "negative-infinity sentinel requires zero numerator",
+                            nav_observation_id=row.nav_observation_id,
+                        )
+                    if prior_nav is None or (nav > 0 and prior_nav > 0):
+                        _fail(
+                            "negative-infinity sentinel without an undefined"
+                            " log return",
+                            nav_observation_id=row.nav_observation_id,
+                        )
+                else:
+                    if prior_nav is None or prior_nav <= 0 or nav <= 0:
+                        _fail(
+                            "finite log growth requires positive NAV pair",
+                            nav_observation_id=row.nav_observation_id,
+                        )
+                    divisor = gcd(abs(nav), prior_nav)
+                    if (numerator, denominator) != (
+                        nav // divisor,
+                        prior_nav // divisor,
+                    ):
+                        _fail(
+                            "log growth ratio does not match the NAV pair",
+                            nav_observation_id=row.nav_observation_id,
+                        )
+            prior_nav = nav
+
+    for row in series[ObservationKind.RESTATED_FINAL.value]:
+        superseded = by_id.get(row.supersedes_observation_id)
+        if superseded is None:
+            _fail(
+                "restated observation lost its superseded link",
+                nav_observation_id=row.nav_observation_id,
+            )
+        if (
+            superseded.observation_kind
+            != ObservationKind.AS_OBSERVED.value
+        ):
+            _fail(
+                "restated observation must supersede an as-observed row",
+                nav_observation_id=row.nav_observation_id,
+            )
+        restating_event = event_by_id.get(row.created_by_event_id)
+        if (
+            restating_event is None
+            or restating_event.correction_of_event_id
+            != superseded.created_by_event_id
+        ):
+            _fail(
+                "restated observation event does not correct the restated"
+                " valuation",
+                nav_observation_id=row.nav_observation_id,
+            )
+        if (
+            superseded.created_by_event_id,
+            row.created_by_event_id,
+        ) not in revision_links:
+            _fail(
+                "restatement missing its append-only event revision link",
+                nav_observation_id=row.nav_observation_id,
+            )
+
+
+def verify_conservation(
+    connection: "sqlalchemy.engine.Connection",
+    metadata: sa.MetaData,
+) -> ConservationReport:
+    """Recompute all identities on one connection; raise on any mismatch."""
+
+    binding_row = connection.execute(
+        metadata.tables["account_capital_truth"].select()
+    ).first()
+    if binding_row is None:
+        # An unbound ledger holds no economic facts: conservation is void.
+        return _empty_report()
+
+    # -- replay inputs ---------------------------------------------------------
+
+    economic = _replay_economic_events(connection)
+    flows = _replay_flow_events(connection)
+
+    event_count = connection.execute(
+        sa.text("SELECT COUNT(*) AS n FROM economic_events")
+    ).scalar()
+
+    quantity_by_lot = economic["quantity_by_lot"]
+    basis_by_lot = economic["basis_by_lot"]
+    receivable_by_id = economic["receivable_by_id"]
+
     # -- stored projections ------------------------------------------------------
 
     projection = connection.execute(
@@ -261,15 +627,23 @@ def verify_conservation(
     available = int(projection.available_cash_cents)
     restricted = int(projection.restricted_cash_cents)
     unsettled = int(projection.unsettled_cash_cents)
+    sub_suspense_stored = int(projection.subscription_suspense_cash_cents)
+    red_suspense_stored = int(projection.redemption_suspense_cash_cents)
 
-    cash_recomputed = cash_credit_total - cash_debit_total
-    if cash_recomputed != available + restricted + unsettled:
+    cash_recomputed = int(economic["cash_delta"]) + int(flows["cash_delta"])
+    bucket_total = (
+        available + restricted + unsettled + sub_suspense_stored
+        + red_suspense_stored
+    )
+    if cash_recomputed != bucket_total:
         _fail(
             "cash conservation violated",
             recomputed_cents=cash_recomputed,
             stored_available_cents=available,
             stored_restricted_cents=restricted,
             stored_unsettled_cents=unsettled,
+            stored_subscription_suspense_cents=sub_suspense_stored,
+            stored_redemption_suspense_cents=red_suspense_stored,
         )
 
     reserve_rows = connection.execute(
@@ -285,11 +659,94 @@ def verify_conservation(
             restricted_cents=restricted,
             reserved_cents=reserved_total,
         )
-    if available != cash_recomputed - restricted - unsettled:
+    if available != (
+        cash_recomputed - restricted - unsettled - sub_suspense_stored
+        - red_suspense_stored
+    ):
         _fail(
             "available cash split violated",
             available_cents=available,
-            expected_cents=cash_recomputed - restricted - unsettled,
+            expected_cents=(
+                cash_recomputed - restricted - unsettled - sub_suspense_stored
+                - red_suspense_stored
+            ),
+        )
+    if sub_suspense_stored != int(flows["sub_suspense"]):
+        _fail(
+            "subscription suspense drifted from flow history",
+            stored_cents=sub_suspense_stored,
+            recomputed_cents=int(flows["sub_suspense"]),
+        )
+    if red_suspense_stored != int(flows["red_suspense"]):
+        _fail(
+            "redemption suspense drifted from flow history",
+            stored_cents=red_suspense_stored,
+            recomputed_cents=int(flows["red_suspense"]),
+        )
+    if int(projection.issued_unit_quanta) != int(flows["issued_units"]):
+        _fail(
+            "issued unit quanta drifted from flow history",
+            stored_units=int(projection.issued_unit_quanta),
+            recomputed_units=int(flows["issued_units"]),
+        )
+    if int(projection.pending_redeemed_unit_quanta) != int(
+        flows["pending_units"]
+    ):
+        _fail(
+            "pending redeemed units drifted from flow history",
+            stored_units=int(projection.pending_redeemed_unit_quanta),
+            recomputed_units=int(flows["pending_units"]),
+        )
+
+    # Payables: every replayed open payable matches a stored OPEN row for
+    # the exact amount, and every replayed settled payable matches a stored
+    # SETTLED row.
+    payable_rows = connection.execute(
+        sa.text("SELECT * FROM payables")
+    ).all()
+    replayed_payables = flows["payables"]
+    stored_by_id = {row.payable_id: row for row in payable_rows}
+    for payable_id, replayed in replayed_payables.items():
+        stored = stored_by_id.get(payable_id)
+        if stored is None:
+            _fail("replayed payable missing its stored row", payable_id=payable_id)
+        if stored.payable_kind != replayed["kind"]:
+            _fail("payable kind drifted from flow history", payable_id=payable_id)
+        expected_state = (
+            PayableState.OPEN.value
+            if replayed["open"]
+            else PayableState.SETTLED.value
+        )
+        if stored.state != expected_state:
+            _fail(
+                "payable state drifted from flow history",
+                payable_id=payable_id,
+                stored_state=stored.state,
+                expected_state=expected_state,
+            )
+        if replayed["open"] and int(stored.amount_cents) != int(
+            replayed["amount"]
+        ):
+            _fail(
+                "open payable amount drifted from flow history",
+                payable_id=payable_id,
+                stored_cents=int(stored.amount_cents),
+                recomputed_cents=int(replayed["amount"]),
+            )
+    for payable_id in stored_by_id:
+        if payable_id not in replayed_payables:
+            _fail("stored payable without flow history", payable_id=payable_id)
+    # Subscription suspense equals open subscription payables exactly.
+    open_subscription_payables = sum(
+        int(replayed["amount"])
+        for replayed in replayed_payables.values()
+        if replayed["open"] and replayed["kind"] == SUBSCRIPTION_PAYABLE
+    )
+    if sub_suspense_stored != open_subscription_payables:
+        _fail(
+            "subscription suspense does not equal open subscription payables",
+            suspense_cents=sub_suspense_stored,
+            payable_cents=open_subscription_payables,
         )
 
     position_rows = connection.execute(metadata.tables["positions"].select()).all()
@@ -364,7 +821,7 @@ def verify_conservation(
     fee_registry_hashes = {row.payload_content_hash for row in fee_registry_rows}
     if len(fee_registry_hashes) != len(fee_registry_rows):
         _fail("duplicate fee revision registry entry")
-    missing_fee_rows = fee_event_hashes - fee_registry_hashes
+    missing_fee_rows = economic["fee_event_hashes"] - fee_registry_hashes
     if missing_fee_rows:
         _fail(
             "fee event missing its execution revision registry row",
@@ -378,28 +835,38 @@ def verify_conservation(
     ).all()
     orphan_fills = {
         row.payload_content_hash for row in fill_registry_rows
-    } - trade_event_hashes
+    } - economic["trade_event_hashes"]
     if orphan_fills:
         _fail(
             "fill registry row without a canonical trade event",
             orphans=sorted(orphan_fills),
         )
 
-    payables_total = int(
-        connection.execute(
-            sa.text("SELECT COALESCE(SUM(amount_cents), 0) AS total FROM payables")
-        ).scalar()
+    _verify_nav_observations(connection)
+
+    # -- master identity ---------------------------------------------------------
+
+    payables_total = sum(
+        int(replayed["amount"])
+        for replayed in replayed_payables.values()
+        if replayed["open"]
     )
 
-    realized_pnl_ex_fees = exit_gross - consumed_basis_total
-    economic_pnl = realized_pnl_ex_fees + dividend_income - fee_total
+    realized_pnl_ex_fees = int(economic["exit_gross"]) - int(
+        economic["consumed_basis_total"]
+    )
+    economic_pnl = (
+        realized_pnl_ex_fees
+        + int(economic["dividend_income"])
+        - int(economic["fee_total"])
+    )
     closing_cash = cash_recomputed
     closing_basis = sum(basis_by_lot.values())
     closing_assets = closing_cash + recomputed_outstanding + closing_basis
     liabilities = payables_total
 
-    opening_capital = 0  # genesis units land in Task 3
-    external_flows = 0  # subscriptions/redemptions land in Task 3
+    opening_capital = int(flows["opening_capital"])
+    external_flows = int(flows["external_flows"])
     if (
         opening_capital + external_flows + economic_pnl
         != closing_assets - liabilities
@@ -415,14 +882,15 @@ def verify_conservation(
 
     return ConservationReport(
         event_count=int(event_count),
+        flow_event_count=int(flows["flow_event_count"]),
         opening_capital_cents=opening_capital,
         external_flow_cents=external_flows,
-        entry_gross_cents=entry_gross,
-        exit_gross_cents=exit_gross,
-        consumed_cost_basis_cents=consumed_basis_total,
+        entry_gross_cents=int(economic["entry_gross"]),
+        exit_gross_cents=int(economic["exit_gross"]),
+        consumed_cost_basis_cents=int(economic["consumed_basis_total"]),
         realized_pnl_ex_fees_cents=realized_pnl_ex_fees,
-        dividend_income_cents=dividend_income,
-        total_fee_cents=fee_total,
+        dividend_income_cents=int(economic["dividend_income"]),
+        total_fee_cents=int(economic["fee_total"]),
         economic_pnl_cents=economic_pnl,
         closing_cash_cents=closing_cash,
         closing_receivable_cents=recomputed_outstanding,
@@ -432,6 +900,10 @@ def verify_conservation(
         available_cash_cents=available,
         restricted_cash_cents=restricted,
         reserved_cash_cents=reserved_total,
+        subscription_suspense_cents=sub_suspense_stored,
+        redemption_suspense_cents=red_suspense_stored,
+        issued_unit_quanta=int(flows["issued_units"]),
+        pending_redeemed_unit_quanta=int(flows["pending_units"]),
     )
 
 

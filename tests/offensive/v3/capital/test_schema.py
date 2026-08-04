@@ -21,17 +21,21 @@ from src.screening.offensive.v3.storage import metadata
 EXPECTED_TABLES = frozenset(
     {
         "account_capital_truth",
+        "capital_flow_events",
         "capital_projection",
         "economic_event_legs",
         "economic_events",
         "entry_tombstones",
         "event_revisions",
         "execution_revisions",
+        "flow_requests",
         "gateway_meta",
+        "nav_observations",
         "payables",
         "positions",
         "receivables",
         "reserves",
+        "risk_epoch_history",
         "risk_latches",
         "session_checkpoints",
         "stage_loss_state",
@@ -41,11 +45,14 @@ EXPECTED_TABLES = frozenset(
 IMMUTABLE_TABLES = frozenset(
     {
         "account_capital_truth",
+        "capital_flow_events",
         "economic_event_legs",
         "economic_events",
         "entry_tombstones",
         "event_revisions",
         "execution_revisions",
+        "nav_observations",
+        "risk_epoch_history",
         "session_checkpoints",
     }
 )
@@ -54,11 +61,45 @@ INTEGER_QUANTA_COLUMNS = {
     ("capital_projection", "available_cash_cents"),
     ("capital_projection", "restricted_cash_cents"),
     ("capital_projection", "unsettled_cash_cents"),
+    ("capital_projection", "subscription_suspense_cash_cents"),
+    ("capital_projection", "redemption_suspense_cash_cents"),
     ("capital_projection", "issued_unit_quanta"),
     ("capital_projection", "pending_redeemed_unit_quanta"),
     ("capital_projection", "as_observed_nav_cents"),
     ("capital_projection", "lifetime_high_water_mark_cents"),
     ("capital_projection", "active_epoch_high_water_mark_cents"),
+    ("capital_projection", "capital_version"),
+    ("capital_flow_events", "flow_version"),
+    ("capital_flow_events", "cash_amount_cents"),
+    ("capital_flow_events", "refund_cents"),
+    ("capital_flow_events", "reserved_cents"),
+    ("capital_flow_events", "issued_unit_quanta"),
+    ("capital_flow_events", "cancelled_unit_quanta"),
+    ("capital_flow_events", "pending_unit_quanta"),
+    ("capital_flow_events", "burnt_unit_quanta"),
+    ("capital_flow_events", "unit_price_numerator"),
+    ("capital_flow_events", "unit_price_denominator"),
+    ("flow_requests", "cash_amount_cents"),
+    ("flow_requests", "unit_quanta"),
+    ("flow_requests", "issued_unit_quanta"),
+    ("flow_requests", "unit_price_numerator"),
+    ("flow_requests", "unit_price_denominator"),
+    ("flow_requests", "v_pre_cents"),
+    ("flow_requests", "units_pre_quanta"),
+    ("flow_requests", "frozen_capital_version"),
+    ("nav_observations", "capital_version"),
+    ("nav_observations", "nav_cents"),
+    ("nav_observations", "issued_unit_quanta"),
+    ("nav_observations", "live_unit_quanta"),
+    ("nav_observations", "unit_price_numerator"),
+    ("nav_observations", "unit_price_denominator"),
+    ("nav_observations", "log_growth_nav_numerator"),
+    ("nav_observations", "log_growth_nav_denominator"),
+    ("risk_epoch_history", "risk_epoch"),
+    ("risk_epoch_history", "predecessor_risk_epoch"),
+    ("risk_epoch_history", "audited_nav_cents"),
+    ("risk_epoch_history", "active_epoch_baseline_nav_cents"),
+    ("risk_epoch_history", "lifetime_high_water_mark_cents"),
     ("economic_event_legs", "cash_amount_cents"),
     ("economic_event_legs", "quantity_units"),
     ("economic_event_legs", "cost_basis_cents"),
@@ -156,6 +197,39 @@ def _seed_history(conn: sa.engine.Connection) -> None:
             " '2026-08-03T09:00:00+00:00')"
         )
     )
+    conn.execute(
+        sa.text(
+            "INSERT INTO capital_flow_events ("
+            " flow_event_id, idempotency_key, flow_kind, portfolio_id,"
+            " flow_version, source_authority, effective_at, recorded_at,"
+            " payload_json, payload_content_hash"
+            ") VALUES ('flow-seed', 'flow-key-1', 'GENESIS', 'pf-schema', 1,"
+            " 'test.seed', '2026-08-03T09:00:00+00:00',"
+            " '2026-08-03T09:00:00+00:00', '{}', :payload_hash)"
+        ),
+        {"payload_hash": "f" * 64},
+    )
+    conn.execute(
+        sa.text(
+            "INSERT INTO nav_observations ("
+            " nav_observation_id, portfolio_id, observation_kind, as_of,"
+            " recorded_at, capital_version, created_by_event_id, nav_cents,"
+            " issued_unit_quanta, live_unit_quanta, log_growth_kind"
+            ") VALUES ('navobs-seed', 'pf-schema', 'AS_OBSERVED',"
+            " '2026-08-03T09:00:00+00:00', '2026-08-03T09:00:00+00:00', 1,"
+            " 'flow-seed', 100, 1, 1, 'NO_PRIOR_OBSERVATION')"
+        )
+    )
+    conn.execute(
+        sa.text(
+            "INSERT INTO risk_epoch_history ("
+            " risk_epoch, portfolio_id, idempotency_key, predecessor_risk_epoch,"
+            " audited_nav_cents, active_epoch_baseline_nav_cents,"
+            " lifetime_high_water_mark_cents, source_authority, started_at"
+            ") VALUES (1, 'pf-schema', 'epoch-key-1', 0, 100, 100, 100,"
+            " 'test.seed', '2026-08-03T09:00:00+00:00')"
+        )
+    )
 
 
 def test_initialize_creates_exact_table_set(repository: CapitalRepository) -> None:
@@ -199,7 +273,7 @@ def test_schema_version_is_exact_and_persisted(
     repository: CapitalRepository,
 ) -> None:
     assert metadata.SCHEMA_MAJOR == 2
-    assert metadata.LEDGER_SCHEMA_VERSION == 1
+    assert metadata.LEDGER_SCHEMA_VERSION == 2
     assert repository.schema_version() == metadata.LEDGER_SCHEMA_VERSION
     with repository.engine.connect() as conn:
         stored = conn.execute(
@@ -292,6 +366,12 @@ def test_immutable_tables_reject_update_and_delete(
         " SET stream_version = 999 WHERE session = '2026-08-03'",
         "entry_tombstones": "UPDATE entry_tombstones"
         " SET tombstone_reason = 'x' WHERE entry_identity = 'entry-seed'",
+        "capital_flow_events": "UPDATE capital_flow_events"
+        " SET flow_kind = 'X' WHERE flow_event_id = 'flow-seed'",
+        "nav_observations": "UPDATE nav_observations"
+        " SET nav_cents = 0 WHERE nav_observation_id = 'navobs-seed'",
+        "risk_epoch_history": "UPDATE risk_epoch_history"
+        " SET audited_nav_cents = 0 WHERE risk_epoch = 1",
     }
     deletes = {
         table: f"DELETE FROM {table}" for table in IMMUTABLE_TABLES
@@ -338,7 +418,7 @@ def test_monetary_columns_use_integer_quanta_not_real(
         )
 
 
-def test_alembic_layout_has_single_initial_revision() -> None:
+def test_alembic_layout_chains_the_ledger_revisions() -> None:
     from alembic.script import ScriptDirectory
     from alembic.config import Config
 
@@ -355,8 +435,13 @@ def test_alembic_layout_has_single_initial_revision() -> None:
     config.set_main_option("script_location", str(migrations))
     script = ScriptDirectory.from_config(config)
     revisions = list(script.walk_revisions())
-    assert len(revisions) == 1
-    assert script.get_current_head() == metadata.INITIAL_MIGRATION_REVISION
+    assert len(revisions) == 2
+    assert script.get_current_head() == metadata.CURRENT_MIGRATION_REVISION
+    bases = {revision.revision: revision.down_revision for revision in revisions}
+    assert bases[metadata.CURRENT_MIGRATION_REVISION] == (
+        metadata.INITIAL_MIGRATION_REVISION
+    )
+    assert bases[metadata.INITIAL_MIGRATION_REVISION] is None
 
 
 def test_alembic_upgrade_reproduces_create_all_schema(tmp_path: Path) -> None:

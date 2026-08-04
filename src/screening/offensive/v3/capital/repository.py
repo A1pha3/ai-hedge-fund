@@ -25,8 +25,10 @@ real policy activation through the Plan 04 gateway.
 from __future__ import annotations
 
 import contextlib
+import json
 from datetime import datetime
 from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 from types import MappingProxyType
 from typing import Annotated, Any, Callable, TypeAlias
@@ -57,6 +59,47 @@ from src.screening.offensive.v3.capital.fills import (
     fill_idempotency_key,
     unattributed_position_identity,
 )
+from src.screening.offensive.v3.capital.flows import (
+    NEW_RISK_BLOCKED_STATES,
+    REDEMPTION_PAYABLE,
+    SUBSCRIPTION_PAYABLE,
+    FlowCancelRequest,
+    FlowKind,
+    FlowPriceReceipt,
+    FlowPriceRequest,
+    FlowRequestKind,
+    FlowRequestState,
+    FlowSettleReceipt,
+    FlowSettleRequest,
+    GenesisReceipt,
+    GenesisRequest,
+    LifecycleState,
+    PayableState,
+    RedemptionPaymentReceipt,
+    RedemptionPaymentRequest,
+    RedemptionRequest,
+    RedemptionRequestReceipt,
+    RiskEpochReceipt,
+    RiskEpochRecord,
+    RiskEpochRequest,
+    SubscriptionReceipt,
+    SubscriptionRequest,
+    genesis_cash_cents,
+)
+from src.screening.offensive.v3.capital.identity import AccountBinding
+from src.screening.offensive.v3.capital.nav import (
+    LogGrowthKind,
+    NavObservation,
+    NavProjectionPath,
+    ObservationKind,
+    RestatementReceipt,
+    RestatementRequest,
+    ValuationReceipt,
+    ValuationRequest,
+    log_growth_kind_for,
+    nav_ratio_lowest_terms,
+    unit_price_lowest_terms,
+)
 from src.screening.offensive.v3.capital.reserves import (
     CONFIRMED_RELEASE_REASONS,
     CapitalReserveState,
@@ -65,6 +108,7 @@ from src.screening.offensive.v3.capital.reserves import (
     ReserveReleaseRequest,
 )
 from src.screening.offensive.v3.capital.rounding import (
+    MICROS_PER_CENT,
     fill_gross_cents,
     round_half_even_div,
 )
@@ -109,8 +153,11 @@ from src.screening.offensive.v3.storage.metadata import (
     RISK_SNAPSHOT_VALIDITY,
     SCHEMA_MAJOR,
     derive_event_id,
+    derive_flow_event_id,
+    derive_nav_observation_id,
     derive_risk_snapshot_id,
     drawdown_ppm,
+    parse_utc,
     scaled_int,
     utc_iso,
     utc_now,
@@ -141,35 +188,9 @@ class CapitalConflict(RuntimeError):
         self.details = MappingProxyType(details)
 
 
-class AccountBinding(CanonicalModel):
-    """The immutable account/environment/currency identity of one ledger.
-
-    One real broker account owns exactly one AccountCapitalTruth stream; the
-    binding freezes portfolio, account, mode, base currency, and the
-    account/environment fingerprint together.
-    """
-
-    portfolio_id: NonEmptyStr
-    mode: ExecutionMode
-    broker_account_id: NonEmptyStr | None
-    base_currency: NonEmptyStr
-    environment_fingerprint: Sha256 | None
-
-    @model_validator(mode="after")
-    def validate_binding(self) -> "AccountBinding":
-        if self.mode is ExecutionMode.RESEARCH_RECONSTRUCTION:
-            raise ValueError("research mode cannot bind executable capital truth")
-        if self.mode is ExecutionMode.DAILY_BAR_PROXY:
-            if self.broker_account_id is not None:
-                raise ValueError("proxy mode cannot bind a real broker account")
-        else:
-            if self.broker_account_id is None:
-                raise ValueError("manual and broker modes require an account")
-            if self.environment_fingerprint is None:
-                raise ValueError(
-                    "manual and broker modes require an environment fingerprint"
-                )
-        return self
+# ``AccountBinding`` lives in ``capital/identity.py`` since Plan 02 Task 3 so
+# the financing-flow DTOs can carry it without importing this module; it is
+# imported above and re-exported unchanged through ``__all__``.
 
 
 class CapitalCommandPayload(CanonicalModel):
@@ -258,7 +279,7 @@ class GatewayTransactionContext:
                     base_currency=binding.base_currency,
                     environment_fingerprint=binding.environment_fingerprint,
                     binding_content_hash=binding.content_hash(),
-                    lifecycle_state="ACTIVE",
+                    lifecycle_state=LifecycleState.ACTIVE.value,
                     bound_at=utc_iso(as_of),
                 )
             )
@@ -268,12 +289,14 @@ class GatewayTransactionContext:
                     available_cash_cents=0,
                     restricted_cash_cents=0,
                     unsettled_cash_cents=0,
+                    subscription_suspense_cash_cents=0,
+                    redemption_suspense_cash_cents=0,
                     issued_unit_quanta=0,
                     pending_redeemed_unit_quanta=0,
                     as_observed_nav_cents=0,
                     lifetime_high_water_mark_cents=0,
                     active_epoch_high_water_mark_cents=0,
-                    lifecycle_state="ACTIVE",
+                    lifecycle_state=LifecycleState.ACTIVE.value,
                     capital_version=0,
                     updated_at=utc_iso(as_of),
                     updated_by_event_id=None,
@@ -377,12 +400,14 @@ class GatewayTransactionContext:
     def _leg_row_values(
         self, event_id: str, sequence: int, leg: Any
     ) -> dict[str, Any]:
+        # Valuation-mark legs carry no debit/credit direction.
+        direction = getattr(leg, "direction", None)
         values: dict[str, Any] = {
             "leg_id": leg.leg_id,
             "economic_event_id": event_id,
             "sequence": sequence,
             "asset_kind": leg.asset_kind.value,
-            "direction": leg.direction.value,
+            "direction": direction.value if direction is not None else None,
             "cash_amount_cents": None,
             "security_id": None,
             "quantity_units": None,
@@ -433,6 +458,12 @@ class GatewayTransactionContext:
     def apply_legs_and_projection(
         self, event: EconomicEvent, command: CapitalCommand
     ) -> None:
+        if event.event_kind is EconomicEventKind.VALUATION:
+            # Valuation events only update marks/NAV; they never change
+            # position state, cash, or shares (Plan 02 Task 3).
+            self._apply_valuation_event(event, command)
+            return
+
         projection_table = self._table("capital_projection")
         projection = self._connection.execute(projection_table.select()).one()
         available_cash_cents = int(projection.available_cash_cents)
@@ -699,6 +730,559 @@ class GatewayTransactionContext:
             )
         )
 
+    # -- Plan 02 Task 3: valuation, NAV, lifecycle, and flow helpers ----------
+
+    def projection_row(self) -> Any:
+        return self._connection.execute(
+            self._table("capital_projection").select()
+        ).one()
+
+    def lifecycle_state(self) -> LifecycleState:
+        return LifecycleState(self.projection_row().lifecycle_state)
+
+    def require_lifecycle(
+        self, allowed: frozenset[LifecycleState]
+    ) -> LifecycleState:
+        """Fail closed when the account lifecycle blocks this command.
+
+        ``TERMINATED`` is reported with its own terminal code; every other
+        blocked state reports ``lifecycle_blocks_new_risk``.
+        """
+
+        state = self.lifecycle_state()
+        if state in allowed:
+            return state
+        if state is LifecycleState.TERMINATED:
+            raise CapitalConflict(
+                "lifecycle_terminal",
+                "the account is TERMINATED and cannot accept new facts",
+                lifecycle_state=state.value,
+            )
+        raise CapitalConflict(
+            "lifecycle_blocks_new_risk",
+            f"lifecycle state {state.value} blocks this command",
+            lifecycle_state=state.value,
+        )
+
+    def open_position_rows(self) -> tuple[Any, ...]:
+        return tuple(
+            self._connection.execute(
+                sa.text(
+                    "SELECT * FROM positions"
+                    " WHERE state IN ('OPEN', 'EXIT_PENDING')"
+                    " ORDER BY position_lineage_id, economic_lot_id"
+                )
+            ).all()
+        )
+
+    def latest_valuation_event(self) -> tuple[str, dict[str, int]] | None:
+        """The newest as-observed VALUATION event and its marks.
+
+        Restated valuations (``correction_of_event_id`` set) never feed the
+        as-observed mark set: they belong to the restated-final path only.
+        """
+
+        row = self._connection.execute(
+            sa.text(
+                "SELECT economic_event_id FROM economic_events"
+                " WHERE event_kind = 'VALUATION'"
+                " AND correction_of_event_id IS NULL"
+                " ORDER BY stream_version DESC LIMIT 1"
+            )
+        ).first()
+        if row is None:
+            return None
+        leg_rows = self._connection.execute(
+            sa.text(
+                "SELECT security_id, mark_price_micros FROM economic_event_legs"
+                " WHERE economic_event_id = :event_id ORDER BY sequence"
+            ),
+            {"event_id": row.economic_event_id},
+        ).all()
+        marks = {
+            leg_row.security_id: int(leg_row.mark_price_micros)
+            for leg_row in leg_rows
+        }
+        return row.economic_event_id, marks
+
+    def marked_gross_cents(self, marks: dict[str, int]) -> int:
+        """Total marked gross over open positions (round-half-even cents)."""
+
+        total = 0
+        for row in self.open_position_rows():
+            micros = marks.get(row.security_id, 0)
+            total += round_half_even_div(
+                int(row.settled_quantity_units) * micros, MICROS_PER_CENT
+            )
+        return total
+
+    def outstanding_receivable_cents(self) -> int:
+        return int(
+            self._connection.execute(
+                sa.text(
+                    "SELECT COALESCE(SUM(amount_cents), 0) AS total"
+                    " FROM receivables WHERE settled = 0"
+                )
+            ).one().total
+        )
+
+    def open_payable_cents(self) -> int:
+        return int(
+            self._connection.execute(
+                sa.text(
+                    "SELECT COALESCE(SUM(amount_cents), 0) AS total"
+                    " FROM payables WHERE state = :state"
+                ),
+                {"state": PayableState.OPEN.value},
+            ).one().total
+        )
+
+    def equity_cents(
+        self,
+        marks: dict[str, int] | None = None,
+        projection: Any | None = None,
+    ) -> int:
+        """Exact NAV: cash buckets + receivables + marked gross - payables."""
+
+        row = projection if projection is not None else self.projection_row()
+        if marks is None:
+            latest = self.latest_valuation_event()
+            marks = latest[1] if latest is not None else {}
+        cash_total = (
+            int(row.available_cash_cents)
+            + int(row.restricted_cash_cents)
+            + int(row.unsettled_cash_cents)
+            + int(row.subscription_suspense_cash_cents)
+            + int(row.redemption_suspense_cash_cents)
+        )
+        return (
+            cash_total
+            + self.outstanding_receivable_cents()
+            + self.marked_gross_cents(marks)
+            - self.open_payable_cents()
+        )
+
+    def equity_after_projection(
+        self,
+        *,
+        available_cash_cents: int,
+        restricted_cash_cents: int,
+        unsettled_cash_cents: int,
+        subscription_suspense_cash_cents: int,
+        redemption_suspense_cash_cents: int,
+        payable_delta_cents: int,
+    ) -> int:
+        """Exact post-fact equity for a flow settle/pay.
+
+        Receivables and marks are read live (flows never move shares);
+        ``payable_delta_cents`` is applied against the currently OPEN
+        payables before this transaction's payable update is visible.
+        """
+
+        latest = self.latest_valuation_event()
+        marks = latest[1] if latest is not None else {}
+        cash_total = (
+            available_cash_cents
+            + restricted_cash_cents
+            + unsettled_cash_cents
+            + subscription_suspense_cash_cents
+            + redemption_suspense_cash_cents
+        )
+        return (
+            cash_total
+            + self.outstanding_receivable_cents()
+            + self.marked_gross_cents(marks)
+            - (self.open_payable_cents() + payable_delta_cents)
+        )
+
+    def require_pricing_inputs(self) -> tuple[int, int]:
+        """Flow pricing inputs: (V_pre, live unit quanta).
+
+        Subscription suspense cash carries an equal payable, so an
+        unsettled subscription is equity-neutral: the current equity
+        already equals the pre-flow portfolio value. Fails closed while
+        any open position is unmarked or the live denominator is empty.
+        """
+
+        projection = self.projection_row()
+        latest = self.latest_valuation_event()
+        marks = latest[1] if latest is not None else {}
+        for row in self.open_position_rows():
+            if row.security_id not in marks:
+                raise CapitalConflict(
+                    "valuation_required_for_pricing",
+                    "every open position must be marked before flow pricing",
+                    security_id=row.security_id,
+                )
+        v_pre = self.equity_cents(projection=projection)
+        units_pre = (
+            int(projection.issued_unit_quanta)
+            - int(projection.pending_redeemed_unit_quanta)
+        )
+        if units_pre <= 0:
+            raise CapitalConflict(
+                "no_live_units_for_pricing",
+                "the live unit denominator is empty; it is never reused for"
+                " NAV or new risk while units are pending redemption",
+            )
+        return v_pre, units_pre
+
+    def latest_observation_row(self, kind: ObservationKind) -> Any | None:
+        return self._connection.execute(
+            sa.text(
+                "SELECT * FROM nav_observations"
+                " WHERE observation_kind = :kind ORDER BY rowid DESC LIMIT 1"
+            ),
+            {"kind": kind.value},
+        ).first()
+
+    def observation_row_for_event(
+        self, kind: ObservationKind, event_id: str
+    ) -> Any | None:
+        return self._connection.execute(
+            sa.text(
+                "SELECT * FROM nav_observations"
+                " WHERE observation_kind = :kind"
+                " AND created_by_event_id = :event_id"
+            ),
+            {"kind": kind.value, "event_id": event_id},
+        ).first()
+
+    def insert_nav_observation(
+        self,
+        *,
+        event_id: str,
+        kind: ObservationKind,
+        supersedes_observation_id: str | None,
+        as_of: datetime,
+        recorded_at: datetime,
+        capital_version: int,
+        nav_cents: int,
+        prior_nav_cents: int | None,
+    ) -> str:
+        projection = self.projection_row()
+        issued = int(projection.issued_unit_quanta)
+        pending = int(projection.pending_redeemed_unit_quanta)
+        live = issued - pending
+        price = unit_price_lowest_terms(nav_cents, live)
+        growth = log_growth_kind_for(nav_cents, prior_nav_cents)
+        if growth is LogGrowthKind.NO_PRIOR_OBSERVATION:
+            ratio_numerator: int | None = None
+            ratio_denominator: int | None = None
+        elif growth is LogGrowthKind.NEGATIVE_INFINITY:
+            ratio_numerator, ratio_denominator = 0, 1
+        else:
+            assert prior_nav_cents is not None
+            ratio_numerator, ratio_denominator = nav_ratio_lowest_terms(
+                nav_cents, prior_nav_cents
+            )
+        observation_id = derive_nav_observation_id(event_id, kind.value)
+        self._connection.execute(
+            self._table("nav_observations").insert().values(
+                nav_observation_id=observation_id,
+                portfolio_id=projection.portfolio_id,
+                observation_kind=kind.value,
+                supersedes_observation_id=supersedes_observation_id,
+                as_of=utc_iso(as_of),
+                recorded_at=utc_iso(recorded_at),
+                capital_version=capital_version,
+                created_by_event_id=event_id,
+                nav_cents=nav_cents,
+                issued_unit_quanta=issued,
+                live_unit_quanta=live,
+                unit_price_numerator=(price[0] if price is not None else None),
+                unit_price_denominator=(price[1] if price is not None else None),
+                log_growth_kind=growth.value,
+                log_growth_nav_numerator=ratio_numerator,
+                log_growth_nav_denominator=ratio_denominator,
+            )
+        )
+        return observation_id
+
+    def _apply_valuation_event(
+        self, event: EconomicEvent, command: CapitalCommand
+    ) -> None:
+        """Mark-only projection: NAV, water marks, lifecycle, observation.
+
+        Restatements (``correction_of_event_id`` set) append a
+        RESTATED_FINAL observation linked to the as-observed row and bump
+        the capital version; they never rewrite the decision-time NAV, HWM,
+        or lifecycle.
+        """
+
+        conn = self._connection
+        marks: dict[str, int] = {}
+        for leg in event.legs:
+            marks[leg.security_id] = scaled_int(
+                leg.mark_price, PRICE_MICRO_SCALE, "mark_price"
+            )
+        restatement = event.correction_of_event_id is not None
+        if not restatement:
+            open_securities = {
+                row.security_id for row in self.open_position_rows()
+            }
+            missing = sorted(open_securities - set(marks))
+            if missing:
+                raise CapitalConflict(
+                    "valuation_mark_missing",
+                    "close valuation must mark every open position",
+                    missing_securities=missing,
+                )
+            unexpected = sorted(set(marks) - open_securities)
+            if unexpected:
+                raise CapitalConflict(
+                    "valuation_mark_unexpected",
+                    "valuation marks a security with no open position",
+                    unexpected_securities=unexpected,
+                )
+
+        projection_table = self._table("capital_projection")
+        projection = conn.execute(projection_table.select()).one()
+        nav_cents = self.equity_cents(marks=marks, projection=projection)
+        new_version = int(projection.capital_version) + 1
+        now = utc_iso(command.as_of)
+
+        if restatement:
+            superseded = self.observation_row_for_event(
+                ObservationKind.AS_OBSERVED, event.correction_of_event_id
+            )
+            if superseded is None:
+                raise CapitalConflict(
+                    "restatement_target_unknown",
+                    "restated valuation has no as-observed observation",
+                    correction_of_event_id=event.correction_of_event_id,
+                )
+            # The restated-final path is its own preserved series: log
+            # growth chains the restated observations in append order (the
+            # first restated row has no prior in the series).
+            prior_restated = self.latest_observation_row(
+                ObservationKind.RESTATED_FINAL
+            )
+            prior_nav = (
+                int(prior_restated.nav_cents)
+                if prior_restated is not None
+                else None
+            )
+            conn.execute(
+                projection_table.update()
+                .where(projection_table.c.portfolio_id == projection.portfolio_id)
+                .values(
+                    capital_version=new_version,
+                    updated_at=now,
+                    updated_by_event_id=event.economic_event_id,
+                )
+            )
+            self.insert_nav_observation(
+                event_id=event.economic_event_id,
+                kind=ObservationKind.RESTATED_FINAL,
+                supersedes_observation_id=superseded.nav_observation_id,
+                as_of=event.effective_at,
+                recorded_at=event.recorded_at,
+                capital_version=new_version,
+                nav_cents=nav_cents,
+                prior_nav_cents=prior_nav,
+            )
+            return
+
+        prior = self.latest_observation_row(ObservationKind.AS_OBSERVED)
+        if prior is None and int(projection.issued_unit_quanta) == 0:
+            raise CapitalConflict(
+                "valuation_before_genesis",
+                "close valuation requires an initialized genesis",
+            )
+        self.confirm_observed_nav(
+            nav_cents=nav_cents,
+            event_id=event.economic_event_id,
+            effective_at=event.effective_at,
+            recorded_at=event.recorded_at,
+            prior_nav_cents=(int(prior.nav_cents) if prior is not None else None),
+        )
+
+    def confirm_observed_nav(
+        self,
+        *,
+        nav_cents: int,
+        event_id: str,
+        effective_at: datetime,
+        recorded_at: datetime,
+        prior_nav_cents: int | None,
+    ) -> int:
+        """Confirm one as-observed NAV: projection, water marks, lifecycle
+        (NAV <= 0 sets INSOLVENT), and the append-only observation row.
+        Returns the new capital version."""
+
+        projection_table = self._table("capital_projection")
+        projection = self._connection.execute(projection_table.select()).one()
+        lifetime_hwm = max(
+            int(projection.lifetime_high_water_mark_cents), nav_cents
+        )
+        active_hwm = max(
+            int(projection.active_epoch_high_water_mark_cents), nav_cents
+        )
+        lifecycle = LifecycleState(projection.lifecycle_state)
+        if nav_cents <= 0 and lifecycle in (
+            LifecycleState.ACTIVE,
+            LifecycleState.TERMINATING,
+        ):
+            # Confirmed NAV <= 0 after investment loss: insolvency is not
+            # auto-recoverable; only exits, liquidation, and reconciliation
+            # continue.
+            lifecycle = LifecycleState.INSOLVENT
+        new_version = int(projection.capital_version) + 1
+        self._connection.execute(
+            projection_table.update()
+            .where(projection_table.c.portfolio_id == projection.portfolio_id)
+            .values(
+                as_observed_nav_cents=nav_cents,
+                lifetime_high_water_mark_cents=lifetime_hwm,
+                active_epoch_high_water_mark_cents=active_hwm,
+                lifecycle_state=lifecycle.value,
+                capital_version=new_version,
+                updated_at=utc_iso(recorded_at),
+                updated_by_event_id=event_id,
+            )
+        )
+        self.insert_nav_observation(
+            event_id=event_id,
+            kind=ObservationKind.AS_OBSERVED,
+            supersedes_observation_id=None,
+            as_of=effective_at,
+            recorded_at=recorded_at,
+            capital_version=new_version,
+            nav_cents=nav_cents,
+            prior_nav_cents=prior_nav_cents,
+        )
+        return new_version
+
+    # -- flow stream primitives -------------------------------------------------
+
+    def current_flow_version(self) -> int:
+        row = self._connection.execute(
+            sa.text(
+                "SELECT COALESCE(MAX(flow_version), 0) AS v"
+                " FROM capital_flow_events"
+            )
+        ).one()
+        return int(row.v)
+
+    def require_flow_version(self, expected: int) -> None:
+        actual = self.current_flow_version()
+        if actual != expected:
+            raise CapitalConflict(
+                "flow_version_mismatch",
+                "compare-and-swap failed: the financing flow stream advanced",
+                expected=expected,
+                actual=actual,
+            )
+
+    def flow_request_row(self, request_id: str) -> Any | None:
+        return self._connection.execute(
+            sa.text("SELECT * FROM flow_requests WHERE flow_request_id = :id"),
+            {"id": request_id},
+        ).first()
+
+    def existing_flow_event(self, idempotency_key: str) -> Any | None:
+        return self._connection.execute(
+            sa.text(
+                "SELECT * FROM capital_flow_events"
+                " WHERE idempotency_key = :key"
+            ),
+            {"key": idempotency_key},
+        ).first()
+
+    def require_flow_payload_idempotent(
+        self, idempotency_key: str, payload_hash: str
+    ) -> Any | None:
+        """Return the committed flow event for an identical retry, fail
+        closed on a divergent payload under the same key."""
+
+        existing = self.existing_flow_event(idempotency_key)
+        if existing is None:
+            return None
+        if existing.payload_content_hash != payload_hash:
+            raise CapitalConflict(
+                "payload_conflict",
+                "flow idempotency key already committed with a different"
+                " payload",
+                idempotency_key=idempotency_key,
+            )
+        return existing
+
+    def insert_flow_event(
+        self,
+        *,
+        idempotency_key: str,
+        flow_kind: FlowKind,
+        portfolio_id: str,
+        request_id: str | None,
+        source_authority: str,
+        effective_at: datetime,
+        recorded_at: datetime,
+        payload: dict[str, Any],
+        cash_amount_cents: int | None = None,
+        refund_cents: int | None = None,
+        reserved_cents: int | None = None,
+        issued_unit_quanta: int | None = None,
+        cancelled_unit_quanta: int | None = None,
+        pending_unit_quanta: int | None = None,
+        burnt_unit_quanta: int | None = None,
+        unit_price_numerator: int | None = None,
+        unit_price_denominator: int | None = None,
+        payable_id: str | None = None,
+    ) -> tuple[str, int]:
+        payload_hash = content_hash(payload)
+        flow_version = self.current_flow_version() + 1
+        flow_event_id = derive_flow_event_id(idempotency_key)
+        self._connection.execute(
+            self._table("capital_flow_events").insert().values(
+                flow_event_id=flow_event_id,
+                idempotency_key=idempotency_key,
+                flow_kind=flow_kind.value,
+                portfolio_id=portfolio_id,
+                flow_version=flow_version,
+                flow_request_id=request_id,
+                source_authority=source_authority,
+                effective_at=utc_iso(effective_at),
+                recorded_at=utc_iso(recorded_at),
+                cash_amount_cents=cash_amount_cents,
+                refund_cents=refund_cents,
+                reserved_cents=reserved_cents,
+                issued_unit_quanta=issued_unit_quanta,
+                cancelled_unit_quanta=cancelled_unit_quanta,
+                pending_unit_quanta=pending_unit_quanta,
+                burnt_unit_quanta=burnt_unit_quanta,
+                unit_price_numerator=unit_price_numerator,
+                unit_price_denominator=unit_price_denominator,
+                payable_id=payable_id,
+                payload_json=json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                payload_content_hash=payload_hash,
+            )
+        )
+        return flow_event_id, flow_version
+
+    def bump_projection(
+        self, event_id: str | None, as_of: datetime, **values: Any
+    ) -> int:
+        """Apply flow-level projection changes and bump the capital version.
+
+        The risk/reconciliation latch is recomputed in the same transaction
+        so flow-driven NAV changes (e.g. a full redemption to zero) keep
+        the snapshot fail-closed rules satisfied.
+        """
+
+        projection_table = self._table("capital_projection")
+        projection = self._connection.execute(projection_table.select()).one()
+        values["capital_version"] = int(projection.capital_version) + 1
+        values["updated_at"] = utc_iso(as_of)
+        values["updated_by_event_id"] = event_id
+        self._connection.execute(
+            projection_table.update()
+            .where(projection_table.c.portfolio_id == projection.portfolio_id)
+            .values(**values)
+        )
+        self.recompute_risk_and_stage_loss(as_of, event_id)
+        return int(values["capital_version"])
+
     # -- risk / stage loss hook -------------------------------------------------
 
     def recompute_risk_and_stage_loss(self, as_of: datetime, event_id: str) -> None:
@@ -808,7 +1392,11 @@ class GatewayTransactionContext:
         )
         cash_payable_cents = int(
             self._connection.execute(
-                sa.text("SELECT COALESCE(SUM(amount_cents), 0) AS total FROM payables")
+                sa.text(
+                    "SELECT COALESCE(SUM(amount_cents), 0) AS total FROM payables"
+                    " WHERE state = :state"
+                ),
+                {"state": PayableState.OPEN.value},
             ).one().total
         )
         # Only LIVE and CANCEL_PENDING reserves still restrict capital; both
@@ -857,6 +1445,13 @@ class GatewayTransactionContext:
                 " ORDER BY position_lineage_id, economic_lot_id"
             )
         ).all()
+        # Marks come from the newest as-observed close-valuation event; a
+        # position opened after the last valuation stays unmarked (zero)
+        # until its first valuation confirms a price (Task 5 owns stale and
+        # unknown mark policy). Restated valuations never feed as-observed
+        # marks.
+        latest_valuation = self.latest_valuation_event()
+        valuation_marks = latest_valuation[1] if latest_valuation is not None else {}
         latch_rows = self._connection.execute(
             self._table("risk_latches").select()
         ).all()
@@ -888,9 +1483,13 @@ class GatewayTransactionContext:
                 settled_quantity=int(row.settled_quantity_units),
                 tradable_quantity=int(row.tradable_quantity_units),
                 share_receivable_quantity=int(row.share_receivable_quantity_units),
-                # Valuation marks arrive with Task 3/Task 5 close-valuation
-                # events; kernel revision 1 carries the unmarked position.
-                marked_gross_cents=0,
+                # Marked gross from the newest as-observed valuation event
+                # (round-half-even cents); unmarked positions stay zero.
+                marked_gross_cents=round_half_even_div(
+                    int(row.settled_quantity_units)
+                    * valuation_marks.get(row.security_id, 0),
+                    MICROS_PER_CENT,
+                ),
             )
             for row in position_rows
         )
@@ -932,8 +1531,12 @@ class GatewayTransactionContext:
             unsettled_cash_cents=int(projection.unsettled_cash_cents),
             cash_receivable_cents=cash_receivable_cents,
             cash_payable_cents=cash_payable_cents,
-            subscription_suspense_cents=0,
-            redemption_suspense_cents=0,
+            subscription_suspense_cents=int(
+                projection.subscription_suspense_cash_cents
+            ),
+            redemption_suspense_cents=int(
+                projection.redemption_suspense_cash_cents
+            ),
             reserved_cash_cents=reserved_cash_cents,
             issued_unit_quanta=int(projection.issued_unit_quanta),
             pending_redeemed_unit_quanta=int(
@@ -987,6 +1590,16 @@ class GatewayTransactionContext:
         after_projection_hook: ProjectorHook | None = None,
     ) -> CapitalRiskSnapshot:
         self.require_account_binding(command.account_binding, command.as_of)
+        # A TERMINATED account accepts no new economic facts of any kind.
+        self.require_lifecycle(
+            frozenset(
+                {
+                    LifecycleState.ACTIVE,
+                    LifecycleState.TERMINATING,
+                    LifecycleState.INSOLVENT,
+                }
+            )
+        )
         existing = self._connection.execute(
             sa.text(
                 "SELECT payload_content_hash FROM economic_events"
@@ -1599,6 +2212,11 @@ class CapitalRepository:
         def operation(context: GatewayTransactionContext) -> CapitalRiskSnapshot:
             conn = context._connection
             self._stored_binding(context)
+            # New entry risk is blocked once the account is terminating,
+            # terminated, or insolvent (exits and reconciliation continue).
+            context.require_lifecycle(
+                frozenset({LifecycleState.ACTIVE})
+            )
             reserves_table = context._table("reserves")
             existing = conn.execute(
                 reserves_table.select().where(
@@ -1812,6 +2430,20 @@ class CapitalRepository:
         ) -> tuple[FillRevisionReceipt, CapitalRiskSnapshot]:
             conn = context._connection
             binding = self._stored_binding(context)
+            # TERMINATED rejects every fill; TERMINATING/INSOLVENT keep
+            # exits and reconciliation alive but block new entry risk.
+            if request.side is ExecutionSide.ENTRY:
+                context.require_lifecycle(frozenset({LifecycleState.ACTIVE}))
+            else:
+                context.require_lifecycle(
+                    frozenset(
+                        {
+                            LifecycleState.ACTIVE,
+                            LifecycleState.TERMINATING,
+                            LifecycleState.INSOLVENT,
+                        }
+                    )
+                )
             reserves_table = context._table("reserves")
             reserve_row = None
             if request.reserve_source_id is not None:
@@ -2267,3 +2899,1888 @@ class CapitalRepository:
         with self._engine.connect() as conn:
             with conn.begin():
                 return verify_conservation(conn, self._metadata)
+
+    # -- Plan 02 Task 3: genesis units, external flows, NAV lifecycle ---------
+
+    def lifecycle_state(self) -> LifecycleState:
+        """The typed account lifecycle state of the bound ledger."""
+
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                sa.text("SELECT lifecycle_state FROM capital_projection")
+            ).first()
+        if row is None:
+            raise CapitalConflict(
+                "account_not_bound",
+                "no AccountCapitalTruth is bound to this ledger",
+            )
+        return LifecycleState(row.lifecycle_state)
+
+    def flow_version(self) -> int:
+        """The current financing flow stream version (CAS anchor)."""
+
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                sa.text(
+                    "SELECT COALESCE(MAX(flow_version), 0) AS v"
+                    " FROM capital_flow_events"
+                )
+            ).one()
+        return int(row.v)
+
+    def flow_request_state(self, request_id: str) -> FlowRequestState:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                sa.text(
+                    "SELECT state FROM flow_requests WHERE flow_request_id = :id"
+                ),
+                {"id": request_id},
+            ).first()
+        if row is None:
+            raise CapitalConflict(
+                "flow_request_unknown",
+                "no flow request exists for this identity",
+                request_id=request_id,
+            )
+        return FlowRequestState(row.state)
+
+    def risk_epoch_history(self) -> tuple[RiskEpochRecord, ...]:
+        """The durable monotonic risk-epoch chain (append-only)."""
+
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT * FROM risk_epoch_history ORDER BY risk_epoch"
+                )
+            ).all()
+        return tuple(
+            RiskEpochRecord(
+                risk_epoch=int(row.risk_epoch),
+                predecessor_risk_epoch=int(row.predecessor_risk_epoch),
+                audited_nav_cents=int(row.audited_nav_cents),
+                active_epoch_baseline_nav_cents=int(
+                    row.active_epoch_baseline_nav_cents
+                ),
+                lifetime_high_water_mark_cents=int(
+                    row.lifetime_high_water_mark_cents
+                ),
+                source_authority=row.source_authority,
+                authorization_reference=row.authorization_reference,
+                started_at=parse_utc(row.started_at),
+            )
+            for row in rows
+        )
+
+    def nav_projections(self) -> NavProjectionPath:
+        """Both preserved NAV series: as-observed and restated-final."""
+
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                sa.text("SELECT * FROM nav_observations ORDER BY rowid")
+            ).all()
+
+        def observation(row: Any) -> NavObservation:
+            return NavObservation(
+                nav_observation_id=row.nav_observation_id,
+                observation_kind=ObservationKind(row.observation_kind),
+                supersedes_observation_id=row.supersedes_observation_id,
+                as_of=parse_utc(row.as_of),
+                capital_version=int(row.capital_version),
+                created_by_event_id=row.created_by_event_id,
+                nav_cents=int(row.nav_cents),
+                issued_unit_quanta=int(row.issued_unit_quanta),
+                live_unit_quanta=int(row.live_unit_quanta),
+                unit_price_numerator=row.unit_price_numerator,
+                unit_price_denominator=row.unit_price_denominator,
+                log_growth_kind=LogGrowthKind(row.log_growth_kind),
+                log_growth_nav_numerator=row.log_growth_nav_numerator,
+                log_growth_nav_denominator=row.log_growth_nav_denominator,
+            )
+
+        as_observed = tuple(
+            observation(row)
+            for row in rows
+            if row.observation_kind == ObservationKind.AS_OBSERVED.value
+        )
+        restated_final = tuple(
+            observation(row)
+            for row in rows
+            if row.observation_kind == ObservationKind.RESTATED_FINAL.value
+        )
+        return NavProjectionPath(
+            as_observed=as_observed, restated_final=restated_final
+        )
+
+    def initialize_genesis(
+        self, request: GenesisRequest
+    ) -> tuple[GenesisReceipt, CapitalRiskSnapshot]:
+        """The one-time atomic genesis issuance of explicit units.
+
+        Fails closed when any economic or financing history already exists,
+        when the frozen genesis price does not divide to exact integer cents,
+        or when the account left the ACTIVE state. Retries with the identical
+        payload converge on the committed genesis fact.
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[GenesisReceipt, CapitalRiskSnapshot]:
+            conn = context._connection
+            context.require_account_binding(request.account_binding, request.as_of)
+            context.require_lifecycle(frozenset({LifecycleState.ACTIVE}))
+
+            payload = {
+                "flow_kind": FlowKind.GENESIS.value,
+                "idempotency_key": request.idempotency_key,
+                "unit_quanta": request.unit_quanta,
+                "unit_price_numerator": request.unit_price_numerator,
+                "unit_price_denominator": request.unit_price_denominator,
+                "source_authority": request.source_authority,
+                "authorization_reference": request.authorization_reference,
+                "effective_at": utc_iso(request.effective_at),
+            }
+            payload_hash = content_hash(payload)
+            existing = context.require_flow_payload_idempotent(
+                request.idempotency_key, payload_hash
+            )
+            if existing is not None:
+                observation_row = context.observation_row_for_event(
+                    ObservationKind.AS_OBSERVED, existing.flow_event_id
+                )
+                projection = context.projection_row()
+                receipt = GenesisReceipt(
+                    flow_event_id=existing.flow_event_id,
+                    observation_id=observation_row.nav_observation_id,
+                    cash_amount_cents=int(existing.cash_amount_cents),
+                    unit_quanta=int(existing.issued_unit_quanta),
+                    unit_price_numerator=int(existing.unit_price_numerator),
+                    unit_price_denominator=int(existing.unit_price_denominator),
+                    capital_version=int(projection.capital_version),
+                    flow_version=int(existing.flow_version),
+                )
+                return receipt, context.read_capital_risk_snapshot(request.as_of)
+
+            # One-time genesis: no economic history, no flow history, and a
+            # zeroed projection are all required.
+            event_count = int(
+                conn.execute(
+                    sa.text("SELECT COUNT(*) AS n FROM economic_events")
+                ).scalar()
+            )
+            projection = context.projection_row()
+            history_exists = (
+                context.current_flow_version() > 0
+                or event_count > 0
+                or int(projection.available_cash_cents) != 0
+                or int(projection.issued_unit_quanta) != 0
+            )
+            if history_exists:
+                raise CapitalConflict(
+                    "genesis_already_committed",
+                    "genesis is one-time: economic or flow history already"
+                    " exists for this account",
+                )
+
+            cash_cents = genesis_cash_cents(
+                request.unit_quanta,
+                request.unit_price_numerator,
+                request.unit_price_denominator,
+            )
+            if cash_cents is None or cash_cents <= 0:
+                raise CapitalConflict(
+                    "genesis_price_not_exact_cents",
+                    "the frozen genesis price must divide to exact integer"
+                    " cents; genesis never rounds",
+                    unit_quanta=request.unit_quanta,
+                    unit_price_numerator=request.unit_price_numerator,
+                    unit_price_denominator=request.unit_price_denominator,
+                )
+
+            flow_event_id, flow_version = context.insert_flow_event(
+                idempotency_key=request.idempotency_key,
+                flow_kind=FlowKind.GENESIS,
+                portfolio_id=request.account_binding.portfolio_id,
+                request_id=None,
+                source_authority=request.source_authority,
+                effective_at=request.effective_at,
+                recorded_at=request.as_of,
+                payload=payload,
+                cash_amount_cents=cash_cents,
+                issued_unit_quanta=request.unit_quanta,
+                unit_price_numerator=request.unit_price_numerator,
+                unit_price_denominator=request.unit_price_denominator,
+            )
+            new_version = context.bump_projection(
+                flow_event_id,
+                request.as_of,
+                available_cash_cents=cash_cents,
+                issued_unit_quanta=request.unit_quanta,
+                as_observed_nav_cents=cash_cents,
+                lifetime_high_water_mark_cents=cash_cents,
+                active_epoch_high_water_mark_cents=cash_cents,
+            )
+            observation_id = context.insert_nav_observation(
+                event_id=flow_event_id,
+                kind=ObservationKind.AS_OBSERVED,
+                supersedes_observation_id=None,
+                as_of=request.effective_at,
+                recorded_at=request.as_of,
+                capital_version=new_version,
+                nav_cents=cash_cents,
+                prior_nav_cents=None,
+            )
+            # Genesis establishes risk epoch 1 as the chain predecessor.
+            conn.execute(
+                context._table("risk_epoch_history").insert().values(
+                    risk_epoch=1,
+                    portfolio_id=request.account_binding.portfolio_id,
+                    idempotency_key=f"{request.idempotency_key}:risk_epoch:1",
+                    predecessor_risk_epoch=0,
+                    audited_nav_cents=cash_cents,
+                    active_epoch_baseline_nav_cents=cash_cents,
+                    lifetime_high_water_mark_cents=cash_cents,
+                    source_authority=request.source_authority,
+                    authorization_reference=request.authorization_reference,
+                    started_at=utc_iso(request.as_of),
+                )
+            )
+            snapshot = context.read_capital_risk_snapshot(request.as_of)
+            receipt = GenesisReceipt(
+                flow_event_id=flow_event_id,
+                observation_id=observation_id,
+                cash_amount_cents=cash_cents,
+                unit_quanta=request.unit_quanta,
+                unit_price_numerator=request.unit_price_numerator,
+                unit_price_denominator=request.unit_price_denominator,
+                capital_version=new_version,
+                flow_version=flow_version,
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def request_subscription(
+        self, request: SubscriptionRequest
+    ) -> tuple[SubscriptionReceipt, CapitalRiskSnapshot]:
+        """Receive subscription cash as restricted suspense with an equal
+        ``subscription_payable``: net equity and units stay unchanged until
+        pricing settles the flow (flow-before-price ordering)."""
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[SubscriptionReceipt, CapitalRiskSnapshot]:
+            conn = context._connection
+            binding = self._stored_binding(context)
+            context.require_lifecycle(frozenset({LifecycleState.ACTIVE}))
+
+            idempotency_key = f"sub:{request.request_id}:received"
+            payload = {
+                "flow_kind": FlowKind.SUBSCRIPTION_RECEIVED.value,
+                "request_id": request.request_id,
+                "cash_amount_cents": request.cash_amount_cents,
+                "source_authority": request.source_authority,
+                "effective_at": utc_iso(request.effective_at),
+            }
+            existing = context.require_flow_payload_idempotent(
+                idempotency_key, content_hash(payload)
+            )
+            if existing is not None:
+                projection = context.projection_row()
+                receipt = SubscriptionReceipt(
+                    request_id=request.request_id,
+                    flow_event_id=existing.flow_event_id,
+                    cash_amount_cents=int(existing.cash_amount_cents),
+                    payable_id=existing.payable_id,
+                    capital_version=int(projection.capital_version),
+                    flow_version=int(existing.flow_version),
+                )
+                return receipt, context.read_capital_risk_snapshot(request.as_of)
+
+            context.require_flow_version(request.expected_flow_version)
+            if context.flow_request_row(request.request_id) is not None:
+                raise CapitalConflict(
+                    "flow_request_conflict",
+                    "flow request identity already in use",
+                    request_id=request.request_id,
+                )
+
+            now = utc_iso(request.as_of)
+            payable_id = f"pay:{idempotency_key}"
+            conn.execute(
+                context._table("flow_requests").insert().values(
+                    flow_request_id=request.request_id,
+                    flow_kind=FlowRequestKind.SUBSCRIPTION.value,
+                    state=FlowRequestState.RECEIVED.value,
+                    cash_amount_cents=request.cash_amount_cents,
+                    unit_quanta=None,
+                    issued_unit_quanta=None,
+                    unit_price_numerator=None,
+                    unit_price_denominator=None,
+                    v_pre_cents=None,
+                    units_pre_quanta=None,
+                    frozen_capital_version=None,
+                    payable_id=payable_id,
+                    source_authority=request.source_authority,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            conn.execute(
+                context._table("payables").insert().values(
+                    payable_id=payable_id,
+                    payable_kind=SUBSCRIPTION_PAYABLE,
+                    amount_cents=request.cash_amount_cents,
+                    state=PayableState.OPEN.value,
+                    created_at=now,
+                    created_by_event_id=None,
+                )
+            )
+            flow_event_id, flow_version = context.insert_flow_event(
+                idempotency_key=idempotency_key,
+                flow_kind=FlowKind.SUBSCRIPTION_RECEIVED,
+                portfolio_id=binding.portfolio_id,
+                request_id=request.request_id,
+                source_authority=request.source_authority,
+                effective_at=request.effective_at,
+                recorded_at=request.as_of,
+                payload=payload,
+                cash_amount_cents=request.cash_amount_cents,
+                payable_id=payable_id,
+            )
+            projection = context.projection_row()
+            new_version = context.bump_projection(
+                flow_event_id,
+                request.as_of,
+                subscription_suspense_cash_cents=(
+                    int(projection.subscription_suspense_cash_cents)
+                    + request.cash_amount_cents
+                ),
+            )
+            snapshot = context.read_capital_risk_snapshot(request.as_of)
+            receipt = SubscriptionReceipt(
+                request_id=request.request_id,
+                flow_event_id=flow_event_id,
+                cash_amount_cents=request.cash_amount_cents,
+                payable_id=payable_id,
+                capital_version=new_version,
+                flow_version=flow_version,
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def _price_flow(
+        self,
+        context: GatewayTransactionContext,
+        request: FlowPriceRequest,
+        flow_kind: FlowRequestKind,
+    ) -> FlowPriceReceipt:
+        """Shared flow-before-price freeze for subscriptions and redemptions.
+
+        V_pre excludes the caller's own subscription suspense cash; every
+        open position must be marked and the live unit denominator must be
+        nonempty before any price may be frozen.
+        """
+
+        row = context.flow_request_row(request.request_id)
+        if row is None or row.flow_kind != flow_kind.value:
+            raise CapitalConflict(
+                "flow_request_unknown",
+                "no matching flow request exists for this identity",
+                request_id=request.request_id,
+            )
+        priced_states = {
+            FlowRequestState.RECEIVED.value,
+            FlowRequestState.REQUESTED.value,
+            FlowRequestState.PRICED.value,
+        }
+        if row.state not in priced_states:
+            raise CapitalConflict(
+                "flow_request_state_conflict",
+                f"flow request state {row.state} cannot be priced",
+                request_id=request.request_id,
+                state=row.state,
+            )
+        # An unsettled subscription's suspense cash and payable already net
+        # to zero in equity, so no exclusion is needed for either kind.
+        v_pre, units_pre = context.require_pricing_inputs()
+        price = Fraction(v_pre, units_pre)
+        if flow_kind is FlowRequestKind.REDEMPTION:
+            cash_amount_cents = round_half_even_div(
+                int(row.unit_quanta) * v_pre, units_pre
+            )
+        else:
+            cash_amount_cents = int(row.cash_amount_cents)
+        projection = context.projection_row()
+        context._connection.execute(
+            context._table("flow_requests").update()
+            .where(
+                context._table("flow_requests").c.flow_request_id
+                == request.request_id
+            )
+            .values(
+                state=FlowRequestState.PRICED.value,
+                cash_amount_cents=cash_amount_cents,
+                unit_price_numerator=price.numerator,
+                unit_price_denominator=price.denominator,
+                v_pre_cents=v_pre,
+                units_pre_quanta=units_pre,
+                frozen_capital_version=int(projection.capital_version),
+                updated_at=utc_iso(request.as_of),
+            )
+        )
+        return FlowPriceReceipt(
+            request_id=request.request_id,
+            v_pre_cents=v_pre,
+            units_pre_quanta=units_pre,
+            unit_price_numerator=price.numerator,
+            unit_price_denominator=price.denominator,
+            cash_amount_cents=cash_amount_cents,
+            frozen_capital_version=int(projection.capital_version),
+        )
+
+    def price_subscription(self, request: FlowPriceRequest) -> FlowPriceReceipt:
+        """Freeze V_pre and the issue price for one subscription request.
+
+        Pricing changes no capital fact, so the capital version stays quiet;
+        settle must still verify the freeze is fresh.
+        """
+
+        def operation(context: GatewayTransactionContext) -> FlowPriceReceipt:
+            self._stored_binding(context)
+            context.require_lifecycle(frozenset({LifecycleState.ACTIVE}))
+            return self._price_flow(
+                context, request, FlowRequestKind.SUBSCRIPTION
+            )
+
+        return self._run_write_transaction(operation)
+
+    def price_redemption(self, request: FlowPriceRequest) -> FlowPriceReceipt:
+        """Freeze the unit price and payout for one redemption request."""
+
+        def operation(context: GatewayTransactionContext) -> FlowPriceReceipt:
+            self._stored_binding(context)
+            context.require_lifecycle(
+                frozenset({LifecycleState.ACTIVE, LifecycleState.INSOLVENT})
+            )
+            return self._price_flow(
+                context, request, FlowRequestKind.REDEMPTION
+            )
+
+        return self._run_write_transaction(operation)
+
+    def _subscription_pricing(
+        self, context: GatewayTransactionContext, row: Any, cash_cents: int
+    ) -> tuple[int, int, int, int, int]:
+        """Resolve (price_num, price_den, v_pre, units_pre, units_issued)
+        for one subscription settle, honoring a fresh frozen price or pricing
+        atomically in-transaction."""
+
+        projection = context.projection_row()
+        if row.state == FlowRequestState.PRICED.value:
+            if int(row.frozen_capital_version) != int(
+                projection.capital_version
+            ):
+                raise CapitalConflict(
+                    "flow_price_stale",
+                    "the frozen flow price is stale; reprice before settling",
+                    frozen_capital_version=int(row.frozen_capital_version),
+                    capital_version=int(projection.capital_version),
+                )
+            price_numerator = int(row.unit_price_numerator)
+            price_denominator = int(row.unit_price_denominator)
+            v_pre = int(row.v_pre_cents)
+            units_pre = int(row.units_pre_quanta)
+        else:
+            v_pre, units_pre = context.require_pricing_inputs()
+            price = Fraction(v_pre, units_pre)
+            price_numerator = price.numerator
+            price_denominator = price.denominator
+        units_issued = (cash_cents * units_pre) // v_pre
+        if units_issued <= 0:
+            raise CapitalConflict(
+                "subscription_below_unit_price",
+                "the subscription cash cannot buy one unit quanta at the"
+                " pre-flow price",
+                cash_amount_cents=cash_cents,
+            )
+        return price_numerator, price_denominator, v_pre, units_pre, units_issued
+
+    def settle_subscription(
+        self, request: FlowSettleRequest
+    ) -> tuple[FlowSettleReceipt, CapitalRiskSnapshot]:
+        """Issue units at the pre-flow price, release suspense, and clear
+        the subscription payable in one capital transaction.
+
+        Unit quanta are never over-issued: the exact-integer floor of the
+        pre-flow price is issued and any residual cents are refunded
+        immediately (the rounding direction is frozen policy).
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[FlowSettleReceipt, CapitalRiskSnapshot]:
+            conn = context._connection
+            binding = self._stored_binding(context)
+            context.require_lifecycle(frozenset({LifecycleState.ACTIVE}))
+
+            row = context.flow_request_row(request.request_id)
+            if row is None or row.flow_kind != FlowRequestKind.SUBSCRIPTION.value:
+                raise CapitalConflict(
+                    "flow_request_unknown",
+                    "no subscription request exists for this identity",
+                    request_id=request.request_id,
+                )
+            idempotency_key = f"sub:{request.request_id}:settled"
+            if row.state in (
+                FlowRequestState.SETTLED.value,
+                FlowRequestState.CANCELLED.value,
+                FlowRequestState.PAID.value,
+            ):
+                if row.state != FlowRequestState.SETTLED.value:
+                    raise CapitalConflict(
+                        "flow_request_state_conflict",
+                        "flow request already reached a terminal state",
+                        request_id=request.request_id,
+                        state=row.state,
+                    )
+                existing = context.existing_flow_event(idempotency_key)
+                projection = context.projection_row()
+                receipt = FlowSettleReceipt(
+                    request_id=request.request_id,
+                    flow_event_id=existing.flow_event_id,
+                    issued_unit_quanta=int(existing.issued_unit_quanta),
+                    refund_cents=int(existing.refund_cents or 0),
+                    unit_price_numerator=int(existing.unit_price_numerator),
+                    unit_price_denominator=int(existing.unit_price_denominator),
+                    payable_id=None,
+                    lifecycle_state=LifecycleState(projection.lifecycle_state),
+                    capital_version=int(projection.capital_version),
+                    flow_version=int(existing.flow_version),
+                )
+                return receipt, context.read_capital_risk_snapshot(request.as_of)
+            cash_cents = int(row.cash_amount_cents)
+            (
+                price_numerator,
+                price_denominator,
+                v_pre,
+                units_pre,
+                units_issued,
+            ) = self._subscription_pricing(context, row, cash_cents)
+            consumed_cents = round_half_even_div(
+                units_issued * v_pre, units_pre
+            )
+            refund_cents = cash_cents - consumed_cents
+
+            payload = {
+                "flow_kind": FlowKind.SUBSCRIPTION_SETTLED.value,
+                "request_id": request.request_id,
+                "consumed_cents": consumed_cents,
+                "refund_cents": refund_cents,
+                "issued_unit_quanta": units_issued,
+                "unit_price_numerator": price_numerator,
+                "unit_price_denominator": price_denominator,
+                "payable_id": row.payable_id,
+                "source_authority": request.source_authority,
+            }
+            existing = context.require_flow_payload_idempotent(
+                idempotency_key, content_hash(payload)
+            )
+            if existing is not None:
+                projection = context.projection_row()
+                receipt = FlowSettleReceipt(
+                    request_id=request.request_id,
+                    flow_event_id=existing.flow_event_id,
+                    issued_unit_quanta=int(existing.issued_unit_quanta),
+                    refund_cents=int(existing.refund_cents or 0),
+                    unit_price_numerator=int(existing.unit_price_numerator),
+                    unit_price_denominator=int(existing.unit_price_denominator),
+                    payable_id=None,
+                    lifecycle_state=LifecycleState(projection.lifecycle_state),
+                    capital_version=int(projection.capital_version),
+                    flow_version=int(existing.flow_version),
+                )
+                return receipt, context.read_capital_risk_snapshot(request.as_of)
+
+            context.require_flow_version(request.expected_flow_version)
+            projection = context.projection_row()
+            new_available = int(projection.available_cash_cents) + consumed_cents
+            new_subscription_suspense = (
+                int(projection.subscription_suspense_cash_cents) - cash_cents
+            )
+            # NAV is set to the exact post-fact equity; both water marks
+            # shift by the net external cents and never fall below NAV, so a
+            # deposit at the pre-flow price creates no performance and no
+            # drawdown. The payable is still OPEN in the tables here, so the
+            # delta must be applied before the row is settled below.
+            nav_new = context.equity_after_projection(
+                available_cash_cents=new_available,
+                restricted_cash_cents=int(projection.restricted_cash_cents),
+                unsettled_cash_cents=int(projection.unsettled_cash_cents),
+                subscription_suspense_cash_cents=new_subscription_suspense,
+                redemption_suspense_cash_cents=int(
+                    projection.redemption_suspense_cash_cents
+                ),
+                payable_delta_cents=-cash_cents,
+            )
+            lifetime_new = max(
+                int(projection.lifetime_high_water_mark_cents) + consumed_cents,
+                nav_new,
+            )
+            active_new = max(
+                int(projection.active_epoch_high_water_mark_cents)
+                + consumed_cents,
+                nav_new,
+            )
+            conn.execute(
+                context._table("payables").update()
+                .where(context._table("payables").c.payable_id == row.payable_id)
+                .values(state=PayableState.SETTLED.value)
+            )
+            flow_event_id, flow_version = context.insert_flow_event(
+                idempotency_key=idempotency_key,
+                flow_kind=FlowKind.SUBSCRIPTION_SETTLED,
+                portfolio_id=binding.portfolio_id,
+                request_id=request.request_id,
+                source_authority=request.source_authority,
+                effective_at=request.as_of,
+                recorded_at=request.as_of,
+                payload=payload,
+                cash_amount_cents=consumed_cents,
+                refund_cents=refund_cents,
+                issued_unit_quanta=units_issued,
+                unit_price_numerator=price_numerator,
+                unit_price_denominator=price_denominator,
+                payable_id=row.payable_id,
+            )
+            conn.execute(
+                context._table("flow_requests").update()
+                .where(
+                    context._table("flow_requests").c.flow_request_id
+                    == request.request_id
+                )
+                .values(
+                    state=FlowRequestState.SETTLED.value,
+                    issued_unit_quanta=units_issued,
+                    unit_price_numerator=price_numerator,
+                    unit_price_denominator=price_denominator,
+                    updated_at=utc_iso(request.as_of),
+                )
+            )
+            new_version = context.bump_projection(
+                flow_event_id,
+                request.as_of,
+                available_cash_cents=new_available,
+                subscription_suspense_cash_cents=new_subscription_suspense,
+                issued_unit_quanta=(
+                    int(projection.issued_unit_quanta) + units_issued
+                ),
+                as_observed_nav_cents=nav_new,
+                lifetime_high_water_mark_cents=lifetime_new,
+                active_epoch_high_water_mark_cents=active_new,
+            )
+            snapshot = context.read_capital_risk_snapshot(request.as_of)
+            receipt = FlowSettleReceipt(
+                request_id=request.request_id,
+                flow_event_id=flow_event_id,
+                issued_unit_quanta=units_issued,
+                refund_cents=refund_cents,
+                unit_price_numerator=price_numerator,
+                unit_price_denominator=price_denominator,
+                payable_id=None,
+                lifecycle_state=LifecycleState.ACTIVE,
+                capital_version=new_version,
+                flow_version=flow_version,
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def cancel_subscription(
+        self, request: FlowCancelRequest
+    ) -> CapitalRiskSnapshot:
+        """Cancel an unsettled subscription: refund the suspense cash and
+        clear the payable. Blocked once units exist (terminal obligation)."""
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> CapitalRiskSnapshot:
+            conn = context._connection
+            binding = self._stored_binding(context)
+            context.require_lifecycle(frozenset({LifecycleState.ACTIVE}))
+
+            row = context.flow_request_row(request.request_id)
+            if row is None or row.flow_kind != FlowRequestKind.SUBSCRIPTION.value:
+                raise CapitalConflict(
+                    "flow_request_unknown",
+                    "no subscription request exists for this identity",
+                    request_id=request.request_id,
+                )
+            if row.state == FlowRequestState.CANCELLED.value:
+                return context.read_capital_risk_snapshot(request.as_of)
+            if row.state not in (
+                FlowRequestState.RECEIVED.value,
+                FlowRequestState.PRICED.value,
+            ):
+                raise CapitalConflict(
+                    "flow_cancel_blocked_terminal_obligations",
+                    "units were issued for this subscription; cancellation"
+                    " cannot erase existing obligations",
+                    request_id=request.request_id,
+                    state=row.state,
+                )
+
+            idempotency_key = f"sub:{request.request_id}:cancelled"
+            refund_cents = int(row.cash_amount_cents)
+            payload = {
+                "flow_kind": FlowKind.SUBSCRIPTION_CANCELLED.value,
+                "request_id": request.request_id,
+                "refund_cents": refund_cents,
+                "payable_id": row.payable_id,
+                "source_authority": request.source_authority,
+            }
+            existing = context.require_flow_payload_idempotent(
+                idempotency_key, content_hash(payload)
+            )
+            if existing is None:
+                context.require_flow_version(request.expected_flow_version)
+                conn.execute(
+                    context._table("payables").update()
+                    .where(
+                        context._table("payables").c.payable_id
+                        == row.payable_id
+                    )
+                    .values(state=PayableState.SETTLED.value)
+                )
+                flow_event_id, _ = context.insert_flow_event(
+                    idempotency_key=idempotency_key,
+                    flow_kind=FlowKind.SUBSCRIPTION_CANCELLED,
+                    portfolio_id=binding.portfolio_id,
+                    request_id=request.request_id,
+                    source_authority=request.source_authority,
+                    effective_at=request.as_of,
+                    recorded_at=request.as_of,
+                    payload=payload,
+                    cash_amount_cents=refund_cents,
+                    refund_cents=refund_cents,
+                    payable_id=row.payable_id,
+                )
+                conn.execute(
+                    context._table("flow_requests").update()
+                    .where(
+                        context._table("flow_requests").c.flow_request_id
+                        == request.request_id
+                    )
+                    .values(
+                        state=FlowRequestState.CANCELLED.value,
+                        updated_at=utc_iso(request.as_of),
+                    )
+                )
+                projection = context.projection_row()
+                context.bump_projection(
+                    flow_event_id,
+                    request.as_of,
+                    subscription_suspense_cash_cents=(
+                        int(projection.subscription_suspense_cash_cents)
+                        - refund_cents
+                    ),
+                )
+            return context.read_capital_risk_snapshot(request.as_of)
+
+        return self._run_write_transaction(operation)
+
+    def request_redemption(
+        self, request: RedemptionRequest
+    ) -> RedemptionRequestReceipt:
+        """Record an off-ledger memo redemption reserve.
+
+        Before reliable pricing a redemption request confirms no payable,
+        cancels no unit, and changes no NAV/HWM/drawdown; cancelling the
+        memo has no return impact either. The capital version stays quiet.
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> RedemptionRequestReceipt:
+            conn = context._connection
+            self._stored_binding(context)
+            context.require_lifecycle(
+                frozenset({LifecycleState.ACTIVE, LifecycleState.INSOLVENT})
+            )
+            row = context.flow_request_row(request.request_id)
+            if row is not None:
+                if (
+                    row.flow_kind == FlowRequestKind.REDEMPTION.value
+                    and int(row.unit_quanta or 0) == request.unit_quanta
+                    and row.state == FlowRequestState.REQUESTED.value
+                ):
+                    return RedemptionRequestReceipt(
+                        request_id=request.request_id,
+                        unit_quanta=request.unit_quanta,
+                    )
+                raise CapitalConflict(
+                    "flow_request_conflict",
+                    "flow request identity already in use",
+                    request_id=request.request_id,
+                )
+            now = utc_iso(request.as_of)
+            conn.execute(
+                context._table("flow_requests").insert().values(
+                    flow_request_id=request.request_id,
+                    flow_kind=FlowRequestKind.REDEMPTION.value,
+                    state=FlowRequestState.REQUESTED.value,
+                    cash_amount_cents=None,
+                    unit_quanta=request.unit_quanta,
+                    issued_unit_quanta=None,
+                    unit_price_numerator=None,
+                    unit_price_denominator=None,
+                    v_pre_cents=None,
+                    units_pre_quanta=None,
+                    frozen_capital_version=None,
+                    payable_id=None,
+                    source_authority=request.source_authority,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            return RedemptionRequestReceipt(
+                request_id=request.request_id,
+                unit_quanta=request.unit_quanta,
+            )
+
+        return self._run_write_transaction(operation)
+
+    def settle_redemption(
+        self, request: FlowSettleRequest
+    ) -> tuple[FlowSettleReceipt, CapitalRiskSnapshot]:
+        """Settle one redemption at the pre-flow NAV.
+
+        Partial redemption cancels the units immediately and reserves the
+        payout cash against a confirmed ``redemption_payable``. Full
+        redemption converts every live unit into ``pending_redeemed_units``
+        and enters settle-only ``TERMINATING``; the pending units are only
+        burnt once payment and every other obligation are zero.
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[FlowSettleReceipt, CapitalRiskSnapshot]:
+            conn = context._connection
+            binding = self._stored_binding(context)
+            state = context.require_lifecycle(
+                frozenset({LifecycleState.ACTIVE, LifecycleState.INSOLVENT})
+            )
+
+            row = context.flow_request_row(request.request_id)
+            if row is None or row.flow_kind != FlowRequestKind.REDEMPTION.value:
+                raise CapitalConflict(
+                    "flow_request_unknown",
+                    "no redemption request exists for this identity",
+                    request_id=request.request_id,
+                )
+            idempotency_key = f"red:{request.request_id}:settled"
+            if row.state in (
+                FlowRequestState.SETTLED.value,
+                FlowRequestState.PAID.value,
+            ):
+                existing = context.existing_flow_event(idempotency_key)
+                projection = context.projection_row()
+                receipt = FlowSettleReceipt(
+                    request_id=request.request_id,
+                    flow_event_id=existing.flow_event_id,
+                    cancelled_unit_quanta=int(
+                        existing.cancelled_unit_quanta or 0
+                    ),
+                    pending_unit_quanta=int(existing.pending_unit_quanta or 0),
+                    unit_price_numerator=int(existing.unit_price_numerator),
+                    unit_price_denominator=int(existing.unit_price_denominator),
+                    payable_id=existing.payable_id,
+                    lifecycle_state=LifecycleState(projection.lifecycle_state),
+                    capital_version=int(projection.capital_version),
+                    flow_version=int(existing.flow_version),
+                )
+                return receipt, context.read_capital_risk_snapshot(request.as_of)
+            if row.state not in (
+                FlowRequestState.REQUESTED.value,
+                FlowRequestState.PRICED.value,
+            ):
+                raise CapitalConflict(
+                    "flow_request_state_conflict",
+                    f"flow request state {row.state} cannot be settled",
+                    request_id=request.request_id,
+                    state=row.state,
+                )
+
+            projection = context.projection_row()
+            if row.state == FlowRequestState.PRICED.value:
+                if int(row.frozen_capital_version) != int(
+                    projection.capital_version
+                ):
+                    raise CapitalConflict(
+                        "flow_price_stale",
+                        "the frozen flow price is stale; reprice before"
+                        " settling",
+                        frozen_capital_version=int(
+                            row.frozen_capital_version
+                        ),
+                        capital_version=int(projection.capital_version),
+                    )
+                price_numerator = int(row.unit_price_numerator)
+                price_denominator = int(row.unit_price_denominator)
+                v_pre = int(row.v_pre_cents)
+                units_pre = int(row.units_pre_quanta)
+            else:
+                v_pre, units_pre = context.require_pricing_inputs()
+                price = Fraction(v_pre, units_pre)
+                price_numerator = price.numerator
+                price_denominator = price.denominator
+
+            units = int(row.unit_quanta)
+            if units > units_pre:
+                raise CapitalConflict(
+                    "redemption_exceeds_live_units",
+                    "redemption requests cannot exceed the live unit count",
+                    requested_unit_quanta=units,
+                    live_unit_quanta=units_pre,
+                )
+            payout_cents = round_half_even_div(units * v_pre, units_pre)
+            full_redemption = units == units_pre
+
+            if full_redemption:
+                # A full redemption requires a liquid portfolio: with open
+                # positions, receivables, reserves, or unsettled cash the
+                # frozen payout could outrun the assets before liquidation,
+                # and pending units must never be erased before obligations
+                # settle.
+                if (
+                    context.open_position_rows()
+                    or context.outstanding_receivable_cents() > 0
+                    or int(projection.restricted_cash_cents) != 0
+                    or int(projection.unsettled_cash_cents) != 0
+                ):
+                    raise CapitalConflict(
+                        "full_redemption_requires_liquid_portfolio",
+                        "full redemption requires positions, receivables,"
+                        " reserves, and unsettled cash to be settled first",
+                        request_id=request.request_id,
+                    )
+            else:
+                if int(projection.available_cash_cents) < payout_cents:
+                    raise CapitalConflict(
+                        "insufficient_available_cash",
+                        "partial redemption payout exceeds available cash",
+                        available_cash_cents=int(
+                            projection.available_cash_cents
+                        ),
+                        payout_cents=payout_cents,
+                    )
+
+            payable_id = f"pay:{idempotency_key}"
+            payload = {
+                "flow_kind": FlowKind.REDEMPTION_SETTLED.value,
+                "request_id": request.request_id,
+                "payout_cents": payout_cents,
+                "cancelled_unit_quanta": 0 if full_redemption else units,
+                "pending_unit_quanta": units if full_redemption else 0,
+                "full_redemption": full_redemption,
+                "unit_price_numerator": price_numerator,
+                "unit_price_denominator": price_denominator,
+                "payable_id": payable_id,
+                "source_authority": request.source_authority,
+            }
+            existing = context.require_flow_payload_idempotent(
+                idempotency_key, content_hash(payload)
+            )
+            if existing is not None:
+                projection = context.projection_row()
+                receipt = FlowSettleReceipt(
+                    request_id=request.request_id,
+                    flow_event_id=existing.flow_event_id,
+                    cancelled_unit_quanta=int(
+                        existing.cancelled_unit_quanta or 0
+                    ),
+                    pending_unit_quanta=int(existing.pending_unit_quanta or 0),
+                    unit_price_numerator=int(existing.unit_price_numerator),
+                    unit_price_denominator=int(existing.unit_price_denominator),
+                    payable_id=existing.payable_id,
+                    lifecycle_state=LifecycleState(projection.lifecycle_state),
+                    capital_version=int(projection.capital_version),
+                    flow_version=int(existing.flow_version),
+                )
+                return receipt, context.read_capital_risk_snapshot(request.as_of)
+
+            context.require_flow_version(request.expected_flow_version)
+            now = utc_iso(request.as_of)
+            reserved_cents = (
+                min(int(projection.available_cash_cents), payout_cents)
+                if full_redemption
+                else payout_cents
+            )
+            updates: dict[str, Any] = {
+                "available_cash_cents": (
+                    int(projection.available_cash_cents) - reserved_cents
+                ),
+                "redemption_suspense_cash_cents": (
+                    int(projection.redemption_suspense_cash_cents)
+                    + reserved_cents
+                ),
+            }
+            new_lifecycle = state
+            if full_redemption:
+                updates["pending_redeemed_unit_quanta"] = (
+                    int(projection.pending_redeemed_unit_quanta) + units
+                )
+                new_lifecycle = LifecycleState.TERMINATING
+                updates["lifecycle_state"] = new_lifecycle.value
+            else:
+                updates["issued_unit_quanta"] = (
+                    int(projection.issued_unit_quanta) - units
+                )
+            # Confirming the redemption payable converts that much equity
+            # into a liability: NAV drops by the payout, while the water
+            # marks shift by zero external cents (no cash left the account
+            # yet) and never fall below NAV. The payable row is inserted
+            # after this computation so the delta applies to the pre-fact
+            # table state.
+            nav_new = context.equity_after_projection(
+                available_cash_cents=int(updates["available_cash_cents"]),
+                restricted_cash_cents=int(projection.restricted_cash_cents),
+                unsettled_cash_cents=int(projection.unsettled_cash_cents),
+                subscription_suspense_cash_cents=int(
+                    projection.subscription_suspense_cash_cents
+                ),
+                redemption_suspense_cash_cents=int(
+                    updates["redemption_suspense_cash_cents"]
+                ),
+                payable_delta_cents=payout_cents,
+            )
+            updates["as_observed_nav_cents"] = nav_new
+            updates["lifetime_high_water_mark_cents"] = max(
+                int(projection.lifetime_high_water_mark_cents), nav_new
+            )
+            updates["active_epoch_high_water_mark_cents"] = max(
+                int(projection.active_epoch_high_water_mark_cents), nav_new
+            )
+            conn.execute(
+                context._table("payables").insert().values(
+                    payable_id=payable_id,
+                    payable_kind=REDEMPTION_PAYABLE,
+                    amount_cents=payout_cents,
+                    state=PayableState.OPEN.value,
+                    created_at=now,
+                    created_by_event_id=None,
+                )
+            )
+            flow_event_id, flow_version = context.insert_flow_event(
+                idempotency_key=idempotency_key,
+                flow_kind=FlowKind.REDEMPTION_SETTLED,
+                portfolio_id=binding.portfolio_id,
+                request_id=request.request_id,
+                source_authority=request.source_authority,
+                effective_at=request.as_of,
+                recorded_at=request.as_of,
+                payload=payload,
+                cash_amount_cents=payout_cents,
+                reserved_cents=reserved_cents,
+                cancelled_unit_quanta=0 if full_redemption else units,
+                pending_unit_quanta=units if full_redemption else 0,
+                unit_price_numerator=price_numerator,
+                unit_price_denominator=price_denominator,
+                payable_id=payable_id,
+            )
+            conn.execute(
+                context._table("flow_requests").update()
+                .where(
+                    context._table("flow_requests").c.flow_request_id
+                    == request.request_id
+                )
+                .values(
+                    state=FlowRequestState.SETTLED.value,
+                    cash_amount_cents=payout_cents,
+                    unit_price_numerator=price_numerator,
+                    unit_price_denominator=price_denominator,
+                    v_pre_cents=v_pre,
+                    units_pre_quanta=units_pre,
+                    payable_id=payable_id,
+                    updated_at=now,
+                )
+            )
+            new_version = context.bump_projection(
+                flow_event_id, request.as_of, **updates
+            )
+            snapshot = context.read_capital_risk_snapshot(request.as_of)
+            receipt = FlowSettleReceipt(
+                request_id=request.request_id,
+                flow_event_id=flow_event_id,
+                cancelled_unit_quanta=0 if full_redemption else units,
+                pending_unit_quanta=units if full_redemption else 0,
+                unit_price_numerator=price_numerator,
+                unit_price_denominator=price_denominator,
+                payable_id=payable_id,
+                lifecycle_state=new_lifecycle,
+                capital_version=new_version,
+                flow_version=flow_version,
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def cancel_redemption(
+        self, request: FlowCancelRequest
+    ) -> CapitalRiskSnapshot:
+        """Cancel a memo redemption reserve (quiet; no return impact).
+
+        Once the redemption settled, the confirmed payable is a terminal
+        obligation and cancellation fails closed.
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> CapitalRiskSnapshot:
+            conn = context._connection
+            self._stored_binding(context)
+            row = context.flow_request_row(request.request_id)
+            if row is None or row.flow_kind != FlowRequestKind.REDEMPTION.value:
+                raise CapitalConflict(
+                    "flow_request_unknown",
+                    "no redemption request exists for this identity",
+                    request_id=request.request_id,
+                )
+            if row.state == FlowRequestState.CANCELLED.value:
+                return context.read_capital_risk_snapshot(request.as_of)
+            if row.state not in (
+                FlowRequestState.REQUESTED.value,
+                FlowRequestState.PRICED.value,
+            ):
+                raise CapitalConflict(
+                    "flow_cancel_blocked_terminal_obligations",
+                    "the redemption payable is a terminal obligation and"
+                    " cannot be cancelled",
+                    request_id=request.request_id,
+                    state=row.state,
+                )
+            conn.execute(
+                context._table("flow_requests").update()
+                .where(
+                    context._table("flow_requests").c.flow_request_id
+                    == request.request_id
+                )
+                .values(
+                    state=FlowRequestState.CANCELLED.value,
+                    updated_at=utc_iso(request.as_of),
+                )
+            )
+            return context.read_capital_risk_snapshot(request.as_of)
+
+        return self._run_write_transaction(operation)
+
+    def _obligations_remaining(self, context: GatewayTransactionContext) -> bool:
+        """True while any asset, liability, reserve, or unit obligation
+        remains on the books (the TERMINATED gate)."""
+
+        projection = context.projection_row()
+        if (
+            int(projection.available_cash_cents) != 0
+            or int(projection.restricted_cash_cents) != 0
+            or int(projection.unsettled_cash_cents) != 0
+            or int(projection.subscription_suspense_cash_cents) != 0
+            or int(projection.redemption_suspense_cash_cents) != 0
+            or int(projection.issued_unit_quanta) != 0
+            or int(projection.pending_redeemed_unit_quanta) != 0
+        ):
+            return True
+        if context.open_position_rows():
+            return True
+        if context.outstanding_receivable_cents() != 0:
+            return True
+        if context.open_payable_cents() != 0:
+            return True
+        reserve_count = int(
+            context._connection.execute(
+                sa.text(
+                    "SELECT COUNT(*) AS n FROM reserves"
+                    " WHERE state IN ('LIVE', 'CANCEL_PENDING')"
+                )
+            ).scalar()
+        )
+        return reserve_count > 0
+
+    def pay_redemption(
+        self, request: RedemptionPaymentRequest
+    ) -> tuple[RedemptionPaymentReceipt, CapitalRiskSnapshot]:
+        """Pay (part of) a settled redemption payable.
+
+        Payment consumes ring-fenced suspense cash first, then available
+        cash. Pending redeemed units burn only when the payable and every
+        other obligation reach zero; full redemption therefore cannot erase
+        units before liabilities, receivables, and positions settle.
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[RedemptionPaymentReceipt, CapitalRiskSnapshot]:
+            conn = context._connection
+            binding = self._stored_binding(context)
+            state = context.require_lifecycle(
+                frozenset(
+                    {
+                        LifecycleState.ACTIVE,
+                        LifecycleState.TERMINATING,
+                        LifecycleState.INSOLVENT,
+                    }
+                )
+            )
+
+            row = context.flow_request_row(request.request_id)
+            if row is None or row.flow_kind != FlowRequestKind.REDEMPTION.value:
+                raise CapitalConflict(
+                    "flow_request_unknown",
+                    "no redemption request exists for this identity",
+                    request_id=request.request_id,
+                )
+            idempotency_key = f"red:{request.request_id}:paid"
+            if row.state == FlowRequestState.PAID.value:
+                existing = context.existing_flow_event(idempotency_key)
+                projection = context.projection_row()
+                receipt = RedemptionPaymentReceipt(
+                    request_id=request.request_id,
+                    flow_event_id=existing.flow_event_id,
+                    cash_amount_cents=int(existing.cash_amount_cents),
+                    burnt_unit_quanta=int(existing.burnt_unit_quanta or 0),
+                    remaining_payable_cents=0,
+                    lifecycle_state=LifecycleState(projection.lifecycle_state),
+                    capital_version=int(projection.capital_version),
+                    flow_version=int(existing.flow_version),
+                )
+                return receipt, context.read_capital_risk_snapshot(request.as_of)
+            if row.state != FlowRequestState.SETTLED.value:
+                raise CapitalConflict(
+                    "flow_request_state_conflict",
+                    f"flow request state {row.state} cannot be paid",
+                    request_id=request.request_id,
+                    state=row.state,
+                )
+
+            projection = context.projection_row()
+            payable_table = context._table("payables")
+            payable_row = conn.execute(
+                payable_table.select().where(
+                    payable_table.c.payable_id == row.payable_id
+                )
+            ).one()
+            remaining_before = int(payable_row.amount_cents)
+            accessible = (
+                int(projection.available_cash_cents)
+                + int(projection.redemption_suspense_cash_cents)
+            )
+            payment_cents = min(remaining_before, accessible)
+            if payment_cents <= 0:
+                raise CapitalConflict(
+                    "no_payable_cash_available",
+                    "no cash is available to pay the redemption payable",
+                    request_id=request.request_id,
+                    remaining_payable_cents=remaining_before,
+                )
+            from_suspense = min(
+                int(projection.redemption_suspense_cash_cents), payment_cents
+            )
+            from_available = payment_cents - from_suspense
+            remaining_after = remaining_before - payment_cents
+
+            payload = {
+                "flow_kind": FlowKind.REDEMPTION_PAID.value,
+                "request_id": request.request_id,
+                "payment_cents": payment_cents,
+                "from_suspense_cents": from_suspense,
+                "payable_id": row.payable_id,
+                "source_authority": request.source_authority,
+            }
+            existing = context.require_flow_payload_idempotent(
+                idempotency_key, content_hash(payload)
+            )
+            if existing is not None:
+                projection = context.projection_row()
+                receipt = RedemptionPaymentReceipt(
+                    request_id=request.request_id,
+                    flow_event_id=existing.flow_event_id,
+                    cash_amount_cents=int(existing.cash_amount_cents),
+                    burnt_unit_quanta=int(existing.burnt_unit_quanta or 0),
+                    remaining_payable_cents=remaining_after,
+                    lifecycle_state=LifecycleState(projection.lifecycle_state),
+                    capital_version=int(projection.capital_version),
+                    flow_version=int(existing.flow_version),
+                )
+                return receipt, context.read_capital_risk_snapshot(request.as_of)
+
+            context.require_flow_version(request.expected_flow_version)
+
+            updates: dict[str, Any] = {
+                "available_cash_cents": (
+                    int(projection.available_cash_cents) - from_available
+                ),
+                "redemption_suspense_cash_cents": (
+                    int(projection.redemption_suspense_cash_cents)
+                    - from_suspense
+                ),
+            }
+            burnt_units = 0
+            pending = int(projection.pending_redeemed_unit_quanta)
+
+            # Payment discharges the liability one-for-one with assets, so
+            # equity is unchanged; the external outflow shifts both water
+            # marks down by the paid cents (never below NAV), keeping a
+            # redemption at price free of fabricated return or drawdown.
+            # The payable row still carries its pre-payment state here, so
+            # the delta is applied before the row updates below.
+            nav_new = context.equity_after_projection(
+                available_cash_cents=int(updates["available_cash_cents"]),
+                restricted_cash_cents=int(projection.restricted_cash_cents),
+                unsettled_cash_cents=int(projection.unsettled_cash_cents),
+                subscription_suspense_cash_cents=int(
+                    projection.subscription_suspense_cash_cents
+                ),
+                redemption_suspense_cash_cents=int(
+                    updates["redemption_suspense_cash_cents"]
+                ),
+                payable_delta_cents=-payment_cents,
+            )
+            updates["as_observed_nav_cents"] = nav_new
+            updates["lifetime_high_water_mark_cents"] = max(
+                int(projection.lifetime_high_water_mark_cents) - payment_cents,
+                nav_new,
+            )
+            updates["active_epoch_high_water_mark_cents"] = max(
+                int(projection.active_epoch_high_water_mark_cents)
+                - payment_cents,
+                nav_new,
+            )
+
+            # Persist the payable/request state: the burn decision below
+            # must see the payable already settled.
+            if remaining_after == 0:
+                conn.execute(
+                    payable_table.update()
+                    .where(payable_table.c.payable_id == row.payable_id)
+                    .values(
+                        state=PayableState.SETTLED.value,
+                        amount_cents=0,
+                    )
+                )
+                conn.execute(
+                    context._table("flow_requests").update()
+                    .where(
+                        context._table("flow_requests").c.flow_request_id
+                        == request.request_id
+                    )
+                    .values(
+                        state=FlowRequestState.PAID.value,
+                        updated_at=utc_iso(request.as_of),
+                    )
+                )
+            else:
+                conn.execute(
+                    payable_table.update()
+                    .where(payable_table.c.payable_id == row.payable_id)
+                    .values(amount_cents=remaining_after)
+                )
+
+            if remaining_after == 0 and pending > 0:
+                if not self._obligations_remaining(
+                    context, overrides=updates, include_units=False
+                ):
+                    # Burn the pending units only now that the payable and
+                    # every other obligation are zero.
+                    burnt_units = pending
+                    updates["issued_unit_quanta"] = (
+                        int(projection.issued_unit_quanta) - pending
+                    )
+                    updates["pending_redeemed_unit_quanta"] = 0
+
+            new_lifecycle = state
+            if state is LifecycleState.TERMINATING and not (
+                self._obligations_remaining(context, overrides=updates)
+            ):
+                # Authorized full redemption with every obligation zero:
+                # TERMINATED (this is not insolvency).
+                new_lifecycle = LifecycleState.TERMINATED
+                updates["lifecycle_state"] = new_lifecycle.value
+
+            flow_event_id, flow_version = context.insert_flow_event(
+                idempotency_key=idempotency_key,
+                flow_kind=FlowKind.REDEMPTION_PAID,
+                portfolio_id=binding.portfolio_id,
+                request_id=request.request_id,
+                source_authority=request.source_authority,
+                effective_at=request.as_of,
+                recorded_at=request.as_of,
+                payload=payload,
+                cash_amount_cents=payment_cents,
+                burnt_unit_quanta=burnt_units or None,
+                payable_id=row.payable_id,
+            )
+            new_version = context.bump_projection(
+                flow_event_id, request.as_of, **updates
+            )
+
+            snapshot = context.read_capital_risk_snapshot(request.as_of)
+            receipt = RedemptionPaymentReceipt(
+                request_id=request.request_id,
+                flow_event_id=flow_event_id,
+                cash_amount_cents=payment_cents,
+                burnt_unit_quanta=burnt_units,
+                remaining_payable_cents=remaining_after,
+                lifecycle_state=new_lifecycle,
+                capital_version=new_version,
+                flow_version=flow_version,
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def _obligations_remaining(
+        self,
+        context: GatewayTransactionContext,
+        overrides: dict[str, Any] | None = None,
+        *,
+        include_units: bool = True,
+    ) -> bool:
+        """True while any asset, liability, reserve, or unit obligation
+        remains on the books (the burn/TERMINATED gate).
+
+        ``overrides`` carries the in-flight projection values of the
+        enclosing transaction so the check observes the post-fact state.
+        """
+
+        overrides = overrides or {}
+        projection = context.projection_row()
+        cash_values = (
+            overrides.get(
+                "available_cash_cents", projection.available_cash_cents
+            ),
+            overrides.get(
+                "restricted_cash_cents", projection.restricted_cash_cents
+            ),
+            overrides.get(
+                "unsettled_cash_cents", projection.unsettled_cash_cents
+            ),
+            overrides.get(
+                "subscription_suspense_cash_cents",
+                projection.subscription_suspense_cash_cents,
+            ),
+            overrides.get(
+                "redemption_suspense_cash_cents",
+                projection.redemption_suspense_cash_cents,
+            ),
+        )
+        if any(int(value) != 0 for value in cash_values):
+            return True
+        if include_units:
+            issued = overrides.get(
+                "issued_unit_quanta", projection.issued_unit_quanta
+            )
+            pending = overrides.get(
+                "pending_redeemed_unit_quanta",
+                projection.pending_redeemed_unit_quanta,
+            )
+            if int(issued) != 0 or int(pending) != 0:
+                return True
+        if context.open_position_rows():
+            return True
+        if context.outstanding_receivable_cents() != 0:
+            return True
+        if context.open_payable_cents() != 0:
+            return True
+        reserve_count = int(
+            context._connection.execute(
+                sa.text(
+                    "SELECT COUNT(*) AS n FROM reserves"
+                    " WHERE state IN ('LIVE', 'CANCEL_PENDING')"
+                )
+            ).scalar()
+        )
+        return reserve_count > 0
+
+    def close_valuation(
+        self, request: ValuationRequest
+    ) -> tuple[ValuationReceipt, CapitalRiskSnapshot]:
+        """Append one close valuation: a mark-only VALUATION event plus the
+        confirmed as-observed NAV observation, water marks, and lifecycle
+        (NAV <= 0 sets INSOLVENT).
+
+        A valuation of a fully liquid portfolio carries no mark legs; the
+        economic event contract requires at least one leg, so such a NAV
+        confirmation lands as an event-less projection fact anchored by a
+        deterministic observation identity (the same pattern Task 2 uses
+        for zero-charge fee revisions).
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[ValuationReceipt, CapitalRiskSnapshot]:
+            binding = self._stored_binding(context)
+            context.require_lifecycle(
+                frozenset(
+                    {
+                        LifecycleState.ACTIVE,
+                        LifecycleState.TERMINATING,
+                        LifecycleState.INSOLVENT,
+                    }
+                )
+            )
+            if not request.marks and context.open_position_rows():
+                raise CapitalConflict(
+                    "valuation_mark_missing",
+                    "close valuation must mark every open position",
+                )
+            if not request.marks:
+                return self._close_valuation_liquid(context, request)
+
+            legs = tuple(
+                ValuationMarkEconomicEventLeg(
+                    leg_id=f"{request.idempotency_key}:mark:{mark.security_id}",
+                    asset_kind=EconomicAssetKind.VALUATION_MARK,
+                    security_id=mark.security_id,
+                    mark_price=Decimal(mark.price_micros) / PRICE_MICRO_SCALE,
+                )
+                for mark in request.marks
+            )
+            payload = CapitalCommandPayload(
+                event_kind=EconomicEventKind.VALUATION,
+                effective_at=request.effective_at,
+                source_authority=request.source_authority,
+                legs=legs,
+            )
+            command = CapitalCommand(
+                idempotency_key=request.idempotency_key,
+                account_binding=binding,
+                expected_stream_version=request.expected_stream_version,
+                as_of=request.as_of,
+                payload=payload,
+            )
+            snapshot = context.run_append(command, after_event_insert_hook=None)
+
+            event_id = derive_event_id(request.idempotency_key)
+            observation_row = context.observation_row_for_event(
+                ObservationKind.AS_OBSERVED, event_id
+            )
+            projection = context.projection_row()
+            receipt = ValuationReceipt(
+                event_id=event_id,
+                observation_id=observation_row.nav_observation_id,
+                nav_cents=int(projection.as_observed_nav_cents),
+                lifetime_high_water_mark_cents=int(
+                    projection.lifetime_high_water_mark_cents
+                ),
+                active_epoch_high_water_mark_cents=int(
+                    projection.active_epoch_high_water_mark_cents
+                ),
+                log_growth_kind=LogGrowthKind(observation_row.log_growth_kind),
+                capital_version=int(projection.capital_version),
+                stream_version=context.current_stream_version(),
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def _close_valuation_liquid(
+        self,
+        context: GatewayTransactionContext,
+        request: ValuationRequest,
+    ) -> tuple[ValuationReceipt, CapitalRiskSnapshot]:
+        """Event-less NAV confirmation for a fully liquid portfolio.
+
+        No economic event is appended (the event contract requires at least
+        one leg and a liquid valuation has none), so the stream CAS is not
+        exercised; idempotency converges on the deterministic observation
+        identity.
+        """
+
+        anchor_event_id = derive_event_id(request.idempotency_key)
+        observation_row = context.observation_row_for_event(
+            ObservationKind.AS_OBSERVED, anchor_event_id
+        )
+        if observation_row is not None:
+            projection = context.projection_row()
+            receipt = ValuationReceipt(
+                event_id=anchor_event_id,
+                observation_id=observation_row.nav_observation_id,
+                nav_cents=int(projection.as_observed_nav_cents),
+                lifetime_high_water_mark_cents=int(
+                    projection.lifetime_high_water_mark_cents
+                ),
+                active_epoch_high_water_mark_cents=int(
+                    projection.active_epoch_high_water_mark_cents
+                ),
+                log_growth_kind=LogGrowthKind(observation_row.log_growth_kind),
+                capital_version=int(projection.capital_version),
+                stream_version=context.current_stream_version(),
+            )
+            return receipt, context.read_capital_risk_snapshot(request.as_of)
+
+        projection = context.projection_row()
+        if int(projection.issued_unit_quanta) == 0:
+            raise CapitalConflict(
+                "valuation_before_genesis",
+                "close valuation requires an initialized genesis",
+            )
+        prior = context.latest_observation_row(ObservationKind.AS_OBSERVED)
+        nav_cents = context.equity_cents(marks={}, projection=projection)
+        new_version = context.confirm_observed_nav(
+            nav_cents=nav_cents,
+            event_id=anchor_event_id,
+            effective_at=request.effective_at,
+            recorded_at=request.as_of,
+            prior_nav_cents=(int(prior.nav_cents) if prior is not None else None),
+        )
+        context.recompute_risk_and_stage_loss(request.as_of, anchor_event_id)
+        snapshot = context.read_capital_risk_snapshot(request.as_of)
+        projection = context.projection_row()
+        observation_row = context.observation_row_for_event(
+            ObservationKind.AS_OBSERVED, anchor_event_id
+        )
+        receipt = ValuationReceipt(
+            event_id=anchor_event_id,
+            observation_id=observation_row.nav_observation_id,
+            nav_cents=nav_cents,
+            lifetime_high_water_mark_cents=int(
+                projection.lifetime_high_water_mark_cents
+            ),
+            active_epoch_high_water_mark_cents=int(
+                projection.active_epoch_high_water_mark_cents
+            ),
+            log_growth_kind=LogGrowthKind(observation_row.log_growth_kind),
+            capital_version=new_version,
+            stream_version=context.current_stream_version(),
+        )
+        return receipt, snapshot
+
+    def restate_valuation(
+        self, request: RestatementRequest
+    ) -> tuple[RestatementReceipt, CapitalRiskSnapshot]:
+        """Append a restated valuation linked to the observation it
+        supersedes (append-only; the as-observed path is preserved)."""
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[RestatementReceipt, CapitalRiskSnapshot]:
+            conn = context._connection
+            binding = self._stored_binding(context)
+            context.require_lifecycle(
+                frozenset(
+                    {
+                        LifecycleState.ACTIVE,
+                        LifecycleState.TERMINATING,
+                        LifecycleState.INSOLVENT,
+                    }
+                )
+            )
+            target_row = conn.execute(
+                sa.text(
+                    "SELECT event_kind, correction_of_event_id"
+                    " FROM economic_events WHERE economic_event_id = :id"
+                ),
+                {"id": request.restates_event_id},
+            ).first()
+            if target_row is None:
+                raise CapitalConflict(
+                    "restatement_target_unknown",
+                    "restatement references no recorded valuation event",
+                    restates_event_id=request.restates_event_id,
+                )
+            if (
+                target_row.event_kind != EconomicEventKind.VALUATION.value
+                or target_row.correction_of_event_id is not None
+            ):
+                raise CapitalConflict(
+                    "restatement_target_conflict",
+                    "restatement must reference an as-observed valuation"
+                    " event",
+                    restates_event_id=request.restates_event_id,
+                )
+
+            legs = tuple(
+                ValuationMarkEconomicEventLeg(
+                    leg_id=f"{request.idempotency_key}:mark:{mark.security_id}",
+                    asset_kind=EconomicAssetKind.VALUATION_MARK,
+                    security_id=mark.security_id,
+                    mark_price=Decimal(mark.price_micros) / PRICE_MICRO_SCALE,
+                )
+                for mark in request.marks
+            )
+            payload = CapitalCommandPayload(
+                event_kind=EconomicEventKind.VALUATION,
+                effective_at=request.effective_at,
+                source_authority=request.source_authority,
+                correction_of_event_id=request.restates_event_id,
+                legs=legs,
+            )
+            command = CapitalCommand(
+                idempotency_key=request.idempotency_key,
+                account_binding=binding,
+                expected_stream_version=request.expected_stream_version,
+                as_of=request.as_of,
+                payload=payload,
+            )
+            event_id = derive_event_id(request.idempotency_key)
+
+            def register_revision(tx: GatewayTransactionContext) -> None:
+                tx._connection.execute(
+                    tx._table("event_revisions").insert().values(
+                        canonical_event_id=request.restates_event_id,
+                        revision_event_id=event_id,
+                        revision_kind=ObservationKind.RESTATED_FINAL.value,
+                        recorded_at=utc_iso(request.as_of),
+                    )
+                )
+
+            snapshot = context.run_append(
+                command,
+                after_event_insert_hook=None,
+                after_projection_hook=register_revision,
+            )
+            observation_row = context.observation_row_for_event(
+                ObservationKind.RESTATED_FINAL, event_id
+            )
+            projection = context.projection_row()
+            receipt = RestatementReceipt(
+                event_id=event_id,
+                restates_event_id=request.restates_event_id,
+                observation_id=observation_row.nav_observation_id,
+                nav_cents=int(observation_row.nav_cents),
+                capital_version=int(projection.capital_version),
+                stream_version=context.current_stream_version(),
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def start_risk_epoch(
+        self, request: RiskEpochRequest
+    ) -> tuple[RiskEpochReceipt, CapitalRiskSnapshot]:
+        """Start a new monotonic risk epoch from an audited capital snapshot.
+
+        ``RiskEpochStarted`` is a governance authority fact, not an economic
+        event: it lands in the append-only ``risk_epoch_history`` chain and
+        bumps ``gateway_meta.risk_epoch``. It re-establishes only the
+        active-epoch operational baseline (the audited NAV); the lifetime
+        high-water mark and every history row are preserved. INSOLVENT is
+        not recoverable through a risk epoch.
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[RiskEpochReceipt, CapitalRiskSnapshot]:
+            conn = context._connection
+            self._stored_binding(context)
+            context.require_lifecycle(frozenset({LifecycleState.ACTIVE}))
+
+            epoch_table = context._table("risk_epoch_history")
+            existing = conn.execute(
+                epoch_table.select().where(
+                    epoch_table.c.idempotency_key == request.idempotency_key
+                )
+            ).first()
+            if existing is not None:
+                if (
+                    int(existing.risk_epoch) != request.risk_epoch
+                    or int(existing.audited_nav_cents)
+                    != request.audited_nav_cents
+                ):
+                    raise CapitalConflict(
+                        "payload_conflict",
+                        "risk epoch idempotency key already committed with"
+                        " different content",
+                        idempotency_key=request.idempotency_key,
+                    )
+                projection = context.projection_row()
+                receipt = RiskEpochReceipt(
+                    risk_epoch=int(existing.risk_epoch),
+                    predecessor_risk_epoch=int(
+                        existing.predecessor_risk_epoch
+                    ),
+                    audited_nav_cents=int(existing.audited_nav_cents),
+                    active_epoch_baseline_nav_cents=int(
+                        existing.active_epoch_baseline_nav_cents
+                    ),
+                    lifetime_high_water_mark_cents=int(
+                        existing.lifetime_high_water_mark_cents
+                    ),
+                    capital_version=int(projection.capital_version),
+                )
+                return receipt, context.read_capital_risk_snapshot(request.as_of)
+
+            meta_table = context._table("gateway_meta")
+            current_epoch = int(
+                conn.execute(
+                    meta_table.select().where(meta_table.c.key == "risk_epoch")
+                ).one().value
+            )
+            if request.risk_epoch != current_epoch + 1:
+                raise CapitalConflict(
+                    "risk_epoch_predecessor_mismatch",
+                    "risk epochs are monotonic: the request must start the"
+                    " successor of the active epoch",
+                    active_epoch=current_epoch,
+                    requested_epoch=request.risk_epoch,
+                )
+            projection = context.projection_row()
+            if request.audited_nav_cents != int(
+                projection.as_observed_nav_cents
+            ):
+                raise CapitalConflict(
+                    "risk_epoch_audit_mismatch",
+                    "the audited NAV must equal the confirmed as-observed"
+                    " NAV of this ledger",
+                    audited_nav_cents=request.audited_nav_cents,
+                    as_observed_nav_cents=int(
+                        projection.as_observed_nav_cents
+                    ),
+                )
+            binding_row = conn.execute(
+                context._table("account_capital_truth").select()
+            ).one()
+            conn.execute(
+                epoch_table.insert().values(
+                    risk_epoch=request.risk_epoch,
+                    portfolio_id=binding_row.portfolio_id,
+                    idempotency_key=request.idempotency_key,
+                    predecessor_risk_epoch=current_epoch,
+                    audited_nav_cents=request.audited_nav_cents,
+                    active_epoch_baseline_nav_cents=request.audited_nav_cents,
+                    lifetime_high_water_mark_cents=int(
+                        projection.lifetime_high_water_mark_cents
+                    ),
+                    source_authority=request.source_authority,
+                    authorization_reference=request.authorization_reference,
+                    started_at=utc_iso(request.as_of),
+                )
+            )
+            # The active-epoch operational baseline becomes the audited NAV;
+            # the lifetime HWM is never reset.
+            new_version = context.bump_projection(
+                None,
+                request.as_of,
+                active_epoch_high_water_mark_cents=request.audited_nav_cents,
+            )
+            conn.execute(
+                meta_table.update()
+                .where(meta_table.c.key == "risk_epoch")
+                .values(
+                    value=str(request.risk_epoch),
+                    updated_at=utc_iso(request.as_of),
+                )
+            )
+            snapshot = context.read_capital_risk_snapshot(request.as_of)
+            receipt = RiskEpochReceipt(
+                risk_epoch=request.risk_epoch,
+                predecessor_risk_epoch=current_epoch,
+                audited_nav_cents=request.audited_nav_cents,
+                active_epoch_baseline_nav_cents=request.audited_nav_cents,
+                lifetime_high_water_mark_cents=int(
+                    projection.lifetime_high_water_mark_cents
+                ),
+                capital_version=new_version,
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)

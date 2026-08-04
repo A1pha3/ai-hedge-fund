@@ -15,11 +15,14 @@ import sqlalchemy as sa
 
 IMMUTABLE_TABLES: tuple[str, ...] = (
     "account_capital_truth",
+    "capital_flow_events",
     "economic_event_legs",
     "economic_events",
     "entry_tombstones",
     "event_revisions",
     "execution_revisions",
+    "nav_observations",
+    "risk_epoch_history",
     "session_checkpoints",
 )
 
@@ -116,7 +119,9 @@ def build_metadata() -> sa.MetaData:
         ),
         sa.Column("sequence", sa.Integer, nullable=False),
         sa.Column("asset_kind", sa.Text, nullable=False),
-        sa.Column("direction", sa.Text, nullable=False),
+        # Valuation-mark legs (Plan 02 Task 3) carry no debit/credit
+        # direction, so the column is nullable.
+        sa.Column("direction", sa.Text, nullable=True),
         sa.Column("cash_amount_cents", sa.BigInteger, nullable=True),
         sa.Column("security_id", sa.Text, nullable=True),
         sa.Column("quantity_units", sa.BigInteger, nullable=True),
@@ -159,6 +164,8 @@ def build_metadata() -> sa.MetaData:
         sa.Column("available_cash_cents", sa.BigInteger, nullable=False),
         sa.Column("restricted_cash_cents", sa.BigInteger, nullable=False),
         sa.Column("unsettled_cash_cents", sa.BigInteger, nullable=False),
+        sa.Column("subscription_suspense_cash_cents", sa.BigInteger, nullable=False),
+        sa.Column("redemption_suspense_cash_cents", sa.BigInteger, nullable=False),
         sa.Column("issued_unit_quanta", sa.BigInteger, nullable=False),
         sa.Column("pending_redeemed_unit_quanta", sa.BigInteger, nullable=False),
         sa.Column("as_observed_nav_cents", sa.BigInteger, nullable=False),
@@ -297,6 +304,111 @@ def build_metadata() -> sa.MetaData:
         sa.Column("key", sa.Text, primary_key=True),
         sa.Column("value", sa.Text, nullable=False),
         sa.Column("updated_at", sa.Text, nullable=False),
+    )
+
+    # -- Plan 02 Task 3: unit NAV, external flows, and lifecycle tables -------
+
+    sa.Table(
+        "capital_flow_events",
+        meta,
+        sa.Column("flow_event_id", sa.Text, primary_key=True),
+        sa.Column("idempotency_key", sa.Text, nullable=False, unique=True),
+        sa.Column("flow_kind", sa.Text, nullable=False),
+        sa.Column(
+            "portfolio_id",
+            sa.Text,
+            sa.ForeignKey("account_capital_truth.portfolio_id"),
+            nullable=False,
+            index=True,
+        ),
+        sa.Column("flow_version", sa.BigInteger, nullable=False, unique=True),
+        sa.Column("flow_request_id", sa.Text, nullable=True),
+        sa.Column("source_authority", sa.Text, nullable=False),
+        sa.Column("effective_at", sa.Text, nullable=False),
+        sa.Column("recorded_at", sa.Text, nullable=False),
+        sa.Column("cash_amount_cents", sa.BigInteger, nullable=True),
+        sa.Column("refund_cents", sa.BigInteger, nullable=True),
+        sa.Column("reserved_cents", sa.BigInteger, nullable=True),
+        sa.Column("issued_unit_quanta", sa.BigInteger, nullable=True),
+        sa.Column("cancelled_unit_quanta", sa.BigInteger, nullable=True),
+        sa.Column("pending_unit_quanta", sa.BigInteger, nullable=True),
+        sa.Column("burnt_unit_quanta", sa.BigInteger, nullable=True),
+        sa.Column("unit_price_numerator", sa.BigInteger, nullable=True),
+        sa.Column("unit_price_denominator", sa.BigInteger, nullable=True),
+        sa.Column("payable_id", sa.Text, nullable=True),
+        sa.Column("payload_json", sa.Text, nullable=False),
+        sa.Column("payload_content_hash", sa.Text, nullable=False, unique=True),
+    )
+
+    sa.Table(
+        "flow_requests",
+        meta,
+        sa.Column("flow_request_id", sa.Text, primary_key=True),
+        sa.Column("flow_kind", sa.Text, nullable=False),
+        sa.Column("state", sa.Text, nullable=False),
+        sa.Column("cash_amount_cents", sa.BigInteger, nullable=True),
+        sa.Column("unit_quanta", sa.BigInteger, nullable=True),
+        sa.Column("issued_unit_quanta", sa.BigInteger, nullable=True),
+        sa.Column("unit_price_numerator", sa.BigInteger, nullable=True),
+        sa.Column("unit_price_denominator", sa.BigInteger, nullable=True),
+        sa.Column("v_pre_cents", sa.BigInteger, nullable=True),
+        sa.Column("units_pre_quanta", sa.BigInteger, nullable=True),
+        sa.Column("frozen_capital_version", sa.BigInteger, nullable=True),
+        sa.Column("payable_id", sa.Text, nullable=True),
+        sa.Column("source_authority", sa.Text, nullable=False),
+        sa.Column("created_at", sa.Text, nullable=False),
+        sa.Column("updated_at", sa.Text, nullable=False),
+    )
+
+    sa.Table(
+        "nav_observations",
+        meta,
+        sa.Column("nav_observation_id", sa.Text, primary_key=True),
+        sa.Column(
+            "portfolio_id",
+            sa.Text,
+            sa.ForeignKey("account_capital_truth.portfolio_id"),
+            nullable=False,
+            index=True,
+        ),
+        sa.Column("observation_kind", sa.Text, nullable=False),
+        sa.Column("supersedes_observation_id", sa.Text, nullable=True),
+        sa.Column("as_of", sa.Text, nullable=False),
+        sa.Column("recorded_at", sa.Text, nullable=False),
+        sa.Column("capital_version", sa.BigInteger, nullable=False),
+        sa.Column("created_by_event_id", sa.Text, nullable=False),
+        sa.Column("nav_cents", sa.BigInteger, nullable=False),
+        sa.Column("issued_unit_quanta", sa.BigInteger, nullable=False),
+        sa.Column("live_unit_quanta", sa.BigInteger, nullable=False),
+        sa.Column("unit_price_numerator", sa.BigInteger, nullable=True),
+        sa.Column("unit_price_denominator", sa.BigInteger, nullable=True),
+        sa.Column("log_growth_kind", sa.Text, nullable=False),
+        sa.Column("log_growth_nav_numerator", sa.BigInteger, nullable=True),
+        sa.Column("log_growth_nav_denominator", sa.BigInteger, nullable=True),
+    )
+
+    sa.Table(
+        "risk_epoch_history",
+        meta,
+        sa.Column("risk_epoch", sa.BigInteger, primary_key=True),
+        sa.Column(
+            "portfolio_id",
+            sa.Text,
+            sa.ForeignKey("account_capital_truth.portfolio_id"),
+            nullable=False,
+        ),
+        sa.Column("idempotency_key", sa.Text, nullable=False, unique=True),
+        sa.Column("predecessor_risk_epoch", sa.BigInteger, nullable=False),
+        sa.Column("audited_nav_cents", sa.BigInteger, nullable=False),
+        sa.Column(
+            "active_epoch_baseline_nav_cents", sa.BigInteger, nullable=False
+        ),
+        sa.Column(
+            "lifetime_high_water_mark_cents", sa.BigInteger, nullable=False
+        ),
+        sa.Column("source_authority", sa.Text, nullable=False),
+        sa.Column("authorization_reference", sa.Text, nullable=True),
+        sa.Column("started_at", sa.Text, nullable=False),
     )
 
     return meta

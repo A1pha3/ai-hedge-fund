@@ -18,11 +18,20 @@ from src.screening.offensive.v3.contracts import content_hash
 SCHEMA_MAJOR: Final[int] = 2
 """The Revision 2 contract schema major persisted into snapshots."""
 
-LEDGER_SCHEMA_VERSION: Final[int] = 1
-"""The capital ledger storage schema revision managed by migrations."""
+LEDGER_SCHEMA_VERSION: Final[int] = 2
+"""The capital ledger storage schema revision managed by migrations.
+
+Revision 2 (Plan 02 Task 3) adds the unit/NAV/lifecycle surface:
+``capital_flow_events``, ``flow_requests``, ``nav_observations``,
+``risk_epoch_history`` and the subscription/redemption suspense cash
+columns on ``capital_projection``.
+"""
 
 INITIAL_MIGRATION_REVISION: Final[str] = "0001"
 """Alembic revision identifier of the initial ledger migration."""
+
+CURRENT_MIGRATION_REVISION: Final[str] = "0002"
+"""Alembic revision identifier of the newest ledger migration."""
 
 UNACTIVATED_POLICY_ACTIVATION_HASH: Final[str] = "0" * 64
 UNACTIVATED_AUTHORIZATION_ID: Final[str] = "unactivated"
@@ -49,17 +58,21 @@ so consumers fail closed until activation.
 EXPECTED_TABLE_NAMES: Final[frozenset[str]] = frozenset(
     {
         "account_capital_truth",
+        "capital_flow_events",
         "capital_projection",
         "economic_event_legs",
         "economic_events",
         "entry_tombstones",
         "event_revisions",
         "execution_revisions",
+        "flow_requests",
         "gateway_meta",
+        "nav_observations",
         "payables",
         "positions",
         "receivables",
         "reserves",
+        "risk_epoch_history",
         "risk_latches",
         "session_checkpoints",
         "stage_loss_state",
@@ -108,6 +121,22 @@ def derive_risk_snapshot_id(portfolio_id: str, capital_version: int) -> str:
         {"portfolio_id": portfolio_id, "capital_version": capital_version}
     )
     return f"cap-risk-{digest[:40]}"
+
+
+def derive_flow_event_id(idempotency_key: str) -> str:
+    """Deterministically bind one financing flow fact to its command key."""
+
+    digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+    return f"flow-{digest[:40]}"
+
+
+def derive_nav_observation_id(event_id: str, observation_kind: str) -> str:
+    """Deterministic NAV observation identity for one valuation event."""
+
+    digest = content_hash(
+        {"economic_event_id": event_id, "observation_kind": observation_kind}
+    )
+    return f"navobs-{digest[:40]}"
 
 
 def scaled_int(value: Decimal, scale: int, label: str) -> int:
