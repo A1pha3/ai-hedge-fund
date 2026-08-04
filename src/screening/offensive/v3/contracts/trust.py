@@ -35,9 +35,39 @@ class ArtifactKind(StrEnum):
     PLAN = "plan"
     EDGE_AUTHORIZATION = "edge"
     EXPLORATION_AUTHORIZATION = "exploration"
+    RECOVERY_AUTHORIZATION = "recovery"
+    PORTFOLIO_DECISION_SEAL = "portfolio_decision_seal"
     DECISION_SEAL = "decision_seal"
     SHADOW_DECISION = "shadow_decision"
     EXECUTION_PERMIT = "execution_permit"
+    ENTRY_CANCELLATION_RECEIPT = "entry_cancellation_receipt"
+    POLICY_ACTIVATION = "policy_activation"
+    RISK_EPOCH_STARTED = "risk_epoch_started"
+    TRIAL_MANIFEST = "trial_manifest"
+    STATISTICAL_ANALYSIS_PLAN = "statistical_analysis_plan"
+    STAGE_MANIFEST = "stage_manifest"
+    AUTHORIZATION_STATUS = "authorization_status"
+    ENTRY_FENCE_RAISED = "entry_fence_raised"
+    ENTRY_FENCE_ACKNOWLEDGEMENT = "entry_fence_acknowledgement"
+    MIGRATION_APPROVAL_MANIFEST = "migration_approval_manifest"
+    BROKER_ENABLEMENT_MANIFEST = "broker_enablement_manifest"
+    DISASTER_RECOVERY_MANIFEST = "disaster_recovery_manifest"
+
+
+class IssuerKind(StrEnum):
+    """Service-principal role used for non-overridable separation."""
+
+    MARKET_PUBLISHER = "market_publisher"
+    SIGNAL_PRODUCER = "signal_producer"
+    OUTCOME_FINALIZER = "outcome_finalizer"
+    AUTHORIZER = "authorizer"
+    GOVERNANCE = "governance"
+    GROWTH_KERNEL = "growth_kernel"
+    CAPITAL_GATEWAY = "capital_gateway"
+    DEPENDENCY_TRACKER = "dependency_tracker"
+    BROKER_GATEWAY = "broker_gateway"
+    SHADOW = "shadow"
+    MANUAL = "manual"
 
 
 def _decode_canonical_base64(
@@ -141,15 +171,40 @@ class SignedEnvelope(BaseModel):
 
 
 class VerifiedIssuer(CanonicalModel):
-    """Minimal authority result safe for downstream trust decisions."""
+    """Reverified issuer truth; this inspection result grants no authority alone."""
 
     issuer_id: NonEmptyStr
+    key_id: NonEmptyStr
+    issuer_kind: IssuerKind
+    public_key_fingerprint: Sha256
+    identity_fingerprint: Sha256
     capability: Capability
+    trust_bundle_hash: Sha256
+    registry_epoch: Annotated[int, Field(ge=1)]
+    trusted_at: UtcInstant
+    valid_from: UtcInstant
+    valid_until: UtcInstant
+
+
+class CurrentTrustHeadWitness(CanonicalModel):
+    """Authority-Store observation of the exact active trust head.
+
+    The witness is a typed input boundary, not a signature or standalone authority.
+    Callers must obtain it from the future authoritative store for each verification.
+    """
+
+    active_trust_bundle_hash: Sha256
+    registry_epoch: Annotated[int, Field(ge=1)]
+    head_version: Annotated[int, Field(ge=1)]
+    store_version: Annotated[int, Field(ge=1)]
+    observed_at: UtcInstant
 
 
 __all__ = [
     "ArtifactKind",
     "Capability",
+    "CurrentTrustHeadWitness",
+    "IssuerKind",
     "SignedEnvelope",
     "VerifiedIssuer",
 ]

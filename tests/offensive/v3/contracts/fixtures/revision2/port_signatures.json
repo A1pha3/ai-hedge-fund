@@ -1,0 +1,237 @@
+{
+  "src.screening.offensive.v3.contracts.ports.AuthorizationQueryPort": {
+    "is_protocol": true,
+    "is_runtime_protocol": true,
+    "methods": {
+      "active_envelope": {
+        "parameters": [
+          {
+            "annotation": "<empty>",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "builtins.str",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "portfolio_id"
+          }
+        ],
+        "return": "src.screening.offensive.v3.contracts.authorization.CapitalAuthorizationEnvelope"
+      },
+      "status": {
+        "parameters": [
+          {
+            "annotation": "<empty>",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "builtins.str",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "authorization_id"
+          }
+        ],
+        "return": "src.screening.offensive.v3.contracts.governance.AuthorizationStatus"
+      }
+    },
+    "parameters": []
+  },
+  "src.screening.offensive.v3.contracts.ports.CapabilityVerifier": {
+    "is_protocol": true,
+    "is_runtime_protocol": true,
+    "methods": {
+      "verify": {
+        "parameters": [
+          {
+            "annotation": "<empty>",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "src.screening.offensive.v3.contracts.trust.SignedEnvelope",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "signed"
+          },
+          {
+            "annotation": "src.screening.offensive.v3.contracts.trust.Capability",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "required"
+          },
+          {
+            "annotation": "src.screening.offensive.v3.contracts.trust.CurrentTrustHeadWitness",
+            "default": "<empty>",
+            "kind": "KEYWORD_ONLY",
+            "name": "current_head"
+          },
+          {
+            "annotation": "datetime.datetime",
+            "default": "<empty>",
+            "kind": "KEYWORD_ONLY",
+            "name": "trusted_at"
+          }
+        ],
+        "return": "src.screening.offensive.v3.contracts.trust.VerifiedIssuer"
+      }
+    },
+    "parameters": []
+  },
+  "src.screening.offensive.v3.contracts.ports.CapitalGatewayCommandPort": {
+    "is_protocol": true,
+    "is_runtime_protocol": true,
+    "methods": {
+      "publish_entry": {
+        "parameters": [
+          {
+            "annotation": "<empty>",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "src.screening.offensive.v3.contracts.decision.PortfolioDecision",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "proposal"
+          },
+          {
+            "annotation": "src.screening.offensive.v3.contracts.decision.GatewayExpectedVersions",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "expected"
+          }
+        ],
+        "return": "src.screening.offensive.v3.contracts.decision.PortfolioDecisionSeal"
+      }
+    },
+    "parameters": []
+  },
+  "src.screening.offensive.v3.contracts.ports.CapitalGatewayReadPort": {
+    "is_protocol": true,
+    "is_runtime_protocol": true,
+    "methods": {
+      "risk_snapshot": {
+        "parameters": [
+          {
+            "annotation": "<empty>",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "builtins.str",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "portfolio_id"
+          },
+          {
+            "annotation": "datetime.datetime",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "as_of"
+          }
+        ],
+        "return": "src.screening.offensive.v3.contracts.capital.CapitalRiskSnapshot"
+      }
+    },
+    "parameters": []
+  },
+  "src.screening.offensive.v3.contracts.ports.EvidenceQueryPort": {
+    "is_protocol": true,
+    "is_runtime_protocol": true,
+    "methods": {
+      "active_revision": {
+        "parameters": [
+          {
+            "annotation": "<empty>",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "builtins.str",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "evidence_id"
+          },
+          {
+            "annotation": "datetime.datetime",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "cutoff"
+          }
+        ],
+        "return": "types.UnionType[src.screening.offensive.v3.contracts.evidence.EvidenceRecord[SnapshotEvidence],src.screening.offensive.v3.contracts.evidence.EvidenceRecord[SignalEvidence],src.screening.offensive.v3.contracts.evidence.EvidenceRecord[OutcomeEvidence],src.screening.offensive.v3.contracts.evidence.EvidenceRecord[PlanEvidence]]"
+      },
+      "outcome": {
+        "parameters": [
+          {
+            "annotation": "<empty>",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "builtins.str",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "outcome_id"
+          },
+          {
+            "annotation": "builtins.int",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "revision"
+          }
+        ],
+        "return": "src.screening.offensive.v3.contracts.evidence.EvidenceRecord[OutcomeEvidence]"
+      }
+    },
+    "parameters": []
+  },
+  "src.screening.offensive.v3.contracts.ports.GrowthKernelPort": {
+    "is_protocol": true,
+    "is_runtime_protocol": true,
+    "methods": {
+      "decide": {
+        "parameters": [
+          {
+            "annotation": "<empty>",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "self"
+          },
+          {
+            "annotation": "TypeVar(KernelInputT)",
+            "default": "<empty>",
+            "kind": "POSITIONAL_OR_KEYWORD",
+            "name": "frozen"
+          }
+        ],
+        "return": "typing.Union[TypeVar(NoTradeDecisionT),src.screening.offensive.v3.contracts.decision.ShadowDecision,src.screening.offensive.v3.contracts.decision.PortfolioDecision]"
+      }
+    },
+    "parameters": [
+      {
+        "bound": "src.screening.offensive.v3.contracts.base.CanonicalModel",
+        "constraints": [],
+        "contravariant": true,
+        "covariant": false,
+        "name": "KernelInputT"
+      },
+      {
+        "bound": "src.screening.offensive.v3.contracts.base.CanonicalModel",
+        "constraints": [],
+        "contravariant": false,
+        "covariant": true,
+        "name": "NoTradeDecisionT"
+      }
+    ]
+  }
+}

@@ -1,0 +1,2178 @@
+{
+  "aliases": {
+    "src.screening.offensive.v3.contracts.ActiveEvidenceRecord": {
+      "schema": {
+        "$defs": {
+          "EvidenceRecord_OutcomeEvidence_": {
+            "additionalProperties": false,
+            "properties": {
+              "active_revision": {
+                "ge": 1,
+                "title": "Active Revision",
+                "type": "integer"
+              },
+              "commit_sequence": {
+                "ge": 1,
+                "title": "Commit Sequence",
+                "type": "integer"
+              },
+              "evidence": {
+                "$ref": "#/$defs/OutcomeEvidence"
+              },
+              "ingested_at": {
+                "format": "date-time",
+                "title": "Ingested At",
+                "type": "string"
+              },
+              "revision": {
+                "ge": 1,
+                "title": "Revision",
+                "type": "integer"
+              },
+              "supersedes_revision": {
+                "anyOf": [
+                  {
+                    "ge": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Supersedes Revision"
+              }
+            },
+            "required": [
+              "evidence",
+              "ingested_at",
+              "commit_sequence",
+              "revision",
+              "supersedes_revision",
+              "active_revision"
+            ],
+            "title": "EvidenceRecord[OutcomeEvidence]",
+            "type": "object"
+          },
+          "EvidenceRecord_PlanEvidence_": {
+            "additionalProperties": false,
+            "properties": {
+              "active_revision": {
+                "ge": 1,
+                "title": "Active Revision",
+                "type": "integer"
+              },
+              "commit_sequence": {
+                "ge": 1,
+                "title": "Commit Sequence",
+                "type": "integer"
+              },
+              "evidence": {
+                "$ref": "#/$defs/PlanEvidence"
+              },
+              "ingested_at": {
+                "format": "date-time",
+                "title": "Ingested At",
+                "type": "string"
+              },
+              "revision": {
+                "ge": 1,
+                "title": "Revision",
+                "type": "integer"
+              },
+              "supersedes_revision": {
+                "anyOf": [
+                  {
+                    "ge": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Supersedes Revision"
+              }
+            },
+            "required": [
+              "evidence",
+              "ingested_at",
+              "commit_sequence",
+              "revision",
+              "supersedes_revision",
+              "active_revision"
+            ],
+            "title": "EvidenceRecord[PlanEvidence]",
+            "type": "object"
+          },
+          "EvidenceRecord_SignalEvidence_": {
+            "additionalProperties": false,
+            "properties": {
+              "active_revision": {
+                "ge": 1,
+                "title": "Active Revision",
+                "type": "integer"
+              },
+              "commit_sequence": {
+                "ge": 1,
+                "title": "Commit Sequence",
+                "type": "integer"
+              },
+              "evidence": {
+                "$ref": "#/$defs/SignalEvidence"
+              },
+              "ingested_at": {
+                "format": "date-time",
+                "title": "Ingested At",
+                "type": "string"
+              },
+              "revision": {
+                "ge": 1,
+                "title": "Revision",
+                "type": "integer"
+              },
+              "supersedes_revision": {
+                "anyOf": [
+                  {
+                    "ge": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Supersedes Revision"
+              }
+            },
+            "required": [
+              "evidence",
+              "ingested_at",
+              "commit_sequence",
+              "revision",
+              "supersedes_revision",
+              "active_revision"
+            ],
+            "title": "EvidenceRecord[SignalEvidence]",
+            "type": "object"
+          },
+          "EvidenceRecord_SnapshotEvidence_": {
+            "additionalProperties": false,
+            "properties": {
+              "active_revision": {
+                "ge": 1,
+                "title": "Active Revision",
+                "type": "integer"
+              },
+              "commit_sequence": {
+                "ge": 1,
+                "title": "Commit Sequence",
+                "type": "integer"
+              },
+              "evidence": {
+                "$ref": "#/$defs/SnapshotEvidence"
+              },
+              "ingested_at": {
+                "format": "date-time",
+                "title": "Ingested At",
+                "type": "string"
+              },
+              "revision": {
+                "ge": 1,
+                "title": "Revision",
+                "type": "integer"
+              },
+              "supersedes_revision": {
+                "anyOf": [
+                  {
+                    "ge": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Supersedes Revision"
+              }
+            },
+            "required": [
+              "evidence",
+              "ingested_at",
+              "commit_sequence",
+              "revision",
+              "supersedes_revision",
+              "active_revision"
+            ],
+            "title": "EvidenceRecord[SnapshotEvidence]",
+            "type": "object"
+          },
+          "EvidenceScope": {
+            "description": "Whether evidence is global or bound to one strategy lineage.",
+            "enum": [
+              "global",
+              "strategy_lineage"
+            ],
+            "title": "EvidenceScope",
+            "type": "string"
+          },
+          "ExecutionMode": {
+            "description": "How an outcome or execution fact was established.",
+            "enum": [
+              "research_reconstruction",
+              "daily_bar_proxy",
+              "manual_confirmed",
+              "broker_confirmed"
+            ],
+            "title": "ExecutionMode",
+            "type": "string"
+          },
+          "OutcomeEvidence": {
+            "additionalProperties": false,
+            "description": "A matured outcome under one fixed execution mode and behavior version.",
+            "properties": {
+              "available_at": {
+                "format": "date-time",
+                "title": "Available At",
+                "type": "string"
+              },
+              "behavior_fingerprint": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Behavior Fingerprint",
+                "type": "string"
+              },
+              "cost_version": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Cost Version",
+                "type": "string"
+              },
+              "effective_at": {
+                "format": "date-time",
+                "title": "Effective At",
+                "type": "string"
+              },
+              "evidence_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Evidence Id",
+                "type": "string"
+              },
+              "evidence_kind": {
+                "const": "outcome",
+                "title": "Evidence Kind",
+                "type": "string"
+              },
+              "execution_version": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Execution Version",
+                "type": "string"
+              },
+              "family_id": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "pattern": ".*\\S.*",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Family Id"
+              },
+              "mode": {
+                "$ref": "#/$defs/ExecutionMode"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "title": "Observed At",
+                "type": "string"
+              },
+              "payload_content_hash": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Payload Content Hash",
+                "type": "string"
+              },
+              "policy_epoch": {
+                "minimum": 1,
+                "title": "Policy Epoch",
+                "type": "integer"
+              },
+              "provider_published_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/ProviderPublicationState"
+                  }
+                ],
+                "title": "Provider Published At"
+              },
+              "schema_major": {
+                "title": "Schema Major",
+                "type": "integer"
+              },
+              "source_authority": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Source Authority",
+                "type": "string"
+              },
+              "strategy_semver": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Strategy Semver",
+                "type": "string"
+              },
+              "subject_producer": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Subject Producer",
+                "type": "string"
+              },
+              "subject_scope": {
+                "$ref": "#/$defs/EvidenceScope"
+              }
+            },
+            "required": [
+              "evidence_id",
+              "subject_scope",
+              "subject_producer",
+              "family_id",
+              "strategy_semver",
+              "behavior_fingerprint",
+              "policy_epoch",
+              "execution_version",
+              "cost_version",
+              "effective_at",
+              "provider_published_at",
+              "observed_at",
+              "available_at",
+              "mode",
+              "source_authority",
+              "payload_content_hash",
+              "schema_major",
+              "evidence_kind"
+            ],
+            "title": "OutcomeEvidence",
+            "type": "object"
+          },
+          "PlanEvidence": {
+            "additionalProperties": false,
+            "description": "Producer raw-target evidence; it carries no execution authority.",
+            "properties": {
+              "available_at": {
+                "format": "date-time",
+                "title": "Available At",
+                "type": "string"
+              },
+              "behavior_fingerprint": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Behavior Fingerprint",
+                "type": "string"
+              },
+              "cost_version": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Cost Version",
+                "type": "string"
+              },
+              "created_at": {
+                "format": "date-time",
+                "title": "Created At",
+                "type": "string"
+              },
+              "economic_lineage_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Economic Lineage Id",
+                "type": "string"
+              },
+              "effective_at": {
+                "format": "date-time",
+                "title": "Effective At",
+                "type": "string"
+              },
+              "evidence_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Evidence Id",
+                "type": "string"
+              },
+              "evidence_kind": {
+                "const": "plan",
+                "title": "Evidence Kind",
+                "type": "string"
+              },
+              "execution_version": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Execution Version",
+                "type": "string"
+              },
+              "family_id": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "pattern": ".*\\S.*",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Family Id"
+              },
+              "mode": {
+                "$ref": "#/$defs/ExecutionMode"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "title": "Observed At",
+                "type": "string"
+              },
+              "payload_content_hash": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Payload Content Hash",
+                "type": "string"
+              },
+              "policy_epoch": {
+                "minimum": 1,
+                "title": "Policy Epoch",
+                "type": "integer"
+              },
+              "portfolio_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Portfolio Id",
+                "type": "string"
+              },
+              "provider_published_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/ProviderPublicationState"
+                  }
+                ],
+                "title": "Provider Published At"
+              },
+              "raw_target_fraction": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "maximum": 1,
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  }
+                ],
+                "title": "Raw Target Fraction"
+              },
+              "schema_major": {
+                "title": "Schema Major",
+                "type": "integer"
+              },
+              "signal_session": {
+                "format": "date",
+                "title": "Signal Session",
+                "type": "string"
+              },
+              "snapshot_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Snapshot Id",
+                "type": "string"
+              },
+              "source_authority": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Source Authority",
+                "type": "string"
+              },
+              "strategy_semver": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Strategy Semver",
+                "type": "string"
+              },
+              "subject_producer": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Subject Producer",
+                "type": "string"
+              },
+              "subject_scope": {
+                "$ref": "#/$defs/EvidenceScope"
+              }
+            },
+            "required": [
+              "evidence_id",
+              "subject_scope",
+              "subject_producer",
+              "family_id",
+              "strategy_semver",
+              "behavior_fingerprint",
+              "policy_epoch",
+              "execution_version",
+              "cost_version",
+              "effective_at",
+              "provider_published_at",
+              "observed_at",
+              "available_at",
+              "mode",
+              "source_authority",
+              "payload_content_hash",
+              "schema_major",
+              "evidence_kind",
+              "portfolio_id",
+              "signal_session",
+              "economic_lineage_id",
+              "snapshot_id",
+              "raw_target_fraction",
+              "created_at"
+            ],
+            "title": "PlanEvidence",
+            "type": "object"
+          },
+          "ProviderPublicationState": {
+            "description": "Typed source states; neither state grants production PIT eligibility.",
+            "enum": [
+              "NOT_APPLICABLE",
+              "UNKNOWN"
+            ],
+            "title": "ProviderPublicationState",
+            "type": "string"
+          },
+          "SignalEvidence": {
+            "additionalProperties": false,
+            "description": "One immutable observation of a producer candidate-funnel stage.",
+            "properties": {
+              "available_at": {
+                "format": "date-time",
+                "title": "Available At",
+                "type": "string"
+              },
+              "behavior_fingerprint": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Behavior Fingerprint",
+                "type": "string"
+              },
+              "cost_version": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Cost Version",
+                "type": "string"
+              },
+              "effective_at": {
+                "format": "date-time",
+                "title": "Effective At",
+                "type": "string"
+              },
+              "evidence_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Evidence Id",
+                "type": "string"
+              },
+              "evidence_kind": {
+                "const": "signal",
+                "title": "Evidence Kind",
+                "type": "string"
+              },
+              "execution_version": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Execution Version",
+                "type": "string"
+              },
+              "family_id": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "pattern": ".*\\S.*",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Family Id"
+              },
+              "mode": {
+                "$ref": "#/$defs/ExecutionMode"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "title": "Observed At",
+                "type": "string"
+              },
+              "payload_content_hash": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Payload Content Hash",
+                "type": "string"
+              },
+              "policy_epoch": {
+                "minimum": 1,
+                "title": "Policy Epoch",
+                "type": "integer"
+              },
+              "provider_published_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/ProviderPublicationState"
+                  }
+                ],
+                "title": "Provider Published At"
+              },
+              "schema_major": {
+                "title": "Schema Major",
+                "type": "integer"
+              },
+              "source_authority": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Source Authority",
+                "type": "string"
+              },
+              "stage": {
+                "$ref": "#/$defs/SignalStage"
+              },
+              "strategy_semver": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Strategy Semver",
+                "type": "string"
+              },
+              "subject_producer": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Subject Producer",
+                "type": "string"
+              },
+              "subject_scope": {
+                "$ref": "#/$defs/EvidenceScope"
+              }
+            },
+            "required": [
+              "evidence_id",
+              "subject_scope",
+              "subject_producer",
+              "family_id",
+              "strategy_semver",
+              "behavior_fingerprint",
+              "policy_epoch",
+              "execution_version",
+              "cost_version",
+              "effective_at",
+              "provider_published_at",
+              "observed_at",
+              "available_at",
+              "mode",
+              "source_authority",
+              "payload_content_hash",
+              "schema_major",
+              "evidence_kind",
+              "stage"
+            ],
+            "title": "SignalEvidence",
+            "type": "object"
+          },
+          "SignalStage": {
+            "description": "A signal's immutable position in the producer funnel.",
+            "enum": [
+              "candidate",
+              "data_eligible",
+              "selected"
+            ],
+            "title": "SignalStage",
+            "type": "string"
+          },
+          "SnapshotEvidence": {
+            "additionalProperties": false,
+            "description": "PIT market/data-health evidence; never an execution authorization.",
+            "properties": {
+              "available_at": {
+                "format": "date-time",
+                "title": "Available At",
+                "type": "string"
+              },
+              "behavior_fingerprint": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Behavior Fingerprint",
+                "type": "string"
+              },
+              "cost_version": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Cost Version",
+                "type": "string"
+              },
+              "effective_at": {
+                "format": "date-time",
+                "title": "Effective At",
+                "type": "string"
+              },
+              "evidence_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Evidence Id",
+                "type": "string"
+              },
+              "evidence_kind": {
+                "const": "snapshot",
+                "title": "Evidence Kind",
+                "type": "string"
+              },
+              "execution_version": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Execution Version",
+                "type": "string"
+              },
+              "family_id": {
+                "anyOf": [
+                  {
+                    "minLength": 1,
+                    "pattern": ".*\\S.*",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Family Id"
+              },
+              "mode": {
+                "$ref": "#/$defs/ExecutionMode"
+              },
+              "observed_at": {
+                "format": "date-time",
+                "title": "Observed At",
+                "type": "string"
+              },
+              "payload_content_hash": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Payload Content Hash",
+                "type": "string"
+              },
+              "policy_epoch": {
+                "minimum": 1,
+                "title": "Policy Epoch",
+                "type": "integer"
+              },
+              "provider_published_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/ProviderPublicationState"
+                  }
+                ],
+                "title": "Provider Published At"
+              },
+              "schema_major": {
+                "title": "Schema Major",
+                "type": "integer"
+              },
+              "source_authority": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Source Authority",
+                "type": "string"
+              },
+              "strategy_semver": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Strategy Semver",
+                "type": "string"
+              },
+              "subject_producer": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Subject Producer",
+                "type": "string"
+              },
+              "subject_scope": {
+                "$ref": "#/$defs/EvidenceScope"
+              }
+            },
+            "required": [
+              "evidence_id",
+              "subject_scope",
+              "subject_producer",
+              "family_id",
+              "strategy_semver",
+              "behavior_fingerprint",
+              "policy_epoch",
+              "execution_version",
+              "cost_version",
+              "effective_at",
+              "provider_published_at",
+              "observed_at",
+              "available_at",
+              "mode",
+              "source_authority",
+              "payload_content_hash",
+              "schema_major",
+              "evidence_kind"
+            ],
+            "title": "SnapshotEvidence",
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "$ref": "#/$defs/EvidenceRecord_SnapshotEvidence_"
+          },
+          {
+            "$ref": "#/$defs/EvidenceRecord_SignalEvidence_"
+          },
+          {
+            "$ref": "#/$defs/EvidenceRecord_OutcomeEvidence_"
+          },
+          {
+            "$ref": "#/$defs/EvidenceRecord_PlanEvidence_"
+          }
+        ]
+      },
+      "schema_sha256": "e8317abf03a83cc073fa0af5d092b60e31d77b7463350ca2fae0984de2f5987f"
+    },
+    "src.screening.offensive.v3.contracts.ConfidenceLevel": {
+      "schema": {
+        "pattern": "^0\\.[0-9]*[1-9][0-9]*$",
+        "type": "string"
+      },
+      "schema_sha256": "f55fce25abf2446e99d4089bac64aa8899574d4bdf52611940931aa08cc37707"
+    },
+    "src.screening.offensive.v3.contracts.EconomicEventLeg": {
+      "schema": {
+        "$defs": {
+          "CashEconomicEventLeg": {
+            "additionalProperties": false,
+            "properties": {
+              "asset_kind": {
+                "const": "CASH",
+                "title": "Asset Kind",
+                "type": "string"
+              },
+              "cash_amount": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  }
+                ],
+                "title": "Cash Amount"
+              },
+              "direction": {
+                "$ref": "#/$defs/EconomicLegDirection"
+              },
+              "leg_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Leg Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "leg_id",
+              "direction",
+              "asset_kind",
+              "cash_amount"
+            ],
+            "title": "CashEconomicEventLeg",
+            "type": "object"
+          },
+          "CashReceivableEconomicEventLeg": {
+            "additionalProperties": false,
+            "properties": {
+              "asset_kind": {
+                "const": "CASH_RECEIVABLE",
+                "title": "Asset Kind",
+                "type": "string"
+              },
+              "cash_amount": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  }
+                ],
+                "title": "Cash Amount"
+              },
+              "direction": {
+                "$ref": "#/$defs/EconomicLegDirection"
+              },
+              "leg_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Leg Id",
+                "type": "string"
+              },
+              "receivable_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Receivable Id",
+                "type": "string"
+              },
+              "security_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Security Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "leg_id",
+              "direction",
+              "asset_kind",
+              "receivable_id",
+              "security_id",
+              "cash_amount"
+            ],
+            "title": "CashReceivableEconomicEventLeg",
+            "type": "object"
+          },
+          "CostBasisEconomicEventLeg": {
+            "additionalProperties": false,
+            "properties": {
+              "asset_kind": {
+                "const": "COST_BASIS",
+                "title": "Asset Kind",
+                "type": "string"
+              },
+              "cost_basis_amount": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  }
+                ],
+                "title": "Cost Basis Amount"
+              },
+              "direction": {
+                "$ref": "#/$defs/EconomicLegDirection"
+              },
+              "leg_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Leg Id",
+                "type": "string"
+              },
+              "security_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Security Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "leg_id",
+              "direction",
+              "asset_kind",
+              "security_id",
+              "cost_basis_amount"
+            ],
+            "title": "CostBasisEconomicEventLeg",
+            "type": "object"
+          },
+          "EconomicLegDirection": {
+            "enum": [
+              "DEBIT",
+              "CREDIT"
+            ],
+            "title": "EconomicLegDirection",
+            "type": "string"
+          },
+          "SecurityEconomicEventLeg": {
+            "additionalProperties": false,
+            "properties": {
+              "asset_kind": {
+                "const": "SECURITY",
+                "title": "Asset Kind",
+                "type": "string"
+              },
+              "direction": {
+                "$ref": "#/$defs/EconomicLegDirection"
+              },
+              "leg_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Leg Id",
+                "type": "string"
+              },
+              "quantity": {
+                "minimum": 1,
+                "title": "Quantity",
+                "type": "integer"
+              },
+              "security_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Security Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "leg_id",
+              "direction",
+              "asset_kind",
+              "security_id",
+              "quantity"
+            ],
+            "title": "SecurityEconomicEventLeg",
+            "type": "object"
+          },
+          "ShareReceivableEconomicEventLeg": {
+            "additionalProperties": false,
+            "properties": {
+              "asset_kind": {
+                "const": "SHARE_RECEIVABLE",
+                "title": "Asset Kind",
+                "type": "string"
+              },
+              "direction": {
+                "$ref": "#/$defs/EconomicLegDirection"
+              },
+              "leg_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Leg Id",
+                "type": "string"
+              },
+              "quantity": {
+                "minimum": 1,
+                "title": "Quantity",
+                "type": "integer"
+              },
+              "receivable_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Receivable Id",
+                "type": "string"
+              },
+              "security_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Security Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "leg_id",
+              "direction",
+              "asset_kind",
+              "receivable_id",
+              "security_id",
+              "quantity"
+            ],
+            "title": "ShareReceivableEconomicEventLeg",
+            "type": "object"
+          },
+          "ValuationMarkEconomicEventLeg": {
+            "additionalProperties": false,
+            "description": "A mark-only leg which cannot change cash, shares, or receivables.",
+            "properties": {
+              "asset_kind": {
+                "const": "VALUATION_MARK",
+                "title": "Asset Kind",
+                "type": "string"
+              },
+              "leg_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Leg Id",
+                "type": "string"
+              },
+              "mark_price": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  }
+                ],
+                "title": "Mark Price"
+              },
+              "security_id": {
+                "minLength": 1,
+                "pattern": ".*\\S.*",
+                "title": "Security Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "leg_id",
+              "asset_kind",
+              "security_id",
+              "mark_price"
+            ],
+            "title": "ValuationMarkEconomicEventLeg",
+            "type": "object"
+          }
+        },
+        "discriminator": {
+          "mapping": {
+            "CASH": "#/$defs/CashEconomicEventLeg",
+            "CASH_RECEIVABLE": "#/$defs/CashReceivableEconomicEventLeg",
+            "COST_BASIS": "#/$defs/CostBasisEconomicEventLeg",
+            "SECURITY": "#/$defs/SecurityEconomicEventLeg",
+            "SHARE_RECEIVABLE": "#/$defs/ShareReceivableEconomicEventLeg",
+            "VALUATION_MARK": "#/$defs/ValuationMarkEconomicEventLeg"
+          },
+          "propertyName": "asset_kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/CashEconomicEventLeg"
+          },
+          {
+            "$ref": "#/$defs/SecurityEconomicEventLeg"
+          },
+          {
+            "$ref": "#/$defs/CashReceivableEconomicEventLeg"
+          },
+          {
+            "$ref": "#/$defs/ShareReceivableEconomicEventLeg"
+          },
+          {
+            "$ref": "#/$defs/CostBasisEconomicEventLeg"
+          },
+          {
+            "$ref": "#/$defs/ValuationMarkEconomicEventLeg"
+          }
+        ]
+      },
+      "schema_sha256": "ed2a0b34a1fae91d15e4efce78685a3ae89e76108ec711999c7fbadb452cff4b"
+    },
+    "src.screening.offensive.v3.contracts.ExactInteger": {
+      "schema": {
+        "type": "integer"
+      },
+      "schema_sha256": "f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670"
+    },
+    "src.screening.offensive.v3.contracts.Fraction": {
+      "schema": {
+        "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+        "type": "string"
+      },
+      "schema_sha256": "a17ae2cf5a0c84a4ab1a7f72a93b6508267177f8e8ccd5dec1fdedc9cdce0155"
+    },
+    "src.screening.offensive.v3.contracts.MoneyCents": {
+      "schema": {
+        "type": "integer"
+      },
+      "schema_sha256": "f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670"
+    },
+    "src.screening.offensive.v3.contracts.QuantityUnits": {
+      "schema": {
+        "type": "integer"
+      },
+      "schema_sha256": "f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670"
+    },
+    "src.screening.offensive.v3.contracts.SchemaVersion": {
+      "schema": {
+        "type": "integer"
+      },
+      "schema_sha256": "f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670"
+    },
+    "src.screening.offensive.v3.contracts.Sha256": {
+      "schema": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "schema_sha256": "67f459c542f6ec4afe79b51471d533c7b954d14e76adcfb186445758052e48d2"
+    },
+    "src.screening.offensive.v3.contracts.UnitQuanta": {
+      "schema": {
+        "type": "integer"
+      },
+      "schema_sha256": "f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670"
+    },
+    "src.screening.offensive.v3.contracts.UtcInstant": {
+      "schema": {
+        "format": "date-time",
+        "type": "string"
+      },
+      "schema_sha256": "4f410cd74c87d8ddd21f20e835e06ed7445481c3aeae3c12085e82c54ea2fb7d"
+    }
+  },
+  "enums": {
+    "src.screening.offensive.v3.contracts.authorization.AuthorizationKind": {
+      "members": [
+        {
+          "name": "EDGE",
+          "value": "EDGE"
+        },
+        {
+          "name": "EXPLORATION",
+          "value": "EXPLORATION"
+        },
+        {
+          "name": "RECOVERY",
+          "value": "RECOVERY"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.base.EvidenceScope": {
+      "members": [
+        {
+          "name": "GLOBAL",
+          "value": "global"
+        },
+        {
+          "name": "STRATEGY_LINEAGE",
+          "value": "strategy_lineage"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.base.ExecutionMode": {
+      "members": [
+        {
+          "name": "RESEARCH_RECONSTRUCTION",
+          "value": "research_reconstruction"
+        },
+        {
+          "name": "DAILY_BAR_PROXY",
+          "value": "daily_bar_proxy"
+        },
+        {
+          "name": "MANUAL_CONFIRMED",
+          "value": "manual_confirmed"
+        },
+        {
+          "name": "BROKER_CONFIRMED",
+          "value": "broker_confirmed"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.base.SignalStage": {
+      "members": [
+        {
+          "name": "CANDIDATE",
+          "value": "candidate"
+        },
+        {
+          "name": "DATA_ELIGIBLE",
+          "value": "data_eligible"
+        },
+        {
+          "name": "SELECTED",
+          "value": "selected"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.capital.AuthorityState": {
+      "members": [
+        {
+          "name": "ACTIVE",
+          "value": "ACTIVE"
+        },
+        {
+          "name": "DRAINING",
+          "value": "DRAINING"
+        },
+        {
+          "name": "BROKER_RECONCILED",
+          "value": "BROKER_RECONCILED"
+        },
+        {
+          "name": "HANDOFF_COMPLETE",
+          "value": "HANDOFF_COMPLETE"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.capital.EconomicAssetKind": {
+      "members": [
+        {
+          "name": "CASH",
+          "value": "CASH"
+        },
+        {
+          "name": "SECURITY",
+          "value": "SECURITY"
+        },
+        {
+          "name": "CASH_RECEIVABLE",
+          "value": "CASH_RECEIVABLE"
+        },
+        {
+          "name": "SHARE_RECEIVABLE",
+          "value": "SHARE_RECEIVABLE"
+        },
+        {
+          "name": "COST_BASIS",
+          "value": "COST_BASIS"
+        },
+        {
+          "name": "VALUATION_MARK",
+          "value": "VALUATION_MARK"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.capital.EconomicEventKind": {
+      "members": [
+        {
+          "name": "TRADE_EXECUTED",
+          "value": "TRADE_EXECUTED"
+        },
+        {
+          "name": "FEE_CHARGED",
+          "value": "FEE_CHARGED"
+        },
+        {
+          "name": "DIVIDEND_RECEIVABLE",
+          "value": "DIVIDEND_RECEIVABLE"
+        },
+        {
+          "name": "DIVIDEND_CASH_SETTLED",
+          "value": "DIVIDEND_CASH_SETTLED"
+        },
+        {
+          "name": "SHARE_RECEIVABLE",
+          "value": "SHARE_RECEIVABLE"
+        },
+        {
+          "name": "SPLIT",
+          "value": "SPLIT"
+        },
+        {
+          "name": "MERGE",
+          "value": "MERGE"
+        },
+        {
+          "name": "CORPORATE_CASH_SETTLED",
+          "value": "CORPORATE_CASH_SETTLED"
+        },
+        {
+          "name": "SECURITY_CONVERTED",
+          "value": "SECURITY_CONVERTED"
+        },
+        {
+          "name": "LEGAL_WRITE_OFF",
+          "value": "LEGAL_WRITE_OFF"
+        },
+        {
+          "name": "VALUATION",
+          "value": "VALUATION"
+        },
+        {
+          "name": "LATE_CORRECTION",
+          "value": "LATE_CORRECTION"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.capital.EconomicLegDirection": {
+      "members": [
+        {
+          "name": "DEBIT",
+          "value": "DEBIT"
+        },
+        {
+          "name": "CREDIT",
+          "value": "CREDIT"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.capital.ExitMandateRevisionKind": {
+      "members": [
+        {
+          "name": "INITIAL",
+          "value": "INITIAL"
+        },
+        {
+          "name": "QUANTITY_REFRESH",
+          "value": "QUANTITY_REFRESH"
+        },
+        {
+          "name": "REOPENED_BY_CORRECTION",
+          "value": "REOPENED_BY_CORRECTION"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.capital.ExitQuantityKnowledge": {
+      "members": [
+        {
+          "name": "KNOWN",
+          "value": "KNOWN"
+        },
+        {
+          "name": "UNKNOWN",
+          "value": "UNKNOWN"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.capital.ExposureScope": {
+      "members": [
+        {
+          "name": "GLOBAL",
+          "value": "GLOBAL"
+        },
+        {
+          "name": "PORTFOLIO",
+          "value": "PORTFOLIO"
+        },
+        {
+          "name": "RESEARCH_PROGRAM",
+          "value": "RESEARCH_PROGRAM"
+        },
+        {
+          "name": "ECONOMIC_LINEAGE",
+          "value": "ECONOMIC_LINEAGE"
+        },
+        {
+          "name": "STAGE",
+          "value": "STAGE"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.capital.PositionState": {
+      "members": [
+        {
+          "name": "OPEN",
+          "value": "OPEN"
+        },
+        {
+          "name": "EXIT_PENDING",
+          "value": "EXIT_PENDING"
+        },
+        {
+          "name": "CLOSED",
+          "value": "CLOSED"
+        },
+        {
+          "name": "LEGAL_TERMINAL",
+          "value": "LEGAL_TERMINAL"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.capital.RiskOrderSide": {
+      "members": [
+        {
+          "name": "ENTRY",
+          "value": "ENTRY"
+        },
+        {
+          "name": "EXIT",
+          "value": "EXIT"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.capital.SessionPhase": {
+      "members": [
+        {
+          "name": "CORPORATE_ACTIONS_APPLIED",
+          "value": "CORPORATE_ACTIONS_APPLIED"
+        },
+        {
+          "name": "PREOPEN_RISK_LOCKED",
+          "value": "PREOPEN_RISK_LOCKED"
+        },
+        {
+          "name": "ORDER_INTENTS_DURABLE",
+          "value": "ORDER_INTENTS_DURABLE"
+        },
+        {
+          "name": "OPEN_RECONCILED",
+          "value": "OPEN_RECONCILED"
+        },
+        {
+          "name": "CLOSE_VALUED",
+          "value": "CLOSE_VALUED"
+        },
+        {
+          "name": "SESSION_FINALIZED",
+          "value": "SESSION_FINALIZED"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.decision.ClockHealth": {
+      "members": [
+        {
+          "name": "HEALTHY",
+          "value": "HEALTHY"
+        },
+        {
+          "name": "UNKNOWN",
+          "value": "UNKNOWN"
+        },
+        {
+          "name": "EXCESSIVE_SKEW",
+          "value": "EXCESSIVE_SKEW"
+        },
+        {
+          "name": "ROLLBACK_DETECTED",
+          "value": "ROLLBACK_DETECTED"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.evidence.ProviderPublicationState": {
+      "members": [
+        {
+          "name": "NOT_APPLICABLE",
+          "value": "NOT_APPLICABLE"
+        },
+        {
+          "name": "UNKNOWN",
+          "value": "UNKNOWN"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.execution.ActiveEntryClaimState": {
+      "members": [
+        {
+          "name": "UNCLAIMED",
+          "value": "UNCLAIMED"
+        },
+        {
+          "name": "SEND_CLAIMED",
+          "value": "SEND_CLAIMED"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.execution.AuthorizationIssuerVerificationResult": {
+      "members": [
+        {
+          "name": "VALID",
+          "value": "VALID"
+        },
+        {
+          "name": "INVALID",
+          "value": "INVALID"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.execution.EconomicProjectionState": {
+      "members": [
+        {
+          "name": "RECONCILED",
+          "value": "RECONCILED"
+        },
+        {
+          "name": "REOPENED_BY_CORRECTION",
+          "value": "REOPENED_BY_CORRECTION"
+        },
+        {
+          "name": "RECONCILIATION_PENDING",
+          "value": "RECONCILIATION_PENDING"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.execution.EffectivePositionState": {
+      "members": [
+        {
+          "name": "OPEN",
+          "value": "OPEN"
+        },
+        {
+          "name": "EXIT_PENDING",
+          "value": "EXIT_PENDING"
+        },
+        {
+          "name": "FLAT",
+          "value": "FLAT"
+        },
+        {
+          "name": "RECONCILIATION_HALT",
+          "value": "RECONCILIATION_HALT"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.execution.ExecutionRevisionKind": {
+      "members": [
+        {
+          "name": "RECORDED",
+          "value": "RECORDED"
+        },
+        {
+          "name": "BUSTED",
+          "value": "BUSTED"
+        },
+        {
+          "name": "CORRECTED",
+          "value": "CORRECTED"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.execution.ExecutionSide": {
+      "members": [
+        {
+          "name": "ENTRY",
+          "value": "ENTRY"
+        },
+        {
+          "name": "EXIT",
+          "value": "EXIT"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.execution.OrderState": {
+      "members": [
+        {
+          "name": "CREATED",
+          "value": "CREATED"
+        },
+        {
+          "name": "SUBMITTED",
+          "value": "SUBMITTED"
+        },
+        {
+          "name": "PARTIALLY_FILLED",
+          "value": "PARTIALLY_FILLED"
+        },
+        {
+          "name": "FILLED",
+          "value": "FILLED"
+        },
+        {
+          "name": "REJECTED",
+          "value": "REJECTED"
+        },
+        {
+          "name": "CANCEL_REQUESTED",
+          "value": "CANCEL_REQUESTED"
+        },
+        {
+          "name": "CANCELLED",
+          "value": "CANCELLED"
+        },
+        {
+          "name": "EXPIRED",
+          "value": "EXPIRED"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.execution.OutboxState": {
+      "members": [
+        {
+          "name": "DURABLE",
+          "value": "DURABLE"
+        },
+        {
+          "name": "TOMBSTONED",
+          "value": "TOMBSTONED"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.execution.PermitDisposition": {
+      "members": [
+        {
+          "name": "ALLOW",
+          "value": "ALLOW"
+        },
+        {
+          "name": "CANCEL",
+          "value": "CANCEL"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.execution.PermitNonceState": {
+      "members": [
+        {
+          "name": "ACTIVE",
+          "value": "ACTIVE"
+        },
+        {
+          "name": "CONSUMED",
+          "value": "CONSUMED"
+        },
+        {
+          "name": "INVALIDATED",
+          "value": "INVALIDATED"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.execution.PermitReasonCode": {
+      "members": [
+        {
+          "name": "UNCHANGED",
+          "value": "UNCHANGED"
+        },
+        {
+          "name": "AVAILABILITY_REDUCTION",
+          "value": "AVAILABILITY_REDUCTION"
+        },
+        {
+          "name": "PRICE_REDUCTION",
+          "value": "PRICE_REDUCTION"
+        },
+        {
+          "name": "CAPACITY_REDUCTION",
+          "value": "CAPACITY_REDUCTION"
+        },
+        {
+          "name": "CASH_REDUCTION",
+          "value": "CASH_REDUCTION"
+        },
+        {
+          "name": "CAPITAL_RISK_REDUCTION",
+          "value": "CAPITAL_RISK_REDUCTION"
+        },
+        {
+          "name": "RISK_HALT_CANCEL",
+          "value": "RISK_HALT_CANCEL"
+        },
+        {
+          "name": "STAGE_HALT_CANCEL",
+          "value": "STAGE_HALT_CANCEL"
+        },
+        {
+          "name": "RECONCILIATION_CANCEL",
+          "value": "RECONCILIATION_CANCEL"
+        },
+        {
+          "name": "FACT_INTEGRITY_CANCEL",
+          "value": "FACT_INTEGRITY_CANCEL"
+        },
+        {
+          "name": "AUTHORIZATION_CANCEL",
+          "value": "AUTHORIZATION_CANCEL"
+        },
+        {
+          "name": "FENCE_CANCEL",
+          "value": "FENCE_CANCEL"
+        },
+        {
+          "name": "DEADLINE_CANCEL",
+          "value": "DEADLINE_CANCEL"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.execution.PlanState": {
+      "members": [
+        {
+          "name": "SEALED",
+          "value": "SEALED"
+        },
+        {
+          "name": "PERMITTED",
+          "value": "PERMITTED"
+        },
+        {
+          "name": "OUTBOX_DURABLE",
+          "value": "OUTBOX_DURABLE"
+        },
+        {
+          "name": "SEND_CLAIMED",
+          "value": "SEND_CLAIMED"
+        },
+        {
+          "name": "SUBMISSION_AMBIGUOUS",
+          "value": "SUBMISSION_AMBIGUOUS"
+        },
+        {
+          "name": "BROKER_ACK",
+          "value": "BROKER_ACK"
+        },
+        {
+          "name": "PARTIALLY_EXECUTED",
+          "value": "PARTIALLY_EXECUTED"
+        },
+        {
+          "name": "CANCEL_PENDING",
+          "value": "CANCEL_PENDING"
+        },
+        {
+          "name": "SUPERSEDED",
+          "value": "SUPERSEDED"
+        },
+        {
+          "name": "CANCELLED",
+          "value": "CANCELLED"
+        },
+        {
+          "name": "EXPIRED",
+          "value": "EXPIRED"
+        },
+        {
+          "name": "REJECTED",
+          "value": "REJECTED"
+        },
+        {
+          "name": "RECONCILED_NOT_ACCEPTED",
+          "value": "RECONCILED_NOT_ACCEPTED"
+        },
+        {
+          "name": "EXECUTED",
+          "value": "EXECUTED"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.execution.ReservationState": {
+      "members": [
+        {
+          "name": "ACTIVE",
+          "value": "ACTIVE"
+        },
+        {
+          "name": "RELEASED",
+          "value": "RELEASED"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.governance.AuthorizationLifecycle": {
+      "members": [
+        {
+          "name": "ACTIVE",
+          "value": "ACTIVE"
+        },
+        {
+          "name": "REVALIDATION_REQUIRED",
+          "value": "REVALIDATION_REQUIRED"
+        },
+        {
+          "name": "REVOKED",
+          "value": "REVOKED"
+        },
+        {
+          "name": "EXPIRED",
+          "value": "EXPIRED"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.governance.GrantKind": {
+      "members": [
+        {
+          "name": "EDGE",
+          "value": "EDGE"
+        },
+        {
+          "name": "EXPLORATION",
+          "value": "EXPLORATION"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.governance.PrimaryMetric": {
+      "members": [
+        {
+          "name": "PORTFOLIO_LOG_GROWTH",
+          "value": "PORTFOLIO_LOG_GROWTH"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.risk.ReconciliationLatchState": {
+      "members": [
+        {
+          "name": "CLEAR",
+          "value": "CLEAR"
+        },
+        {
+          "name": "RECONCILIATION_HALT",
+          "value": "RECONCILIATION_HALT"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.risk.RiskLatchState": {
+      "members": [
+        {
+          "name": "CLEAR",
+          "value": "CLEAR"
+        },
+        {
+          "name": "RISK_HALTED",
+          "value": "RISK_HALTED"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.risk.RiskSnapshotCompleteness": {
+      "members": [
+        {
+          "name": "COMPLETE",
+          "value": "COMPLETE"
+        },
+        {
+          "name": "INCOMPLETE",
+          "value": "INCOMPLETE"
+        },
+        {
+          "name": "UNKNOWN",
+          "value": "UNKNOWN"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.risk.RiskSnapshotFreshness": {
+      "members": [
+        {
+          "name": "FRESH",
+          "value": "FRESH"
+        },
+        {
+          "name": "STALE",
+          "value": "STALE"
+        },
+        {
+          "name": "UNKNOWN",
+          "value": "UNKNOWN"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.risk.StageLossLatchState": {
+      "members": [
+        {
+          "name": "CLEAR",
+          "value": "CLEAR"
+        },
+        {
+          "name": "STAGE_LOSS_HALTED",
+          "value": "STAGE_LOSS_HALTED"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.trust.ArtifactKind": {
+      "members": [
+        {
+          "name": "SNAPSHOT",
+          "value": "snapshot"
+        },
+        {
+          "name": "SIGNAL",
+          "value": "signal"
+        },
+        {
+          "name": "OUTCOME",
+          "value": "outcome"
+        },
+        {
+          "name": "PLAN",
+          "value": "plan"
+        },
+        {
+          "name": "EDGE_AUTHORIZATION",
+          "value": "edge"
+        },
+        {
+          "name": "EXPLORATION_AUTHORIZATION",
+          "value": "exploration"
+        },
+        {
+          "name": "RECOVERY_AUTHORIZATION",
+          "value": "recovery"
+        },
+        {
+          "name": "PORTFOLIO_DECISION_SEAL",
+          "value": "portfolio_decision_seal"
+        },
+        {
+          "name": "DECISION_SEAL",
+          "value": "decision_seal"
+        },
+        {
+          "name": "SHADOW_DECISION",
+          "value": "shadow_decision"
+        },
+        {
+          "name": "EXECUTION_PERMIT",
+          "value": "execution_permit"
+        },
+        {
+          "name": "ENTRY_CANCELLATION_RECEIPT",
+          "value": "entry_cancellation_receipt"
+        },
+        {
+          "name": "POLICY_ACTIVATION",
+          "value": "policy_activation"
+        },
+        {
+          "name": "RISK_EPOCH_STARTED",
+          "value": "risk_epoch_started"
+        },
+        {
+          "name": "TRIAL_MANIFEST",
+          "value": "trial_manifest"
+        },
+        {
+          "name": "STATISTICAL_ANALYSIS_PLAN",
+          "value": "statistical_analysis_plan"
+        },
+        {
+          "name": "STAGE_MANIFEST",
+          "value": "stage_manifest"
+        },
+        {
+          "name": "AUTHORIZATION_STATUS",
+          "value": "authorization_status"
+        },
+        {
+          "name": "ENTRY_FENCE_RAISED",
+          "value": "entry_fence_raised"
+        },
+        {
+          "name": "ENTRY_FENCE_ACKNOWLEDGEMENT",
+          "value": "entry_fence_acknowledgement"
+        },
+        {
+          "name": "MIGRATION_APPROVAL_MANIFEST",
+          "value": "migration_approval_manifest"
+        },
+        {
+          "name": "BROKER_ENABLEMENT_MANIFEST",
+          "value": "broker_enablement_manifest"
+        },
+        {
+          "name": "DISASTER_RECOVERY_MANIFEST",
+          "value": "disaster_recovery_manifest"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.trust.IssuerKind": {
+      "members": [
+        {
+          "name": "MARKET_PUBLISHER",
+          "value": "market_publisher"
+        },
+        {
+          "name": "SIGNAL_PRODUCER",
+          "value": "signal_producer"
+        },
+        {
+          "name": "OUTCOME_FINALIZER",
+          "value": "outcome_finalizer"
+        },
+        {
+          "name": "AUTHORIZER",
+          "value": "authorizer"
+        },
+        {
+          "name": "GOVERNANCE",
+          "value": "governance"
+        },
+        {
+          "name": "GROWTH_KERNEL",
+          "value": "growth_kernel"
+        },
+        {
+          "name": "CAPITAL_GATEWAY",
+          "value": "capital_gateway"
+        },
+        {
+          "name": "DEPENDENCY_TRACKER",
+          "value": "dependency_tracker"
+        },
+        {
+          "name": "BROKER_GATEWAY",
+          "value": "broker_gateway"
+        },
+        {
+          "name": "SHADOW",
+          "value": "shadow"
+        },
+        {
+          "name": "MANUAL",
+          "value": "manual"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.policy.models.CapitalTier": {
+      "members": [
+        {
+          "name": "EXPLORATION",
+          "value": 2
+        },
+        {
+          "name": "CANARY",
+          "value": 5
+        },
+        {
+          "name": "MAXIMUM",
+          "value": 10
+        }
+      ],
+      "value_type": "builtins.int"
+    },
+    "src.screening.offensive.v3.policy.models.MissingAdvBehavior": {
+      "members": [
+        {
+          "name": "FAIL_CLOSED",
+          "value": "fail_closed"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.policy.models.RuntimeMode": {
+      "members": [
+        {
+          "name": "OFF",
+          "value": "off"
+        },
+        {
+          "name": "SHADOW",
+          "value": "shadow"
+        },
+        {
+          "name": "BTST_CANARY",
+          "value": "btst_canary"
+        },
+        {
+          "name": "AUTHORITATIVE",
+          "value": "authoritative"
+        }
+      ],
+      "value_type": "builtins.str"
+    }
+  }
+}

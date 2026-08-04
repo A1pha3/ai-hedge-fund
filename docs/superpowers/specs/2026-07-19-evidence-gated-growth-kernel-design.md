@@ -1,11 +1,11 @@
 # Evidence-Gated Growth Kernel：`--auto` / `--daily-action` 长期架构设计
 
-> - 状态：**Revision 2 已批准；部分实现（Plan 01 Revision 1 contracts/policy/trust only），无资本权限**
+> - 状态：**Revision 2 已批准；部分实现（Plan 01 Revision 2 Tasks 1–5 contracts/policy/trust/final structural ports），无资本权限**
 > - 初次批准日期：2026-07-19
 > - Revision 2 批准日期：2026-07-26
 > - 适用范围：A 股次日开盘入场、固定 T+10 开盘退出的研究、模拟与未来实盘链路
 > - 权威性：本文件是该架构的唯一完整规范；与旧设计冲突时，本文件优先
-> - 当前实现边界：只有 Plan 01 Revision 1 的 strict/frozen 领域契约、默认 `off` 的 PolicySnapshot、只读 trust verifier 与基础 ports；Plan 01 Revision 2 增量及其后的资本、证据、Authorizer、kernel、gateway、迁移和 broker 路径均未实现
+> - 当前实现边界：Plan 01 Revision 2 Tasks 1–5 的 strict/frozen 候选契约、默认 `off` 的 policy-v2、schema-2 PIT/store-record 边界、root/current-head/policy predecessor 纯验证及 final structural ports 已实现；没有 active store/CAS、资本权限、Authorizer、kernel、gateway、签名服务、迁移 writer、broker 或任何可执行路径
 > - 实现状态的事实来源：代码、版本化策略快照、迁移记录和可重验台账，而不是本文的目标态描述
 
 ## 1. 阅读目标
@@ -203,6 +203,10 @@ schema_major
 
 本地 JSON、环境变量、CLI 参数或未激活的签名文件都只是候选输入。它们不能直接改变 active policy、registry、stage、authorization、risk epoch、writer 或 broker enablement。
 
+Plan 01 Task 4 的 generic signed-envelope route matrix 对上述独立签名对象使用 schema-major 2，并固定 issuer role：Governance 签发 `PolicyActivation`、`RiskEpochStarted`、Trial/SAP/Stage 与 migration/broker/DR manifest；Authorizer 只签发 `EDGE` envelope；Governance 签发 `EXPLORATION | RECOVERY` envelope；Capital Gateway 签发 `AuthorizationStatus`、`EntryFenceAcknowledgement`、portfolio seal、permit 与 cancellation receipt；独立 dependency tracker 签发 `EntryFenceRaised`。`LineageGrant` 与 `ProgramLossBudgetBinding` 是 `CapitalAuthorizationEnvelope` 签名 payload 内的嵌入 binding，不建立可绕过 parent envelope 的独立 issuer route。`ApprovalAttestationBinding` 同样是 two-person manifest payload 内的嵌入 binding；它引用的 `approval_artifact_hash` 仍须由后续 specialized manifest verifier 重验，当前没有定义 standalone approval payload/schema，因此不得臆造 generic authority route。generic route 可表达并隔离签发角色，但不替代每种 payload 的 specialized verifier。
+
+`PolicyActivation` 的纯候选验证与 Authority Store 激活时间分离：候选 `effective_from` 不得早于绑定 root、TrustBundle issuance、issuer key 与 capability 的最晚 `valid_from`，且在 `trusted_at` 不得已经过期；`effective_from > trusted_at` 的未来候选可以通过签名与绑定验证，但仍没有 active authority。未来 Authority Store 只能在实际到达生效时间后用单调 CAS 记录真实 activation，不能把候选反向回填为历史权限；该 store、CAS 与 activation token 在 Plan 01 Task 4 均未实现。
+
 `EDGE` envelope 只能由独立 Authorizer 签发；`EXPLORATION`/`RECOVERY` envelope 只能由 Governance Control Plane 的对应 capability 签发，并引用其使用的既有 EDGE grant/assessment。三类信封都必须经过 Capital Gateway Authority Store 的单调 `AuthorizationStatus` CAS 激活，并至少绑定：
 
 ```text
@@ -262,6 +266,10 @@ lineage_grants[]:
 
 有行为变化的 target policy 上线时，签名的 `PolicyActivation` 候选与引用它的 `CapitalAuthorizationEnvelope` 必须先完成准备，再由 Capital Gateway 在一次 CAS 中同时设为 active；任一签名、前驱、epoch、账户、模式或 target fingerprint 不匹配则两者都不激活。纯收紧 policy 可以单独提高 epoch 并 fence entry，但不能借“收紧”标签加入任何新候选、数量、时间窗口或额度；若 schema 无法机械证明所有允许行为都是旧集合的子集，就必须按行为变化走完整证据与联合 activation。
 
+Plan 01 的 `load_policy_snapshot()` 只安全读取候选，`verify_policy_activation()` 只在 root-verified 且与 `CurrentTrustHeadWitness` 精确一致的当前 trust chain 下验证 SignedEnvelope、canonical/duplicate-key JSON、完整 snapshot hash、portfolio/account/mode、policy/authority/risk epoch、registry/trust、前驱和生效区间。successor 不接受 raw `PolicyActivation` 前驱，只接受未来 Authority Store 提供的 typed active-predecessor witness，并拒绝前驱 hash 不一致、policy epoch 非逐一递增、authority/risk/registry 回滚、同 registry epoch trust fork 和 `effective_from` 倒序；genesis 三个 epoch 均从 1 开始。witness 与返回的 `VerifiedPolicyActivation` 都不是 activation token。二者都没有 `activate()`、签名、存储或 CAS 能力；仓库内 `policy-v2.json` 固定为 `runtime_mode=off`，不能单独改变任何运行权限。
+
+该 active-predecessor witness 自身还必须满足 `effective_from <= observed_at`；普通构造与候选验证入口对 unchecked/model-constructed 输入的 strict revalidation 后防御性检查都 fail closed。当前候选入口只接受 exact current `CapabilityVerifier` 类型，覆写 `verify()` 的 subclass 被拒绝，并通过 `CapabilityVerifier.verify(verifier, ...)` 的明确基类级非虚分派避免 exact verifier 实例的 `verify` shadow 绕过无效签名或错误 current head。`CapabilityVerifier` 构造器也只接受 exact `TrustBundleVerifier`，并对 `verify_chain`、`_verify_link` 与 root-anchor lookup 使用明确的基类级非虚分派，使 inner subclass 在 override 触发前 fail closed，并避免实例级 method shadowing 绕过 root Ed25519 chain。它们只是当前纯候选验证入口的进程内类型与 dispatch 边界，不声称能够防御恶意同进程 class monkeypatch 或 verifier 内部状态篡改。
+
 `EDGE` 只有在固定 target portfolio policy 通过 §13 的完整门后才能签发。`EXPLORATION` 只能由独立治理 capability 签发，强制 `mode=BROKER_CONFIRMED`，并绑定期限、固定整数分 stress-loss budget 和收集证据的 trial。所有并发 exploration grants 必须出现在同一个 portfolio envelope 中，共享 `exploration_aggregate_gross_cap <= 2%` 与 loss cap，不得每个 lineage 各开 2%；既有 EDGE 风险仍进入完整 target policy 和 `portfolio_gross_cap`，不能与探索额度机械相加。首次 broker 启动若没有既有 live EDGE grant，则整个 portfolio gross 同样最多 2%。探索是 one-shot、不可续期：到固定 assessment/expiry 后停止相应新仓并按原定退出规则 drain；未决探索风险未归零/完成法律终局前不得重发。其成交只进入预注册 exploration trial，在评估通过前不能混入既有 champion 授权池。
 
 `RECOVERY` 只用于 15% 风险熔断后的新 Risk/Authority Epoch。它可以引用上一个已证明的 target policy，但只允许 portfolio-wide 2% 且继承风险、未决订单和既有 stage/program loss consumption 全部计入；它不声称新的 edge，也不能替代下一次 5% 晋级所需的新证据。
@@ -269,6 +277,14 @@ lineage_grants[]:
 `PortfolioDecisionSeal` 必须引用并由 gateway 重验一个未过期、portfolio/account/mode/policy/lineage/stage 完全匹配的 `CapitalAuthorizationEnvelope`。信封里的 `issuer_capability` 只是审计声明，不是权限证明；gateway 必须用当前已激活的 `TrustBundle` 校验 `issuer_id + key_id/service principal + signature/MAC/mTLS identity + capability scope/version`。producer/CLI 不得持有 Authorizer 或 governance 的凭据。hash 只能证明内容一致，不能替代发行权限。
 
 TrustBundle 自身必须由仓库和服务配置之外的治理根签名，带单调 `registry_epoch`、前驱 hash、`issued_at`、`expires_at` 和 root key ID；Capital Gateway 持久化 last-seen epoch，拒绝回滚。envelope 中的 `trust_bundle_hash/registry_epoch` 是签发时 provenance 与最低可信 epoch，不把授权永久钉死在旧 registry；seal/send claim 必须使用 `current_registry_epoch >= issuance_registry_epoch` 的当前 active TrustBundle 重新验证 issuer/key/capability 未撤销，并记录当次 registry hash。生产验证时间来自 gateway-owned trusted clock；调用方传入的时间只允许用于 research replay。新仓验证还要求 registry freshness 合格。
+
+截至 Plan 01 Task 4 的无存储契约实现，`TrustedRegistry.load()` 仅是严格的 compatibility candidate parser；它的返回值不能直接构造可执行 capability verifier。`TrustBundleVerifier` 只公开从 genesis 重验完整 `SignedTrustBundle` chain 的 API，不公开接受可构造 `VerifiedTrustBundle` 前驱的单步入口；每个 bundle 的 root anchor 必须同时在该 bundle `issued_at` 有效，head root/bundle 还必须在事件 `trusted_at` 有效。`CapabilityVerifier` 每次验证还必须显式消费未来 Authority Store 提供的 `CurrentTrustHeadWitness`，并要求 active bundle hash/registry epoch 与 signed-chain head 精确一致；witness 只陈述 store observation，不是独立授权。旧未过期 chain、缺失签名前驱的 orphan 和同 epoch fork 都不能绕过 current head。返回的 `VerifiedIssuer` 从 root/registry truth 重验 exact key ID、issuer role、public-key 与 domain-separated identity fingerprint，并把 root/bundle/key/capability 到期或预定撤销时间的最小值冻结为 `valid_until`。所有 current artifact 使用 schema major 2；`EDGE` 只归 Authorizer，`EXPLORATION`/`RECOVERY`/PolicyActivation 只归 Governance，`CAPITAL_GATEWAY` 是 final seal/permit/receipt 的唯一 issuer；legacy `DecisionSeal` 只留 Revision 1 compatibility，final Growth Kernel verifier 不接受。该 verifier 仍是纯验证组件，不持久化或激活 bundle。
+
+截至 Plan 01 Task 5，Revision 2 contracts/policy/trust/ports implementation is present; no capital authority。current top-level 发布六个 structural ports，其中 active evidence query 使用严格闭合的四 record union，outcome 保留 revision/commit-time，verifier 显式依赖 current-head witness 与 trusted time。Plan 04 前，production `src` 的 `*.py`/`*.pyi` 必须保持 zero static `GrowthKernelPort` references；仅允许 `contracts/ports.py` 的 top-level Protocol 定义/精确 list-or-tuple `__all__`，以及 `contracts/__init__.py` 的 top-level 精确 import/`__all__`。There is no downstream typing or runtime exception：任何 import、attribute、alias、annotation、runtime check、quoted/reflection token、stub 或 contracts star import 都阻断 acceptance。Plan 04 必须随 concrete strict/frozen DTO、真实入口重验和独立审阅后的替代 gate 一起改变该边界，不能让 generic port 提前跨文件扩散。旧 Revision 1 interface scan 仍覆盖 whole production `src`、只排除两个冻结 compatibility 模块；tests 不属于生产 acceptance，控制文档 old-name guard 只作 lexical invariant。ports 本身没有方法实现、store、clock、activation、signing、CAS、reserve 或 send 能力，不构成 Capital Gateway/Kernel，也不能授予执行权限。
+
+Dynamic or fragmented string construction is outside this static proof. Plan 04 must keep default-deny and use new RED-to-GREEN TDD to allow only an exact consumer module and the exact `GrowthKernelPort[KernelInput, NoTradeDecision]` signature; alias, runtime-check, and star-import exceptions remain forbidden.
+
+Tasks 1–5 implementation is present and the Plan 01 completion gate is closed (2026-08-04): checked-in snapshot fixtures now form the full snapshot matrix for decision/capital/execution/evidence/trust/policy/ports — schema goldens, strict JSON round-trip hashes, canonical hashes, independently recomputed artifact hashes, protected domain preimages, public enum/alias types and port signatures (`tests/offensive/v3/contracts/test_revision2_snapshot_matrix.py` + `fixtures/revision2/`). Gate closure is a re-verifiable documentation statement; it cannot be inferred from behavioral tests alone and does not make any port, policy candidate, or verified witness active authority.
 
 Authorization 绑定完整 evidence-set Merkle root 和依赖 revisions。任一成员发生 fee/company-action/fill bust、correction 或 revision，必须先按 §3.1 安装 `EntryFenceRaised`，再激活 correction；不能用跨 SQLite “同一事务”掩盖传播窗口。每个 entry permit 和 send claim 绑定 `capital_authorization_id + authorization_version + evidence_set_merkle_root + registry_epoch + active_policy_hash`。原 issuer 只能按原冻结 TrialManifest/SAP 或 governance manifest 重算并签 correction/replacement；不得改写当时决策，也不得更换门槛。旧授权永久保留作审计，但不能继续生成或提交 entry。
 
@@ -298,7 +314,7 @@ T0_close_finalized_at
   < broker_auction_submission_cutoff
 ```
 
-`seal_creation_deadline` 与 `permit_issue_deadline` 分别是最晚封存/签发时点，不是 permit 的有效期。`ExecutionPermit.issued_at` 必须晚于所引用 seal 的创建且不晚于 `permit_issue_deadline`；`SEND_CLAIMED_at` 必须不晚于 `min(ExecutionPermit.expires_at, gateway_send_deadline)`。所有安全余量和相等边界由 execution policy 版本化，禁止把同一个模糊 `deadline` 字段同时当签发截止和失效时间。
+`seal_creation_deadline` 与 `permit_issue_deadline` 分别是最晚封存/ALLOW 签发时点，不是 permit 的有效期。仅 `ExecutionPermit(ALLOW).issued_at` 必须晚于所引用 seal 的创建且不晚于 `permit_issue_deadline`；超过该时点仍允许发布由当前事实见证的 `ExecutionPermit(CANCEL)`，否则 deadline 会反而阻断安全释放。每类 permit 的 `issued_at` 都必须等于同 artifact 的 Gateway trusted-clock wall observation；坏时钟不能伪造 deadline witness。`SEND_CLAIMED_at` 必须不晚于 `min(ExecutionPermit.expires_at, gateway_send_deadline)`。所有安全余量和相等边界由 execution policy 版本化，禁止把同一个模糊 `deadline` 字段同时当签发截止和失效时间。
 
 是否赶上开盘以 broker 接收时间为准，不能用本地 seal/outbox 时间代替。生产时间来自 gateway-owned `TrustedClock`：同时记录 UTC wall clock、单调进程时钟、clock health 和版本化交易所 cutoff snapshot；时钟回拨、skew 超限或 health 未知时停止 entry。调用方传入的时间只能用于 replay，不能为生产决策回填“尚未过期”。
 
@@ -311,9 +327,17 @@ T0 收盘未最终确认、T0 数据迟到或错过任一内部 deadline 都不�
 - portfolio/account、每条 order line 的 producer/lineage/stage/authorization、snapshot、active policy、registry、risk epoch 和 authority epoch；
 - 幂等 key 和完整 payload hash。
 
-T+1 的 `ExecutionPermit` 可依据最新但仍在提交前可用的风险/数据证据**缩减或取消**，不能增加封存数量。允许沿用原行为世代的 shrink/cancel predicate 必须在 PolicySnapshot 中冻结，只能基于执行不可用、价格边界、capacity、cash、capital/risk/stage halt、reconciliation 或事实完整性等机械条件。使用盘前新闻、quote 或其他证券选择性信息保留赢家、取消输家，属于新的 pre-open alpha overlay，必须使用新 behavior/execution version、Trial/SAP 和 ITT 计数。
+T+1 的 `ExecutionPermit` 可依据最新但仍在提交前可用的风险/数据证据**缩减或取消**，不能增加封存数量。允许沿用原行为世代的 shrink predicate 必须在 PolicySnapshot 中冻结，只能基于执行不可用、价格边界、capacity、cash、capital/risk 等机械条件。`ALLOW` 的逐行缩减（包括某行缩减为零）必须绑定同一冻结 policy 下实际消费的 availability/price/capacity/cash/capital-risk 数量上限，按整手向下取最小值并使用确定性的 limiting-reason 优先级。全零 `CANCEL` 只能是两种互斥形式：所有行都携带实际消费的 mechanical binding，并各自机械缩减为零；或由 authorization、risk/stage halt、reconciliation、fence、clock/deadline 等组合级 witness 取消完整组合，此时所有行都不得携带 mechanical binding。两种形式混用、只机械取消部分行或为组合级取消附加未消费字段均拒绝。使用盘前新闻、quote 或其他证券选择性信息保留赢家、取消输家，属于新的 pre-open alpha overlay，必须使用新 behavior/execution version、Trial/SAP 和 ITT 计数。
 
-每个 seal 同时最多一个 active、single-use permit nonce；permit line 数量必须逐项 `<=` seal line，缩减/取消、reserve 释放和 outbox 建立在同一 Gateway 事务提交。释放的现金保持现金，不得在观察盘前状态后重分配给其他证券或扩大任何行。permit 未被 `SEND_CLAIMED` 消费即到期时，outbox tombstone、reserve 释放和状态推进也必须同事务完成。
+每个 seal 同时最多一个 active、single-use permit nonce；permit line 数量必须逐项 `<=` seal line，stable `reservation_allocation_id`、当前逐行 reserve、permit remaining/release、post allocation 与 post `CapitalRiskSnapshot` 必须逐行守恒。`CapitalRiskSnapshot` 是完整账户/组合事实，当前 reservation 的 source/stage 只做 attribution-exact subset 校验，不能把完整 snapshot 强行等同于本次 reservation；post snapshot 必须在完整 current map 上仅替换/删除本 reservation 拥有的 source，按精确 delta 更新 full reserved cash/exposure，并原样保留其它 reserve、stage latch、position、live order、NAV/HWM、stress、公司行动与未归属风险。当前实现把 `available_cash_cents` 视为独立的 free-cash 事实，因此单纯 reserve 投影不得顺便改写它。缩减/取消、reserve 释放和 outbox 建立在同一 Gateway 事务提交。释放的现金保持现金，不得在观察盘前状态后重分配给其他证券或扩大任何行。quiet account 不得为通过 CAS 伪造版本增长；只有真实资本/reserve/stage 事实变化才递增对应版本，且变化后的完整风险快照必须使用新 snapshot ID、在事务 event time 创建且有效，并可重算其 artifact hash。
+
+seal 必须把 admission/reserve 事务完成后的 `post_admission_capital_version`、`post_admission_capital_stream_version`、`post_admission_risk_snapshot_id` 和 risk snapshot artifact hash 一并封存；这些不是由 permit 夹具事后推导的隐式事实。post-admission snapshot 的 ID 和 hash 都必须不同于 consumed pre-admission snapshot，否则会形成无法兑现的 dead seal。permit 观察到相同 post-admission capital version 时，snapshot ID/hash 必须与 seal 锚点逐位相等；只有真实资本事实以更高 capital/stream version 提交后，才允许引用使用新 snapshot ID 的完整 snapshot。stage admission 与后续 stage-loss binding 必须同时保证 `(research_program_id, economic_lineage_id, stage_id)` 和 `stage_loss_budget_id` 双向唯一，不能用重复 stage、别名 budget 或共享 budget 绕过 loss budget。
+
+取消分为两个不可混淆的 artifact 路径：`ExecutionPermit(CANCEL)` 只表示 seal 后、尚无 prior permit/outbox 时的全组合取消；一旦 `ALLOW` permit 与 durable outbox 已存在但尚未 `SEND_CLAIMED`，撤销、熔断、坏时钟或到期必须发布独立、无发送权的 `EntryCancellationReceipt`。该 receipt 精确绑定 prior ALLOW permit/hash、current active `ACTIVE` nonce、reservation/outbox 与 current TrustBundle，原子把 nonce 置为 `INVALIDATED`、tombstone 原 outbox、逐行释放 reserve 并嵌入新的可重验 `CapitalRiskSnapshot`。current allocation 必须保留 permit 所绑定的 line/allocation source identity，金额只能单调缩减到零，不能增长、换 source 或重分配；`ReservationState.RELEASED` 必须全行和 remaining reserve 都为零，`ACTIVE` 则允许因先前事实而已经全零。reservation 从 `ACTIVE -> RELEASED` 总是推进 reservation version；若 receipt 实际释放为零，则 capital/stream version 与 risk snapshot 必须精确 quiet，只有 nonce、outbox 和 reservation 状态/version 前进；释放为正才必须同步推进 capital/stream version 并封存新 snapshot。已进入 `SEND_CLAIMED` 时 nonce 必须为 `CONSUMED` 且 claim sequence 为正，禁止生成该 receipt，只能按在途风险查询、取消或对账。
+
+post-permit 任一可安全归属于同一 prior permit 的发送绑定发生变化——包括 policy/trust/registry、authorization lifecycle/status/revalidation、evidence root、entry fence、capital/stream/snapshot、risk/stage/reconciliation latch、reservation、writer fencing，以及 current durable outbox 的 ID/payload——都必须能以对应的当前事实 witness 发布取消，不能因 ALLOW 条件已不成立而把安全释放也锁死。receipt 仍必须精确绑定 prior active permit ID/hash 和 nonce/sequence/state；这些身份漂移意味着当前已是另一 permit，旧 receipt 不得取消它，应由新 active permit 自己的 receipt 收口。current outbox ID/payload 漂移则以 `FACT_INTEGRITY_CANCEL` tombstone 当下权威的 durable outbox。健康时钟下，permit/receipt 不得接受 `risk_snapshot.as_of` 晚于 artifact event time；时钟 `UNKNOWN`/`ROLLBACK_DETECTED` 时不得信任 wall-clock freshness 或 deadline，只能凭单调 observation sequence/time 证明取消发生在 prior permit 之后并作为事实完整性取消，不能伪称 deadline。permit 未被 `SEND_CLAIMED` 消费即到期时，上述 receipt、outbox tombstone、reserve 释放和状态推进必须同事务完成。
+
+seal/envelope 上的 trust hash/registry epoch 是发行时 provenance 与最低可信 epoch。seal 嵌入 domain-separated、可自哈希的 `AuthorizationIssuanceBinding`，冻结 exact authorization envelope 与原 issuer/key/capability/version/identity/issuance TrustBundle；permit 与 cancellation receipt 的 typed `AuthorizationIssuerRevalidation` 必须精确绑定该 issuance artifact，在当次 current `registry_epoch >= issuance_registry_epoch` 的 TrustBundle 下于事务时点重验，并自带 `VALID | INVALID`、`verified_at`、`valid_until` 和独立 hash domain，而不是携带无 preimage 的自断言 hash。同 epoch 不同 hash 视为分叉并拒绝。`ALLOW` 只接受 event-current 且 `VALID` 的结果；issuer 已撤销/过期时，event-current `INVALID` 仍可作为 `AUTHORIZATION_CANCEL` witness 安全释放，不能把失权变成无法取消。permit/receipt 的 Gateway issuer binding 同样必须在 artifact event time 内有效并绑定当次 current bundle。`SEND_CLAIMED` 再精确消费 permit 所绑定的 current trust/registry，之后的任何轮换都会使旧 permit 失效。
 
 已经进入拍卖的订单，不能观察开盘价后再声称“当时本应拒绝”；这会造成前视。broker adapter 必须证明 `opening_auction` TIF 的真实语义，或使用可审计的 auction-only 提交/取消协议。entry order 不得留到连续竞价；若券商仍在窗口后成交，该 fill 必须进入真实资本账，但标为 execution-contract breach、触发新仓 halt，并且不能计入目标合约的有效 edge 样本。
 
@@ -325,7 +349,7 @@ T+1 的 `ExecutionPermit` 可依据最新但仍在提交前可用的风险/数�
 
 - 入场时只固化 `exit_session_ordinal` 和退出策略，不提前固化假定全部入场成功的退出数量。
 - 基准合约不含盘中止损、止盈或择时提前退出；启用任何此类规则都会改变 execution/behavior fingerprint、组合路径和 outcome 口径，必须注册新 challenger，不能作为“风控覆盖”悄悄加入既有授权。组合/stage halt 只停止新增风险，不自动改写已持仓的预注册退出策略。
-- 退出不复用 entry `CapitalAuthorizationEnvelope`。Capital Gateway 根据权威 position/economic lot 生成不可伪造的 `ExitMandate`，至少绑定 portfolio/account、position/lot、mode/provenance、固定退出策略、due session、`tradable_quantity - live_exit_leaves`、capital/fencing version、稳定 client ID 和 payload hash。
+- 退出不复用 entry `CapitalAuthorizationEnvelope`。Capital Gateway 根据权威 position/economic lot 生成不可伪造的 `ExitMandate`，至少绑定 portfolio/account、position/lot、mode/provenance、固定退出策略、due session、`tradable_quantity - live_exit_leaves`、capital/fencing version、稳定 client ID 和 payload hash。当前无存储 DTO 的字段 `entry_plan_evidence_artifact_hash` 专指入场所绑定 current `EvidenceRecord[PlanEvidence].artifact_hash()`，不得退化成裸 payload/content hash；实际 capital writer 与这一绑定的持久化重验仍未实现。
 - T+10 cutoff 前，gateway 依据 `ExitMandate` 生成退出 OrderIntent；部分入场、送转待上市、此前部分退出与 live order 都必须计入。
 - broker-live 模式下，T+10 订单也必须在开盘拍卖截止前准备，不能收盘后回填开盘成交。
 - 退出订单同样必须是经 capability test 证明的 auction-only 语义；若券商在连续竞价才成交，真实成交仍减少资本风险并照实入账，但标记 execution-contract breach，不能作为目标 T+10-open 合约的合格 outcome，也不得通过反向交易恢复原头寸。
@@ -765,6 +789,10 @@ Authorizer 必须对 `estimator_as_of` 时真实 active、可读取、可用且 
 
 `observed_at`、`ingested_at` 和 `commit_sequence` 由 Evidence Store/gateway 的 trusted clock 与提交事务赋值；producer/调用方提供的同名值只能作为不可信 source metadata。若时钟健康未知、提交顺序不可证明或 payload 先使用后入库，该事实没有 production PIT 资格。
 
+Plan 01 Task 4 只冻结上述时间轴的 schema-major 2 无存储 DTO；Revision 1 的无 `provider_published_at` wire shape 继续冻结为 major 1，两个不兼容 shape 不共享 major。R1 实际使用的 `ExecutionMode`、`EvidenceScope`、UTC、SHA-256、canonical serializer/content hash 与 `CanonicalModel` 均按 `dccb76c5` 的 `base.py` 在 self-contained local primitive 模块冻结，R1 enum 与 current enum 不是同一类型；R1 canonical 保留有限 float（例如 `1.5`）并拒绝 NaN/Infinity，而 current R2 canonical 继续拒绝所有 float。current producer envelope 必填 `provider_published_at`，其值为严格 UTC timestamp、`UNKNOWN` 或 `NOT_APPLICABLE`；后两者本身不授予 production PIT 资格，`NOT_APPLICABLE` 仍须由后续 Evidence Store 对受信 source-authority policy 重验。store-owned generic `EvidenceRecord[T]` 另含 `ingested_at`、正整数 `commit_sequence`、`revision`、`supersedes_revision` 和 `active_revision`，允许旧 revision 保留并指向更高 active revision；producer envelope 不能携带这些 store-owned 字段。current executable order line 必须绑定 active `EvidenceRecord[PlanEvidence]`，其完整 store timeline 进入 line/proposal hash；在 source-policy verifier 尚不存在时，`UNKNOWN`、`NOT_APPLICABLE` 和 historical revision 全部阻断 entry。当前实现不写 Evidence Store，也不据此签发 edge 或资本权限。
+
+current executable `PlanEvidence` 另要求 `created_at <= observed_at`；结合 store record 与 decision cutoff，完整顺序为 `created_at <= observed_at <= ingested_at <= available_at <= decision_cutoff`。`EvidenceRecord` 使用 evidence schema major 参与版本化、domain-separated artifact hash，避免与同字段但不同语义的 payload 共用 identity。未来 Evidence Store 必须用 trusted clock/提交事务赋值或重新验证 `observed_at`、`ingested_at` 与 `available_at`；producer 附带的 raw observation metadata 既不能替代 store-owned timeline，也不能授予数据源、edge 或 entry authority。
+
 ### 14.2 payload 与缓存
 
 - 保存实际消费的内容寻址 payload/blob、解析器版本和 source metadata；只存 hash 不足以重验。
@@ -827,7 +855,7 @@ Plan 聚合状态只允许：
 
 撤单本身是带稳定 `cancel_client_id`、目标 broker order、fencing epoch 和 outbox 状态的 durable command，不是内存布尔值。`CANCEL_REQUESTED` 仍视为 live，继续预留现金/数量，直到经纪商 terminal ACK；撤单请求后晚到 fill 必须正常入账。terminal 后出现未关联 fill、未知状态或非法转移时，停止新风险并进入 reconciliation。
 
-订单“历史 terminal”与“当前经济投影”分离。经纪商后续 `BUSTED`/`CORRECTED` 可使 effective filled quantity 下降、现金/仓位反转，并生成 `REOPENED_BY_CORRECTION` 或 `RECONCILIATION_PENDING` 的经济状态；若原位置已记 closed，而 correction 重新产生正持仓，必须恢复原 economic lot 和 `ExitMandate` 义务，不能因历史订单/position 曾 terminal 而遗失风险。若 active revisions 导出负股份、卖出大于合法持仓或其他 long-only 不可能状态，不得 clamp 为零或伪造买入抵消；必须保留经纪商事实和结算义务、锁存 reconciliation halt，并由 source-authorized correction/法律结算解决。
+订单“历史 terminal”与“当前经济投影”分离。经纪商后续 `BUSTED`/`CORRECTED` 可使 effective filled quantity 下降、现金/仓位反转，并生成 `REOPENED_BY_CORRECTION` 或 `RECONCILIATION_PENDING` 的经济状态；`BUSTED` 自身的 effective filled quantity/gross cash 必须为零，entry bust 必须 flat，但 exit bust 可以恢复正持仓。只要同一 economic lot 从 flat/负数投影重新变为正持仓，就必须进入 `EXIT_PENDING + REOPENED_BY_CORRECTION`；反之，未发生该跃迁时不得冒用 `REOPENED_BY_CORRECTION`。重开必须恢复稳定不变的原 `ExitMandate` ID，并把 mandate revision 提高到严格大于 `max(1, 该 lot 历史所有 revision)`，确保 revision 1 只属于 INITIAL；不能因历史订单/position 曾 terminal 而遗失风险。若 active revisions 导出负股份、卖出大于合法持仓或其他 long-only 不可能状态，不得 clamp 为零或伪造买入抵消；必须保留经纪商事实和结算义务、锁存 reconciliation halt，并由 source-authorized correction/法律结算解决。
 
 ### 15.2 broker-live 的必要前提
 

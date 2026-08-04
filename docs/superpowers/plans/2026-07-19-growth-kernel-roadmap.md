@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - 唯一权威规范是 `docs/superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md` Revision 2；计划冲突时以规范为准，并先修计划。
-- 当前仅 Plan 01 Revision 1 已实现；其旧 `CapitalAuthorization`、`DecisionSeal`、本地 registry 等接口不是 Revision 2 最终接口，Plan 02 前必须先完成 Plan 01 增量升级。
+- Plan 01 Revision 2 contracts/policy/trust/ports 已实现；Revision 1 compatibility 中的旧 `CapitalAuthorization`、`DecisionSeal` 和本地 registry 不是最终接口。该实现仍无 store、activation、签发、资本 authority、Kernel/Gateway 或可执行路径，Plan 02–07 不得把结构 port 当作权限。
 - `data/paper_trading_backtest/`、`data/paper_trading/`、`data/paper_trading_v2/` 不得被 v3 测试或 shadow 修改；所有测试存储使用 `tmp_path`。
 - v3 在签名 migration CAS flip 前不是资本 writer；flip 后 v2 只读，任何时刻禁止资本双写或无人接收外部事件。
 - producer 只写候选证据；Governance、Authorizer、Publisher、Finalizer、Capital Gateway 和 broker adapter 使用独立 capability/namespace。
@@ -63,16 +63,30 @@ class CapitalGatewayReadPort(Protocol):
         self, portfolio_id: str, as_of: datetime
     ) -> CapitalRiskSnapshot: ...
 
+ActiveEvidenceRecord = (
+    EvidenceRecord[SnapshotEvidence]
+    | EvidenceRecord[SignalEvidence]
+    | EvidenceRecord[OutcomeEvidence]
+    | EvidenceRecord[PlanEvidence]
+)
+
 class EvidenceQueryPort(Protocol):
-    def active_revision(self, evidence_id: str, cutoff: datetime) -> EvidenceRecord: ...
-    def outcome(self, outcome_id: str, revision: int) -> OutcomeEvidence: ...
+    def active_revision(
+        self, evidence_id: str, cutoff: datetime
+    ) -> ActiveEvidenceRecord: ...
+    def outcome(self, outcome_id: str, revision: int) -> EvidenceRecord[OutcomeEvidence]: ...
 
 class AuthorizationQueryPort(Protocol):
     def active_envelope(self, portfolio_id: str) -> CapitalAuthorizationEnvelope: ...
     def status(self, authorization_id: str) -> AuthorizationStatus: ...
 
-class GrowthKernelPort(Protocol):
-    def decide(self, frozen: KernelInput) -> NoTradeDecision | ShadowDecision | PortfolioDecision: ...
+KernelInputT = TypeVar("KernelInputT", bound=CanonicalModel, contravariant=True)
+NoTradeDecisionT = TypeVar("NoTradeDecisionT", bound=CanonicalModel, covariant=True)
+
+class GrowthKernelPort(Protocol[KernelInputT, NoTradeDecisionT]):
+    def decide(
+        self, frozen: KernelInputT
+    ) -> NoTradeDecisionT | ShadowDecision | PortfolioDecision: ...
 
 class CapitalGatewayCommandPort(Protocol):
     def publish_entry(
@@ -81,9 +95,18 @@ class CapitalGatewayCommandPort(Protocol):
 
 class CapabilityVerifier(Protocol):
     def verify(
-        self, signed: SignedEnvelope, required: Capability, trusted_at: datetime
+        self,
+        signed: SignedEnvelope,
+        required: Capability,
+        *,
+        current_head: CurrentTrustHeadWitness,
+        trusted_at: datetime,
     ) -> VerifiedIssuer: ...
 ```
+
+Plan 01 不提前定义 Plan 04 的 `KernelInput`/`NoTradeDecision`。在 Plan 04 边界被独立审阅并替换前，production `src` 的 `*.py`/`*.pyi` 必须保持 zero static `GrowthKernelPort` references；只允许 `contracts/ports.py` 的 top-level Protocol 定义/精确 `__all__`，以及 `contracts/__init__.py` 的 top-level 精确 import/`__all__`。There is no downstream typing or runtime exception：concrete alias、annotation、runtime check、quoted/reflection token、stub 与 contracts star import 均不例外。Plan 04 若要以 `GrowthKernelPort[KernelInput, NoTradeDecision]` 绑定，必须先提交新的 strict/frozen DTO、真实入口重验和替代 acceptance gate，不能借 Task 5 的 generic port 预先扩散。Evidence active query 继续使用四种严格具体 payload 的闭合 record union；`OutcomeEvidence` 不得绕过 record revision/commit-time 语义，`CapabilityVerifier` 的 `current_head`/`trusted_at` 也不授予权限。旧 Revision 1 interface acceptance scan 仍覆盖整个 production `src`、仅排除两个冻结 compatibility 模块；tests 不计入生产扫描，控制文档历史标记仅是 lexical guard。
+
+Dynamic or fragmented string construction is outside this static proof. Plan 04 must keep default-deny and use new RED-to-GREEN TDD to allow only an exact consumer module and the exact `GrowthKernelPort[KernelInput, NoTradeDecision]` signature; alias, runtime-check, and star-import exceptions remain forbidden.
 
 依赖方向固定：
 
@@ -111,7 +134,7 @@ Evidence/Authorizer 与 Capital Gateway 可以分库，但不得声称跨库同�
 
 ## 总体验收门
 
-- [ ] Plan 01 Revision 2 schema/ports 完成；仓库内不再有下游代码依赖旧 `CapitalAuthorization`/`DecisionSeal` 作为最终接口。
+- [ ] Plan 01 Revision 2 schema/ports implementation 与 completion gate 已完成（含 full checked-in snapshot matrix），仓库内不再有下游代码依赖旧 `CapitalAuthorization`/`DecisionSeal` 作为最终接口；验收勾选待独立审阅通过并合并后更新。
 - [ ] Plan 02–05 在 `off|shadow` 下完成，`uv run pytest tests/offensive/v3/ -q` 全绿，且不生成 executable entry。
 - [ ] 资本属性测试覆盖 genesis、subscription/redemption、TERMINATING/INSOLVENT、fill/fee/reserve、公司行动、bust/correction、stage loss、as-observed/restated-final。
 - [ ] 权限测试证明本地配置、producer、CLI、shadow、manual issuer 和旧 epoch 无法激活 policy/envelope、写 Capital Gateway 或发送 broker entry。

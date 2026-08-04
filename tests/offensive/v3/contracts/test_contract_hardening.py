@@ -21,9 +21,9 @@ POLICY_HASH = "1" * 64
 
 
 def _api() -> Any:
-    from src.screening.offensive.v3 import contracts
+    from src.screening.offensive.v3.contracts import revision1
 
-    return contracts
+    return revision1
 
 
 def _plan(api: Any, **overrides: Any) -> Any:
@@ -176,7 +176,7 @@ def _signed_seal_envelope(api: Any, payload: bytes) -> tuple[Any, Any, Any]:
     required = trust.Capability(
         artifact=trust.ArtifactKind.DECISION_SEAL,
         namespace="decision.live",
-        mode=api.ExecutionMode.DAILY_BAR_PROXY,
+        mode=trust.ExecutionMode.DAILY_BAR_PROXY,
         schema_major=1,
         capability_version="growth-kernel.v1",
         scope="portfolio:paper-v3",
@@ -222,7 +222,46 @@ def _signed_seal_envelope(api: Any, payload: bytes) -> tuple[Any, Any, Any]:
         payload=payload,
         signature=b64encode(private_key.sign(protected)).decode("ascii"),
     )
-    verifier = trust.CapabilityVerifier(trust.TrustedRegistry(issuers=(issuer,)))
+    from src.screening.offensive.v3.contracts.governance import TrustBundle
+
+    registry = trust.TrustedRegistry(issuers=(issuer,))
+    root_key = Ed25519PrivateKey.generate()
+    root_public = root_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    anchor = trust.RootTrustAnchor(
+        root_hash=hashlib.sha256(root_public).hexdigest(),
+        root_key_id="offline-root-1",
+        public_key=b64encode(root_public).decode("ascii"),
+        valid_from=datetime(2026, 7, 18, 8, 0, tzinfo=UTC),
+        valid_until=datetime(2026, 7, 20, 8, 0, tzinfo=UTC),
+        revoked_at=None,
+    )
+    bundle = TrustBundle(
+        registry_epoch=1,
+        predecessor_bundle_hash="0" * 64,
+        root_hash=anchor.root_hash,
+        root_key_id=anchor.root_key_id,
+        trusted_issuer_registry_hash=registry.content_hash(),
+        issued_at=datetime(2026, 7, 18, 8, 0, tzinfo=UTC),
+        expires_at=datetime(2026, 7, 20, 8, 0, tzinfo=UTC),
+        revoked_at=None,
+        issuer_id="offline-governance-root",
+        issuer_capability="root.trust.bundle.v1",
+        schema_major=2,
+    )
+    signed_bundle = trust.SignedTrustBundle(
+        bundle=bundle,
+        registry=registry,
+        signature=b64encode(
+            root_key.sign(trust.trust_bundle_signature_preimage(bundle, registry))
+        ).decode("ascii"),
+    )
+    verifier = trust.CapabilityVerifier(
+        trust.TrustBundleVerifier((anchor,)),
+        (signed_bundle,),
+    )
     return signed, verifier, required
 
 
@@ -257,7 +296,9 @@ def test_seal_binding_contains_the_complete_publish_command() -> None:
     binding = _seal(api, command).command_binding
 
     assert binding.publish_command == command
-    assert binding.publish_command_content_hash == binding.publish_command.content_hash()
+    assert (
+        binding.publish_command_content_hash == binding.publish_command.content_hash()
+    )
 
 
 @pytest.mark.parametrize(
@@ -283,9 +324,7 @@ def test_seal_binding_contains_the_complete_publish_command() -> None:
 def test_binding_rejects_every_flat_field_drift(field: str, value: Any) -> None:
     api = _api()
     raw = _seal(api).command_binding.model_dump(mode="python", round_trip=True)
-    raw[field] = (
-        api.ExecutionMode.MANUAL_CONFIRMED if field == "mode" else value
-    )
+    raw[field] = api.ExecutionMode.MANUAL_CONFIRMED if field == "mode" else value
 
     with pytest.raises(ValidationError, match="command binding|publish command"):
         api.DecisionSealBinding.model_validate(raw, strict=True)
@@ -306,6 +345,8 @@ def test_binding_rejects_every_flat_field_drift(field: str, value: Any) -> None:
 def test_validly_signed_schema_drift_cannot_escape_embedded_command(
     drift: str,
 ) -> None:
+    from src.screening.offensive.v3 import trust
+
     api = _api()
     raw = _seal(api).model_dump(mode="python", round_trip=True)
     if drift == "order_quantity":
@@ -331,11 +372,24 @@ def test_validly_signed_schema_drift_cannot_escape_embedded_command(
         api,
         api.canonical_json_bytes(raw),
     )
-    assert verifier.verify(
-        signed,
-        required,
-        verification_time=NOW,
-    ).issuer_id == "growth-kernel.service"
+    bundle = verifier._signed_chain[-1].bundle
+    current_head = trust.CurrentTrustHeadWitness(
+        active_trust_bundle_hash=bundle.artifact_hash(),
+        registry_epoch=bundle.registry_epoch,
+        head_version=bundle.registry_epoch,
+        store_version=1,
+        observed_at=NOW,
+    )
+    with pytest.raises(
+        trust.TrustVerificationError,
+        match="legacy|unsupported",
+    ):
+        verifier.verify(
+            signed,
+            required,
+            current_head=current_head,
+            verification_time=NOW,
+        )
     with pytest.raises(ValidationError, match="command binding|publish command"):
         api.DecisionSeal.model_validate_json(signed.payload, strict=True)
 
@@ -381,7 +435,9 @@ def test_validly_signed_schema_drift_cannot_escape_embedded_command(
         ),
         lambda api: _command(
             api,
-            authorization=_authorization_binding(api, capital_authorization_id="auth-002"),
+            authorization=_authorization_binding(
+                api, capital_authorization_id="auth-002"
+            ),
         ),
         lambda api: _command(
             api,
@@ -397,7 +453,16 @@ def test_validly_signed_schema_drift_cannot_escape_embedded_command(
         ),
         lambda api: _command(
             api,
-            decision=_decision(api, order_lines=(_order_line(api, sealed_quantity=200, worst_case_cash_reserve=Decimal("2105")),)),
+            decision=_decision(
+                api,
+                order_lines=(
+                    _order_line(
+                        api,
+                        sealed_quantity=200,
+                        worst_case_cash_reserve=Decimal("2105"),
+                    ),
+                ),
+            ),
         ),
     ],
 )
@@ -435,9 +500,7 @@ def test_seal_rejects_command_binding_mismatch(field: str, value: Any) -> None:
     if field in api.DecisionSealBinding.model_fields:
         raw["command_binding"] = seal.command_binding.model_copy(update={field: value})
     else:
-        raw[field] = (
-            api.ExecutionMode.MANUAL_CONFIRMED if field == "mode" else value
-        )
+        raw[field] = api.ExecutionMode.MANUAL_CONFIRMED if field == "mode" else value
 
     with pytest.raises(ValidationError, match="command binding"):
         api.DecisionSeal.model_validate(raw)
@@ -473,54 +536,17 @@ def test_decision_input_recursively_revalidates_nested_instances(
 
 
 @pytest.mark.parametrize("method", ["model_copy", "model_construct"])
-def test_capital_authorization_root_revalidates_unchecked_instances(
+def test_capital_authorization_revalidates_unchecked_nested_member(
     method: str,
 ) -> None:
     api = _api()
-    valid = api.CapitalAuthorization.model_validate(
-        {
-            "authorization_kind": "edge",
-            "authorization_version": 1,
-            "evidence_id": "auth-001",
-            "subject_scope": api.EvidenceScope.STRATEGY_LINEAGE,
-            "subject_producer": "authorizer",
-            "family_id": "btst.limit-up-breakout",
-            "strategy_semver": "3.0.0",
-            "behavior_fingerprint": HASH,
-            "policy_epoch": 3,
-            "execution_version": "t1-open-t10-open.v1",
-            "cost_version": "cn-a-share-costs.v1",
-            "effective_at": NOW,
-            "observed_at": NOW,
-            "available_at": NOW,
-            "mode": api.ExecutionMode.DAILY_BAR_PROXY,
-            "source_authority": "authorizer",
-            "payload_content_hash": HASH,
-            "schema_major": 1,
-            "economic_lineage_id": "btst-economic-lineage",
-            "research_program_id": "program-001",
-            "baseline_portfolio_policy_fingerprint": HASH,
-            "target_portfolio_policy_fingerprint": POLICY_HASH,
-            "evidence_as_of": NOW,
-            "evidence_set_merkle_root": HASH,
-            "issued_at": NOW,
-            "expires_at": datetime(2026, 7, 20, 8, 0, tzinfo=UTC),
-            "max_capital_tier": 2,
-            "issuer_id": "authorizer.service",
-            "issuer_capability": "capital.edge.btst",
-            "trial_id": "trial-001",
-            "trial_manifest_hash": HASH,
-            "statistical_analysis_plan_hash": HASH,
-            "assessment_result_hash": HASH,
-            "attempt_ledger_checkpoint_hash": HASH,
-            "alpha_sample_consumption_id": "consumption-001",
-            "authorization_payload_hash": HASH,
-        }
-    )
+    from test_ports import _authorization
+
+    valid = _authorization(api)
     poisoned_member = _unchecked_mutation(
         valid.root,
         method,
-        max_capital_tier=3,
+        authorization_version="4",
     )
     poisoned = _unchecked_mutation(valid, method, root=poisoned_member)
 

@@ -8,7 +8,7 @@ from decimal import Decimal
 from enum import Enum, StrEnum
 import hashlib
 import json
-import math
+from math import gcd
 from typing import Annotated, Any, TypeAlias
 
 from pydantic import (
@@ -16,8 +16,11 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Strict,
     StringConstraints,
     TypeAdapter,
+    field_validator,
+    model_validator,
 )
 
 
@@ -73,6 +76,46 @@ UtcInstant: TypeAlias = Annotated[
 UtcInstantAdapter = TypeAdapter(UtcInstant, config=ConfigDict(strict=True))
 
 
+def _validate_exact_integer(value: Any) -> Any:
+    if type(value) is not int:
+        raise ValueError("exact integer values must use the native int type")
+    return value
+
+
+ExactInteger: TypeAlias = Annotated[
+    int,
+    BeforeValidator(_validate_exact_integer),
+    Strict(),
+]
+"""A semantically neutral exact native integer without numeric coercion."""
+
+MoneyCents: TypeAlias = ExactInteger
+"""An exact integer count of the smallest monetary unit."""
+
+QuantityUnits: TypeAlias = ExactInteger
+"""An exact integer count of a domain quantity's smallest unit."""
+
+UnitQuanta: TypeAlias = ExactInteger
+"""An exact integer count of issued or redeemed unit quanta."""
+
+
+def _validate_schema_version(value: int) -> int:
+    if value != 2:
+        raise ValueError("unsupported schema major: expected 2")
+    return value
+
+
+SchemaVersion: TypeAlias = Annotated[
+    int,
+    BeforeValidator(_validate_exact_integer),
+    Strict(),
+    AfterValidator(_validate_schema_version),
+]
+"""The only Revision 2 schema major accepted by new domain contracts."""
+
+SchemaVersionAdapter = TypeAdapter(SchemaVersion)
+
+
 Sha256: TypeAlias = Annotated[
     str,
     StringConstraints(pattern=r"^[0-9a-f]{64}$"),
@@ -82,7 +125,9 @@ Sha256: TypeAlias = Annotated[
 Sha256Adapter = TypeAdapter(Sha256, config=ConfigDict(strict=True))
 
 
-def _normalized_decimal(value: Decimal) -> str:
+def canonical_decimal_string(value: Decimal) -> str:
+    """Render a finite Decimal without exponent notation or redundant zeros."""
+
     if not value.is_finite():
         raise ValueError("canonical JSON requires finite Decimal values")
     if value.is_zero():
@@ -111,11 +156,9 @@ def _canonical_value(value: Any) -> Any:
     if value is None or isinstance(value, (str, bool, int)):
         return value
     if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError("canonical JSON requires finite float values")
-        return value
+        raise ValueError("canonical JSON forbids float values")
     if isinstance(value, Decimal):
-        return _normalized_decimal(value)
+        return canonical_decimal_string(value)
     if isinstance(value, datetime):
         utc_value = _validate_utc(value)
         return utc_value.isoformat().replace("+00:00", "Z")
@@ -169,6 +212,23 @@ def content_hash(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
 
 
+def domain_hash(domain: str, schema_major: int, payload: Any) -> str:
+    """Hash a Revision 2 payload in one explicit domain-separated envelope."""
+
+    if not isinstance(domain, str) or not domain or domain.strip() != domain:
+        raise ValueError("domain must be nonempty and have no surrounding whitespace")
+    schema_version = SchemaVersionAdapter.validate_python(schema_major)
+    return hashlib.sha256(
+        canonical_json_bytes(
+            {
+                "domain": domain,
+                "schema_major": schema_version,
+                "payload": payload,
+            }
+        )
+    ).hexdigest()
+
+
 class CanonicalModel(BaseModel):
     """Base model for immutable, strict, canonically hashable contracts."""
 
@@ -184,3 +244,37 @@ class CanonicalModel(BaseModel):
 
     def content_hash(self) -> str:
         return content_hash(self)
+
+
+class RationalQuantity(CanonicalModel):
+    """A minimal exact rational quantity for later corporate-action contracts."""
+
+    numerator: QuantityUnits
+    denominator: QuantityUnits
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_lowest_terms(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+
+        numerator = value.get("numerator")
+        denominator = value.get("denominator")
+        if type(numerator) is not int or type(denominator) is not int:
+            return value
+        if denominator <= 0:
+            return value
+
+        divisor = gcd(abs(numerator), denominator)
+        return {
+            **value,
+            "numerator": numerator // divisor,
+            "denominator": denominator // divisor,
+        }
+
+    @field_validator("denominator")
+    @classmethod
+    def validate_positive_denominator(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("denominator must be greater than zero")
+        return value

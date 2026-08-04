@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from base64 import b64encode
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -10,10 +12,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import ValidationError
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 INITIAL_POLICY_PATH = REPOSITORY_ROOT / "config/policies/v3/policy-v1.json"
+REVISION2_POLICY_PATH = REPOSITORY_ROOT / "config/policies/v3/policy-v2.json"
+UTC = timezone.utc
+NOW = datetime(2026, 7, 29, 8, 0, tzinfo=UTC)
 
 
 def _policy_api() -> Any:
@@ -36,6 +43,158 @@ def _write_policy(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8",
+    )
+
+
+def _signed_policy_activation(
+    *,
+    activation_updates: dict[str, Any] | None = None,
+    capability_updates: dict[str, Any] | None = None,
+    policy_updates: dict[str, Any] | None = None,
+    payload_override: bytes | None = None,
+) -> tuple[Any, Any, Any, Any, Any]:
+    from src.screening.offensive.v3 import trust
+    from src.screening.offensive.v3.contracts.governance import (
+        PolicyActivation,
+        TrustBundle,
+    )
+
+    policy_api = _policy_api()
+    policy = policy_api.load_policy_snapshot(REVISION2_POLICY_PATH)
+    if policy_updates:
+        policy = policy_api.PolicySnapshot.model_validate(
+            policy.model_dump(mode="python", round_trip=True) | policy_updates,
+            strict=True,
+        )
+    issuer_key = Ed25519PrivateKey.generate()
+    capability_values = {
+        "artifact": trust.ArtifactKind.POLICY_ACTIVATION,
+        "namespace": "governance.policy.activation",
+        "mode": trust.ExecutionMode.MANUAL_CONFIRMED,
+        "schema_major": 2,
+        "capability_version": "governance.policy.activation.v1",
+        "scope": "portfolio:paper-v3",
+        "valid_from": NOW - timedelta(days=1),
+        "valid_until": NOW + timedelta(days=1),
+        "revoked_at": None,
+    }
+    capability_values.update(capability_updates or {})
+    capability = trust.Capability(**capability_values)
+    issuer_public = issuer_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    issuer = trust.TrustedIssuer(
+        issuer_id="governance.service",
+        key_id="governance-key-1",
+        issuer_kind=trust.IssuerKind.GOVERNANCE,
+        public_key=b64encode(issuer_public).decode("ascii"),
+        valid_from=NOW - timedelta(days=1),
+        valid_until=NOW + timedelta(days=1),
+        revoked_at=None,
+        capabilities=(capability,),
+    )
+    registry = trust.TrustedRegistry(issuers=(issuer,))
+    root_key = Ed25519PrivateKey.generate()
+    root_public = root_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    anchor = trust.RootTrustAnchor(
+        root_hash=hashlib.sha256(root_public).hexdigest(),
+        root_key_id="offline-root-1",
+        public_key=b64encode(root_public).decode("ascii"),
+        valid_from=NOW - timedelta(days=1),
+        valid_until=NOW + timedelta(days=1),
+        revoked_at=None,
+    )
+    bundle = TrustBundle(
+        registry_epoch=1,
+        predecessor_bundle_hash="0" * 64,
+        root_hash=anchor.root_hash,
+        root_key_id=anchor.root_key_id,
+        trusted_issuer_registry_hash=registry.content_hash(),
+        issued_at=NOW - timedelta(minutes=10),
+        expires_at=NOW + timedelta(days=1),
+        revoked_at=None,
+        issuer_id="offline-governance-root",
+        issuer_capability="root.trust.bundle.v1",
+        schema_major=2,
+    )
+    signed_bundle = trust.SignedTrustBundle(
+        bundle=bundle,
+        registry=registry,
+        signature=b64encode(
+            root_key.sign(trust.trust_bundle_signature_preimage(bundle, registry))
+        ).decode("ascii"),
+    )
+    trust_verifier = trust.TrustBundleVerifier((anchor,))
+    values = {
+        "portfolio_id": "paper-v3",
+        "broker_account_id": "manual-account-1",
+        "broker_account_fingerprint": None,
+        "mode": trust.ExecutionMode.MANUAL_CONFIRMED,
+        "policy_snapshot_hash": policy.policy_fingerprint,
+        "predecessor_policy_activation_hash": "0" * 64,
+        "trust_bundle_hash": bundle.artifact_hash(),
+        "registry_epoch": 1,
+        "policy_epoch": policy.policy_epoch,
+        "authority_epoch": policy.authority_epoch,
+        "risk_epoch": policy.risk_epoch,
+        "effective_from": NOW - timedelta(minutes=1),
+        "expires_at": NOW + timedelta(hours=1),
+        "issuer_id": issuer.issuer_id,
+        "issuer_capability": "governance.policy.activation.v1",
+        "schema_major": 2,
+    }
+    values.update(activation_updates or {})
+    activation = PolicyActivation(**values)
+    payload = payload_override or activation.canonical_bytes()
+    payload_hash = hashlib.sha256(payload).hexdigest()
+    protected = trust.canonical_json_bytes(
+        {
+            "artifact": capability.artifact,
+            "capability_scope": capability.scope,
+            "capability_version": capability.capability_version,
+            "issuer_id": issuer.issuer_id,
+            "key_id": issuer.key_id,
+            "mode": capability.mode,
+            "namespace": capability.namespace,
+            "payload": b64encode(payload).decode("ascii"),
+            "payload_hash": payload_hash,
+            "schema_major": capability.schema_major,
+        }
+    )
+    signed = trust.SignedEnvelope(
+        issuer_id=issuer.issuer_id,
+        key_id=issuer.key_id,
+        schema_major=capability.schema_major,
+        artifact=capability.artifact,
+        namespace=capability.namespace,
+        mode=capability.mode,
+        capability_version=capability.capability_version,
+        capability_scope=capability.scope,
+        payload_hash=payload_hash,
+        payload=payload,
+        signature=b64encode(issuer_key.sign(protected)).decode("ascii"),
+    )
+    capability_verifier = trust.CapabilityVerifier(
+        trust_verifier,
+        (signed_bundle,),
+    )
+    return policy, activation, signed, capability, capability_verifier
+
+
+def _current_trust_head(verifier: Any) -> Any:
+    from src.screening.offensive.v3 import trust
+
+    bundle = verifier._signed_chain[-1].bundle
+    return trust.CurrentTrustHeadWitness(
+        active_trust_bundle_hash=bundle.artifact_hash(),
+        registry_epoch=bundle.registry_epoch,
+        head_version=bundle.registry_epoch,
+        store_version=1,
+        observed_at=NOW,
     )
 
 
@@ -80,6 +239,141 @@ def test_initial_policy_is_off_and_contains_governed_risk_contract() -> None:
     assert policy.capital.stage_loss_budget_cap == Decimal("0")
     assert policy.risk.drawdown_scale_start == Decimal("0.10")
     assert policy.risk.drawdown_halt == Decimal("0.15")
+
+
+def test_revision2_policy_candidate_remains_off_and_confers_no_authority() -> None:
+    policy_api = _policy_api()
+    policy = policy_api.load_policy_snapshot(REVISION2_POLICY_PATH)
+
+    assert policy.policy_version == "policy-v2"
+    assert policy.runtime_mode is policy_api.RuntimeMode.OFF
+    assert policy.capital.portfolio_gross_cap == 0
+    assert policy.producers.any_enabled() is False
+    assert "activation" not in type(policy).model_fields
+    assert not hasattr(policy_api, "activate_policy")
+
+
+def test_policy_activation_verification_is_signed_but_has_no_side_effect() -> None:
+    from src.screening.offensive.v3 import trust
+
+    policy_api = _policy_api()
+    policy, activation, signed, required, verifier = _signed_policy_activation()
+
+    verified = policy_api.verify_policy_activation(
+        signed,
+        policy,
+        verifier,
+        required,
+        current_trust_head=_current_trust_head(verifier),
+        trusted_at=NOW,
+        predecessor=None,
+        expected_portfolio_id="paper-v3",
+        expected_broker_account_id="manual-account-1",
+        expected_broker_account_fingerprint=None,
+        expected_mode=trust.ExecutionMode.MANUAL_CONFIRMED,
+    )
+
+    assert verified.activation == activation
+    assert verified.policy_snapshot == policy
+    assert verified.trust_bundle_hash == activation.trust_bundle_hash
+    assert not hasattr(verified, "activate")
+
+
+@pytest.mark.parametrize(
+    ("activation_updates", "expected_account", "match"),
+    [
+        ({"policy_epoch": 2}, "manual-account-1", "policy_epoch"),
+        (
+            {"predecessor_policy_activation_hash": "f" * 64},
+            "manual-account-1",
+            "predecessor",
+        ),
+        ({}, "different-account", "account"),
+        ({"registry_epoch": 2}, "manual-account-1", "registry_epoch"),
+    ],
+)
+def test_policy_activation_rejects_epoch_predecessor_account_and_trust_mismatch(
+    activation_updates: dict[str, Any],
+    expected_account: str,
+    match: str,
+) -> None:
+    from src.screening.offensive.v3 import trust
+
+    policy_api = _policy_api()
+    policy, _, signed, required, verifier = _signed_policy_activation(
+        activation_updates=activation_updates
+    )
+    with pytest.raises(policy_api.PolicyActivationVerificationError, match=match):
+        policy_api.verify_policy_activation(
+            signed,
+            policy,
+            verifier,
+            required,
+            current_trust_head=_current_trust_head(verifier),
+            trusted_at=NOW,
+            predecessor=None,
+            expected_portfolio_id="paper-v3",
+            expected_broker_account_id=expected_account,
+            expected_broker_account_fingerprint=None,
+            expected_mode=trust.ExecutionMode.MANUAL_CONFIRMED,
+        )
+
+
+def test_policy_activation_payload_rejects_duplicate_json_keys() -> None:
+    from src.screening.offensive.v3 import trust
+
+    policy_api = _policy_api()
+    policy, activation, _, _, _ = _signed_policy_activation()
+    duplicate = activation.canonical_bytes().replace(
+        b'"portfolio_id":"paper-v3"',
+        b'"portfolio_id":"paper-v3","portfolio_id":"paper-v3"',
+        1,
+    )
+    policy, _, signed, required, verifier = _signed_policy_activation(
+        payload_override=duplicate
+    )
+
+    with pytest.raises(policy_api.PolicyActivationVerificationError, match="duplicate"):
+        policy_api.verify_policy_activation(
+            signed,
+            policy,
+            verifier,
+            required,
+            current_trust_head=_current_trust_head(verifier),
+            trusted_at=NOW,
+            predecessor=None,
+            expected_portfolio_id="paper-v3",
+            expected_broker_account_id="manual-account-1",
+            expected_broker_account_fingerprint=None,
+            expected_mode=trust.ExecutionMode.MANUAL_CONFIRMED,
+        )
+
+
+def test_policy_activation_requires_fixed_portfolio_capability_context() -> None:
+    from src.screening.offensive.v3 import trust
+
+    policy_api = _policy_api()
+    policy, _, signed, required, verifier = _signed_policy_activation(
+        capability_updates={"scope": "portfolio:other"}
+    )
+
+    with pytest.raises(
+        policy_api.PolicyActivationVerificationError,
+        match="capability.*scope|context",
+    ):
+        policy_api.verify_policy_activation(
+            signed,
+            policy,
+            verifier,
+            required,
+            current_trust_head=_current_trust_head(verifier),
+            trusted_at=NOW,
+            predecessor=None,
+            expected_portfolio_id="paper-v3",
+            expected_broker_account_id="manual-account-1",
+            expected_broker_account_fingerprint=None,
+            expected_mode=trust.ExecutionMode.MANUAL_CONFIRMED,
+        )
 
 
 def test_initial_policy_disables_all_producer_and_sizing_switches() -> None:
@@ -132,12 +426,21 @@ def test_initial_policy_payload_has_no_self_referential_fingerprint() -> None:
 
     assert "policy_fingerprint" not in raw
     assert "behavior_fingerprint" not in raw
-    assert _initial_policy().policy_fingerprint == hashlib.sha256(_initial_policy().canonical_bytes()).hexdigest()
+    assert (
+        _initial_policy().policy_fingerprint
+        == hashlib.sha256(_initial_policy().canonical_bytes()).hexdigest()
+    )
 
 
 def test_policy_fingerprint_covers_the_complete_payload() -> None:
     original = _initial_policy()
-    changed = original.model_copy(update={"versions": original.versions.model_copy(update={"governance_version": "growth-kernel-governance.v2"})})
+    changed = original.model_copy(
+        update={
+            "versions": original.versions.model_copy(
+                update={"governance_version": "growth-kernel-governance.v2"}
+            )
+        }
+    )
 
     assert original.policy_fingerprint != changed.policy_fingerprint
 
@@ -153,7 +456,13 @@ def test_behavior_fingerprint_is_typed_deterministic_and_policy_bound() -> None:
     first = policy_api.behavior_fingerprint(producer, policy)
     second = policy_api.behavior_fingerprint(producer, policy)
     changed_producer = producer.model_copy(update={"strategy_semver": "3.0.1"})
-    changed_policy = policy.model_copy(update={"versions": policy.versions.model_copy(update={"setup_version": "daily-action-setups-v2"})})
+    changed_policy = policy.model_copy(
+        update={
+            "versions": policy.versions.model_copy(
+                update={"setup_version": "daily-action-setups-v2"}
+            )
+        }
+    )
 
     assert first == second
     assert len(first) == 64
@@ -181,11 +490,29 @@ def test_behavior_fingerprint_excludes_provenance_only_policy_labels() -> None:
     )
 
     assert policy.policy_fingerprint != provenance_revision.policy_fingerprint
-    assert policy_api.behavior_fingerprint(producer, policy) == policy_api.behavior_fingerprint(producer, provenance_revision)
+    assert policy_api.behavior_fingerprint(
+        producer, policy
+    ) == policy_api.behavior_fingerprint(producer, provenance_revision)
 
 
-@pytest.mark.parametrize("epoch_field", ["policy_epoch", "authority_epoch", "risk_epoch"])
-def test_behavior_fingerprint_includes_governed_epochs(epoch_field: str) -> None:
+def test_behavior_fingerprint_includes_policy_epoch() -> None:
+    policy_api = _policy_api()
+    policy = _initial_policy()
+    producer = policy_api.ProducerIdentity(
+        producer_namespace="daily_action.btst",
+        strategy_semver="3.0.0",
+    )
+    next_epoch = policy.model_copy(update={"policy_epoch": 2})
+
+    assert policy_api.behavior_fingerprint(
+        producer, policy
+    ) != policy_api.behavior_fingerprint(producer, next_epoch)
+
+
+@pytest.mark.parametrize("epoch_field", ["authority_epoch", "risk_epoch"])
+def test_behavior_fingerprint_excludes_operational_fencing_epochs(
+    epoch_field: str,
+) -> None:
     policy_api = _policy_api()
     policy = _initial_policy()
     producer = policy_api.ProducerIdentity(
@@ -194,7 +521,9 @@ def test_behavior_fingerprint_includes_governed_epochs(epoch_field: str) -> None
     )
     next_epoch = policy.model_copy(update={epoch_field: 2})
 
-    assert policy_api.behavior_fingerprint(producer, policy) != policy_api.behavior_fingerprint(producer, next_epoch)
+    assert policy_api.behavior_fingerprint(
+        producer, policy
+    ) == policy_api.behavior_fingerprint(producer, next_epoch)
 
 
 @pytest.mark.parametrize(
@@ -206,7 +535,9 @@ def test_behavior_fingerprint_includes_governed_epochs(epoch_field: str) -> None
         (("versions", "calendar_version"), "not a version"),
     ],
 )
-def test_loader_rejects_unknown_major_and_invalid_versions(tmp_path: Path, field_path: tuple[str, ...], value: Any) -> None:
+def test_loader_rejects_unknown_major_and_invalid_versions(
+    tmp_path: Path, field_path: tuple[str, ...], value: Any
+) -> None:
     policy_api = _policy_api()
     raw = _raw_initial_policy()
     target: dict[str, Any] = raw
@@ -271,7 +602,9 @@ def test_loader_rejects_symlink_and_non_regular_file(tmp_path: Path) -> None:
         policy_api.load_policy_snapshot(linked_directory / "policy.json")
 
 
-def test_loader_rejects_file_mutation_during_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_loader_rejects_file_mutation_during_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from src.screening.offensive.v3.policy import loader
 
     policy_path = tmp_path / "policy.json"
@@ -297,7 +630,9 @@ def test_loader_rejects_file_mutation_during_read(tmp_path: Path, monkeypatch: p
 def test_loader_rejects_oversized_policy_before_parsing(tmp_path: Path) -> None:
     policy_api = _policy_api()
     policy_path = tmp_path / "oversized-policy.json"
-    policy_path.write_bytes((b" " * (1024 * 1024 + 1)) + INITIAL_POLICY_PATH.read_bytes())
+    policy_path.write_bytes(
+        (b" " * (1024 * 1024 + 1)) + INITIAL_POLICY_PATH.read_bytes()
+    )
 
     with pytest.raises(policy_api.PolicyLoadError, match="too large"):
         policy_api.load_policy_snapshot(policy_path)
@@ -602,7 +937,9 @@ def test_policy_loader_closes_leaf_after_fstat_failure(
     assert leaf_close_attempted is True
 
 
-def test_loader_does_not_consult_permissive_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_loader_does_not_consult_permissive_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     policy_api = _policy_api()
     path = tmp_path / "policy.json"
     _write_policy(path, _raw_initial_policy())
@@ -661,7 +998,9 @@ def test_fingerprints_revalidate_copied_policy_models() -> None:
         producer_namespace="daily_action.btst",
         strategy_semver="3.0.0",
     )
-    invalid_capital = policy.capital.model_copy(update={"portfolio_gross_cap": Decimal("1")})
+    invalid_capital = policy.capital.model_copy(
+        update={"portfolio_gross_cap": Decimal("1")}
+    )
     invalid_policy = policy.model_copy(update={"capital": invalid_capital})
 
     with pytest.raises(ValidationError, match="gross cap"):

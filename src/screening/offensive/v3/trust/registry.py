@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager, ExitStack
 from datetime import datetime
-from enum import StrEnum
 import hashlib
 import json
 import os
@@ -26,14 +25,21 @@ from pydantic import (
 from ..contracts.base import (
     CanonicalModel,
     ExecutionMode,
+    Sha256,
     UtcInstant,
     UtcInstantAdapter,
+    canonical_json_bytes,
+    domain_hash,
 )
 from ..contracts.evidence import NonEmptyStr, SUPPORTED_SCHEMA_MAJOR
+from ..contracts.governance import TrustBundle
 from ..contracts.trust import (
     ArtifactKind,
     Capability,
+    CurrentTrustHeadWitness,
+    IssuerKind,
     SignedEnvelope,
+    Signature,
     VerifiedIssuer,
     _decode_canonical_base64,
 )
@@ -171,9 +177,7 @@ def _read_regular_registry_file(path: str | os.PathLike[str]) -> bytes:
                 chunks.append(chunk)
                 bytes_read += len(chunk)
                 if bytes_read > MAX_TRUSTED_REGISTRY_FILE_BYTES:
-                    raise TrustedRegistryLoadError(
-                        "trusted registry file is too large"
-                    )
+                    raise TrustedRegistryLoadError("trusted registry file is too large")
             payload = b"".join(chunks)
             after = os.fstat(descriptor)
             unchanged_fields = (
@@ -200,20 +204,6 @@ def _read_regular_registry_file(path: str | os.PathLike[str]) -> bytes:
             ) from exc
 
 
-class IssuerKind(StrEnum):
-    """Service-principal role used to enforce non-overridable separation."""
-
-    MARKET_PUBLISHER = "market_publisher"
-    SIGNAL_PRODUCER = "signal_producer"
-    OUTCOME_FINALIZER = "outcome_finalizer"
-    AUTHORIZER = "authorizer"
-    GOVERNANCE = "governance"
-    GROWTH_KERNEL = "growth_kernel"
-    BROKER_GATEWAY = "broker_gateway"
-    SHADOW = "shadow"
-    MANUAL = "manual"
-
-
 def _validate_public_key(value: str) -> str:
     _decode_canonical_base64(value, expected_length=32, label="public key")
     return value
@@ -224,6 +214,32 @@ PublicKey = Annotated[
     StringConstraints(min_length=1),
     AfterValidator(_validate_public_key),
 ]
+
+
+class RootTrustAnchor(CanonicalModel):
+    """Externally injected offline governance-root public key."""
+
+    root_hash: Sha256
+    root_key_id: NonEmptyStr
+    public_key: PublicKey
+    valid_from: UtcInstant
+    valid_until: UtcInstant
+    revoked_at: UtcInstant | None
+
+    @model_validator(mode="after")
+    def validate_anchor(self) -> Self:
+        if self.valid_until <= self.valid_from:
+            raise ValueError("root key valid_until must be after valid_from")
+        public_bytes = _decode_canonical_base64(
+            self.public_key,
+            expected_length=32,
+            label="public key",
+        )
+        if hashlib.sha256(public_bytes).hexdigest() != self.root_hash:
+            raise ValueError("root_hash must identify the root public key")
+        return self
+
+
 class TrustedIssuer(CanonicalModel):
     """One immutable public key, its lifecycle, and explicit grants."""
 
@@ -266,7 +282,7 @@ class TrustedIssuer(CanonicalModel):
 
 
 class TrustedRegistry(CanonicalModel):
-    """Frozen, read-only public issuer/key/capability truth."""
+    """Frozen registry candidate; only a verified TrustBundle chain makes it trusted."""
 
     issuers: tuple[TrustedIssuer, ...]
 
@@ -287,7 +303,7 @@ class TrustedRegistry(CanonicalModel):
 
     @classmethod
     def load(cls, path: str | Path) -> TrustedRegistry:
-        """Load one strict local public registry file without network access."""
+        """Compatibility-parse one local candidate without granting authority."""
 
         payload = _read_regular_registry_file(path)
         try:
@@ -313,6 +329,191 @@ class TrustedRegistry(CanonicalModel):
             if issuer.issuer_id == issuer_id and issuer.key_id == key_id:
                 return issuer
         raise TrustVerificationError("unknown issuer or key")
+
+
+class SignedTrustBundle(CanonicalModel):
+    """One root-signed bundle candidate plus its exact registry payload."""
+
+    bundle: TrustBundle
+    registry: TrustedRegistry
+    signature: Signature
+
+
+class VerifiedTrustBundle(CanonicalModel):
+    """Pure verification result; this object is not an activation record."""
+
+    bundle: TrustBundle
+    registry: TrustedRegistry
+    trusted_at: UtcInstant
+
+
+def trust_bundle_signature_preimage(
+    bundle: TrustBundle,
+    registry: TrustedRegistry,
+) -> bytes:
+    """Return the versioned root-signature preimage without signing capability."""
+
+    if not isinstance(bundle, TrustBundle) or not isinstance(registry, TrustedRegistry):
+        raise TypeError("bundle and registry must use strict trust contract types")
+    return canonical_json_bytes(
+        {
+            "domain": "ai-hedge-fund.v3.trust-bundle-root-signature.v1",
+            "bundle": bundle,
+            "registry_hash": registry.content_hash(),
+        }
+    )
+
+
+class TrustBundleVerifier:
+    """Verify root signature, bundle lifecycle, registry payload, and chain."""
+
+    def __init__(self, root_anchors: tuple[RootTrustAnchor, ...]) -> None:
+        if not isinstance(root_anchors, tuple) or not root_anchors:
+            raise TypeError("root_anchors must be a nonempty tuple")
+        self._root_anchors = tuple(
+            _strict_revalidate_model(anchor, RootTrustAnchor, label="root anchor")
+            for anchor in root_anchors
+        )
+        identities = [
+            (anchor.root_hash, anchor.root_key_id) for anchor in self._root_anchors
+        ]
+        if len(identities) != len(set(identities)):
+            raise TrustVerificationError("duplicate root anchor identity")
+
+    def _verify_link(
+        self,
+        signed: SignedTrustBundle,
+        *,
+        predecessor: VerifiedTrustBundle | None,
+    ) -> VerifiedTrustBundle:
+        signed = _strict_revalidate_model(
+            signed,
+            SignedTrustBundle,
+            label="signed trust bundle",
+        )
+        if predecessor is not None:
+            predecessor = _strict_revalidate_model(
+                predecessor,
+                VerifiedTrustBundle,
+                label="predecessor trust bundle",
+            )
+        bundle = signed.bundle
+        checked_time = bundle.issued_at
+        if bundle.trusted_issuer_registry_hash != signed.registry.content_hash():
+            raise TrustVerificationError("trusted issuer registry hash mismatch")
+        anchor = TrustBundleVerifier._root_anchor_for(self, bundle)
+        _require_active(
+            valid_from=anchor.valid_from,
+            valid_until=anchor.valid_until,
+            revoked_at=anchor.revoked_at,
+            verification_time=checked_time,
+            label="root key",
+        )
+        _require_active(
+            valid_from=bundle.issued_at,
+            valid_until=bundle.expires_at,
+            revoked_at=bundle.revoked_at,
+            verification_time=checked_time,
+            label="bundle",
+        )
+        if predecessor is None:
+            if bundle.registry_epoch != 1 or bundle.predecessor_bundle_hash != "0" * 64:
+                raise TrustVerificationError(
+                    "genesis bundle requires epoch one and the zero predecessor"
+                )
+        else:
+            if bundle.registry_epoch != predecessor.bundle.registry_epoch + 1:
+                raise TrustVerificationError(
+                    "registry epoch must advance by exactly one"
+                )
+            if bundle.predecessor_bundle_hash != predecessor.bundle.artifact_hash():
+                raise TrustVerificationError("trust bundle predecessor mismatch")
+            if bundle.issued_at < predecessor.bundle.issued_at:
+                raise TrustVerificationError("trust bundle issue time cannot roll back")
+            if bundle.issued_at >= predecessor.bundle.expires_at:
+                raise TrustVerificationError(
+                    "successor bundle must be issued before predecessor expiry"
+                )
+        public_bytes = _decode_canonical_base64(
+            anchor.public_key,
+            expected_length=32,
+            label="public key",
+        )
+        signature_bytes = _decode_canonical_base64(
+            signed.signature,
+            expected_length=64,
+            label="signature",
+        )
+        try:
+            Ed25519PublicKey.from_public_bytes(public_bytes).verify(
+                signature_bytes,
+                trust_bundle_signature_preimage(bundle, signed.registry),
+            )
+        except (InvalidSignature, ValueError) as exc:
+            raise TrustVerificationError("invalid governance root signature") from exc
+        return VerifiedTrustBundle(
+            bundle=bundle,
+            registry=signed.registry,
+            trusted_at=checked_time,
+        )
+
+    def _root_anchor_for(self, bundle: TrustBundle) -> RootTrustAnchor:
+        anchor = next(
+            (
+                item
+                for item in self._root_anchors
+                if item.root_hash == bundle.root_hash
+                and item.root_key_id == bundle.root_key_id
+            ),
+            None,
+        )
+        if anchor is None:
+            raise TrustVerificationError("unknown governance root key")
+        return anchor
+
+    def verify_chain(
+        self,
+        signed_chain: tuple[SignedTrustBundle, ...],
+        *,
+        trusted_at: datetime,
+    ) -> VerifiedTrustBundle:
+        """Reverify every root signature and predecessor from genesis to head."""
+
+        if not isinstance(signed_chain, tuple) or not signed_chain:
+            raise TypeError("signed trust bundle chain must be a nonempty tuple")
+        try:
+            checked_time = UtcInstantAdapter.validate_python(trusted_at, strict=True)
+        except (ValidationError, ValueError, TypeError) as exc:
+            raise TrustVerificationError("trusted_at must be strict UTC") from exc
+        predecessor: VerifiedTrustBundle | None = None
+        for candidate in signed_chain:
+            predecessor = TrustBundleVerifier._verify_link(
+                self,
+                candidate,
+                predecessor=predecessor,
+            )
+        assert predecessor is not None
+        head = predecessor.bundle
+        head_anchor = TrustBundleVerifier._root_anchor_for(self, head)
+        _require_active(
+            valid_from=head_anchor.valid_from,
+            valid_until=head_anchor.valid_until,
+            revoked_at=head_anchor.revoked_at,
+            verification_time=checked_time,
+            label="root key",
+        )
+        _require_active(
+            valid_from=head.issued_at,
+            valid_until=head.expires_at,
+            revoked_at=head.revoked_at,
+            verification_time=checked_time,
+            label="bundle",
+        )
+        return VerifiedTrustBundle(
+            bundle=head,
+            registry=predecessor.registry,
+            trusted_at=checked_time,
+        )
 
 
 StrictModel = TypeVar("StrictModel", bound=BaseModel)
@@ -342,9 +543,32 @@ _ROLE_ARTIFACTS: dict[IssuerKind, frozenset[ArtifactKind]] = {
     IssuerKind.SIGNAL_PRODUCER: frozenset({ArtifactKind.SIGNAL, ArtifactKind.PLAN}),
     IssuerKind.OUTCOME_FINALIZER: frozenset({ArtifactKind.OUTCOME}),
     IssuerKind.AUTHORIZER: frozenset({ArtifactKind.EDGE_AUTHORIZATION}),
-    IssuerKind.GOVERNANCE: frozenset({ArtifactKind.EXPLORATION_AUTHORIZATION}),
-    IssuerKind.GROWTH_KERNEL: frozenset({ArtifactKind.DECISION_SEAL}),
-    IssuerKind.BROKER_GATEWAY: frozenset({ArtifactKind.EXECUTION_PERMIT}),
+    IssuerKind.GOVERNANCE: frozenset(
+        {
+            ArtifactKind.EXPLORATION_AUTHORIZATION,
+            ArtifactKind.RECOVERY_AUTHORIZATION,
+            ArtifactKind.POLICY_ACTIVATION,
+            ArtifactKind.RISK_EPOCH_STARTED,
+            ArtifactKind.TRIAL_MANIFEST,
+            ArtifactKind.STATISTICAL_ANALYSIS_PLAN,
+            ArtifactKind.STAGE_MANIFEST,
+            ArtifactKind.MIGRATION_APPROVAL_MANIFEST,
+            ArtifactKind.BROKER_ENABLEMENT_MANIFEST,
+            ArtifactKind.DISASTER_RECOVERY_MANIFEST,
+        }
+    ),
+    IssuerKind.GROWTH_KERNEL: frozenset(),
+    IssuerKind.CAPITAL_GATEWAY: frozenset(
+        {
+            ArtifactKind.PORTFOLIO_DECISION_SEAL,
+            ArtifactKind.EXECUTION_PERMIT,
+            ArtifactKind.ENTRY_CANCELLATION_RECEIPT,
+            ArtifactKind.AUTHORIZATION_STATUS,
+            ArtifactKind.ENTRY_FENCE_ACKNOWLEDGEMENT,
+        }
+    ),
+    IssuerKind.DEPENDENCY_TRACKER: frozenset({ArtifactKind.ENTRY_FENCE_RAISED}),
+    IssuerKind.BROKER_GATEWAY: frozenset(),
     IssuerKind.SHADOW: frozenset(
         {ArtifactKind.SIGNAL, ArtifactKind.PLAN, ArtifactKind.SHADOW_DECISION}
     ),
@@ -385,25 +609,33 @@ def _require_role_boundary(issuer: TrustedIssuer, required: Capability) -> None:
 class CapabilityVerifier:
     """Pure verifier over injected registry truth and verification time."""
 
-    def __init__(self, registry: TrustedRegistry) -> None:
-        if not isinstance(registry, TrustedRegistry):
-            raise TypeError("registry must be a TrustedRegistry")
-        self._registry = _strict_revalidate_model(
-            registry,
-            TrustedRegistry,
-            label="trusted registry",
+    def __init__(
+        self,
+        trust_verifier: TrustBundleVerifier,
+        signed_chain: tuple[SignedTrustBundle, ...],
+    ) -> None:
+        if type(trust_verifier) is not TrustBundleVerifier:
+            raise TypeError("trust_verifier must be an exact TrustBundleVerifier")
+        if not isinstance(signed_chain, tuple) or not signed_chain:
+            raise TypeError("signed trust bundle chain must be a nonempty tuple")
+        self._trust_verifier = trust_verifier
+        self._signed_chain = tuple(
+            _strict_revalidate_model(
+                candidate,
+                SignedTrustBundle,
+                label="signed trust bundle chain",
+            )
+            for candidate in signed_chain
         )
-
-    @property
-    def registry(self) -> TrustedRegistry:
-        return self._registry
 
     def verify(
         self,
         signed: SignedEnvelope,
         required: Capability,
         *,
-        verification_time: datetime,
+        current_head: CurrentTrustHeadWitness,
+        trusted_at: datetime | None = None,
+        verification_time: datetime | None = None,
     ) -> VerifiedIssuer:
         """Fail closed unless identity, grant, context, hash, and signature agree."""
 
@@ -421,9 +653,21 @@ class CapabilityVerifier:
             Capability,
             label="required capability",
         )
+        current_head = _strict_revalidate_model(
+            current_head,
+            CurrentTrustHeadWitness,
+            label="current trust head witness",
+        )
+        if trusted_at is None and verification_time is None:
+            raise TypeError("trusted_at is required")
+        if trusted_at is not None and verification_time is not None:
+            raise TrustVerificationError(
+                "exactly one explicit trusted_at time is required"
+            )
+        event_time = trusted_at if trusted_at is not None else verification_time
         try:
             checked_time = UtcInstantAdapter.validate_python(
-                verification_time,
+                event_time,
                 strict=True,
             )
         except (ValidationError, ValueError, TypeError) as exc:
@@ -431,9 +675,34 @@ class CapabilityVerifier:
                 "verification time must be strict UTC"
             ) from exc
 
+        verified_bundle = TrustBundleVerifier.verify_chain(
+            self._trust_verifier,
+            self._signed_chain,
+            trusted_at=checked_time,
+        )
+        bundle = verified_bundle.bundle
+        registry = verified_bundle.registry
+        if not bundle.issued_at <= current_head.observed_at <= checked_time:
+            raise TrustVerificationError(
+                "current trust head observed_at must be between bundle issuance "
+                "and trusted_at"
+            )
         if (
-            signed.schema_major != SUPPORTED_SCHEMA_MAJOR
-            or required.schema_major != SUPPORTED_SCHEMA_MAJOR
+            current_head.active_trust_bundle_hash != bundle.artifact_hash()
+            or current_head.registry_epoch != bundle.registry_epoch
+        ):
+            raise TrustVerificationError(
+                "signed chain does not match the Authority Store current head"
+            )
+
+        if required.artifact is ArtifactKind.DECISION_SEAL:
+            raise TrustVerificationError(
+                "legacy decision seal is unsupported by the final verifier"
+            )
+        expected_schema_major = SUPPORTED_SCHEMA_MAJOR
+        if (
+            signed.schema_major != expected_schema_major
+            or required.schema_major != expected_schema_major
         ):
             raise TrustVerificationError("unsupported schema major")
 
@@ -450,7 +719,7 @@ class CapabilityVerifier:
                 "envelope does not match caller-required capability context"
             )
 
-        issuer = self.registry.require(signed.issuer_id, signed.key_id)
+        issuer = registry.require(signed.issuer_id, signed.key_id)
         _require_active(
             valid_from=issuer.valid_from,
             valid_until=issuer.valid_until,
@@ -483,18 +752,74 @@ class CapabilityVerifier:
         except (InvalidSignature, ValueError) as exc:
             raise TrustVerificationError("invalid Ed25519 signature") from exc
 
-        return VerifiedIssuer(issuer_id=issuer.issuer_id, capability=granted)
+        public_key_fingerprint = hashlib.sha256(public_bytes).hexdigest()
+        identity_fingerprint = domain_hash(
+            "ai-hedge-fund.v3.trust.issuer-identity.v1",
+            2,
+            {
+                "issuer_id": issuer.issuer_id,
+                "issuer_kind": issuer.issuer_kind,
+                "key_id": issuer.key_id,
+                "public_key_fingerprint": public_key_fingerprint,
+            },
+        )
+        root_anchor = TrustBundleVerifier._root_anchor_for(
+            self._trust_verifier,
+            bundle,
+        )
+        validity_ends = [
+            root_anchor.valid_until,
+            bundle.expires_at,
+            issuer.valid_until,
+            granted.valid_until,
+        ]
+        validity_ends.extend(
+            revocation
+            for revocation in (
+                root_anchor.revoked_at,
+                bundle.revoked_at,
+                issuer.revoked_at,
+                granted.revoked_at,
+            )
+            if revocation is not None
+        )
+        validity_starts = (
+            root_anchor.valid_from,
+            bundle.issued_at,
+            issuer.valid_from,
+            granted.valid_from,
+        )
+
+        return VerifiedIssuer(
+            issuer_id=issuer.issuer_id,
+            key_id=issuer.key_id,
+            issuer_kind=issuer.issuer_kind,
+            public_key_fingerprint=public_key_fingerprint,
+            identity_fingerprint=identity_fingerprint,
+            capability=granted,
+            trust_bundle_hash=bundle.artifact_hash(),
+            registry_epoch=bundle.registry_epoch,
+            trusted_at=checked_time,
+            valid_from=max(validity_starts),
+            valid_until=min(validity_ends),
+        )
 
 
 __all__ = [
     "ArtifactKind",
     "Capability",
     "CapabilityVerifier",
+    "CurrentTrustHeadWitness",
     "IssuerKind",
+    "RootTrustAnchor",
     "SignedEnvelope",
+    "SignedTrustBundle",
     "TrustedIssuer",
     "TrustedRegistry",
     "TrustedRegistryLoadError",
     "TrustVerificationError",
+    "TrustBundleVerifier",
+    "VerifiedTrustBundle",
     "VerifiedIssuer",
+    "trust_bundle_signature_preimage",
 ]

@@ -10,7 +10,8 @@
 
 ## Global Constraints
 
-- 当前实现事实：Revision 1 contracts/policy/trust/ports 已合并；本计划只完成 Revision 2 delta，不声称资本、Authorizer、Gateway 或 broker 已实现。
+- 当前实现事实：Plan 01 Revision 2 Tasks 1–5 contracts/policy/trust/final structural ports 已完成；仍无 store、activation、签发、资本 authority、Authorizer、Kernel、Gateway、broker 或可执行路径。
+- Tasks 1–3 中未勾选的步骤保留为当时的历史计划记录，不据此否定已经落库并验证的实现；当前完成度只由 Completion Gate 的可重验验收项陈述。
 - 本计划不写任何 evidence、capital、authority 或 broker 数据库，也不提供 `activate()`、`sign()`、`send()`。
 - Snapshot/Signal/Outcome schema 禁止 `execution_authorized`；shadow 与 executable 必须是不同 discriminant、issuer capability 和 namespace。
 - 所有授权都是 portfolio 完整政策的 `CapitalAuthorizationEnvelope`；不得恢复多个独立 lineage authorization 相加的旧语义。
@@ -32,7 +33,7 @@
 - Modify `src/screening/offensive/v3/contracts/ports.py`
 - Create `src/screening/offensive/v3/contracts/governance.py`
 - Create `src/screening/offensive/v3/contracts/execution.py`
-- Create `src/screening/offensive/v3/contracts/migration.py`
+- （历史注记：原计划列了独立 `contracts/migration.py`；三个迁移/broker/DR manifest 实际并入 `contracts/governance.py`，无独立模块）
 - Modify `src/screening/offensive/v3/contracts/trust.py`
 - Modify `src/screening/offensive/v3/policy/models.py`
 - Modify `src/screening/offensive/v3/policy/loader.py`
@@ -60,7 +61,7 @@ Run: `uv run pytest tests/offensive/v3/contracts/test_revision2_base.py -v`
 
 Expected: collection succeeds; tests fail because `domain_hash` and exact integer aliases are absent.
 
-- [ ] **Step 3: Implement minimal primitives** in `contracts/base.py`. Canonical serialization sorts keys, rejects NaN/Infinity/float, normalizes Decimal strings and binds domain plus schema major before SHA-256.
+- [ ] **Step 3: Implement minimal primitives** in `contracts/base.py`. Canonical serialization sorts keys, rejects NaN/Infinity/float, normalizes Decimal strings and binds domain plus schema major before SHA-256. Revision 1 imports none of these evolving R2 primitives: its used `ExecutionMode`/`EvidenceScope`/UTC/SHA-256/canonical serializer/content hash/`CanonicalModel` are copied from `dccb76c5` into a self-contained local primitive module, including the R1-only acceptance of finite float values.
 - [ ] **Step 4: Add frozen Revision 1 schema/hash fixtures** in `tests/offensive/v3/contracts/fixtures/revision1/` so import adapters can distinguish old payloads without silently reinterpreting them.
 - [ ] **Step 5: Verify and commit**.
 
@@ -128,26 +129,34 @@ git commit -m "feat(v3): define governed portfolio authorization envelopes"
   - `SEALED -> PERMITTED -> OUTBOX_DURABLE -> SEND_CLAIMED -> SUBMISSION_AMBIGUOUS | BROKER_ACK`;
   - `close_finalized < seal_creation_deadline < permit_issue_deadline < permit_expires_at <= gateway_send_deadline < broker_auction_cutoff`;
   - `permitted_quantity <= sealed_quantity` and T+1 cannot increase;
-  - ExitMandate has no entry authorization field and cannot sell unknown/untradable quantity;
+  - seal-owned post-admission capital/stream/snapshot anchors, exact same-version revalidation and bidirectionally unique stage/budget bindings;
+  - mutually exclusive all-line mechanical-zero versus portfolio-witness `CANCEL`, plus post-permit receipts that preserve exact prior permit/nonce ownership while cancelling monotonic authority/capital/fact drift or current durable-outbox drift;
+  - stable reservation allocation identities with monotonic shrink, positive-release capital/snapshot advance, and zero-release capital/snapshot quietness;
+  - healthy trusted-time future-snapshot rejection and unhealthy-clock monotonic fact-integrity cancellation;
+  - issuer revalidation against `current_registry_epoch >= issuance_registry_epoch`, rejecting same-epoch TrustBundle forks;
+  - flat/nonpositive-to-positive correction reopening a stable ExitMandate ID at a revision above all prior revisions;
+  - ExitMandate has no entry authorization field, names `entry_plan_evidence_artifact_hash` as the current `EvidenceRecord[PlanEvidence].artifact_hash()` binding, and cannot sell unknown/untradable quantity;
   - order lifecycle terminal history may receive a higher execution revision.
-- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/contracts/test_{decision,capital,execution}.py -v`.
+- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/contracts -v` so every checkpoint/adversarial contract is included.
 - [ ] **Step 4: Implement exact models** in `decision.py`, `capital.py`, and `execution.py`; remove final-interface exports of the old generic names from `contracts/__init__.py`.
 - [ ] **Step 5: Verify stable serialization and commit**.
 
 ```bash
-uv run pytest tests/offensive/v3/contracts/test_{decision,capital,execution}.py -v
+uv run pytest tests/offensive/v3/contracts -v
 git add src/screening/offensive/v3/contracts tests/offensive/v3/contracts
 git commit -m "feat(v3): freeze portfolio decision and lifecycle contracts"
 ```
 
 ### Task 4: Upgrade PIT evidence and root-signed trust/policy candidates
 
-**Interfaces:** Evidence envelopes add `provider_published_at`; store-controlled records add `ingested_at`, `commit_sequence`, revision links and active-revision identity. Produces root-verified `TrustBundleVerifier`, candidate `load_policy_snapshot()` and `verify_policy_activation()` without activation side effects.
+**Interfaces:** Evidence envelopes add `provider_published_at`; store-controlled records add `ingested_at`, `commit_sequence`, revision links, active-revision identity and a schema-major domain-separated artifact hash. Produces root-verified `TrustBundleVerifier`, complete schema-major-2 signed control-artifact role routes, and candidate `load_policy_snapshot()` / `verify_policy_activation()` without activation side effects. Revision 1 trust, authorization, capital dependencies and ports remain locally frozen at the `dccb76c5` surface.
 
-- [ ] **Step 1: Add failing tests** in `test_evidence.py`, `test_trust_registry.py`, and `test_policy.py` for trusted clock ordering, store-controlled fields forbidden on producer input, root signature, registry epoch/predecessor rollback, revoked/expired issuer, policy predecessor/account/epoch mismatch, duplicate JSON key and symlink/non-regular files.
-- [ ] **Step 2: Verify RED**.
-- [ ] **Step 3: Implement verification only**. `TrustedRegistry.load()` becomes a compatibility parser; executable verification requires a valid `TrustBundle` chain and explicit `trusted_at`. `policy-v2.json` remains `runtime_mode="off"` and has no activation authority.
-- [ ] **Step 4: Run secret/capability scan**.
+**Implemented boundary (2026-08-01):** This task is implemented as storage-free candidate contracts and pure verification only. A raw `TrustedRegistry`, locally loaded policy, constructible `VerifiedTrustBundle`/`VerifiedIssuer`, or typed witness cannot confer authority. `TrustBundleVerifier` only exposes full root-signed chain verification; every executable capability check also consumes a future Authority-Store `CurrentTrustHeadWitness` and exact-matches the signed head. Policy successors consume a typed active-predecessor witness, never raw activation DTOs; each witness enforces `effective_from <= observed_at`, including strict revalidation plus a defensive verification check for unchecked instances. `verify_policy_activation()` accepts only the exact current `CapabilityVerifier`, not a subclass override, and calls `CapabilityVerifier.verify(verifier, ...)` through explicit base-class dispatch so an exact verifier instance cannot shadow `verify()` to bypass an invalid signature or wrong current head. The nested `CapabilityVerifier` constructor likewise accepts only the exact `TrustBundleVerifier`, and root-chain verification/helpers use explicit base-class dispatch so an inner subclass is rejected before its override can run and instance-level method shadowing cannot bypass root-signature verification. These are in-process type/dispatch boundaries and do not claim protection from malicious same-process class monkeypatching or verifier internal-state mutation. Current evidence is schema major 2 and executable plans bind active store-owned records with known provider publication time; `ExitMandate.entry_plan_evidence_artifact_hash` denotes the current plan record's domain-separated `artifact_hash()`. Revision 1 stays locally frozen at major 1, including its `dccb76c5` canonical primitives and finite-float behavior, without weakening current R2 float rejection. Per design §11.2, the behavior fingerprint binds `policy_epoch` but excludes the operational `authority_epoch` and `risk_epoch` fencing counters. `policy-v2.json` remains `off`. Evidence/Trust/Policy Store persistence, source-policy qualification of `NOT_APPLICABLE`, activation CAS, signing, capital authority, and all Task 5 final ports remain outside this task.
+
+- [x] **Step 1: Add failing tests** in `test_evidence.py`, `test_trust_registry.py`, and `test_policy.py` for trusted clock ordering, store-controlled fields forbidden on producer input, root signature, registry epoch/predecessor rollback, revoked/expired issuer, policy predecessor/account/epoch mismatch, duplicate JSON key and symlink/non-regular files.
+- [x] **Step 2: Verify RED**.
+- [x] **Step 3: Implement verification only**. `TrustedRegistry.load()` becomes a compatibility parser; executable verification requires a complete valid `TrustBundle` chain, exact current-head witness and explicit `trusted_at`. Policy successor verification requires an exact active-predecessor witness. `policy-v2.json` remains `runtime_mode="off"` and has no activation authority.
+- [x] **Step 4: Run secret/capability scan** and adversarial checks for superseded/forked trust heads, raw policy predecessors, schema routing, and executable UNKNOWN/NOT_APPLICABLE/historical evidence rejection.
 
 ```bash
 uv run pytest tests/offensive/v3/contracts/test_{evidence,trust_registry,policy}.py -v
@@ -156,16 +165,20 @@ rg -n "PRIVATE KEY|broker.*secret|authorizer.*secret|def sign\(" src/screening/o
 
 Expected: tests pass; scan has no output.
 
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): verify trusted evidence policy and registry chains"`.
+- [x] **Step 5: Prepare the verified Task 4 change set** for the parent session's approved commit workflow with message `feat(v3): verify trusted evidence policy and registry chains`.
 
 ### Task 5: Publish final ports and block obsolete-interface diffusion
 
 **Interfaces:** Produces Roadmap ports: `CapitalGatewayReadPort`, `EvidenceQueryPort`, `AuthorizationQueryPort`, `GrowthKernelPort`, `CapitalGatewayCommandPort`, and `CapabilityVerifier`.
 
-- [ ] **Step 1: Update** `tests/offensive/v3/contracts/test_ports.py` with fakes for every final method and immutable return type.
-- [ ] **Step 2: Update** `test_import_boundaries.py` to forbid storage/network/pandas/v2 imports from contracts/policy and forbid downstream v3 modules from importing old interface aliases.
-- [ ] **Step 3: Add repository scan test** that permits old names only in Revision 1 fixture/adapter modules and this historical status documentation.
-- [ ] **Step 4: Run complete verification**.
+**Implemented boundary (2026-08-01):** Published six runtime-checkable structural ports with explicit Revision 2 domain annotations. `EvidenceQueryPort.active_revision()` uses the closed four-record `ActiveEvidenceRecord` union, and `CapabilityVerifier` requires the Authority-Store current-head witness plus trusted time. Plan 04 前实行 fail-closed source boundary: production `src` `*.py` and `*.pyi` must have zero static `GrowthKernelPort` references, with only the exact top-level Protocol definition and exact top-level list/tuple `__all__` element in `screening/offensive/v3/contracts/ports.py`, plus the exact top-level `.ports` import and exact top-level list/tuple `__all__` element in `screening/offensive/v3/contracts/__init__.py`. There is no downstream typing or runtime exception: identifiers, imports, attributes, aliases, annotations, runtime checks, quoted exact tokens, exact-string reflective access, `.pyi` uses, and contracts/ports star imports all fail repository acceptance. Plan 04 may introduce concrete consumers only after an independently reviewed replacement boundary lands with its strict/frozen DTO and entry-point tests; Task 5 does not pre-authorize that change. Current top-level exports contain no Revision 1 port/decision aliases. The separate obsolete-interface AST scan covers the whole production `src` tree and excludes only `screening/offensive/v3/contracts/revision1.py` and `screening/offensive/v3/contracts/revision1_primitives.py`; tests are fixtures outside that production scan. Contracts/policy imports remain explicit allowlists, and control-document old-name checks remain lexical rather than semantic proof. These ports have no implementation or side effects: no storage, activation, signing, capital authority, Kernel, Gateway, send or executable path exists, and `policy-v2` remains `off`.
+
+Dynamic or fragmented string construction is outside this static proof. Plan 04 must keep default-deny and use new RED-to-GREEN TDD to allow only an exact consumer module and the exact `GrowthKernelPort[KernelInput, NoTradeDecision]` signature; alias, runtime-check, and star-import exceptions remain forbidden.
+
+- [x] **Step 1: Update** `tests/offensive/v3/contracts/test_ports.py` with fakes for every final method and immutable return type.
+- [x] **Step 2: Update** `test_import_boundaries.py` to forbid storage/network/pandas/v2 imports from contracts/policy and forbid downstream v3 modules from importing old interface aliases.
+- [x] **Step 3: Add repository scan test** that permits old names only in Revision 1 fixture/adapter modules and this historical status documentation.
+- [x] **Step 4: Run complete verification**.
 
 ```bash
 uv run pytest tests/offensive/v3/contracts/ -v
@@ -175,13 +188,13 @@ git diff --check
 
 Expected: all tests pass; policy remains off; no capital/authority file is created.
 
-- [ ] **Step 5: Update `AGENTS.md` current implementation boundary** to “Revision 2 contracts/policy/trust/ports complete; no capital authority”, then commit scoped files.
+- [x] **Step 5: Update `AGENTS.md` current implementation boundary** to “Revision 2 contracts/policy/trust/ports complete; no capital authority”, then prepare the scoped change set for the parent session's approved commit workflow.
 
 ## Completion Gate
 
-- [ ] Every Revision 2 schema and canonical hash has an approved snapshot fixture.
-- [ ] Unknown schema, extra field, float, empty fingerprint, naive time, wrong mode/account/capability/epoch and invalid predecessor fail closed.
-- [ ] `ShadowDecision` cannot parse or sign as `PortfolioDecisionSeal`.
-- [ ] `CapitalAuthorizationEnvelope` is the only final entry authorization type and represents one complete target portfolio policy.
-- [ ] Trust/policy loading performs no activation; no CLI/producer module contains signing material.
-- [ ] Plan 02–07 can compile exclusively against the final ports without importing obsolete aliases.
+- [x] Every Revision 2 schema has strict validation, canonical serialization, hash, and snapshot tests. The checked-in snapshot matrix (`tests/offensive/v3/contracts/test_revision2_snapshot_matrix.py` + `fixtures/revision2/`) covers all 99 public decision/capital/execution/evidence/trust/policy model schema goldens, strict JSON round-trip and canonical hashes, independently recomputed artifact hashes, protected domain preimages, public enum/alias types and port signatures; runtime discovery only alarms on new, removed, or misclassified public contracts.
+- [x] Unknown schema, extra field, float, empty fingerprint, naive time, wrong mode/account/capability/epoch and invalid predecessor fail closed.
+- [x] `ShadowDecision` cannot parse or sign as `PortfolioDecisionSeal`.
+- [x] `CapitalAuthorizationEnvelope` is the only final entry authorization type and represents one complete target portfolio policy.
+- [x] Trust/policy loading performs no activation; no CLI/producer module contains signing material.
+- [x] Plan 02–07 can compile exclusively against the final ports without importing obsolete aliases.

@@ -8,7 +8,15 @@ from typing import Annotated, ClassVar, Self
 
 from pydantic import Field, StringConstraints, model_validator
 
-from ..contracts.base import CanonicalModel, content_hash
+from ..contracts.base import (
+    CanonicalModel,
+    ExecutionMode,
+    Sha256,
+    UtcInstant,
+    content_hash,
+)
+from ..contracts.governance import PolicyActivation
+from ..contracts.trust import VerifiedIssuer
 
 SUPPORTED_POLICY_SCHEMA_MAJOR = 1
 
@@ -25,7 +33,9 @@ IdentifierStr = Annotated[
 ]
 SemVer = Annotated[
     str,
-    StringConstraints(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"),
+    StringConstraints(
+        pattern=r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
+    ),
 ]
 Fraction = Annotated[Decimal, Field(ge=Decimal("0"), le=Decimal("1"))]
 PositiveInt = Annotated[int, Field(ge=1)]
@@ -140,14 +150,19 @@ class ExecutionPolicy(CanonicalModel):
     seal_deadline_after_t0_close_minutes: PositiveInt
     permit_deadline_before_auction_minutes: PositiveInt
     gateway_send_deadline_before_auction_minutes: PositiveInt
-    broker_auction_submission_cutoff_cn: Annotated[str, StringConstraints(pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$")]
+    broker_auction_submission_cutoff_cn: Annotated[
+        str, StringConstraints(pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$")
+    ]
     worst_case_cost_multiplier: Annotated[Decimal, Field(ge=Decimal("1"))]
 
     @model_validator(mode="after")
     def validate_execution_contract(self) -> Self:
         if self.entry_session_ordinal != 1 or self.exit_session_ordinal != 10:
             raise ValueError("economic contract must enter T+1 and exit T+10")
-        if self.permit_deadline_before_auction_minutes <= self.gateway_send_deadline_before_auction_minutes:
+        if (
+            self.permit_deadline_before_auction_minutes
+            <= self.gateway_send_deadline_before_auction_minutes
+        ):
             raise ValueError("permit deadline must precede gateway send deadline")
         return self
 
@@ -243,13 +258,18 @@ class PolicySnapshot(CanonicalModel):
         if drawdown < PolicySnapshot._DRAWDOWN_SCALE_START:
             return Decimal("1")
         if drawdown < PolicySnapshot._DRAWDOWN_HALT:
-            return (PolicySnapshot._DRAWDOWN_HALT - drawdown) / PolicySnapshot._DRAWDOWN_RAMP_WIDTH
+            return (
+                PolicySnapshot._DRAWDOWN_HALT - drawdown
+            ) / PolicySnapshot._DRAWDOWN_RAMP_WIDTH
         return Decimal("0")
 
     @model_validator(mode="after")
     def validate_snapshot(self) -> Self:
         if self.schema_major != SUPPORTED_POLICY_SCHEMA_MAJOR:
-            raise ValueError(f"unsupported policy schema major: {self.schema_major}; " f"expected {SUPPORTED_POLICY_SCHEMA_MAJOR}")
+            raise ValueError(
+                f"unsupported policy schema major: {self.schema_major}; "
+                f"expected {SUPPORTED_POLICY_SCHEMA_MAJOR}"
+            )
         if self.runtime_mode is RuntimeMode.OFF:
             caps = (
                 self.capital.exploration_aggregate_gross_cap,
@@ -260,9 +280,74 @@ class PolicySnapshot(CanonicalModel):
                 self.capital.stage_loss_budget_cap,
             )
             if any(cap != 0 for cap in caps):
-                raise ValueError("off runtime mode requires every executable risk cap to be zero")
+                raise ValueError(
+                    "off runtime mode requires every executable risk cap to be zero"
+                )
             if self.producers.any_enabled():
-                raise ValueError("off runtime mode requires every producer switch to be disabled")
+                raise ValueError(
+                    "off runtime mode requires every producer switch to be disabled"
+                )
+        return self
+
+
+class VerifiedPolicyActivation(CanonicalModel):
+    """Verification-only policy candidate result; never an active-state token."""
+
+    activation: PolicyActivation
+    policy_snapshot: PolicySnapshot
+    verified_issuer: VerifiedIssuer
+    trust_bundle_hash: Sha256
+    registry_epoch: PositiveInt
+    trusted_at: UtcInstant
+
+
+class ActivePolicyActivationWitness(CanonicalModel):
+    """Authority-Store observation of the active predecessor policy.
+
+    This immutable witness is an input to pure verification, not an activation token.
+    """
+
+    active_policy_activation_hash: Sha256
+    portfolio_id: IdentifierStr
+    broker_account_id: IdentifierStr | None
+    broker_account_fingerprint: Sha256 | None
+    mode: ExecutionMode
+    trust_bundle_hash: Sha256
+    registry_epoch: PositiveInt
+    policy_epoch: PositiveInt
+    authority_epoch: PositiveInt
+    risk_epoch: PositiveInt
+    effective_from: UtcInstant
+    store_version: PositiveInt
+    observed_at: UtcInstant
+
+    @model_validator(mode="after")
+    def validate_account_mode(self) -> Self:
+        if self.active_policy_activation_hash == "0" * 64:
+            raise ValueError(
+                "active policy activation hash cannot use the genesis zero sentinel"
+            )
+        if self.effective_from > self.observed_at:
+            raise ValueError("effective_from must be at or before observed_at")
+        if self.mode is ExecutionMode.BROKER_CONFIRMED:
+            if (
+                self.broker_account_id is None
+                or self.broker_account_fingerprint is None
+            ):
+                raise ValueError("broker witness requires account ID and fingerprint")
+        elif self.mode is ExecutionMode.MANUAL_CONFIRMED:
+            if (
+                self.broker_account_id is None
+                or self.broker_account_fingerprint is not None
+            ):
+                raise ValueError(
+                    "manual witness requires account ID without fingerprint"
+                )
+        elif (
+            self.broker_account_id is not None
+            or self.broker_account_fingerprint is not None
+        ):
+            raise ValueError("non-account witness cannot bind broker account fields")
         return self
 
 
@@ -276,12 +361,12 @@ def behavior_fingerprint(
         raise TypeError("producer must be a ProducerIdentity")
     if not isinstance(policy, PolicySnapshot):
         raise TypeError("policy must be a PolicySnapshot")
-    validated_producer = ProducerIdentity.model_validate(producer.model_dump(mode="python", round_trip=True), strict=True)
+    validated_producer = ProducerIdentity.model_validate(
+        producer.model_dump(mode="python", round_trip=True), strict=True
+    )
     validated_policy = _revalidate_policy_snapshot(policy)
     behavior_policy = {
         "policy_epoch": validated_policy.policy_epoch,
-        "authority_epoch": validated_policy.authority_epoch,
-        "risk_epoch": validated_policy.risk_epoch,
         "runtime_mode": validated_policy.runtime_mode,
         "capital": validated_policy.capital,
         "risk": validated_policy.risk,
@@ -295,11 +380,14 @@ def behavior_fingerprint(
 
 
 def _revalidate_policy_snapshot(policy: PolicySnapshot) -> PolicySnapshot:
-    return PolicySnapshot.model_validate(policy.model_dump(mode="python", round_trip=True), strict=True)
+    return PolicySnapshot.model_validate(
+        policy.model_dump(mode="python", round_trip=True), strict=True
+    )
 
 
 __all__ = [
     "AdvPolicy",
+    "ActivePolicyActivationWitness",
     "CapitalPolicy",
     "CapitalTier",
     "EvidenceGatePolicy",
@@ -312,5 +400,6 @@ __all__ = [
     "RuntimeMode",
     "SUPPORTED_POLICY_SCHEMA_MAJOR",
     "VersionBindings",
+    "VerifiedPolicyActivation",
     "behavior_fingerprint",
 ]
