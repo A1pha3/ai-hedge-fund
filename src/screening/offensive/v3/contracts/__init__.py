@@ -146,9 +146,13 @@ from .execution import (
 )
 
 from .ports import (
-    CapitalViewPort,
+    ActiveEvidenceRecord,
+    AuthorizationQueryPort,
+    CapitalGatewayCommandPort,
+    CapitalGatewayReadPort,
     CapabilityVerifier,
     EvidenceQueryPort,
+    GrowthKernelPort,
 )
 from .risk import (
     ReconciliationLatchState,
@@ -176,6 +180,7 @@ EntryCancellationReceipt.model_rebuild(_types_namespace=_capital_snapshot_types)
 __all__ = [
     "AUTHORITY_STATE_TRANSITIONS",
     "ActiveEntryClaimState",
+    "ActiveEvidenceRecord",
     "ArtifactKind",
     "ApprovalAttestationBinding",
     "AuthorizationKind",
@@ -183,12 +188,14 @@ __all__ = [
     "AuthorizationIssuerRevalidation",
     "AuthorizationIssuerVerificationResult",
     "AuthorizationLifecycle",
+    "AuthorizationQueryPort",
     "AuthorizationStatus",
     "CapitalAuthorizationEnvelope",
+    "CapitalGatewayCommandPort",
+    "CapitalGatewayReadPort",
     "CapitalLiveOrderRisk",
     "CapitalPositionRisk",
     "CapitalRiskSnapshot",
-    "CapitalViewPort",
     "CapabilityVerifier",
     "Capability",
     "CurrentTrustHeadWitness",
@@ -235,6 +242,7 @@ __all__ = [
     "GatewayExpectedVersions",
     "GatewayIssuerBinding",
     "GrantKind",
+    "GrowthKernelPort",
     "LineageGrant",
     "MigrationApprovalManifest",
     "MoneyCents",

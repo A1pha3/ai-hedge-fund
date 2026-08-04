@@ -10,7 +10,8 @@
 
 ## Global Constraints
 
-- 当前实现事实：Revision 1 contracts/policy/trust/ports 已合并；本计划只完成 Revision 2 delta，不声称资本、Authorizer、Gateway 或 broker 已实现。
+- 当前实现事实：Plan 01 Revision 2 Tasks 1–5 contracts/policy/trust/final structural ports 已完成；仍无 store、activation、签发、资本 authority、Authorizer、Kernel、Gateway、broker 或可执行路径。
+- Tasks 1–3 中未勾选的步骤保留为当时的历史计划记录，不据此否定已经落库并验证的实现；当前完成度只由 Completion Gate 的可重验验收项陈述。
 - 本计划不写任何 evidence、capital、authority 或 broker 数据库，也不提供 `activate()`、`sign()`、`send()`。
 - Snapshot/Signal/Outcome schema 禁止 `execution_authorized`；shadow 与 executable 必须是不同 discriminant、issuer capability 和 namespace。
 - 所有授权都是 portfolio 完整政策的 `CapitalAuthorizationEnvelope`；不得恢复多个独立 lineage authorization 相加的旧语义。
@@ -170,10 +171,14 @@ Expected: tests pass; scan has no output.
 
 **Interfaces:** Produces Roadmap ports: `CapitalGatewayReadPort`, `EvidenceQueryPort`, `AuthorizationQueryPort`, `GrowthKernelPort`, `CapitalGatewayCommandPort`, and `CapabilityVerifier`.
 
-- [ ] **Step 1: Update** `tests/offensive/v3/contracts/test_ports.py` with fakes for every final method and immutable return type.
-- [ ] **Step 2: Update** `test_import_boundaries.py` to forbid storage/network/pandas/v2 imports from contracts/policy and forbid downstream v3 modules from importing old interface aliases.
-- [ ] **Step 3: Add repository scan test** that permits old names only in Revision 1 fixture/adapter modules and this historical status documentation.
-- [ ] **Step 4: Run complete verification**.
+**Implemented boundary (2026-08-01):** Published six runtime-checkable structural ports with explicit Revision 2 domain annotations. `EvidenceQueryPort.active_revision()` uses the closed four-record `ActiveEvidenceRecord` union, and `CapabilityVerifier` requires the Authority-Store current-head witness plus trusted time. Plan 04 前实行 fail-closed source boundary: production `src` `*.py` and `*.pyi` must have zero static `GrowthKernelPort` references, with only the exact top-level Protocol definition and exact top-level list/tuple `__all__` element in `screening/offensive/v3/contracts/ports.py`, plus the exact top-level `.ports` import and exact top-level list/tuple `__all__` element in `screening/offensive/v3/contracts/__init__.py`. There is no downstream typing or runtime exception: identifiers, imports, attributes, aliases, annotations, runtime checks, quoted exact tokens, exact-string reflective access, `.pyi` uses, and contracts/ports star imports all fail repository acceptance. Plan 04 may introduce concrete consumers only after an independently reviewed replacement boundary lands with its strict/frozen DTO and entry-point tests; Task 5 does not pre-authorize that change. Current top-level exports contain no Revision 1 port/decision aliases. The separate obsolete-interface AST scan covers the whole production `src` tree and excludes only `screening/offensive/v3/contracts/revision1.py` and `screening/offensive/v3/contracts/revision1_primitives.py`; tests are fixtures outside that production scan. Contracts/policy imports remain explicit allowlists, and control-document old-name checks remain lexical rather than semantic proof. These ports have no implementation or side effects: no storage, activation, signing, capital authority, Kernel, Gateway, send or executable path exists, and `policy-v2` remains `off`.
+
+Dynamic or fragmented string construction is outside this static proof. Plan 04 must keep default-deny and use new RED-to-GREEN TDD to allow only an exact consumer module and the exact `GrowthKernelPort[KernelInput, NoTradeDecision]` signature; alias, runtime-check, and star-import exceptions remain forbidden.
+
+- [x] **Step 1: Update** `tests/offensive/v3/contracts/test_ports.py` with fakes for every final method and immutable return type.
+- [x] **Step 2: Update** `test_import_boundaries.py` to forbid storage/network/pandas/v2 imports from contracts/policy and forbid downstream v3 modules from importing old interface aliases.
+- [x] **Step 3: Add repository scan test** that permits old names only in Revision 1 fixture/adapter modules and this historical status documentation.
+- [x] **Step 4: Run complete verification**.
 
 ```bash
 uv run pytest tests/offensive/v3/contracts/ -v
@@ -183,13 +188,13 @@ git diff --check
 
 Expected: all tests pass; policy remains off; no capital/authority file is created.
 
-- [ ] **Step 5: Update `AGENTS.md` current implementation boundary** to “Revision 2 contracts/policy/trust/ports complete; no capital authority”, then commit scoped files.
+- [x] **Step 5: Update `AGENTS.md` current implementation boundary** to “Revision 2 contracts/policy/trust/ports complete; no capital authority”, then prepare the scoped change set for the parent session's approved commit workflow.
 
 ## Completion Gate
 
-- [ ] Every Revision 2 schema and canonical hash has an approved snapshot fixture.
-- [ ] Unknown schema, extra field, float, empty fingerprint, naive time, wrong mode/account/capability/epoch and invalid predecessor fail closed.
-- [ ] `ShadowDecision` cannot parse or sign as `PortfolioDecisionSeal`.
-- [ ] `CapitalAuthorizationEnvelope` is the only final entry authorization type and represents one complete target portfolio policy.
-- [ ] Trust/policy loading performs no activation; no CLI/producer module contains signing material.
-- [ ] Plan 02–07 can compile exclusively against the final ports without importing obsolete aliases.
+- [ ] Every Revision 2 schema has strict validation, canonical serialization, hash, and snapshot tests. Current checked-in snapshots cover governance schemas/hashes and decimal samples only; the full checked-in snapshot matrix for decision/capital/execution/evidence/trust/policy/ports remains follow-up remediation.
+- [x] Unknown schema, extra field, float, empty fingerprint, naive time, wrong mode/account/capability/epoch and invalid predecessor fail closed.
+- [x] `ShadowDecision` cannot parse or sign as `PortfolioDecisionSeal`.
+- [x] `CapitalAuthorizationEnvelope` is the only final entry authorization type and represents one complete target portfolio policy.
+- [x] Trust/policy loading performs no activation; no CLI/producer module contains signing material.
+- [x] Plan 02–07 can compile exclusively against the final ports without importing obsolete aliases.

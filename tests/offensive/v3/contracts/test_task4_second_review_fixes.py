@@ -87,7 +87,7 @@ def test_revision1_authorization_and_ports_do_not_alias_revision2() -> None:
     assert not hasattr(revision1, "CapitalAuthorizationEnvelope")
     assert revision1.CapitalAuthorization is not current.CapitalAuthorizationEnvelope
     assert revision1.CapabilityVerifier is not current_ports.CapabilityVerifier
-    assert revision1.CapitalViewPort is not current_ports.CapitalViewPort
+    assert not hasattr(current_ports, "CapitalViewPort")
 
 
 @pytest.mark.parametrize(

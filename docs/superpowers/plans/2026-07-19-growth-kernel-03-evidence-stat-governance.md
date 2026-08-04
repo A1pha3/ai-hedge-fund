@@ -42,20 +42,28 @@
 
 ### Task 1: Content-addressed revisioned PIT Evidence Store
 
-**Interfaces:** Produces `BlobStore.put/get`, issuer-scoped `EvidenceRepository.publish/get/prepare_revision/activate_revision`, store commit sequence and dependency Merkle roots.
+**Interfaces:** Produces `BlobStore.put/get`, issuer-scoped `EvidenceRepository.publish/get/prepare_revision/activate_revision`, an `EvidenceRepository` implementation of final `EvidenceQueryPort.active_revision()/outcome()`, store commit sequence and dependency Merkle roots.
 
 - [ ] **Step 1: Write failing tests** in `test_blob_store.py` and `test_repository.py` for payload round-trip/hash mismatch, secure file reads, duplicate/same-ID conflict, effective/published/observed/ingested/available ordering, trusted-clock stamp ownership, commit sequence monotonicity, revision/supersedes chain, legal empty overriding stale and issuer namespace.
 - [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_{blob_store,repository}.py -v`.
 - [ ] **Step 3: Implement durable blob-before-envelope publication**. Orphan blob is safe; envelope without durable payload is impossible. Producer payload cannot set store-controlled timestamps/sequence/active revision.
 
 ```python
-def publish(self, signed: SignedEnvelope, payload: bytes) -> EvidenceRecord:
-    verified = self.verifier.verify(signed, required_capability(signed.kind), self.clock.now())
+def publish(self, signed: SignedEnvelope, payload: bytes) -> ActiveEvidenceRecord:
+    trusted_at = self.clock.now()
+    verified = self.verifier.verify(
+        signed,
+        required_capability(signed.artifact),
+        current_head=self.authority.current_trust_head(trusted_at),
+        trusted_at=trusted_at,
+    )
     self._require_payload_hash(signed, payload)
     blob = self.blobs.put_durable(payload)
     with self.db.begin_immediate() as tx:
         return tx.insert_with_store_time_and_sequence(signed, blob, verified)
 ```
+
+`publish()`/`get()` must decode all four concrete record variants through `TypeAdapter(ActiveEvidenceRecord).validate_json(..., strict=True)`. The storage round-trip must preserve the concrete type, full value, and `artifact_hash()` exactly; a bare generic record or construction path that bypasses validation is forbidden.
 
 - [ ] **Step 4: Verify GREEN** after restart and concurrent publisher tests.
 - [ ] **Step 5: Commit** with `git commit -m "feat(v3): persist trusted revisioned evidence"`.

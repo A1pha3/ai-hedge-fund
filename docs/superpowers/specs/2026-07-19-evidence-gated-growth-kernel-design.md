@@ -1,11 +1,11 @@
 # Evidence-Gated Growth Kernel：`--auto` / `--daily-action` 长期架构设计
 
-> - 状态：**Revision 2 已批准；部分实现（Plan 01 Revision 2 Tasks 1–4 candidate contracts/pure verification），无资本权限**
+> - 状态：**Revision 2 已批准；部分实现（Plan 01 Revision 2 Tasks 1–5 contracts/policy/trust/final structural ports），无资本权限**
 > - 初次批准日期：2026-07-19
 > - Revision 2 批准日期：2026-07-26
 > - 适用范围：A 股次日开盘入场、固定 T+10 开盘退出的研究、模拟与未来实盘链路
 > - 权威性：本文件是该架构的唯一完整规范；与旧设计冲突时，本文件优先
-> - 当前实现边界：Plan 01 Revision 2 Tasks 1–4 的 strict/frozen 候选契约、默认 `off` 的 policy-v2、schema-2 PIT/store-record 边界及 root/current-head/policy predecessor 纯验证已实现；没有 active store/CAS、资本权限、Task 5 final ports、Authorizer、kernel、gateway、迁移 writer 或 broker 路径
+> - 当前实现边界：Plan 01 Revision 2 Tasks 1–5 的 strict/frozen 候选契约、默认 `off` 的 policy-v2、schema-2 PIT/store-record 边界、root/current-head/policy predecessor 纯验证及 final structural ports 已实现；没有 active store/CAS、资本权限、Authorizer、kernel、gateway、签名服务、迁移 writer、broker 或任何可执行路径
 > - 实现状态的事实来源：代码、版本化策略快照、迁移记录和可重验台账，而不是本文的目标态描述
 
 ## 1. 阅读目标
@@ -279,6 +279,12 @@ Plan 01 的 `load_policy_snapshot()` 只安全读取候选，`verify_policy_acti
 TrustBundle 自身必须由仓库和服务配置之外的治理根签名，带单调 `registry_epoch`、前驱 hash、`issued_at`、`expires_at` 和 root key ID；Capital Gateway 持久化 last-seen epoch，拒绝回滚。envelope 中的 `trust_bundle_hash/registry_epoch` 是签发时 provenance 与最低可信 epoch，不把授权永久钉死在旧 registry；seal/send claim 必须使用 `current_registry_epoch >= issuance_registry_epoch` 的当前 active TrustBundle 重新验证 issuer/key/capability 未撤销，并记录当次 registry hash。生产验证时间来自 gateway-owned trusted clock；调用方传入的时间只允许用于 research replay。新仓验证还要求 registry freshness 合格。
 
 截至 Plan 01 Task 4 的无存储契约实现，`TrustedRegistry.load()` 仅是严格的 compatibility candidate parser；它的返回值不能直接构造可执行 capability verifier。`TrustBundleVerifier` 只公开从 genesis 重验完整 `SignedTrustBundle` chain 的 API，不公开接受可构造 `VerifiedTrustBundle` 前驱的单步入口；每个 bundle 的 root anchor 必须同时在该 bundle `issued_at` 有效，head root/bundle 还必须在事件 `trusted_at` 有效。`CapabilityVerifier` 每次验证还必须显式消费未来 Authority Store 提供的 `CurrentTrustHeadWitness`，并要求 active bundle hash/registry epoch 与 signed-chain head 精确一致；witness 只陈述 store observation，不是独立授权。旧未过期 chain、缺失签名前驱的 orphan 和同 epoch fork 都不能绕过 current head。返回的 `VerifiedIssuer` 从 root/registry truth 重验 exact key ID、issuer role、public-key 与 domain-separated identity fingerprint，并把 root/bundle/key/capability 到期或预定撤销时间的最小值冻结为 `valid_until`。所有 current artifact 使用 schema major 2；`EDGE` 只归 Authorizer，`EXPLORATION`/`RECOVERY`/PolicyActivation 只归 Governance，`CAPITAL_GATEWAY` 是 final seal/permit/receipt 的唯一 issuer；legacy `DecisionSeal` 只留 Revision 1 compatibility，final Growth Kernel verifier 不接受。该 verifier 仍是纯验证组件，不持久化或激活 bundle。
+
+截至 Plan 01 Task 5，Revision 2 contracts/policy/trust/ports implementation is present; no capital authority。current top-level 发布六个 structural ports，其中 active evidence query 使用严格闭合的四 record union，outcome 保留 revision/commit-time，verifier 显式依赖 current-head witness 与 trusted time。Plan 04 前，production `src` 的 `*.py`/`*.pyi` 必须保持 zero static `GrowthKernelPort` references；仅允许 `contracts/ports.py` 的 top-level Protocol 定义/精确 list-or-tuple `__all__`，以及 `contracts/__init__.py` 的 top-level 精确 import/`__all__`。There is no downstream typing or runtime exception：任何 import、attribute、alias、annotation、runtime check、quoted/reflection token、stub 或 contracts star import 都阻断 acceptance。Plan 04 必须随 concrete strict/frozen DTO、真实入口重验和独立审阅后的替代 gate 一起改变该边界，不能让 generic port 提前跨文件扩散。旧 Revision 1 interface scan 仍覆盖 whole production `src`、只排除两个冻结 compatibility 模块；tests 不属于生产 acceptance，控制文档 old-name guard 只作 lexical invariant。ports 本身没有方法实现、store、clock、activation、signing、CAS、reserve 或 send 能力，不构成 Capital Gateway/Kernel，也不能授予执行权限。
+
+Dynamic or fragmented string construction is outside this static proof. Plan 04 must keep default-deny and use new RED-to-GREEN TDD to allow only an exact consumer module and the exact `GrowthKernelPort[KernelInput, NoTradeDecision]` signature; alias, runtime-check, and star-import exceptions remain forbidden.
+
+Tasks 1–5 implementation is present, but the Plan 01 completion gate is not closed: checked-in fixtures do not yet form the full checked-in snapshot matrix for decision/capital/execution/evidence/trust/policy/ports. Current snapshots cover governance schemas/hashes and decimal samples only; completing that matrix remains explicit remediation and cannot be inferred from passing behavioral tests.
 
 Authorization 绑定完整 evidence-set Merkle root 和依赖 revisions。任一成员发生 fee/company-action/fill bust、correction 或 revision，必须先按 §3.1 安装 `EntryFenceRaised`，再激活 correction；不能用跨 SQLite “同一事务”掩盖传播窗口。每个 entry permit 和 send claim 绑定 `capital_authorization_id + authorization_version + evidence_set_merkle_root + registry_epoch + active_policy_hash`。原 issuer 只能按原冻结 TrialManifest/SAP 或 governance manifest 重算并签 correction/replacement；不得改写当时决策，也不得更换门槛。旧授权永久保留作审计，但不能继续生成或提交 entry。
 

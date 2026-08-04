@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import inspect
 from typing import Any, get_args, get_origin, get_type_hints
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 
 UTC = timezone.utc
@@ -562,3 +562,421 @@ def test_stable_port_annotations_are_exact_and_contain_no_mutable_or_any_boundar
                 assert node not in forbidden_types
                 assert origin not in forbidden_types
                 assert getattr(node, "__name__", "") not in forbidden_names
+
+
+def test_revision2_final_ports_are_the_only_current_public_port_surface() -> None:
+    from src.screening.offensive.v3 import contracts
+
+    final_ports = {
+        "AuthorizationQueryPort",
+        "CapitalGatewayCommandPort",
+        "CapitalGatewayReadPort",
+        "CapabilityVerifier",
+        "EvidenceQueryPort",
+        "GrowthKernelPort",
+    }
+
+    assert final_ports <= set(contracts.__all__)
+    assert all(hasattr(contracts, name) for name in final_ports)
+    assert "CapitalViewPort" not in contracts.__all__
+    assert not hasattr(contracts, "CapitalViewPort")
+
+
+def test_revision2_final_ports_are_runtime_structural_with_frozen_domain_returns() -> (
+    None
+):
+    from src.screening.offensive.v3 import contracts as api
+
+    risk = api.CapitalRiskSnapshot.model_construct()
+    active_records = _active_evidence_records(api)
+    active = active_records[0]
+    outcome = next(
+        record
+        for record in active_records
+        if isinstance(record.evidence, api.OutcomeEvidence)
+    )
+    envelope = api.CapitalAuthorizationEnvelope.model_construct()
+    status = api.AuthorizationStatus.model_construct()
+    proposal = api.PortfolioDecision.model_construct()
+    seal = api.PortfolioDecisionSeal.model_construct()
+    shadow = api.ShadowDecision.model_construct()
+    expected = api.GatewayExpectedVersions.model_construct()
+    signed = api.SignedEnvelope.model_construct()
+    required = api.Capability.model_construct()
+    current_head = api.CurrentTrustHeadWitness.model_construct()
+    verified = api.VerifiedIssuer.model_construct()
+
+    class KernelInput(api.CanonicalModel):
+        input_id: str
+
+    class NoTradeDecision(api.CanonicalModel):
+        reason: str
+
+    frozen_input = KernelInput(input_id="input-1")
+    no_trade = NoTradeDecision(reason="no eligible entry")
+    expected_proposal = proposal
+    expected_versions = expected
+    expected_signed = signed
+    expected_capability = required
+    expected_current_head = current_head
+
+    class CapitalRead:
+        def risk_snapshot(
+            self, portfolio_id: str, as_of: datetime
+        ) -> api.CapitalRiskSnapshot:
+            assert portfolio_id == "portfolio-1"
+            assert as_of == NOW
+            return risk
+
+    class EvidenceQuery:
+        def active_revision(
+            self, evidence_id: str, cutoff: datetime
+        ) -> api.ActiveEvidenceRecord:
+            assert evidence_id == "evidence-1"
+            assert cutoff == NOW
+            return active
+
+        def outcome(
+            self, outcome_id: str, revision: int
+        ) -> api.EvidenceRecord[api.OutcomeEvidence]:
+            assert outcome_id == "outcome-1"
+            assert revision == 2
+            return outcome
+
+    class AuthorizationQuery:
+        def active_envelope(
+            self, portfolio_id: str
+        ) -> api.CapitalAuthorizationEnvelope:
+            assert portfolio_id == "portfolio-1"
+            return envelope
+
+        def status(self, authorization_id: str) -> api.AuthorizationStatus:
+            assert authorization_id == "authorization-1"
+            return status
+
+    class Kernel:
+        def decide(
+            self, frozen: KernelInput
+        ) -> NoTradeDecision | api.ShadowDecision | api.PortfolioDecision:
+            assert frozen is frozen_input
+            return no_trade
+
+    class Gateway:
+        def publish_entry(
+            self,
+            proposal: api.PortfolioDecision,
+            expected: api.GatewayExpectedVersions,
+        ) -> api.PortfolioDecisionSeal:
+            assert proposal is expected_proposal
+            assert expected is expected_versions
+            return seal
+
+    class Verifier:
+        def verify(
+            self,
+            signed: api.SignedEnvelope,
+            required: api.Capability,
+            *,
+            current_head: api.CurrentTrustHeadWitness,
+            trusted_at: datetime,
+        ) -> api.VerifiedIssuer:
+            assert signed is expected_signed
+            assert required is expected_capability
+            assert current_head is expected_current_head
+            assert trusted_at == NOW
+            return verified
+
+    assert isinstance(CapitalRead(), api.CapitalGatewayReadPort)
+    for record in active_records:
+        active = record
+        assert isinstance(EvidenceQuery(), api.EvidenceQueryPort)
+        assert EvidenceQuery().active_revision("evidence-1", NOW) is record
+    assert isinstance(AuthorizationQuery(), api.AuthorizationQueryPort)
+    assert isinstance(Kernel(), api.GrowthKernelPort)
+    assert isinstance(Gateway(), api.CapitalGatewayCommandPort)
+    assert isinstance(Verifier(), api.CapabilityVerifier)
+    assert CapitalRead().risk_snapshot("portfolio-1", NOW) is risk
+    assert EvidenceQuery().outcome("outcome-1", 2) is outcome
+    assert AuthorizationQuery().active_envelope("portfolio-1") is envelope
+    assert AuthorizationQuery().status("authorization-1") is status
+    assert Kernel().decide(frozen_input) is no_trade
+    assert Gateway().publish_entry(proposal, expected) is seal
+    assert (
+        Verifier().verify(
+            signed,
+            required,
+            current_head=current_head,
+            trusted_at=NOW,
+        )
+        is verified
+    )
+
+    for returned in (
+        risk,
+        active,
+        outcome,
+        envelope,
+        status,
+        no_trade,
+        shadow,
+        proposal,
+        seal,
+        verified,
+    ):
+        assert returned.model_config["frozen"] is True
+        with pytest.raises(ValidationError, match="frozen_instance"):
+            returned.illegal_mutation = True
+
+
+def test_revision2_final_port_signatures_are_exact_and_generic_kernel_is_deferred() -> (
+    None
+):
+    from src.screening.offensive.v3 import contracts as api
+
+    expected = {
+        api.CapitalGatewayReadPort.risk_snapshot: {
+            "portfolio_id": str,
+            "as_of": datetime,
+            "return": api.CapitalRiskSnapshot,
+        },
+        api.EvidenceQueryPort.active_revision: {
+            "evidence_id": str,
+            "cutoff": datetime,
+            "return": api.ActiveEvidenceRecord,
+        },
+        api.EvidenceQueryPort.outcome: {
+            "outcome_id": str,
+            "revision": int,
+            "return": api.EvidenceRecord[api.OutcomeEvidence],
+        },
+        api.AuthorizationQueryPort.active_envelope: {
+            "portfolio_id": str,
+            "return": api.CapitalAuthorizationEnvelope,
+        },
+        api.AuthorizationQueryPort.status: {
+            "authorization_id": str,
+            "return": api.AuthorizationStatus,
+        },
+        api.CapitalGatewayCommandPort.publish_entry: {
+            "proposal": api.PortfolioDecision,
+            "expected": api.GatewayExpectedVersions,
+            "return": api.PortfolioDecisionSeal,
+        },
+        api.CapabilityVerifier.verify: {
+            "signed": api.SignedEnvelope,
+            "required": api.Capability,
+            "current_head": api.CurrentTrustHeadWitness,
+            "trusted_at": datetime,
+            "return": api.VerifiedIssuer,
+        },
+    }
+    for method, exact_hints in expected.items():
+        assert get_type_hints(method) == exact_hints
+
+    verifier_signature = inspect.signature(api.CapabilityVerifier.verify)
+    assert list(verifier_signature.parameters) == [
+        "self",
+        "signed",
+        "required",
+        "current_head",
+        "trusted_at",
+    ]
+    for name in ("current_head", "trusted_at"):
+        assert (
+            verifier_signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+        )
+        assert verifier_signature.parameters[name].default is inspect.Parameter.empty
+
+    kernel_parameters = api.GrowthKernelPort.__parameters__
+    assert len(kernel_parameters) == 2
+    frozen_input_type, no_trade_type = kernel_parameters
+    assert frozen_input_type.__bound__ is api.CanonicalModel
+    assert frozen_input_type.__contravariant__ is True
+    assert no_trade_type.__bound__ is api.CanonicalModel
+    assert no_trade_type.__covariant__ is True
+    kernel_hints = get_type_hints(api.GrowthKernelPort.decide)
+    assert kernel_hints["frozen"] is frozen_input_type
+    assert set(get_args(kernel_hints["return"])) == {
+        no_trade_type,
+        api.ShadowDecision,
+        api.PortfolioDecision,
+    }
+
+    rendered = " ".join(
+        str(annotation)
+        for method in (*expected, api.GrowthKernelPort.decide)
+        for annotation in get_type_hints(method).values()
+    )
+    for forbidden in (
+        "typing.Any",
+        "dict",
+        "list",
+        "set",
+        "Mapping",
+        "DataFrame",
+        "Connection",
+        "Session",
+        "Cursor",
+    ):
+        assert forbidden not in rendered
+
+
+def _active_evidence_records(api):
+    common = {
+        "subject_scope": api.EvidenceScope.STRATEGY_LINEAGE,
+        "subject_producer": "btst",
+        "family_id": "btst.limit-up-breakout",
+        "strategy_semver": "3.0.0",
+        "behavior_fingerprint": HASH,
+        "policy_epoch": 7,
+        "execution_version": "t1-open-t10-open.v1",
+        "cost_version": "cn-a-share-costs.v1",
+        "effective_at": NOW,
+        "provider_published_at": NOW,
+        "observed_at": NOW,
+        "available_at": NOW + timedelta(minutes=2),
+        "mode": api.ExecutionMode.DAILY_BAR_PROXY,
+        "source_authority": "trusted-publisher",
+        "payload_content_hash": HASH,
+        "schema_major": 2,
+    }
+    evidence = (
+        api.SnapshotEvidence(
+            **(
+                common
+                | {
+                    "evidence_id": "snapshot-1",
+                    "subject_scope": api.EvidenceScope.GLOBAL,
+                    "subject_producer": "market-publisher",
+                    "family_id": None,
+                    "evidence_kind": "snapshot",
+                }
+            )
+        ),
+        api.SignalEvidence(
+            **(
+                common
+                | {
+                    "evidence_id": "signal-1",
+                    "evidence_kind": "signal",
+                    "stage": api.SignalStage.SELECTED,
+                }
+            )
+        ),
+        api.OutcomeEvidence(
+            **(
+                common
+                | {
+                    "evidence_id": "outcome-1",
+                    "evidence_kind": "outcome",
+                }
+            )
+        ),
+        api.PlanEvidence(
+            **(
+                common
+                | {
+                    "evidence_id": "plan-1",
+                    "evidence_kind": "plan",
+                    "portfolio_id": "portfolio-1",
+                    "signal_session": date(2026, 7, 19),
+                    "economic_lineage_id": "btst-economic-lineage",
+                    "snapshot_id": "snapshot-1",
+                    "raw_target_fraction": Decimal("0.02"),
+                    "created_at": NOW,
+                }
+            )
+        ),
+    )
+    return tuple(
+        api.EvidenceRecord[type(item)](
+            evidence=item,
+            ingested_at=NOW + timedelta(minutes=1),
+            commit_sequence=index,
+            revision=1,
+            supersedes_revision=None,
+            active_revision=1,
+        )
+        for index, item in enumerate(evidence, start=1)
+    )
+
+
+def test_active_evidence_record_is_closed_over_all_strict_payloads() -> None:
+    from src.screening.offensive.v3 import contracts as api
+
+    records = _active_evidence_records(api)
+    assert tuple(type(record.evidence) for record in records) == (
+        api.SnapshotEvidence,
+        api.SignalEvidence,
+        api.OutcomeEvidence,
+        api.PlanEvidence,
+    )
+    assert set(get_args(api.ActiveEvidenceRecord)) == {
+        api.EvidenceRecord[api.SnapshotEvidence],
+        api.EvidenceRecord[api.SignalEvidence],
+        api.EvidenceRecord[api.OutcomeEvidence],
+        api.EvidenceRecord[api.PlanEvidence],
+    }
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        api.EvidenceRecord[api.EvidenceEnvelope](
+            evidence=records[0].evidence,
+            ingested_at=NOW + timedelta(minutes=1),
+            commit_sequence=1,
+            revision=1,
+            supersedes_revision=None,
+            active_revision=1,
+        )
+
+
+def test_active_evidence_record_strict_roundtrip_preserves_concrete_truth() -> None:
+    from src.screening.offensive.v3 import contracts as api
+
+    adapter = TypeAdapter(api.ActiveEvidenceRecord)
+    for record in _active_evidence_records(api):
+        restored = adapter.validate_json(record.model_dump_json(), strict=True)
+
+        assert type(restored) is type(record)
+        assert type(restored.evidence) is type(record.evidence)
+        assert restored == record
+        assert restored.artifact_hash() == record.artifact_hash()
+
+
+def test_concrete_capability_verifier_satisfies_the_final_port() -> None:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from src.screening.offensive.v3 import contracts
+    from src.screening.offensive.v3 import trust
+    from tests.offensive.v3.contracts.test_trust_registry import (
+        _capability,
+        _current_head,
+        _issuer,
+        _root_verified_bundle,
+        _signed,
+    )
+
+    private_key = Ed25519PrivateKey.generate()
+    required = _capability(trust)
+    issuer = _issuer(trust, private_key, required)
+    root_verifier, signed_chain = _root_verified_bundle(
+        trust,
+        trust.TrustedRegistry(issuers=(issuer,)),
+        return_context=True,
+    )
+    verifier = trust.CapabilityVerifier(root_verifier, signed_chain)
+    signed = _signed(trust, private_key, required)
+    current_head = _current_head(trust, verifier)
+
+    assert isinstance(verifier, contracts.CapabilityVerifier)
+    concrete_signature = inspect.signature(type(verifier).verify)
+    for name in ("current_head", "trusted_at"):
+        assert name in concrete_signature.parameters
+        assert (
+            concrete_signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+        )
+    verified = verifier.verify(
+        signed,
+        required,
+        current_head=current_head,
+        trusted_at=NOW,
+    )
+    assert isinstance(verified, contracts.VerifiedIssuer)
