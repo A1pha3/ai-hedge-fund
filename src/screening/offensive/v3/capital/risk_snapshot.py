@@ -64,6 +64,7 @@ Extension points for later plans:
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import date
 from typing import TYPE_CHECKING, Annotated, Final
 
@@ -820,6 +821,23 @@ def recompute_global_stage_loss_floor(
             )
         ).one().total
     )
+    # Fee bust/correction revisions book signed deltas against the charged
+    # streams; the floor consumes the net charged fee, refunds included
+    # (consumption itself stays monotone below).
+    fee_revision_rows = conn.execute(
+        sa.text(
+            "SELECT e.payload_json AS payload_json"
+            " FROM execution_revisions er"
+            " JOIN economic_events e"
+            " ON e.payload_content_hash = er.payload_content_hash"
+            " WHERE er.revision_kind IN ('FEE_BUST', 'FEE_CORRECTION')"
+        )
+    ).all()
+    for row in fee_revision_rows:
+        fact = json.loads(row.payload_json).get("execution_revision") or {}
+        fees_total += int(fact.get("fee_commission_delta_cents") or 0)
+        fees_total += int(fact.get("fee_stamp_tax_delta_cents") or 0)
+        fees_total += int(fact.get("fee_transfer_fee_delta_cents") or 0)
     open_rows = context.open_position_rows()
     latest = context.latest_valuation_event()
     marks = latest[1] if latest is not None else {}

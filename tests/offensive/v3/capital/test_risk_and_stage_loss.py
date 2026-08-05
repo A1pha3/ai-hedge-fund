@@ -1198,6 +1198,9 @@ class StageLossModel:
     fee_paid_cents: int = 0
     basis_cents: int = 0
     quantity: int = 0
+    # The kernel marks each position row separately; the model mirrors that
+    # per-fill rounding instead of marking the aggregate quantity.
+    fill_quantities: list = field(default_factory=list)
     # The newest valuation's mark for SECURITY; None when the newest
     # valuation did not mark it (no valuation yet, or a liquid valuation).
     marked_price_micros: int | None = None
@@ -1216,8 +1219,11 @@ class StageLossModel:
     def marked_gross_cents(self) -> int:
         if self.marked_price_micros is None or self.quantity == 0:
             return 0
-        return round_half_even_div(
-            self.quantity * self.marked_price_micros, MICROS_PER_CENT
+        return sum(
+            round_half_even_div(
+                fill_quantity * self.marked_price_micros, MICROS_PER_CENT
+            )
+            for fill_quantity in self.fill_quantities
         )
 
     def nav_cents(self, cash_cents: int) -> int:
@@ -1297,6 +1303,7 @@ def risk_operation_sequences(draw):
                 continue
             cash_cents -= gross
             model.quantity += quantity
+            model.fill_quantities.append(quantity)
             model.basis_cents += gross
             # A fill re-runs the same-transaction stage-loss recompute with
             # worst-case marks; then the global floor may only grow.

@@ -34,6 +34,7 @@ log-growth sentinels, and append-only restatement links).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from math import gcd
 from typing import TYPE_CHECKING
@@ -102,6 +103,149 @@ def _fail(message: str, **details: object) -> None:
     raise _violation(message, **details)
 
 
+def _parse_execution_revision_fact(
+    payload_json: str,
+) -> dict[str, object] | None:
+    """The execution revision fact of one event payload, when present.
+
+    Returns None for payloads without an execution revision (e.g. the
+    receivable-only corporate corrections). The kernel verified the fact's
+    exact frozen shape at append time; the replay reads the canonical dict
+    fields directly.
+    """
+
+    payload = json.loads(payload_json)
+    fact = payload.get("execution_revision")
+    if not isinstance(fact, dict):
+        return None
+    return fact
+
+
+def _recompute_consumed_basis(
+    connection: "sqlalchemy.engine.Connection",
+    lot_key: tuple[str, str],
+) -> int:
+    """Consumed basis of one lot replayed from its final active facts.
+
+    Re-projection is retroactive: the lot's true history is the latest
+    committed revision of every execution that touched it (busts leave no
+    fact). Replaying that final set in original stream order is
+    order-independent, unlike incremental consumption attribution across
+    interleaved busts and corrections. Impossible states stay signed: an
+    exit beyond the replayed entries exports preserved negative shares,
+    and consumption is capped at the lot's available basis.
+    """
+
+    revision_rows = connection.execute(
+        sa.text(
+            "SELECT er.execution_id AS execution_id,"
+            " er.revision AS revision,"
+            " er.revision_kind AS revision_kind,"
+            " e.payload_json AS payload_json,"
+            " e.stream_version AS stream_version,"
+            " e.economic_event_id AS economic_event_id"
+            " FROM execution_revisions er"
+            " JOIN economic_events e"
+            " ON e.payload_content_hash = er.payload_content_hash"
+            " WHERE e.position_lineage_id = :lineage"
+            " AND e.economic_lot_id = :lot"
+            " ORDER BY er.execution_id, er.revision"
+        ),
+        {"lineage": lot_key[0], "lot": lot_key[1]},
+    ).all()
+
+    # Latest committed revision per execution wins (rows arrive sorted by
+    # revision); first-seen stream versions fix the replay order.
+    final_by_execution: dict[str, object] = {}
+    first_seen: dict[str, int] = {}
+    for row in revision_rows:
+        execution_id = row.execution_id
+        stream_version = int(row.stream_version)
+        if execution_id not in first_seen:
+            first_seen[execution_id] = stream_version
+        final_by_execution[execution_id] = row
+
+    # Revision-1 fills carry no execution-revision fact: their quantity,
+    # gross and side come from their own legs.
+    legs_by_event: dict[str, list[tuple[str, str, int, int]]] = {}
+    leg_rows = connection.execute(
+        sa.text(
+            "SELECT e.economic_event_id AS economic_event_id,"
+            " l.asset_kind AS asset_kind,"
+            " l.direction AS direction,"
+            " l.cash_amount_cents AS cash_amount_cents,"
+            " l.quantity_units AS quantity_units"
+            " FROM economic_events e"
+            " JOIN economic_event_legs l"
+            " ON l.economic_event_id = e.economic_event_id"
+            " WHERE e.position_lineage_id = :lineage"
+            " AND e.economic_lot_id = :lot"
+        ),
+        {"lineage": lot_key[0], "lot": lot_key[1]},
+    ).all()
+    for leg in leg_rows:
+        legs_by_event.setdefault(str(leg.economic_event_id), []).append(
+            (
+                leg.asset_kind,
+                leg.direction,
+                int(leg.cash_amount_cents or 0),
+                int(leg.quantity_units or 0),
+            )
+        )
+
+    active_by_execution: dict[str, tuple[str, int, int] | None] = {}
+    for execution_id, row in final_by_execution.items():
+        if row.revision_kind == "FILL_BUST":
+            active_by_execution[execution_id] = None
+        elif row.revision_kind == "FILL_CORRECTION":
+            fact = _parse_execution_revision_fact(str(row.payload_json))
+            assert fact is not None
+            active_by_execution[execution_id] = (
+                str(fact["side"]),
+                int(fact["corrected_quantity"] or 0),
+                int(fact["corrected_gross_cents"] or 0),
+            )
+        else:  # FILL
+            quantity = 0
+            gross = 0
+            side = "ENTRY"
+            for asset_kind, direction, cash, qty in legs_by_event.get(
+                str(row.economic_event_id), []
+            ):
+                if asset_kind == "SECURITY":
+                    quantity = qty
+                    side = "ENTRY" if direction == "CREDIT" else "EXIT"
+                elif asset_kind == "CASH":
+                    gross = cash
+            active_by_execution[execution_id] = (side, quantity, gross)
+
+    quantity = 0
+    basis = 0
+    consumed_total = 0
+    for execution_id in sorted(first_seen, key=lambda k: first_seen[k]):
+        active = active_by_execution.get(execution_id)
+        if active is None:
+            continue
+        side, fill_quantity, gross = active
+        if side == "ENTRY":
+            quantity += fill_quantity
+            basis += gross
+        else:
+            if fill_quantity == quantity:
+                consumed = basis
+            elif quantity > 0:
+                consumed = round_half_even_div(
+                    basis * fill_quantity, quantity
+                )
+            else:
+                consumed = 0
+            consumed = max(0, min(consumed, max(basis, 0)))
+            consumed_total += consumed
+            quantity -= fill_quantity
+            basis -= consumed
+    return consumed_total
+
+
 def _empty_report() -> ConservationReport:
     return ConservationReport(
         event_count=0,
@@ -142,6 +286,7 @@ def _replay_economic_events(
             " e.position_lineage_id AS position_lineage_id,"
             " e.economic_lot_id AS economic_lot_id,"
             " e.payload_content_hash AS payload_content_hash,"
+            " e.payload_json AS payload_json,"
             " l.asset_kind AS asset_kind,"
             " l.direction AS direction,"
             " l.cash_amount_cents AS cash_amount_cents,"
@@ -169,6 +314,12 @@ def _replay_economic_events(
     quantity_by_lot: dict[tuple[str, str], int] = {}
     basis_by_lot: dict[tuple[str, str], int] = {}
     consumed_basis_total = 0
+    # Plan 02 Task 6: per-lot consumed basis. Lots touched by execution
+    # revisions are recomputed from their final active fact set below
+    # (retroactive re-projection makes incremental attribution
+    # order-dependent).
+    consumed_basis_by_lot: dict[tuple[str, str], int] = {}
+    lots_with_revisions: set[tuple[str, str]] = set()
     receivable_by_id: dict[str, int] = {}
     share_receivable_by_id: dict[str, int] = {}
     share_receivable_by_lot: dict[tuple[str, str], int] = {}
@@ -278,6 +429,7 @@ def _replay_economic_events(
                     "lineage": row.position_lineage_id,
                     "lot": row.economic_lot_id,
                     "hash": row.payload_content_hash,
+                    "payload_json": row.payload_json,
                     "legs": [],
                 }
             )
@@ -302,6 +454,111 @@ def _replay_economic_events(
                 )
 
         if event_kind is EconomicEventKind.LATE_CORRECTION:
+            revision_fact = _parse_execution_revision_fact(
+                event["payload_json"]  # type: ignore[arg-type]
+            )
+            if revision_fact is not None:
+                # Plan 02 Task 6: one execution bust/correction fact is
+                # replayed from its frozen revision fields — the exact
+                # signed reversal of the superseded contribution, then the
+                # corrected contribution. Negative replayed quantities and
+                # basis are preserved exactly (never clamped), mirroring
+                # the kernel projection.
+                for row in event_legs:
+                    if (
+                        EconomicAssetKind(row.asset_kind)
+                        is EconomicAssetKind.CASH
+                    ):
+                        amount = int(row.cash_amount_cents)
+                        if (
+                            EconomicLegDirection(row.direction)
+                            is EconomicLegDirection.CREDIT
+                        ):
+                            cash_credit_total += amount
+                        else:
+                            cash_debit_total += amount
+                if revision_fact["fact_kind"] == "FEE":
+                    fee_total += (
+                        int(revision_fact["fee_commission_delta_cents"] or 0)
+                        + int(revision_fact["fee_stamp_tax_delta_cents"] or 0)
+                        + int(revision_fact["fee_transfer_fee_delta_cents"] or 0)
+                    )
+                    continue
+                side = revision_fact["side"]
+                superseded_quantity = int(
+                    revision_fact["superseded_quantity"] or 0
+                )
+                superseded_gross = int(
+                    revision_fact["superseded_gross_cents"] or 0
+                )
+                reversed_basis = int(
+                    revision_fact["reversed_consumed_basis_cents"] or 0
+                )
+                corrected_quantity = int(
+                    revision_fact["corrected_quantity"] or 0
+                )
+                corrected_gross = int(
+                    revision_fact["corrected_gross_cents"] or 0
+                )
+                if superseded_quantity:
+                    if side == "ENTRY":
+                        entry_gross -= superseded_gross
+                        quantity_by_lot[key] = (
+                            quantity_by_lot.get(key, 0) - superseded_quantity
+                        )
+                        basis_by_lot[key] = (
+                            basis_by_lot.get(key, 0) - superseded_gross
+                        )
+                    else:
+                        exit_gross -= superseded_gross
+                        quantity_by_lot[key] = (
+                            quantity_by_lot.get(key, 0) + superseded_quantity
+                        )
+                        basis_by_lot[key] = (
+                            basis_by_lot.get(key, 0) + reversed_basis
+                        )
+                        consumed_basis_total -= reversed_basis
+                        consumed_basis_by_lot[key] = (
+                            consumed_basis_by_lot.get(key, 0) - reversed_basis
+                        )
+                if corrected_quantity:
+                    if side == "ENTRY":
+                        entry_gross += corrected_gross
+                        quantity_by_lot[key] = (
+                            quantity_by_lot.get(key, 0) + corrected_quantity
+                        )
+                        basis_by_lot[key] = (
+                            basis_by_lot.get(key, 0) + corrected_gross
+                        )
+                    else:
+                        exit_gross += corrected_gross
+                        before = quantity_by_lot.get(key, 0)
+                        basis_before = basis_by_lot.get(key, 0)
+                        if corrected_quantity == before:
+                            consumed = basis_before
+                        elif before > 0:
+                            consumed = round_half_even_div(
+                                basis_before * corrected_quantity, before
+                            )
+                        else:
+                            consumed = 0
+                        # Consumption is capped at the lot's available
+                        # basis; the excess corrected quantity stays as a
+                        # preserved negative replayed quantity.
+                        consumed = min(consumed, max(basis_before, 0))
+                        basis_by_lot[key] = basis_before - consumed
+                        consumed_basis_total += consumed
+                        consumed_basis_by_lot[key] = (
+                            consumed_basis_by_lot.get(key, 0) + consumed
+                        )
+                        quantity_by_lot[key] = before - corrected_quantity
+                # Lots touched by revisions get their consumed basis
+                # recomputed from the final active fact set after the
+                # stream walk: re-projection is retroactive, so
+                # incremental consumption attribution is order-dependent
+                # while the final-set recomputation is not.
+                lots_with_revisions.add(key)
+                continue
             cash_debit_ids = [
                 row.receivable_id
                 for row in event_legs
@@ -625,6 +882,9 @@ def _replay_economic_events(
                             )
                         basis_by_lot[key] = basis_before - consumed
                         consumed_basis_total += consumed
+                        consumed_basis_by_lot[key] = (
+                            consumed_basis_by_lot.get(key, 0) + consumed
+                        )
 
             elif asset_kind is EconomicAssetKind.CASH_RECEIVABLE:
                 amount = int(row.cash_amount_cents)
@@ -653,6 +913,16 @@ def _replay_economic_events(
                     settle_share_receivable(
                         key, row.receivable_id, quantity
                     )
+
+    # Plan 02 Task 6: consumed basis of revision-touched lots is the
+    # final-active-fact recomputation (order-independent); the incremental
+    # attribution above is exact only for lots without revisions.
+    for lot_key in lots_with_revisions:
+        recomputed = _recompute_consumed_basis(connection, lot_key)
+        consumed_basis_total += recomputed - consumed_basis_by_lot.get(
+            lot_key, 0
+        )
+        consumed_basis_by_lot[lot_key] = recomputed
 
     return {
         "cash_delta": cash_credit_total - cash_debit_total,
@@ -1288,7 +1558,15 @@ def verify_conservation(
         - int(economic["fee_total"])
     )
     closing_cash = cash_recomputed
-    closing_basis = sum(basis_by_lot.values())
+    # Plan 02 Task 6: impossible (negative) replayed states are preserved
+    # signed in the ledger and surfaced by reconciliation_discrepancies(),
+    # but they are not assets: the master identity closes over the sane
+    # lots only.
+    closing_basis = sum(
+        basis
+        for lot_key, basis in basis_by_lot.items()
+        if basis > 0 and quantity_by_lot.get(lot_key, 0) >= 0
+    )
     closing_assets = closing_cash + recomputed_outstanding + closing_basis
     liabilities = payables_total
 

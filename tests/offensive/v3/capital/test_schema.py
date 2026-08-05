@@ -29,6 +29,7 @@ EXPECTED_TABLES = frozenset(
         "entry_tombstones",
         "event_revisions",
         "execution_revisions",
+        "exit_obligation_reopens",
         "flow_requests",
         "gateway_meta",
         "nav_observations",
@@ -55,6 +56,7 @@ IMMUTABLE_TABLES = frozenset(
         "entry_tombstones",
         "event_revisions",
         "execution_revisions",
+        "exit_obligation_reopens",
         "nav_observations",
         "risk_epoch_history",
         "risk_snapshot_seals",
@@ -230,6 +232,21 @@ def _seed_history(conn: sa.engine.Connection) -> None:
     )
     conn.execute(
         sa.text(
+            "INSERT INTO exit_obligation_reopens ("
+            " reopen_id, position_lineage_id, economic_lot_id, security_id,"
+            " producer_namespace, research_program_id, economic_lineage_id,"
+            " stage_id, reopened_quantity_units, position_state,"
+            " reopen_reason, mandate_revision_floor,"
+            " reopened_by_execution_revision_id, reopened_by_event_id,"
+            " capital_version, stream_version, recorded_at"
+            ") VALUES ('reopen-seed', 'lin-seed', 'lot-seed', 'sec-seed',"
+            " 'ns-seed', 'prog-seed', 'elin-seed', 'stage-seed', 1,"
+            " 'EXIT_PENDING', 'BUSTED', 2, 'fill:exec-1:2',"
+            " 'eco-seed-2', 1, 1, '2026-08-03T09:00:00+00:00')"
+        )
+    )
+    conn.execute(
+        sa.text(
             "INSERT INTO capital_flow_events ("
             " flow_event_id, idempotency_key, flow_kind, portfolio_id,"
             " flow_version, source_authority, effective_at, recorded_at,"
@@ -349,7 +366,7 @@ def test_schema_version_is_exact_and_persisted(
     repository: CapitalRepository,
 ) -> None:
     assert metadata.SCHEMA_MAJOR == 2
-    assert metadata.LEDGER_SCHEMA_VERSION == 4
+    assert metadata.LEDGER_SCHEMA_VERSION == 5
     assert repository.schema_version() == metadata.LEDGER_SCHEMA_VERSION
     with repository.engine.connect() as conn:
         stored = conn.execute(
@@ -442,6 +459,8 @@ def test_immutable_tables_reject_update_and_delete(
         " SET stream_version = 999 WHERE session = '2026-08-03'",
         "entry_tombstones": "UPDATE entry_tombstones"
         " SET tombstone_reason = 'x' WHERE entry_identity = 'entry-seed'",
+        "exit_obligation_reopens": "UPDATE exit_obligation_reopens"
+        " SET reopen_reason = 'x' WHERE reopen_id = 'reopen-seed'",
         "capital_flow_events": "UPDATE capital_flow_events"
         " SET flow_kind = 'X' WHERE flow_event_id = 'flow-seed'",
         "nav_observations": "UPDATE nav_observations"
@@ -519,10 +538,13 @@ def test_alembic_layout_chains_the_ledger_revisions() -> None:
     config.set_main_option("script_location", str(migrations))
     script = ScriptDirectory.from_config(config)
     revisions = list(script.walk_revisions())
-    assert len(revisions) == 4
+    assert len(revisions) == 5
     assert script.get_current_head() == metadata.CURRENT_MIGRATION_REVISION
     bases = {revision.revision: revision.down_revision for revision in revisions}
     assert bases[metadata.CURRENT_MIGRATION_REVISION] == (
+        metadata.RISK_SNAPSHOT_MIGRATION_REVISION
+    )
+    assert bases[metadata.RISK_SNAPSHOT_MIGRATION_REVISION] == (
         metadata.CORPORATE_ACTIONS_MIGRATION_REVISION
     )
     assert bases[metadata.CORPORATE_ACTIONS_MIGRATION_REVISION] == (

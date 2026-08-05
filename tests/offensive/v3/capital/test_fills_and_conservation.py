@@ -63,6 +63,7 @@ from src.screening.offensive.v3.contracts import (
     EconomicEventKind,
     EconomicLegDirection,
     ExecutionMode,
+    ExecutionRevisionKind,
     ExecutionSide,
     PositionState,
     ReconciliationLatchState,
@@ -510,7 +511,7 @@ def test_entry_into_exiting_lot_is_rejected(repository: CapitalRepository) -> No
     repository.assert_conservation()
 
 
-def test_fill_revision_beyond_recorded_is_reserved_for_later_tasks(
+def test_fill_revision_beyond_recorded_dispatches_to_execution_revisions(
     repository: CapitalRepository,
 ) -> None:
     deposit(repository, 1_000_000, 1)
@@ -519,12 +520,35 @@ def test_fill_revision_beyond_recorded_is_reserved_for_later_tasks(
         FillRevisionRequest.model_validate(
             {**request.model_dump(mode="python"), "revision": 0}
         )
+    repository.record_fill_revision(request)
+    # Plan 02 Task 6: revision > 1 is a broker bust/correction
+    # supersession, re-projected from the append-only history.
     later = FillRevisionRequest.model_validate(
-        {**request.model_dump(mode="python"), "revision": 2}
+        {
+            **request.model_dump(mode="python"),
+            "revision": 2,
+            "revision_kind": ExecutionRevisionKind.BUSTED,
+            "expected_stream_version": repository.stream_version(),
+        }
+    )
+    receipt, snapshot = repository.record_fill_revision(later)
+    assert receipt.revision == 2
+    assert receipt.revision_kind is ExecutionRevisionKind.BUSTED
+    assert snapshot.positions == ()
+    repository.assert_conservation()
+    # A revision against an execution with no recorded fill stays rejected.
+    unknown = FillRevisionRequest.model_validate(
+        {
+            **fill_request(
+                "exec-none", repository=repository, quantity=100, step=2
+            ).model_dump(mode="python"),
+            "revision": 2,
+            "revision_kind": ExecutionRevisionKind.BUSTED,
+        }
     )
     with pytest.raises(CapitalConflict) as excinfo:
-        repository.record_fill_revision(later)
-    assert excinfo.value.code == "unsupported_revision"
+        repository.record_fill_revision(unknown)
+    assert excinfo.value.code == "execution_unknown"
 
 
 # ---------------------------------------------------------------------------

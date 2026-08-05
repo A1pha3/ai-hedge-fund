@@ -41,6 +41,33 @@ from src.screening.offensive.v3.capital.conservation import (
     ConservationReport,
     verify_conservation,
 )
+from src.screening.offensive.v3.capital.execution_revisions import (
+    EVENT_REVISION_LINK_KIND,
+    FEE_KIND,
+    FEE_REVISION_KINDS,
+    FILL_BUST_KIND,
+    FILL_CORRECTION_KIND,
+    FILL_KIND,
+    FILL_REVISION_KINDS,
+    MANDATE_REVISION_FLOOR,
+    REOPEN_POSITION_STATE,
+    TOMBSTONE_REASON_ENTRY_INVALIDATED,
+    TOMBSTONE_REASON_EXECUTION_BUSTED,
+    ExecutionRevisionFact,
+    ExecutionRevisionFactKind,
+    ExecutionRevisionReceipt,
+    ExecutionRevisionRequest,
+    LotEventFact,
+    LotReplayState,
+    ReconciliationDiscrepancy,
+    ReopenedEconomicLot,
+    execution_revision_legs,
+    lot_tombstone_identity,
+    registry_kind_for_fee_revision,
+    registry_kind_for_fill_revision,
+    replay_lot_fact,
+    reserve_tombstone_identity,
+)
 from src.screening.offensive.v3.capital.corporate_actions import (
     ENTITLEMENT_KINDS,
     SOURCE_AUTHORITY_RANK,
@@ -82,6 +109,7 @@ from src.screening.offensive.v3.capital.corporate_actions import (
 )
 from src.screening.offensive.v3.capital.fees import (
     FeePolicy,
+    FeeRevisionKind,
     compute_fee_components,
     fee_execution_id,
 )
@@ -188,6 +216,7 @@ from src.screening.offensive.v3.contracts import (
     EconomicLegDirection,
     EntryReserveRiskComponent,
     ExecutionMode,
+    ExecutionRevisionKind,
     ExecutionSide,
     ExposureScope,
     content_hash,
@@ -278,6 +307,10 @@ class CapitalCommandPayload(CanonicalModel):
     # Plan 02 Task 4: the action-level corporate fact context (entitlement
     # rationals, authority tier, recorded inputs) persisted with the event.
     corporate_action: CorporateActionFact | None = None
+    # Plan 02 Task 6: the execution bust/correction fact (fill or fee)
+    # persisted with LATE_CORRECTION revision events; the projection and
+    # the conservation replay both recompute from it.
+    execution_revision: ExecutionRevisionFact | None = None
 
     @model_validator(mode="after")
     def validate_security_attribution(self) -> "CapitalCommandPayload":
@@ -1071,7 +1104,15 @@ class GatewayTransactionContext:
         self, event: EconomicEvent, command: CapitalCommand
     ) -> None:
         kind = event.event_kind
-        if kind in (EconomicEventKind.SPLIT, EconomicEventKind.MERGE):
+        if (
+            kind is EconomicEventKind.LATE_CORRECTION
+            and command.payload.execution_revision is not None
+        ):
+            # Plan 02 Task 6: execution bust/correction facts own their
+            # projection rules (exact reversal, reopen, preserved negative
+            # states); receivable-only corporate corrections keep theirs.
+            self._apply_execution_revision_event(event, command)
+        elif kind in (EconomicEventKind.SPLIT, EconomicEventKind.MERGE):
             self._apply_split_merge(event)
         elif kind is EconomicEventKind.SECURITY_CONVERTED:
             self._apply_security_conversion(event)
@@ -1841,6 +1882,155 @@ class GatewayTransactionContext:
         )
         return observation_id
 
+    def _apply_execution_revision_event(
+        self, event: EconomicEvent, command: CapitalCommand
+    ) -> None:
+        """Project one execution revision fact onto cash and the lot.
+
+        Capital is re-projected from the append-only history: the original
+        fact is never patched, the revision event's legs move cash, and the
+        position row advances by the exact signed deltas. Negative results
+        are preserved (never clamped) and latch the account through the
+        risk recompute; a flat/nonpositive-to-positive transition reopens
+        the exit obligation durably.
+        """
+
+        fact = command.payload.execution_revision
+        if fact is None:
+            raise CapitalConflict(
+                "projection_rejected",
+                "execution revision events carry their revision fact",
+                economic_event_id=event.economic_event_id,
+            )
+
+        projection_table = self._table("capital_projection")
+        projection = self._connection.execute(projection_table.select()).one()
+        # The corporate-action wrapper bumps capital_version by exactly one
+        # after this projection step, in the same transaction; the durable
+        # tombstone/reopen rows record that post-bump version so their
+        # audit identity matches the committed capital version.
+        recorded_capital_version = int(projection.capital_version) + 1
+        available_cash_cents = int(projection.available_cash_cents)
+        for leg in event.legs:
+            if leg.asset_kind is not EconomicAssetKind.CASH:
+                continue
+            amount_cents = scaled_int(leg.cash_amount, CENT_SCALE, "cash_amount")
+            if leg.direction is EconomicLegDirection.CREDIT:
+                available_cash_cents += amount_cents
+            else:
+                available_cash_cents -= amount_cents
+        if available_cash_cents < 0:
+            raise CapitalConflict(
+                "projection_rejected",
+                "cash projection would become negative",
+                available_cash_cents=available_cash_cents,
+            )
+
+        quantity_delta = 0
+        basis_delta = 0
+        if fact.fact_kind is ExecutionRevisionFactKind.FILL:
+            if fact.superseded_quantity is not None:
+                assert fact.superseded_gross_cents is not None
+                superseded_quantity = int(fact.superseded_quantity)
+                superseded_gross = int(fact.superseded_gross_cents)
+                if fact.side is ExecutionSide.ENTRY:
+                    quantity_delta -= superseded_quantity
+                    basis_delta -= superseded_gross
+                else:
+                    quantity_delta += superseded_quantity
+                    basis_delta += int(
+                        fact.reversed_consumed_basis_cents or 0
+                    )
+            if fact.corrected_quantity is not None:
+                assert fact.corrected_gross_cents is not None
+                corrected_quantity = int(fact.corrected_quantity)
+                corrected_gross = int(fact.corrected_gross_cents)
+                if fact.side is ExecutionSide.ENTRY:
+                    quantity_delta += corrected_quantity
+                    basis_delta += corrected_gross
+                else:
+                    quantity_delta -= corrected_quantity
+                    basis_delta -= int(
+                        fact.corrected_consumed_basis_cents or 0
+                    )
+            positions_table = self._table("positions")
+            row = self._connection.execute(
+                positions_table.select().where(
+                    sa.and_(
+                        positions_table.c.position_lineage_id
+                        == fact.position_lineage_id,
+                        positions_table.c.economic_lot_id
+                        == fact.economic_lot_id,
+                    )
+                )
+            ).first()
+            if row is None:
+                raise CapitalConflict(
+                    "conservation_violation",
+                    "execution revision lost its economic lot projection",
+                    economic_lot_id=fact.economic_lot_id,
+                )
+            quantity_before = int(row.settled_quantity_units)
+            quantity_after = quantity_before + quantity_delta
+            now = utc_iso(event.recorded_at)
+            values: dict[str, Any] = {
+                "settled_quantity_units": quantity_after,
+                "tradable_quantity_units": (
+                    int(row.tradable_quantity_units) + quantity_delta
+                ),
+                "cost_basis_cents": int(row.cost_basis_cents) + basis_delta,
+                "updated_by_event_id": event.economic_event_id,
+                "updated_at": now,
+            }
+            if quantity_after > 0:
+                if quantity_before <= 0:
+                    # Flat/nonpositive-to-positive: the lot reappears with
+                    # its due exit obligation (charter item 9).
+                    values["state"] = PositionState.EXIT_PENDING.value
+                    self.reopen_exit_obligation(
+                        fact=fact,
+                        reopened_quantity=quantity_after,
+                        as_of=event.recorded_at,
+                        capital_version=recorded_capital_version,
+                    )
+            elif quantity_after == 0:
+                values["state"] = PositionState.CLOSED.value
+            # Negative projections keep their prior state: impossible states
+            # are preserved for reconciliation, never clamped or dropped.
+            self._connection.execute(
+                positions_table.update()
+                .where(
+                    sa.and_(
+                        positions_table.c.position_lineage_id
+                        == fact.position_lineage_id,
+                        positions_table.c.economic_lot_id
+                        == fact.economic_lot_id,
+                    )
+                )
+                .values(**values)
+            )
+            removed_entry = (
+                fact.superseded_quantity is not None
+                and fact.side is ExecutionSide.ENTRY
+            )
+            if removed_entry and quantity_after <= 0:
+                assert fact.position_lineage_id is not None
+                assert fact.economic_lot_id is not None
+                self.tombstone_removed_entry_lot(
+                    fact.position_lineage_id,
+                    fact.economic_lot_id,
+                    event.recorded_at,
+                    capital_version=recorded_capital_version,
+                )
+
+        # The corporate-action wrapper bumps the capital version exactly
+        # once after this projection step; only the cash leg lands here.
+        self._connection.execute(
+            projection_table.update()
+            .where(projection_table.c.portfolio_id == projection.portfolio_id)
+            .values(available_cash_cents=available_cash_cents)
+        )
+
     def _apply_valuation_event(
         self, event: EconomicEvent, command: CapitalCommand
     ) -> None:
@@ -2181,10 +2371,18 @@ class GatewayTransactionContext:
                 },
             )
 
-        # Reconciliation latch (Task 2 scope): unattributed or plan-violating
-        # fills are preserved under sentinel attribution and flag the account
-        # until reconciliation flattens them. The full halt/reopen semantics
-        # for busts, corrections and negative positions remain Task 6.
+        # Reconciliation latch. Two triggers:
+        # - unattributed or plan-violating fills are preserved under
+        #   sentinel attribution and flag the account until reconciliation
+        #   flattens them (Task 2);
+        # - active revisions exporting negative shares or basis (busts and
+        #   corrections of terminal history) are long-only impossibilities
+        #   that flag the account while they persist (Task 6 / charter item
+        #   15).
+        # The latch tracks the current projection: it is re-evaluated on
+        # every projection and clears exactly when the impossible state is
+        # resolved by a source-authorized correction or flattening. (The
+        # one-way rule applies to the RISK drawdown latch, not here.)
         sentinel = self._connection.execute(
             sa.text(
                 "SELECT COALESCE(SUM(settled_quantity_units), 0) AS units,"
@@ -2193,22 +2391,41 @@ class GatewayTransactionContext:
             ),
             {"sentinel": UNATTRIBUTED_PRODUCER},
         ).one()
-        unattributed_exposure = int(sentinel.units) > 0 or int(sentinel.basis) > 0
+        unattributed_exposure = (
+            int(sentinel.units) > 0 or int(sentinel.basis) > 0
+        )
+        negative_positions = int(
+            self._connection.execute(
+                sa.text(
+                    "SELECT COUNT(*) AS n FROM positions"
+                    " WHERE settled_quantity_units < 0"
+                    " OR tradable_quantity_units < 0"
+                    " OR cost_basis_cents < 0"
+                )
+            ).one().n
+        )
+        halted = unattributed_exposure or negative_positions > 0
         reconciliation_state = (
             ReconciliationLatchState.RECONCILIATION_HALT
-            if unattributed_exposure
+            if halted
             else ReconciliationLatchState.CLEAR
         )
-        reconciliation_reason = (
-            "unattributed fill exposure pending reconciliation"
-            if unattributed_exposure
-            else None
-        )
+        if negative_positions > 0:
+            reconciliation_reason = (
+                "active revisions export a negative position; impossible"
+                " states are preserved until reconciliation"
+            )
+        elif unattributed_exposure:
+            reconciliation_reason = (
+                "unattributed fill exposure pending reconciliation"
+            )
+        else:
+            reconciliation_reason = None
         self._connection.execute(
             sa.text(
-                "INSERT INTO risk_latches (latch_kind, state, reason, set_at,"
-                " set_by_event_id) VALUES ('RECONCILIATION', :state, :reason,"
-                " :set_at, :event_id)"
+                "INSERT INTO risk_latches (latch_kind, state, reason,"
+                " set_at, set_by_event_id) VALUES ('RECONCILIATION',"
+                " :state, :reason, :set_at, :event_id)"
                 " ON CONFLICT(latch_kind) DO UPDATE SET"
                 " state = excluded.state, reason = excluded.reason,"
                 " set_at = excluded.set_at,"
@@ -2230,16 +2447,162 @@ class GatewayTransactionContext:
         recompute_global_stage_loss_floor(self, as_of, event_id)
 
     def tombstone_unclaimed_entries_if_versions_changed(self) -> None:
-        """Tombstone entry claims that never reached a send claim.
+        """Tombstone entry claims that never reached a fill.
 
-        Entry claim state (sealed/permitted/outbox/send-claim rows) lives in
-        the Plan 04 gateway tables of this same database. Kernel revision 1
-        registers no entry claims, so the sweep is a no-op; the hook and the
-        ``entry_tombstones`` table are in place so that a capital version
-        change atomically tombstones unclaimed entries once Plan 04 lands.
+        One tombstone per entry identity, written in the same transaction
+        as the capital fact that invalidates it:
+
+        - released reserves are invalidated entries (their cancel/reject/
+          expiry confirmed the entry never filled), so every sweep claims
+          the released rows that are not yet tombstoned;
+        - entry lots removed by a bust/correction are tombstoned by the
+          revision projection itself (it knows the removal fact).
+
+        Entry claim state beyond the kernel (sealed/permitted/outbox/send
+        claims) belongs to the Plan 04 gateway tables of this same
+        database; Plan 04 registers those identities through this same
+        sweep so a capital version change atomically tombstones every
+        unclaimed entry. Tombstones are append-only audit: they are never
+        updated or deleted, and a tombstoned entry that reappears through
+        a correction must re-create real exposure through the reopen
+        machinery instead of silently reviving.
         """
 
-        return None
+        conn = self._connection
+        released = conn.execute(
+            sa.text(
+                "SELECT source_id FROM reserves"
+                " WHERE state = 'RELEASED'"
+                " AND NOT EXISTS ("
+                " SELECT 1 FROM entry_tombstones t"
+                " WHERE t.entry_identity ="
+                " 'reserve:' || reserves.source_id"
+                ")"
+            )
+        ).all()
+        if not released:
+            return
+        projection = conn.execute(
+            self._table("capital_projection").select()
+        ).one()
+        tombstones = self._table("entry_tombstones")
+        now = utc_iso(utc_now())
+        for row in released:
+            conn.execute(
+                tombstones.insert().values(
+                    entry_identity=reserve_tombstone_identity(row.source_id),
+                    tombstone_reason=TOMBSTONE_REASON_ENTRY_INVALIDATED,
+                    capital_version=int(projection.capital_version),
+                    stream_version=self.current_stream_version(),
+                    tombstoned_at=now,
+                )
+            )
+
+    def tombstone_removed_entry_lot(
+        self,
+        position_lineage_id: str,
+        economic_lot_id: str,
+        as_of: datetime,
+        capital_version: int | None = None,
+    ) -> None:
+        """Idempotently tombstone an entry lot a revision flattened.
+
+        Append-only: the first removal owns the tombstone row; later
+        revisions of the same lot converge on it. ``capital_version``
+        overrides the projection read for callers that know the
+        same-transaction post-bump version.
+        """
+
+        identity = lot_tombstone_identity(position_lineage_id, economic_lot_id)
+        tombstones = self._table("entry_tombstones")
+        existing = self._connection.execute(
+            tombstones.select().where(
+                tombstones.c.entry_identity == identity
+            )
+        ).first()
+        if existing is not None:
+            return
+        projection = self._connection.execute(
+            self._table("capital_projection").select()
+        ).one()
+        version = (
+            capital_version
+            if capital_version is not None
+            else int(projection.capital_version)
+        )
+        self._connection.execute(
+            tombstones.insert().values(
+                entry_identity=identity,
+                tombstone_reason=TOMBSTONE_REASON_EXECUTION_BUSTED,
+                capital_version=version,
+                stream_version=self.current_stream_version(),
+                tombstoned_at=utc_iso(as_of),
+            )
+        )
+
+    def reopen_exit_obligation(
+        self,
+        *,
+        fact: ExecutionRevisionFact,
+        reopened_quantity: int,
+        as_of: datetime,
+        capital_version: int | None = None,
+    ) -> str:
+        """Append the durable reopened exit obligation for one lot.
+
+        Plan 04's ExitMandate projection consumes these rows: the stable
+        lot identity and attribution name the mandate, the restored state
+        is ``EXIT_PENDING`` with the ``REOPENED_BY_CORRECTION`` reason,
+        and ``mandate_revision_floor`` keeps revision 1 reserved for
+        INITIAL mandates (Plan 04 advances it strictly beyond every
+        mandate revision the lot has ever seen).
+        """
+
+        reopen_id = f"reopen:fill:{fact.execution_id}:{fact.revision}"
+        reopens = self._table("exit_obligation_reopens")
+        existing = self._connection.execute(
+            reopens.select().where(reopens.c.reopen_id == reopen_id)
+        ).first()
+        if existing is not None:
+            return reopen_id
+        projection = self._connection.execute(
+            self._table("capital_projection").select()
+        ).one()
+        version = (
+            capital_version
+            if capital_version is not None
+            else int(projection.capital_version)
+        )
+        self._connection.execute(
+            reopens.insert().values(
+                reopen_id=reopen_id,
+                position_lineage_id=fact.position_lineage_id,
+                economic_lot_id=fact.economic_lot_id,
+                security_id=fact.security_id,
+                producer_namespace=fact.producer_namespace,
+                research_program_id=fact.research_program_id,
+                economic_lineage_id=fact.economic_lineage_id,
+                stage_id=fact.stage_id,
+                reopened_quantity_units=reopened_quantity,
+                position_state=REOPEN_POSITION_STATE.value,
+                reopen_reason=(
+                    ExecutionRevisionKind.CORRECTED.value
+                    if fact.revision_kind is ExecutionRevisionKind.CORRECTED
+                    else ExecutionRevisionKind.BUSTED.value
+                ),
+                mandate_revision_floor=MANDATE_REVISION_FLOOR,
+                reopened_by_execution_revision_id=(
+                    fill_idempotency_key(fact.execution_id, fact.revision)
+                ),
+                reopened_by_event_id=derive_event_id(
+                    fill_idempotency_key(fact.execution_id, fact.revision)
+                ),
+                capital_version=version,
+                stream_version=self.current_stream_version(),
+                recorded_at=utc_iso(as_of),
+            )
+        )
+        return reopen_id
 
     # -- snapshot read -----------------------------------------------------------
 
@@ -2296,23 +2659,48 @@ class GatewayTransactionContext:
         )
         # Unattributed or plan-violating fills are preserved under sentinel
         # attribution; their cost basis is the only known non-optimistic
-        # exposure until valuation marks arrive with Task 3/Task 5.
-        unattributed_risk_cents = int(
-            self._connection.execute(
-                sa.text(
-                    "SELECT COALESCE(SUM(cost_basis_cents), 0) AS total"
-                    " FROM positions WHERE producer_namespace = :sentinel"
-                ),
-                {"sentinel": UNATTRIBUTED_PRODUCER},
-            ).one().total
+        # exposure until valuation marks arrive with Task 3/Task 5. A
+        # negative sentinel basis is a reconciliation discrepancy (the
+        # snapshot contract is nonnegative; the signed value stays in the
+        # ledger and surfaces via ``reconciliation_discrepancies``).
+        unattributed_risk_cents = max(
+            0,
+            int(
+                self._connection.execute(
+                    sa.text(
+                        "SELECT COALESCE(SUM(cost_basis_cents), 0) AS total"
+                        " FROM positions WHERE producer_namespace = :sentinel"
+                    ),
+                    {"sentinel": UNATTRIBUTED_PRODUCER},
+                ).one().total
+            ),
         )
+        # Negative projections are preserved in the ledger but cannot be
+        # represented by the frozen snapshot contract (nonnegative
+        # quantities): they are excluded from ``positions`` and the
+        # snapshot fails closed as INCOMPLETE while the reconciliation
+        # latch carries the halt. ``reconciliation_discrepancies()`` keeps
+        # them visible, never clamped or dropped.
         position_rows = self._connection.execute(
             sa.text(
                 "SELECT * FROM positions"
                 " WHERE state IN ('OPEN', 'EXIT_PENDING')"
+                " AND settled_quantity_units >= 0"
+                " AND tradable_quantity_units >= 0"
+                " AND cost_basis_cents >= 0"
                 " ORDER BY position_lineage_id, economic_lot_id"
             )
         ).all()
+        negative_position_count = int(
+            self._connection.execute(
+                sa.text(
+                    "SELECT COUNT(*) AS n FROM positions"
+                    " WHERE settled_quantity_units < 0"
+                    " OR tradable_quantity_units < 0"
+                    " OR cost_basis_cents < 0"
+                )
+            ).one().n
+        )
         # Marks come from the newest as-observed close-valuation event; a
         # position opened after the last valuation stays unmarked (zero)
         # until its first valuation confirms a price (Task 5 owns stale and
@@ -2393,7 +2781,11 @@ class GatewayTransactionContext:
             as_of=as_of,
             valid_until=as_of + RISK_SNAPSHOT_VALIDITY,
             freshness=RiskSnapshotFreshness.FRESH,
-            completeness=RiskSnapshotCompleteness.COMPLETE,
+            completeness=(
+                RiskSnapshotCompleteness.INCOMPLETE
+                if negative_position_count > 0
+                else RiskSnapshotCompleteness.COMPLETE
+            ),
             available_cash_cents=int(projection.available_cash_cents),
             restricted_cash_cents=int(projection.restricted_cash_cents),
             unsettled_cash_cents=int(projection.unsettled_cash_cents),
@@ -2748,76 +3140,184 @@ def _fill_fact_from_event_json(canonical_event_json: str) -> tuple[int, Executio
     )
 
 
+def _order_fee_state(
+    connection: sa.engine.Connection,
+    order_id: str,
+    fee_rowid: int | None,
+    policy: "FeePolicy",
+) -> tuple[int, int, int, int, int, int, int]:
+    """Active-fact fee state of one order around one fee revision row.
+
+    Returns ``(base_now, stamp_owed, transfer_owed, commission_charged,
+    stamp_charged, transfer_charged, active_fill_count)``:
+
+    - ``base_now`` / ``stamp_owed`` / ``transfer_owed`` recompute the fee
+      target from the order's ACTIVE fill facts below the cutoff rowid
+      (busted fills drop out, corrected fills contribute their corrected
+      notional);
+    - ``*_charged`` sum what the order's fee streams have actually booked
+      below the cutoff (initial charges plus signed bust/correction
+      deltas).
+
+    Rowid order is append order, so idempotent retries recompute the
+    identical charge even after later fills, busts or corrections land on
+    the same order; using the actually-charged history keeps the
+    minimum-commission rule exact across fee-policy version changes.
+    """
+
+    registry_rows = connection.execute(
+        sa.text(
+            "SELECT er.rowid AS registry_rowid,"
+            " er.execution_id AS execution_id,"
+            " er.revision_kind AS revision_kind,"
+            " er.payload_content_hash AS payload_content_hash"
+            " FROM execution_revisions er"
+            " WHERE er.order_id = :order_id"
+            " AND er.revision_kind IN ('FILL', 'FILL_BUST',"
+            " 'FILL_CORRECTION', 'FEE', 'FEE_BUST', 'FEE_CORRECTION')"
+            " ORDER BY er.rowid"
+        ),
+        {"order_id": order_id},
+    ).all()
+
+    event_cache: dict[str, Any] = {}
+
+    def event_row_for(payload_hash: str) -> Any:
+        if payload_hash not in event_cache:
+            event_cache[payload_hash] = connection.execute(
+                sa.text(
+                    "SELECT canonical_event_json, payload_json"
+                    " FROM economic_events"
+                    " WHERE payload_content_hash = :hash"
+                ),
+                {"hash": payload_hash},
+            ).first()
+        return event_cache[payload_hash]
+
+    fill_active: dict[str, tuple[int, ExecutionSide] | None] = {}
+    stream_totals: dict[str, dict[str, int]] = {}
+
+    for row in registry_rows:
+        if fee_rowid is not None and row.registry_rowid >= fee_rowid:
+            break
+        kind = row.revision_kind
+        if kind == "FILL":
+            event_row = event_row_for(row.payload_content_hash)
+            notional, side = _fill_fact_from_event_json(
+                event_row.canonical_event_json
+            )
+            fill_active[row.execution_id] = (notional, side)
+        elif kind == "FILL_BUST":
+            fill_active[row.execution_id] = None
+        elif kind == "FILL_CORRECTION":
+            event_row = event_row_for(row.payload_content_hash)
+            payload = CapitalCommandPayload.model_validate_json(
+                event_row.payload_json
+            )
+            fact = payload.execution_revision
+            assert fact is not None and fact.side is not None
+            fill_active[row.execution_id] = (
+                int(fact.corrected_gross_cents or 0),
+                fact.side,
+            )
+        else:
+            totals = stream_totals.setdefault(
+                row.execution_id,
+                {"commission": 0, "stamp_tax": 0, "transfer_fee": 0},
+            )
+            if kind == "FEE":
+                event_row = event_row_for(row.payload_content_hash)
+                if event_row is None:
+                    # Registry-only zero-charge fact: nothing was booked.
+                    continue
+                event = EconomicEvent.model_validate_json(
+                    event_row.canonical_event_json
+                )
+                for leg in event.legs:
+                    if leg.asset_kind is not EconomicAssetKind.CASH:
+                        continue
+                    cents = scaled_int(
+                        leg.cash_amount, CENT_SCALE, "cash_amount"
+                    )
+                    signed = (
+                        cents
+                        if leg.direction is EconomicLegDirection.DEBIT
+                        else -cents
+                    )
+                    if leg.leg_id.endswith(":commission"):
+                        totals["commission"] += signed
+                    elif leg.leg_id.endswith(":stamp_tax"):
+                        totals["stamp_tax"] += signed
+                    elif leg.leg_id.endswith(":transfer_fee"):
+                        totals["transfer_fee"] += signed
+            else:
+                event_row = event_row_for(row.payload_content_hash)
+                payload = CapitalCommandPayload.model_validate_json(
+                    event_row.payload_json
+                )
+                fact = payload.execution_revision
+                assert fact is not None
+                totals["commission"] += int(
+                    fact.fee_commission_delta_cents or 0
+                )
+                totals["stamp_tax"] += int(
+                    fact.fee_stamp_tax_delta_cents or 0
+                )
+                totals["transfer_fee"] += int(
+                    fact.fee_transfer_fee_delta_cents or 0
+                )
+
+    base_now = 0
+    stamp_owed = 0
+    transfer_owed = 0
+    active_fill_count = 0
+    for active in fill_active.values():
+        if active is None:
+            continue
+        active_fill_count += 1
+        notional, side = active
+        components = compute_fee_components(notional, side, policy)
+        base_now += components.commission_base_cents
+        stamp_owed += components.stamp_tax_cents
+        transfer_owed += components.transfer_fee_cents
+
+    commission_charged = sum(
+        totals["commission"] for totals in stream_totals.values()
+    )
+    stamp_charged = sum(
+        totals["stamp_tax"] for totals in stream_totals.values()
+    )
+    transfer_charged = sum(
+        totals["transfer_fee"] for totals in stream_totals.values()
+    )
+    return (
+        base_now,
+        stamp_owed,
+        transfer_owed,
+        commission_charged,
+        stamp_charged,
+        transfer_charged,
+        active_fill_count,
+    )
+
+
 def _order_commission_state(
     connection: sa.engine.Connection,
     order_id: str,
     fee_rowid: int | None,
     policy: "FeePolicy",
 ) -> tuple[int, int]:
-    """Per-order commission state around one fee revision.
+    """Per-order commission state around one INITIAL fee revision.
 
-    Returns ``(base_now, charged_before)``: the sum of per-fill commission
-    bases (under ``policy``) over fills recorded before this fee revision
-    row, and the commission actually charged by this order's earlier fee
-    revisions. Rowid order is append order, so idempotent retries recompute
-    the identical charge even after later fills land on the same order;
-    using the actually-charged history keeps the minimum-commission rule
-    exact across fee-policy version changes.
+    Returns ``(base_now, charged_before)``: the active-fact commission
+    base and the commission actually charged by this order's earlier fee
+    rows (see :func:`_order_fee_state`).
     """
 
-    fill_rows = connection.execute(
-        sa.text(
-            "SELECT er.rowid AS registry_rowid,"
-            " l.cash_amount_cents AS notional_cents,"
-            " l.direction AS direction"
-            " FROM execution_revisions er"
-            " JOIN economic_events ee"
-            " ON ee.payload_content_hash = er.payload_content_hash"
-            " JOIN economic_event_legs l"
-            " ON l.economic_event_id = ee.economic_event_id"
-            " AND l.asset_kind = 'CASH'"
-            " WHERE er.order_id = :order_id"
-            " AND er.revision_kind = 'FILL'"
-            " ORDER BY er.rowid"
-        ),
-        {"order_id": order_id},
-    ).all()
-    base_now = 0
-    for row in fill_rows:
-        if fee_rowid is not None and row.registry_rowid >= fee_rowid:
-            break
-        side = (
-            ExecutionSide.ENTRY
-            if row.direction == EconomicLegDirection.DEBIT.value
-            else ExecutionSide.EXIT
-        )
-        components = compute_fee_components(
-            int(row.notional_cents), side, policy
-        )
-        base_now += components.commission_base_cents
-
-    charged_rows = connection.execute(
-        sa.text(
-            "SELECT l.cash_amount_cents AS commission_cents"
-            " FROM execution_revisions er"
-            " JOIN economic_events ee"
-            " ON ee.payload_content_hash = er.payload_content_hash"
-            " JOIN economic_event_legs l"
-            " ON l.economic_event_id = ee.economic_event_id"
-            " AND l.asset_kind = 'CASH'"
-            " AND l.leg_id LIKE :commission_pattern"
-            " WHERE er.order_id = :order_id"
-            " AND er.revision_kind = 'FEE'"
-            + (" AND er.rowid < :fee_rowid" if fee_rowid is not None else "")
-        ),
-        {
-            "order_id": order_id,
-            "fee_rowid": fee_rowid,
-            "commission_pattern": "%:commission",
-        },
-    ).all()
-    charged_before = sum(int(row.commission_cents) for row in charged_rows)
-    return base_now, charged_before
+    base_now, _, _, commission_charged, _, _, _ = _order_fee_state(
+        connection, order_id, fee_rowid, policy
+    )
+    return base_now, commission_charged
 
 
 def _fee_payload(
@@ -2853,13 +3353,14 @@ def _fee_payload(
 
 
 def _zero_fee_receipt_hash(request: FeeRevisionRequest) -> str:
-    """Canonical identity of a zero-charge fee revision (no economic event)."""
+    """Canonical identity of a zero-delta fee revision (no economic event)."""
 
     return content_hash(
         {
             "kind": "fee_revision_zero_charge",
             "fill_execution_id": request.fill_execution_id,
             "revision": request.revision,
+            "revision_kind": request.revision_kind.value,
             "fee_policy_version": request.fee_policy.fee_policy_version,
         }
     )
@@ -3382,6 +3883,9 @@ class CapitalRepository:
                     request.as_of,
                     f"reserve:{request.source_id}:released:{reason.value}",
                 )
+                # The released reservation is an invalidated entry: the
+                # tombstone lands atomically in this capital transaction.
+                context.tombstone_unclaimed_entries_if_versions_changed()
                 return context.read_capital_risk_snapshot(request.as_of)
             if state is CapitalReserveState.RELEASED:
                 # Quiet idempotent convergence: already released.
@@ -3397,21 +3901,55 @@ class CapitalRepository:
 
     def record_fill_revision(
         self, request: FillRevisionRequest
-    ) -> tuple[FillRevisionReceipt, CapitalRiskSnapshot]:
+    ) -> tuple[
+        FillRevisionReceipt | ExecutionRevisionReceipt, CapitalRiskSnapshot
+    ]:
         """Record one broker execution report as a canonical economic event.
 
         One fact / one event: the fill's gross cash leg and security leg land
         atomically in one capital transaction. Unattributed fills and late
         fills after a confirmed cancel are preserved under sentinel
         attribution and flagged, never dropped.
+
+        ``revision > 1`` requests are broker bust/correction supersessions
+        (Plan 02 Task 6) and dispatch to the execution-revision machinery;
+        the recorded fact is preserved and capital re-projects from the
+        append-only history.
         """
 
         if request.revision != 1:
-            raise CapitalConflict(
-                "unsupported_revision",
-                "fill bust/correction revisions land in Plan 02 Task 6",
+            revision_request = ExecutionRevisionRequest(
+                execution_id=request.execution_id,
                 revision=request.revision,
+                revision_kind=request.revision_kind,
+                order_id=request.order_id,
+                side=request.side,
+                security_id=request.security_id,
+                position_lineage_id=request.position_lineage_id,
+                economic_lot_id=request.economic_lot_id,
+                superseded_quantity=(
+                    request.quantity
+                    if request.revision_kind is ExecutionRevisionKind.BUSTED
+                    else None
+                ),
+                corrected_price_micros=(
+                    request.price_micros
+                    if request.revision_kind
+                    is ExecutionRevisionKind.CORRECTED
+                    else None
+                ),
+                corrected_quantity=(
+                    request.quantity
+                    if request.revision_kind
+                    is ExecutionRevisionKind.CORRECTED
+                    else None
+                ),
+                source_authority=request.source_authority,
+                effective_at=request.effective_at,
+                as_of=request.as_of,
+                expected_stream_version=request.expected_stream_version,
             )
+            return self._record_execution_bust_or_correction(revision_request)
         gross_cents = fill_gross_cents(request.price_micros, request.quantity)
         if gross_cents < 1:
             raise CapitalConflict(
@@ -3671,6 +4209,859 @@ class CapitalRepository:
 
         return self._run_write_transaction(operation)
 
+    # -- Plan 02 Task 6: execution bust/correction and reopen ----------------
+
+    def record_execution_revision(
+        self, request: ExecutionRevisionRequest
+    ) -> tuple[ExecutionRevisionReceipt, CapitalRiskSnapshot]:
+        """Record one broker bust of a recorded fill execution.
+
+        The bust appends an exact compensation of the active fact under
+        ``(execution_id, revision)``: its effective filled quantity and
+        gross cash become zero, the recorded history is preserved, and the
+        capital projection is recomputed from the append-only stream. An
+        entry bust flattens the lot (tombstoning it); an exit bust can
+        restore a positive holding and reopens the exit obligation.
+        """
+
+        if request.revision_kind is not ExecutionRevisionKind.BUSTED:
+            raise CapitalConflict(
+                "revision_kind_conflict",
+                "record_execution_revision records BUSTED revisions",
+                revision_kind=request.revision_kind.value,
+            )
+        return self._record_execution_bust_or_correction(request)
+
+    def record_execution_correction(
+        self, request: ExecutionRevisionRequest
+    ) -> tuple[ExecutionRevisionReceipt, CapitalRiskSnapshot]:
+        """Record one broker correction of a recorded fill execution.
+
+        ``CORRECTED`` equals busting the active value and applying the
+        corrected value in one canonical event: the superseded fact is
+        reversed exactly (refunding the basis an exit consumed) and the
+        corrected fact is applied. A correction that transitions the lot
+        from flat/nonpositive back to positive reopens the exit
+        obligation. Corrections that would create negative shares are
+        preserved and latch ``RECONCILIATION_HALT``, never clamped.
+        """
+
+        if request.revision_kind is not ExecutionRevisionKind.CORRECTED:
+            raise CapitalConflict(
+                "revision_kind_conflict",
+                "record_execution_correction records CORRECTED revisions",
+                revision_kind=request.revision_kind.value,
+            )
+        return self._record_execution_bust_or_correction(request)
+
+    def reopen_exit_obligations(self) -> tuple[ReopenedEconomicLot, ...]:
+        """Durable reopened exit obligations for Plan 04 consumption."""
+
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT * FROM exit_obligation_reopens"
+                    " ORDER BY capital_version, stream_version, reopen_id"
+                )
+            ).all()
+        return tuple(
+            ReopenedEconomicLot(
+                reopen_id=row.reopen_id,
+                position_lineage_id=row.position_lineage_id,
+                economic_lot_id=row.economic_lot_id,
+                security_id=row.security_id,
+                producer_namespace=row.producer_namespace,
+                research_program_id=row.research_program_id,
+                economic_lineage_id=row.economic_lineage_id,
+                stage_id=row.stage_id,
+                reopened_quantity_units=int(row.reopened_quantity_units),
+                position_state=PositionState(row.position_state),
+                reopen_reason=row.reopen_reason,
+                mandate_revision_floor=int(row.mandate_revision_floor),
+                reopened_by_execution_revision_id=(
+                    row.reopened_by_execution_revision_id
+                ),
+                reopened_by_event_id=row.reopened_by_event_id,
+                capital_version=int(row.capital_version),
+                stream_version=int(row.stream_version),
+            )
+            for row in rows
+        )
+
+    def reconciliation_discrepancies(
+        self,
+    ) -> tuple[ReconciliationDiscrepancy, ...]:
+        """Preserved impossible position states under reconciliation halt.
+
+        Negative (long-only impossible) projections are kept signed in the
+        ledger and surfaced here; they are never clamped to zero, dropped,
+        or papered over with valuation events (charter item 15).
+        """
+
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT * FROM positions"
+                    " WHERE settled_quantity_units < 0"
+                    " OR tradable_quantity_units < 0"
+                    " OR cost_basis_cents < 0"
+                    " ORDER BY position_lineage_id, economic_lot_id"
+                )
+            ).all()
+        return tuple(
+            ReconciliationDiscrepancy(
+                position_lineage_id=row.position_lineage_id,
+                economic_lot_id=row.economic_lot_id,
+                security_id=row.security_id,
+                settled_quantity_units=int(row.settled_quantity_units),
+                tradable_quantity_units=int(row.tradable_quantity_units),
+                cost_basis_cents=int(row.cost_basis_cents),
+            )
+            for row in rows
+        )
+
+    # -- revision internals ----------------------------------------------------
+
+    def _fill_registry_rows(
+        self, conn: sa.engine.Connection, execution_id: str
+    ) -> tuple[Any, ...]:
+        registry = self._metadata.tables["execution_revisions"]
+        return tuple(
+            conn.execute(
+                registry.select()
+                .where(
+                    sa.and_(
+                        registry.c.execution_id == execution_id,
+                        registry.c.revision_kind.in_(
+                            tuple(sorted(FILL_REVISION_KINDS))
+                        ),
+                    )
+                )
+                .order_by(registry.c.revision)
+            ).all()
+        )
+
+    def _event_row_by_payload_hash(
+        self, conn: sa.engine.Connection, payload_hash: str
+    ) -> Any:
+        row = conn.execute(
+            sa.text(
+                "SELECT * FROM economic_events"
+                " WHERE payload_content_hash = :hash"
+            ),
+            {"hash": payload_hash},
+        ).first()
+        if row is None:
+            raise CapitalConflict(
+                "conservation_violation",
+                "execution revision registry row lost its canonical event",
+                payload_content_hash=payload_hash,
+            )
+        return row
+
+    def _original_fill_context(
+        self, conn: sa.engine.Connection, fill_rows: tuple[Any, ...]
+    ) -> dict[str, Any]:
+        """The immutable identity and attribution of the recorded fill."""
+
+        event_row = self._event_row_by_payload_hash(
+            conn, fill_rows[0].payload_content_hash
+        )
+        payload = CapitalCommandPayload.model_validate_json(
+            event_row.payload_json
+        )
+        gross_cents, side = _fill_fact_from_event_json(
+            event_row.canonical_event_json
+        )
+        quantity = 0
+        for leg in payload.legs:
+            if leg.asset_kind is EconomicAssetKind.SECURITY:
+                quantity = int(leg.quantity)
+        return {
+            "event_id": event_row.economic_event_id,
+            "order_id": fill_rows[0].order_id,
+            "side": side,
+            "gross_cents": gross_cents,
+            "quantity": quantity,
+            "position_lineage_id": event_row.position_lineage_id,
+            "economic_lot_id": event_row.economic_lot_id,
+            "security_id": next(
+                leg.security_id
+                for leg in payload.legs
+                if leg.asset_kind is EconomicAssetKind.SECURITY
+            ),
+            "producer_namespace": payload.producer_namespace,
+            "research_program_id": payload.research_program_id,
+            "economic_lineage_id": payload.economic_lineage_id,
+            "stage_id": payload.stage_id,
+        }
+
+    def _active_fill_fact(
+        self,
+        conn: sa.engine.Connection,
+        fill_rows: tuple[Any, ...],
+        original: dict[str, Any],
+        before_revision: int,
+    ) -> dict[str, Any] | None:
+        """The fill's active fact below ``before_revision``.
+
+        Returns ``None`` exactly when the newest committed revision below
+        the boundary is a bust (the execution currently contributes
+        nothing). For a corrected active fact the consumed basis is the
+        amount recorded on the correction event itself.
+        """
+
+        active_row = None
+        for row in fill_rows:
+            if int(row.revision) < before_revision:
+                active_row = row
+        if active_row is None:
+            raise CapitalConflict(
+                "execution_unknown",
+                "execution revision chain lost its recorded fill",
+            )
+        kind = active_row.revision_kind
+        if kind == FILL_KIND:
+            return {
+                "event_id": self._event_row_by_payload_hash(
+                    conn, active_row.payload_content_hash
+                ).economic_event_id,
+                "side": original["side"],
+                "gross_cents": original["gross_cents"],
+                "quantity": original["quantity"],
+                "consumed_basis_cents": None,
+            }
+        if kind == FILL_BUST_KIND:
+            return {
+                "event_id": self._event_row_by_payload_hash(
+                    conn, active_row.payload_content_hash
+                ).economic_event_id,
+                "side": None,
+                "gross_cents": 0,
+                "quantity": 0,
+                "consumed_basis_cents": None,
+            }
+        event_row = self._event_row_by_payload_hash(
+            conn, active_row.payload_content_hash
+        )
+        payload = CapitalCommandPayload.model_validate_json(
+            event_row.payload_json
+        )
+        fact = payload.execution_revision
+        if fact is None or fact.fact_kind is not (
+            ExecutionRevisionFactKind.FILL
+        ):
+            raise CapitalConflict(
+                "conservation_violation",
+                "fill correction registry row lost its revision fact",
+            )
+        return {
+            "event_id": event_row.economic_event_id,
+            "side": fact.side,
+            "gross_cents": (
+                int(fact.corrected_gross_cents)
+                if fact.corrected_gross_cents is not None
+                else 0
+            ),
+            "quantity": (
+                int(fact.corrected_quantity)
+                if fact.corrected_quantity is not None
+                else 0
+            ),
+            "consumed_basis_cents": fact.corrected_consumed_basis_cents,
+        }
+
+    def _lot_event_facts(
+        self,
+        conn: sa.engine.Connection,
+        position_lineage_id: str,
+        economic_lot_id: str,
+        upto_stream_version: int | None = None,
+    ) -> tuple[LotEventFact, ...]:
+        """The lot's trade/revision facts in stream order (pure inputs)."""
+
+        rows = conn.execute(
+            sa.text(
+                "SELECT economic_event_id, stream_version, event_kind,"
+                " payload_json FROM economic_events"
+                " WHERE position_lineage_id = :lineage"
+                " AND economic_lot_id = :lot"
+                " ORDER BY stream_version"
+            ),
+            {"lineage": position_lineage_id, "lot": economic_lot_id},
+        ).all()
+        facts: list[LotEventFact] = []
+        for row in rows:
+            if (
+                upto_stream_version is not None
+                and int(row.stream_version) > upto_stream_version
+            ):
+                break
+            kind = EconomicEventKind(row.event_kind)
+            payload = CapitalCommandPayload.model_validate_json(
+                row.payload_json
+            )
+            if kind is EconomicEventKind.TRADE_EXECUTED:
+                gross_cents = 0
+                side = ExecutionSide.ENTRY
+                quantity = 0
+                for leg in payload.legs:
+                    if leg.asset_kind is EconomicAssetKind.CASH:
+                        gross_cents = scaled_int(
+                            leg.cash_amount, CENT_SCALE, "cash_amount"
+                        )
+                        side = (
+                            ExecutionSide.ENTRY
+                            if leg.direction is EconomicLegDirection.DEBIT
+                            else ExecutionSide.EXIT
+                        )
+                    elif leg.asset_kind is EconomicAssetKind.SECURITY:
+                        quantity = int(leg.quantity)
+                facts.append(
+                    LotEventFact(
+                        event_id=row.economic_event_id,
+                        stream_version=int(row.stream_version),
+                        kind="TRADE",
+                        side=side,
+                        gross_cents=gross_cents,
+                        quantity=quantity,
+                    )
+                )
+                continue
+            if (
+                kind is EconomicEventKind.LATE_CORRECTION
+                and payload.execution_revision is not None
+                and payload.execution_revision.fact_kind
+                is ExecutionRevisionFactKind.FILL
+            ):
+                fact = payload.execution_revision
+                facts.append(
+                    LotEventFact(
+                        event_id=row.economic_event_id,
+                        stream_version=int(row.stream_version),
+                        kind="REVISION",
+                        revision_kind=fact.revision_kind,
+                        superseded_side=fact.side,
+                        superseded_gross_cents=(
+                            int(fact.superseded_gross_cents)
+                            if fact.superseded_gross_cents is not None
+                            else 0
+                        ),
+                        superseded_quantity=(
+                            int(fact.superseded_quantity)
+                            if fact.superseded_quantity is not None
+                            else 0
+                        ),
+                        reversed_consumed_basis_cents=(
+                            int(fact.reversed_consumed_basis_cents)
+                            if fact.reversed_consumed_basis_cents is not None
+                            else 0
+                        ),
+                        corrected_gross_cents=(
+                            int(fact.corrected_gross_cents)
+                            if fact.corrected_gross_cents is not None
+                            else 0
+                        ),
+                        corrected_quantity=(
+                            int(fact.corrected_quantity)
+                            if fact.corrected_quantity is not None
+                            else 0
+                        ),
+                        corrected_consumed_basis_cents=(
+                            int(fact.corrected_consumed_basis_cents)
+                            if fact.corrected_consumed_basis_cents is not None
+                            else 0
+                        ),
+                    )
+                )
+        return tuple(facts)
+
+    def _replayed_basis_consumed_by_exit(
+        self,
+        conn: sa.engine.Connection,
+        position_lineage_id: str,
+        economic_lot_id: str,
+        exit_event_id: str,
+    ) -> int:
+        """Exact basis one exit event consumed, recomputed from history."""
+
+        state = LotReplayState()
+        for fact in self._lot_event_facts(
+            conn, position_lineage_id, economic_lot_id
+        ):
+            replay_lot_fact(state, fact)
+            if fact.event_id == exit_event_id:
+                break
+        assert state.consumed_basis_by_exit_event is not None
+        return state.consumed_basis_by_exit_event.get(exit_event_id, 0)
+
+    def _record_execution_bust_or_correction(
+        self, request: ExecutionRevisionRequest
+    ) -> tuple[ExecutionRevisionReceipt, CapitalRiskSnapshot]:
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[ExecutionRevisionReceipt, CapitalRiskSnapshot]:
+            conn = context._connection
+            binding = self._stored_binding(context)
+            registry = context._table("execution_revisions")
+
+            fill_rows = self._fill_registry_rows(conn, request.execution_id)
+            if not fill_rows or int(fill_rows[0].revision) != 1:
+                raise CapitalConflict(
+                    "execution_unknown",
+                    "execution revision references no recorded fill",
+                    execution_id=request.execution_id,
+                )
+            newest_revision = int(fill_rows[-1].revision)
+            if request.revision > newest_revision + 1:
+                raise CapitalConflict(
+                    "revision_sequence_conflict",
+                    "execution revisions are monotonic and contiguous",
+                    execution_id=request.execution_id,
+                    active_revision=newest_revision,
+                    requested_revision=request.revision,
+                )
+
+            original = self._original_fill_context(conn, fill_rows)
+            if request.order_id != original["order_id"]:
+                raise CapitalConflict(
+                    "revision_content_conflict",
+                    "revision order identity differs from the recorded fill",
+                    execution_id=request.execution_id,
+                )
+            if request.side is not original["side"]:
+                raise CapitalConflict(
+                    "revision_content_conflict",
+                    "revision side differs from the recorded fill",
+                    execution_id=request.execution_id,
+                )
+            if request.security_id != original["security_id"]:
+                raise CapitalConflict(
+                    "revision_content_conflict",
+                    "revision security differs from the recorded fill",
+                    execution_id=request.execution_id,
+                )
+            lineage = original["position_lineage_id"]
+            lot = original["economic_lot_id"]
+            if (
+                request.position_lineage_id is not None
+                and (
+                    request.position_lineage_id != lineage
+                    or request.economic_lot_id != lot
+                )
+            ):
+                raise CapitalConflict(
+                    "revision_content_conflict",
+                    "revision lot identity differs from the recorded fill",
+                    execution_id=request.execution_id,
+                )
+
+            # The superseded fact is whatever revision request.revision-1
+            # left active (the recorded fill, a correction, or nothing after
+            # a bust).
+            active = self._active_fill_fact(
+                conn, fill_rows, original, before_revision=request.revision
+            )
+            if request.revision_kind is ExecutionRevisionKind.BUSTED:
+                if active["side"] is None:
+                    raise CapitalConflict(
+                        "revision_active_fact_missing",
+                        "the execution is already busted; there is no active"
+                        " fact to remove",
+                        execution_id=request.execution_id,
+                    )
+                # The bust must restate the active fact's quantity exactly;
+                # verified after the registry idempotence check below, so a
+                # divergent retry of a committed revision reports
+                # payload_conflict rather than this restatement error.
+            else:
+                if active["side"] is None:
+                    if request.superseded_quantity is not None:
+                        raise CapitalConflict(
+                            "revision_content_conflict",
+                            "the active fact is busted; the correction"
+                            " restates no superseded quantity",
+                            execution_id=request.execution_id,
+                        )
+
+            # Corporate restructurings change the share language of the lot;
+            # revising pre-restructuring fills is source-authorized
+            # settlement territory and stays fail-closed here.
+            original_stream = int(
+                conn.execute(
+                    sa.text(
+                        "SELECT stream_version FROM economic_events"
+                        " WHERE economic_event_id = :event_id"
+                    ),
+                    {"event_id": original["event_id"]},
+                ).one().stream_version
+            )
+            restructured = conn.execute(
+                sa.text(
+                    "SELECT COUNT(*) AS n FROM economic_events"
+                    " WHERE position_lineage_id = :lineage"
+                    " AND economic_lot_id = :lot"
+                    " AND stream_version > :stream_version"
+                    " AND event_kind IN ('SPLIT', 'MERGE',"
+                    " 'SECURITY_CONVERTED', 'SHARE_RECEIVABLE',"
+                    " 'CORPORATE_CASH_SETTLED', 'LEGAL_WRITE_OFF')"
+                ),
+                {
+                    "lineage": lineage,
+                    "lot": lot,
+                    "stream_version": original_stream,
+                },
+            ).one().n
+            if int(restructured) > 0:
+                raise CapitalConflict(
+                    "revision_lot_restructured",
+                    "the lot changed through a corporate action after this"
+                    " fill; revisions of restructured lots stay fail-closed",
+                    execution_id=request.execution_id,
+                )
+            position_row = context.position_row(lineage, lot)
+            if position_row is not None and position_row.state == (
+                PositionState.LEGAL_TERMINAL.value
+            ):
+                raise CapitalConflict(
+                    "revision_lot_legal_terminal",
+                    "legally derecognized lots are settled by legal facts,"
+                    " not execution revisions",
+                    execution_id=request.execution_id,
+                )
+
+            # Superseded contribution (the fact this revision removes).
+            superseded_side = active["side"]
+            # A correction after a bust supersedes nothing, but the
+            # corrected fact still belongs to the recorded fill's side;
+            # replay routing and the exit basis rule key off that side.
+            effective_side = (
+                superseded_side
+                if superseded_side is not None
+                else original["side"]
+            )
+            superseded_gross = int(active["gross_cents"])
+            superseded_quantity = int(active["quantity"])
+            reversed_consumed_basis: int | None = None
+            if superseded_side is ExecutionSide.EXIT:
+                reversed_consumed_basis = (
+                    int(active["consumed_basis_cents"])
+                    if active["consumed_basis_cents"] is not None
+                    else self._replayed_basis_consumed_by_exit(
+                        conn, lineage, lot, active["event_id"]
+                    )
+                )
+
+            corrected_gross = 0
+            if request.revision_kind is ExecutionRevisionKind.CORRECTED:
+                corrected_gross = fill_gross_cents(
+                    request.corrected_price_micros,
+                    request.corrected_quantity,
+                )
+                if corrected_gross < 1:
+                    raise CapitalConflict(
+                        "fill_gross_rounds_to_zero",
+                        "corrected notional rounds to zero cents under the"
+                        " frozen policy",
+                        price_micros=request.corrected_price_micros,
+                        quantity=request.corrected_quantity,
+                    )
+                if (
+                    superseded_side is not None
+                    and superseded_quantity == request.corrected_quantity
+                    and superseded_gross == corrected_gross
+                ):
+                    raise CapitalConflict(
+                        "revision_changes_nothing",
+                        "the corrected fact equals the active fact; no"
+                        " economic fact changed",
+                        execution_id=request.execution_id,
+                    )
+
+            # Replayed lot state around this revision: before, after the
+            # reversal only (for the corrected exit's basis rule), and
+            # after the whole fact.
+            prior_state = LotReplayState()
+            for fact in self._lot_event_facts(conn, lineage, lot):
+                replay_lot_fact(prior_state, fact)
+            quantity_before = prior_state.quantity
+            basis_before = prior_state.basis_cents
+            reversed_only = LotEventFact(
+                event_id="",
+                stream_version=0,
+                kind="REVISION",
+                revision_kind=ExecutionRevisionKind.BUSTED,
+                superseded_side=superseded_side,
+                superseded_gross_cents=superseded_gross,
+                superseded_quantity=superseded_quantity,
+                reversed_consumed_basis_cents=reversed_consumed_basis or 0,
+            )
+            reversed_state = LotReplayState(
+                quantity=quantity_before,
+                basis_cents=basis_before,
+                consumed_basis_total_cents=prior_state.consumed_basis_total_cents,
+            )
+            if superseded_side is not None:
+                replay_lot_fact(reversed_state, reversed_only)
+            corrected_consumed_basis: int | None = None
+            if (
+                request.revision_kind is ExecutionRevisionKind.CORRECTED
+                and effective_side is ExecutionSide.EXIT
+            ):
+                if request.corrected_quantity == reversed_state.quantity:
+                    corrected_consumed_basis = reversed_state.basis_cents
+                elif reversed_state.quantity > 0:
+                    corrected_consumed_basis = round_half_even_div(
+                        reversed_state.basis_cents
+                        * request.corrected_quantity,
+                        reversed_state.quantity,
+                    )
+                else:
+                    corrected_consumed_basis = 0
+                # Consumption is capped at the lot's available basis (see
+                # replay_lot_fact): an oversized corrected exit exports the
+                # excess shares as a preserved negative quantity.
+                corrected_consumed_basis = min(
+                    corrected_consumed_basis,
+                    max(reversed_state.basis_cents, 0),
+                )
+
+            full_fact = LotEventFact(
+                event_id="",
+                stream_version=0,
+                kind="REVISION",
+                revision_kind=request.revision_kind,
+                superseded_side=effective_side,
+                superseded_gross_cents=superseded_gross,
+                superseded_quantity=superseded_quantity,
+                reversed_consumed_basis_cents=reversed_consumed_basis or 0,
+                corrected_gross_cents=corrected_gross,
+                corrected_quantity=(
+                    request.corrected_quantity
+                    if request.corrected_quantity is not None
+                    else 0
+                ),
+                corrected_consumed_basis_cents=(
+                    corrected_consumed_basis or 0
+                ),
+            )
+            after_state = LotReplayState(
+                quantity=quantity_before,
+                basis_cents=basis_before,
+                consumed_basis_total_cents=prior_state.consumed_basis_total_cents,
+            )
+            replay_lot_fact(after_state, full_fact)
+            quantity_after = after_state.quantity
+            basis_after = after_state.basis_cents
+            reopened = quantity_before <= 0 < quantity_after
+            impossible = quantity_after < 0 or basis_after < 0
+
+            fact = ExecutionRevisionFact(
+                fact_kind=ExecutionRevisionFactKind.FILL,
+                revision_kind=request.revision_kind,
+                execution_id=request.execution_id,
+                revision=request.revision,
+                order_id=request.order_id,
+                side=original["side"],
+                security_id=original["security_id"],
+                position_lineage_id=lineage,
+                economic_lot_id=lot,
+                producer_namespace=original["producer_namespace"],
+                research_program_id=original["research_program_id"],
+                economic_lineage_id=original["economic_lineage_id"],
+                stage_id=original["stage_id"],
+                superseded_quantity=(
+                    superseded_quantity if superseded_side is not None else None
+                ),
+                superseded_gross_cents=(
+                    superseded_gross if superseded_side is not None else None
+                ),
+                reversed_consumed_basis_cents=reversed_consumed_basis,
+                corrected_price_micros=request.corrected_price_micros,
+                corrected_quantity=request.corrected_quantity,
+                corrected_gross_cents=(
+                    corrected_gross
+                    if request.revision_kind
+                    is ExecutionRevisionKind.CORRECTED
+                    else None
+                ),
+                corrected_consumed_basis_cents=corrected_consumed_basis,
+            )
+            idempotency_key = fill_idempotency_key(
+                request.execution_id, request.revision
+            )
+            payload = CapitalCommandPayload(
+                event_kind=EconomicEventKind.LATE_CORRECTION,
+                effective_at=request.effective_at,
+                source_authority=request.source_authority,
+                position_lineage_id=lineage,
+                economic_lot_id=lot,
+                correction_of_event_id=active["event_id"],
+                legs=self._execution_revision_legs(
+                    idempotency_key, fact
+                ),
+                producer_namespace=original["producer_namespace"],
+                research_program_id=original["research_program_id"],
+                economic_lineage_id=original["economic_lineage_id"],
+                stage_id=original["stage_id"],
+                execution_revision=fact,
+            )
+            payload_hash = payload.content_hash()
+
+            existing_row = conn.execute(
+                registry.select().where(
+                    sa.and_(
+                        registry.c.execution_id == request.execution_id,
+                        registry.c.revision == request.revision,
+                    )
+                )
+            ).first()
+            if request.superseded_quantity is not None and (
+                request.superseded_quantity != active["quantity"]
+            ):
+                # A divergent restatement of the active fact under this
+                # revision identity: payload_conflict when the identity is
+                # already committed (the committed revision restated the
+                # active fact exactly), revision_content_conflict when new.
+                raise CapitalConflict(
+                    (
+                        "payload_conflict"
+                        if existing_row is not None
+                        else "revision_content_conflict"
+                    ),
+                    "the revision restates a different superseded quantity"
+                    " than the active fact",
+                    execution_id=request.execution_id,
+                    active_quantity=active["quantity"],
+                    restated_quantity=request.superseded_quantity,
+                )
+            if existing_row is not None:
+                expected_kind = registry_kind_for_fill_revision(
+                    request.revision_kind
+                )
+                if existing_row.revision_kind != expected_kind:
+                    raise CapitalConflict(
+                        "revision_kind_conflict",
+                        "execution revision identity reused by another fact"
+                        " kind",
+                        execution_id=request.execution_id,
+                        revision=request.revision,
+                    )
+                if existing_row.payload_content_hash != payload_hash:
+                    raise CapitalConflict(
+                        "payload_conflict",
+                        "execution revision already committed with different"
+                        " content",
+                        execution_id=request.execution_id,
+                        revision=request.revision,
+                    )
+                snapshot = context.read_capital_risk_snapshot(request.as_of)
+                receipt = ExecutionRevisionReceipt(
+                    execution_id=request.execution_id,
+                    order_id=request.order_id,
+                    revision=request.revision,
+                    revision_kind=request.revision_kind,
+                    event_id=derive_event_id(idempotency_key),
+                    superseded_event_id=active["event_id"],
+                    side=original["side"],
+                    security_id=original["security_id"],
+                    position_lineage_id=lineage,
+                    economic_lot_id=lot,
+                    reversed_gross_cents=superseded_gross,
+                    reversed_quantity=superseded_quantity,
+                    reversed_consumed_basis_cents=reversed_consumed_basis,
+                    applied_gross_cents=corrected_gross,
+                    applied_quantity=(
+                        request.corrected_quantity
+                        if request.corrected_quantity is not None
+                        else 0
+                    ),
+                    applied_consumed_basis_cents=corrected_consumed_basis,
+                    reopened=reopened,
+                    reconciliation_halted=impossible,
+                    capital_version=snapshot.capital_version,
+                    stream_version=context.current_stream_version(),
+                )
+                return receipt, snapshot
+
+            command = CapitalCommand(
+                idempotency_key=idempotency_key,
+                account_binding=binding,
+                expected_stream_version=request.expected_stream_version,
+                as_of=request.as_of,
+                payload=payload,
+            )
+
+            def register_revision(tx: GatewayTransactionContext) -> None:
+                tx._connection.execute(
+                    registry.insert().values(
+                        execution_revision_id=idempotency_key,
+                        execution_id=request.execution_id,
+                        revision=request.revision,
+                        revision_kind=registry_kind_for_fill_revision(
+                            request.revision_kind
+                        ),
+                        order_id=request.order_id,
+                        payload_content_hash=payload_hash,
+                        recorded_at=utc_iso(request.as_of),
+                    )
+                )
+                tx._connection.execute(
+                    tx._table("event_revisions").insert().values(
+                        canonical_event_id=active["event_id"],
+                        revision_event_id=derive_event_id(idempotency_key),
+                        revision_kind=EVENT_REVISION_LINK_KIND,
+                        recorded_at=utc_iso(request.as_of),
+                    )
+                )
+
+            snapshot = context.run_append(
+                command,
+                after_event_insert_hook=None,
+                after_projection_hook=register_revision,
+            )
+            receipt = ExecutionRevisionReceipt(
+                execution_id=request.execution_id,
+                order_id=request.order_id,
+                revision=request.revision,
+                revision_kind=request.revision_kind,
+                event_id=derive_event_id(idempotency_key),
+                superseded_event_id=active["event_id"],
+                side=original["side"],
+                security_id=original["security_id"],
+                position_lineage_id=lineage,
+                economic_lot_id=lot,
+                reversed_gross_cents=superseded_gross,
+                reversed_quantity=superseded_quantity,
+                reversed_consumed_basis_cents=reversed_consumed_basis,
+                applied_gross_cents=corrected_gross,
+                applied_quantity=(
+                    request.corrected_quantity
+                    if request.corrected_quantity is not None
+                    else 0
+                ),
+                applied_consumed_basis_cents=corrected_consumed_basis,
+                reopened=reopened,
+                reconciliation_halted=impossible,
+                capital_version=snapshot.capital_version,
+                stream_version=context.current_stream_version(),
+            )
+            return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def _execution_revision_legs(
+        self, idempotency_key: str, fact: ExecutionRevisionFact
+    ) -> tuple[EconomicEventLeg, ...]:
+        """Exact reversal (and corrected) legs for one revision fact.
+
+        Cash amounts reuse the recorded gross cents, so a busted fill
+        reverses its cash and security legs exactly — rounding residue
+        included — and fee revision legs carry the signed booked deltas.
+        """
+
+        return execution_revision_legs(idempotency_key, fact)
+
     def record_fee_revision(
         self, request: FeeRevisionRequest
     ) -> tuple[FeeRevisionReceipt, CapitalRiskSnapshot]:
@@ -3680,14 +5071,15 @@ class CapitalRepository:
         order's fill history: commission base / stamp tax / transfer fee are
         each rounded half-even, and the per-order minimum commission is
         charged exactly once across partial fills.
+
+        Higher revisions (Plan 02 Task 6) follow a busted/corrected fill:
+        they recompute the order's fee target from the active fill facts
+        and book the signed delta against what the order's fee streams
+        have actually charged.
         """
 
         if request.revision != 1:
-            raise CapitalConflict(
-                "unsupported_revision",
-                "fee bust/correction revisions land in Plan 02 Task 6",
-                revision=request.revision,
-            )
+            return self._record_fee_bust_or_correction(request)
 
         def operation(
             context: GatewayTransactionContext,
@@ -3801,6 +5193,7 @@ class CapitalRepository:
                     fill_execution_id=request.fill_execution_id,
                     order_id=order_id,
                     revision=request.revision,
+                    revision_kind=FeeRevisionKind.INITIAL,
                     event_id=(
                         derive_event_id(idempotency_key)
                         if total_cents > 0
@@ -3811,6 +5204,7 @@ class CapitalRepository:
                     stamp_tax_cents=components.stamp_tax_cents,
                     transfer_fee_cents=components.transfer_fee_cents,
                     total_cents=total_cents,
+                    booked_delta_cents=total_cents,
                     capital_version=snapshot.capital_version,
                     stream_version=stream_version,
                 )
@@ -3835,12 +5229,14 @@ class CapitalRepository:
                     fill_execution_id=request.fill_execution_id,
                     order_id=order_id,
                     revision=request.revision,
+                    revision_kind=FeeRevisionKind.INITIAL,
                     event_id=None,
                     fee_policy_version=request.fee_policy.fee_policy_version,
                     commission_cents=0,
                     stamp_tax_cents=0,
                     transfer_fee_cents=0,
                     total_cents=0,
+                    booked_delta_cents=0,
                     capital_version=snapshot.capital_version,
                     stream_version=context.current_stream_version(),
                 )
@@ -3876,16 +5272,319 @@ class CapitalRepository:
                 fill_execution_id=request.fill_execution_id,
                 order_id=order_id,
                 revision=request.revision,
+                revision_kind=FeeRevisionKind.INITIAL,
                 event_id=derive_event_id(idempotency_key),
                 fee_policy_version=request.fee_policy.fee_policy_version,
                 commission_cents=commission_cents,
                 stamp_tax_cents=components.stamp_tax_cents,
                 transfer_fee_cents=components.transfer_fee_cents,
                 total_cents=total_cents,
+                booked_delta_cents=total_cents,
                 capital_version=snapshot.capital_version,
                 stream_version=context.current_stream_version(),
             )
             return receipt, snapshot
+
+        return self._run_write_transaction(operation)
+
+    def _record_fee_bust_or_correction(
+        self, request: FeeRevisionRequest
+    ) -> tuple[FeeRevisionReceipt, CapitalRiskSnapshot]:
+        """Fee revisions follow fill revisions (Plan 02 Task 6).
+
+        A fee bust/correction is accepted only after the linked fill has
+        been busted/corrected. It recomputes the order's fee target from
+        the active fill facts under the request's policy and books the
+        signed per-component delta against what the order's fee streams
+        actually charged: a LATE_CORRECTION event when the delta is
+        nonzero, a registry-only fact when the target is unchanged.
+        """
+
+        def operation(
+            context: GatewayTransactionContext,
+        ) -> tuple[FeeRevisionReceipt, CapitalRiskSnapshot]:
+            conn = context._connection
+            binding = self._stored_binding(context)
+            registry = context._table("execution_revisions")
+
+            fill_rows = self._fill_registry_rows(
+                conn, request.fill_execution_id
+            )
+            if not fill_rows or int(fill_rows[0].revision) != 1:
+                raise CapitalConflict(
+                    "fill_unknown",
+                    "fee revision references no recorded fill",
+                    fill_execution_id=request.fill_execution_id,
+                )
+            newest_fill_row = fill_rows[-1]
+            expected_fill_kind = (
+                FILL_BUST_KIND
+                if request.revision_kind is FeeRevisionKind.BUSTED
+                else FILL_CORRECTION_KIND
+            )
+            if (
+                int(newest_fill_row.revision) == 1
+                or newest_fill_row.revision_kind != expected_fill_kind
+            ):
+                raise CapitalConflict(
+                    "fee_revision_requires_fill_revision",
+                    "fee revisions follow fill revisions: the linked fill"
+                    " must already carry the matching bust/correction",
+                    fill_execution_id=request.fill_execution_id,
+                    fill_revision_kind=newest_fill_row.revision_kind,
+                    requested_fee_kind=request.revision_kind.value,
+                )
+            order_id = newest_fill_row.order_id
+
+            fee_exec_id = fee_execution_id(request.fill_execution_id)
+            fee_rows = tuple(
+                conn.execute(
+                    registry.select()
+                    .where(
+                        sa.and_(
+                            registry.c.execution_id == fee_exec_id,
+                            registry.c.revision_kind.in_(
+                                tuple(sorted(FEE_REVISION_KINDS))
+                            ),
+                        )
+                    )
+                    .order_by(registry.c.revision)
+                ).all()
+            )
+            if not fee_rows:
+                raise CapitalConflict(
+                    "revision_sequence_conflict",
+                    "fee revisions supersede the initial fee charge",
+                    fill_execution_id=request.fill_execution_id,
+                )
+            newest_fee_revision = int(fee_rows[-1].revision)
+            if request.revision > newest_fee_revision + 1:
+                raise CapitalConflict(
+                    "revision_sequence_conflict",
+                    "fee revisions are monotonic and contiguous",
+                    fill_execution_id=request.fill_execution_id,
+                    active_revision=newest_fee_revision,
+                    requested_revision=request.revision,
+                )
+
+            fee_row = conn.execute(
+                sa.text(
+                    "SELECT rowid AS fee_rowid, payload_content_hash,"
+                    " revision_kind FROM execution_revisions"
+                    " WHERE execution_id = :execution_id"
+                    " AND revision = :revision"
+                ),
+                {
+                    "execution_id": fee_exec_id,
+                    "revision": request.revision,
+                },
+            ).first()
+            cutoff = fee_row.fee_rowid if fee_row is not None else None
+            (
+                base_now,
+                stamp_owed,
+                transfer_owed,
+                commission_charged,
+                stamp_charged,
+                transfer_charged,
+                active_fill_count,
+            ) = _order_fee_state(conn, order_id, cutoff, request.fee_policy)
+            # The per-order minimum commission applies while the order
+            # holds an active fill; a fully busted order owes nothing
+            # (minimum included), so the bust refunds every component.
+            if active_fill_count > 0:
+                commission_target = max(
+                    request.fee_policy.min_commission_cents, base_now
+                )
+            else:
+                commission_target = 0
+            commission_delta = commission_target - commission_charged
+            stamp_delta = stamp_owed - stamp_charged
+            transfer_delta = transfer_owed - transfer_charged
+            total_delta = commission_delta + stamp_delta + transfer_delta
+            target_total = commission_target + stamp_owed + transfer_owed
+
+            idempotency_key = fee_idempotency_key(
+                request.fill_execution_id, request.revision
+            )
+            # The superseded fee fact is the previous revision's event when
+            # it exists (zero-charge revisions record no event).
+            prior_row = next(
+                (
+                    row
+                    for row in fee_rows
+                    if int(row.revision) == request.revision - 1
+                ),
+                None,
+            )
+            prior_event_id: str | None = None
+            if prior_row is not None:
+                prior_event_row = conn.execute(
+                    sa.text(
+                        "SELECT economic_event_id FROM economic_events"
+                        " WHERE payload_content_hash = :hash"
+                    ),
+                    {"hash": prior_row.payload_content_hash},
+                ).first()
+                if prior_event_row is not None:
+                    prior_event_id = prior_event_row.economic_event_id
+
+            if total_delta != 0:
+                fact = ExecutionRevisionFact(
+                    fact_kind=ExecutionRevisionFactKind.FEE,
+                    revision_kind=(
+                        ExecutionRevisionKind.BUSTED
+                        if request.revision_kind is FeeRevisionKind.BUSTED
+                        else ExecutionRevisionKind.CORRECTED
+                    ),
+                    execution_id=fee_exec_id,
+                    revision=request.revision,
+                    order_id=order_id,
+                    fee_commission_delta_cents=commission_delta,
+                    fee_stamp_tax_delta_cents=stamp_delta,
+                    fee_transfer_fee_delta_cents=transfer_delta,
+                )
+                payload = CapitalCommandPayload(
+                    event_kind=EconomicEventKind.LATE_CORRECTION,
+                    effective_at=request.effective_at,
+                    source_authority=request.source_authority,
+                    correction_of_event_id=prior_event_id,
+                    legs=self._execution_revision_legs(
+                        idempotency_key, fact
+                    ),
+                    execution_revision=fact,
+                )
+                expected_hash = payload.content_hash()
+            else:
+                payload = None
+                expected_hash = _zero_fee_receipt_hash(request)
+
+            registry_kind = registry_kind_for_fee_revision(
+                request.revision_kind
+            )
+
+            def build_receipt(
+                snapshot: CapitalRiskSnapshot,
+                event_id: str | None,
+                stream_version: int,
+            ) -> FeeRevisionReceipt:
+                return FeeRevisionReceipt(
+                    fill_execution_id=request.fill_execution_id,
+                    order_id=order_id,
+                    revision=request.revision,
+                    revision_kind=request.revision_kind,
+                    event_id=event_id,
+                    fee_policy_version=(
+                        request.fee_policy.fee_policy_version
+                    ),
+                    commission_cents=commission_target,
+                    stamp_tax_cents=stamp_owed,
+                    transfer_fee_cents=transfer_owed,
+                    total_cents=target_total,
+                    booked_delta_cents=total_delta,
+                    capital_version=snapshot.capital_version,
+                    stream_version=stream_version,
+                )
+
+            if fee_row is not None:
+                if fee_row.revision_kind != registry_kind:
+                    raise CapitalConflict(
+                        "revision_kind_conflict",
+                        "fee revision identity reused by another fact kind",
+                        fill_execution_id=request.fill_execution_id,
+                        revision=request.revision,
+                    )
+                if fee_row.payload_content_hash != expected_hash:
+                    raise CapitalConflict(
+                        "payload_conflict",
+                        "fee revision already committed with different"
+                        " content",
+                        fill_execution_id=request.fill_execution_id,
+                        revision=request.revision,
+                    )
+                snapshot = context.read_capital_risk_snapshot(request.as_of)
+                if total_delta != 0:
+                    event_row = conn.execute(
+                        sa.text(
+                            "SELECT stream_version FROM economic_events"
+                            " WHERE idempotency_key = :key"
+                        ),
+                        {"key": idempotency_key},
+                    ).one()
+                    stream_version = int(event_row.stream_version)
+                    event_id = derive_event_id(idempotency_key)
+                else:
+                    stream_version = context.current_stream_version()
+                    event_id = None
+                return build_receipt(snapshot, event_id, stream_version), snapshot
+
+            if payload is None:
+                # Zero delta: the registry records the fee fact, but no
+                # capital changed, so no event and a quiet capital version.
+                conn.execute(
+                    registry.insert().values(
+                        execution_revision_id=idempotency_key,
+                        execution_id=fee_exec_id,
+                        revision=request.revision,
+                        revision_kind=registry_kind,
+                        order_id=order_id,
+                        payload_content_hash=expected_hash,
+                        recorded_at=utc_iso(request.as_of),
+                    )
+                )
+                snapshot = context.read_capital_risk_snapshot(request.as_of)
+                return (
+                    build_receipt(
+                        snapshot, None, context.current_stream_version()
+                    ),
+                    snapshot,
+                )
+
+            command = CapitalCommand(
+                idempotency_key=idempotency_key,
+                account_binding=binding,
+                expected_stream_version=request.expected_stream_version,
+                as_of=request.as_of,
+                payload=payload,
+            )
+
+            def register_revision(tx: GatewayTransactionContext) -> None:
+                tx._connection.execute(
+                    registry.insert().values(
+                        execution_revision_id=idempotency_key,
+                        execution_id=fee_exec_id,
+                        revision=request.revision,
+                        revision_kind=registry_kind,
+                        order_id=order_id,
+                        payload_content_hash=expected_hash,
+                        recorded_at=utc_iso(request.as_of),
+                    )
+                )
+                if prior_event_id is not None:
+                    tx._connection.execute(
+                        tx._table("event_revisions").insert().values(
+                            canonical_event_id=prior_event_id,
+                            revision_event_id=derive_event_id(
+                                idempotency_key
+                            ),
+                            revision_kind=EVENT_REVISION_LINK_KIND,
+                            recorded_at=utc_iso(request.as_of),
+                        )
+                    )
+
+            snapshot = context.run_append(
+                command,
+                after_event_insert_hook=None,
+                after_projection_hook=register_revision,
+            )
+            return (
+                build_receipt(
+                    snapshot,
+                    derive_event_id(idempotency_key),
+                    context.current_stream_version(),
+                ),
+                snapshot,
+            )
 
         return self._run_write_transaction(operation)
 

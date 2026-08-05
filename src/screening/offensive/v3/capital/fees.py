@@ -25,6 +25,7 @@ Fee revision semantics:
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Annotated
 
 from pydantic import Field
@@ -38,6 +39,21 @@ from src.screening.offensive.v3.contracts.evidence import NonEmptyStr
 
 
 NonNegativeInt = Annotated[int, Field(ge=0)]
+
+
+class FeeRevisionKind(StrEnum):
+    """The lifecycle kind of one fee revision of a fill execution.
+
+    ``INITIAL`` is revision 1, the first charge of the fill's fee stream.
+    ``BUSTED``/``CORRECTED`` (Plan 02 Task 6) follow a busted/corrected
+    fill and recompute the order's fee target from the active fill facts;
+    they book the signed delta against what the order's fee streams have
+    actually charged (a refund when the delta is negative).
+    """
+
+    INITIAL = "INITIAL"
+    BUSTED = "BUSTED"
+    CORRECTED = "CORRECTED"
 
 
 class FeePolicy(CanonicalModel):
@@ -144,6 +160,7 @@ def commission_charge_cents(
 __all__ = [
     "FeeComponents",
     "FeePolicy",
+    "FeeRevisionKind",
     "commission_charge_cents",
     "compute_fee_components",
     "fee_execution_id",

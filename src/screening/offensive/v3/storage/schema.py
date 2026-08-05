@@ -21,6 +21,7 @@ IMMUTABLE_TABLES: tuple[str, ...] = (
     "entry_tombstones",
     "event_revisions",
     "execution_revisions",
+    "exit_obligation_reopens",
     "nav_observations",
     "risk_epoch_history",
     "risk_snapshot_seals",
@@ -299,6 +300,36 @@ def build_metadata() -> sa.MetaData:
         sa.Column("capital_version", sa.BigInteger, nullable=False),
         sa.Column("stream_version", sa.BigInteger, nullable=False),
         sa.Column("tombstoned_at", sa.Text, nullable=False),
+    )
+
+    # -- Plan 02 Task 6: durable reopened exit obligations -----------------
+    # Append-only facts: one row per flat/nonpositive-to-positive lot
+    # transition caused by an execution bust/correction. Plan 04 consumes
+    # them to restore the stable ExitMandate identity at a revision beyond
+    # every prior mandate revision of the lot.
+
+    sa.Table(
+        "exit_obligation_reopens",
+        meta,
+        sa.Column("reopen_id", sa.Text, primary_key=True),
+        sa.Column("position_lineage_id", sa.Text, nullable=False),
+        sa.Column("economic_lot_id", sa.Text, nullable=False),
+        sa.Column("security_id", sa.Text, nullable=False),
+        sa.Column("producer_namespace", sa.Text, nullable=False),
+        sa.Column("research_program_id", sa.Text, nullable=False),
+        sa.Column("economic_lineage_id", sa.Text, nullable=False),
+        sa.Column("stage_id", sa.Text, nullable=False),
+        sa.Column("reopened_quantity_units", sa.BigInteger, nullable=False),
+        sa.Column("position_state", sa.Text, nullable=False),
+        sa.Column("reopen_reason", sa.Text, nullable=False),
+        sa.Column("mandate_revision_floor", sa.BigInteger, nullable=False),
+        sa.Column(
+            "reopened_by_execution_revision_id", sa.Text, nullable=False
+        ),
+        sa.Column("reopened_by_event_id", sa.Text, nullable=False),
+        sa.Column("capital_version", sa.BigInteger, nullable=False),
+        sa.Column("stream_version", sa.BigInteger, nullable=False),
+        sa.Column("recorded_at", sa.Text, nullable=False),
     )
 
     sa.Table(

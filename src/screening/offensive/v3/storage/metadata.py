@@ -18,7 +18,7 @@ from src.screening.offensive.v3.contracts import content_hash
 SCHEMA_MAJOR: Final[int] = 2
 """The Revision 2 contract schema major persisted into snapshots."""
 
-LEDGER_SCHEMA_VERSION: Final[int] = 4
+LEDGER_SCHEMA_VERSION: Final[int] = 5
 """The capital ledger storage schema revision managed by migrations.
 
 Revision 2 (Plan 02 Task 3) adds the unit/NAV/lifecycle surface:
@@ -34,6 +34,10 @@ mapping that keeps exit obligations alive across conversions.
 Revision 4 (Plan 02 Task 5) adds the append-only stage-loss and
 risk-snapshot fact tables: ``stage_loss_budget_activations``,
 ``stage_loss_charges`` and ``risk_snapshot_seals``.
+
+Revision 5 (Plan 02 Task 6) adds the append-only reopened exit
+obligation facts (``exit_obligation_reopens``) consumed by Plan 04's
+ExitMandate projection when a bust/correction makes a lot reappear.
 """
 
 INITIAL_MIGRATION_REVISION: Final[str] = "0001"
@@ -48,7 +52,10 @@ CORPORATE_ACTIONS_MIGRATION_REVISION: Final[str] = "0003"
 RISK_SNAPSHOT_MIGRATION_REVISION: Final[str] = "0004"
 """Alembic revision identifier of the Task 5 stage-loss/snapshot migration."""
 
-CURRENT_MIGRATION_REVISION: Final[str] = RISK_SNAPSHOT_MIGRATION_REVISION
+EXECUTION_REVISION_MIGRATION_REVISION: Final[str] = "0005"
+"""Alembic revision identifier of the Task 6 reopen-obligation migration."""
+
+CURRENT_MIGRATION_REVISION: Final[str] = EXECUTION_REVISION_MIGRATION_REVISION
 """Alembic revision identifier of the newest ledger migration."""
 
 UNACTIVATED_POLICY_ACTIVATION_HASH: Final[str] = "0" * 64
@@ -84,6 +91,7 @@ EXPECTED_TABLE_NAMES: Final[frozenset[str]] = frozenset(
         "entry_tombstones",
         "event_revisions",
         "execution_revisions",
+        "exit_obligation_reopens",
         "flow_requests",
         "gateway_meta",
         "nav_observations",

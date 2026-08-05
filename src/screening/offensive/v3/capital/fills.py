@@ -8,10 +8,11 @@ FEE_CHARGED event. Unattributed or plan-violating fills are preserved under
 sentinel attribution and flagged, never dropped.
 
 Revision semantics: each broker execution report owns its own
-``execution_id`` and starts at ``revision=1`` (the recorded fact); partial
+``execution_id`` and starts at ``revision=1`` (the RECORDED fact); partial
 fills of one order are distinct execution reports. Higher revisions
-(BUSTED/CORRECTED supersessions) belong to Plan 02 Task 6 and fail closed
-here.
+(BUSTED/CORRECTED supersessions) land through Plan 02 Task 6
+(:mod:`capital.execution_revisions`); ``record_fill_revision`` dispatches
+``revision > 1`` requests to that machinery.
 """
 
 from __future__ import annotations
@@ -20,9 +21,10 @@ from typing import Annotated
 
 from pydantic import Field, model_validator
 
-from src.screening.offensive.v3.capital.fees import FeePolicy
+from src.screening.offensive.v3.capital.fees import FeePolicy, FeeRevisionKind
 from src.screening.offensive.v3.contracts import (
     CanonicalModel,
+    ExecutionRevisionKind,
     ExecutionSide,
     UtcInstant,
 )
@@ -59,6 +61,10 @@ class FillRevisionRequest(CanonicalModel):
 
     execution_id: NonEmptyStr
     revision: PositiveInt
+    # Plan 02 Task 6: revision 1 is the RECORDED fill fact and carries no
+    # revision kind; higher revisions are BUSTED/CORRECTED supersessions
+    # dispatched to the execution-revision machinery.
+    revision_kind: ExecutionRevisionKind | None = None
     order_id: NonEmptyStr
     side: ExecutionSide
     security_id: NonEmptyStr
@@ -77,6 +83,28 @@ class FillRevisionRequest(CanonicalModel):
     def validate_identity(self) -> "FillRevisionRequest":
         if self.as_of < self.effective_at:
             raise ValueError("as_of cannot precede effective_at")
+        if self.revision == 1:
+            if self.revision_kind is not None:
+                raise ValueError(
+                    "revision 1 is the RECORDED fill fact and carries no"
+                    " revision kind"
+                )
+        else:
+            if self.revision_kind not in (
+                ExecutionRevisionKind.BUSTED,
+                ExecutionRevisionKind.CORRECTED,
+            ):
+                raise ValueError(
+                    "higher revisions require a BUSTED or CORRECTED kind"
+                )
+            # Bust/correction restate or replace facts of the recorded
+            # fill; lot identity and attribution come from history, so the
+            # entry-attribution rules below apply to revision 1 only.
+            if self.reserve_source_id is not None:
+                raise ValueError(
+                    "execution revisions never consume a reserve"
+                )
+            return self
         has_lineage = self.position_lineage_id is not None
         has_lot = self.economic_lot_id is not None
         if has_lineage != has_lot:
@@ -122,10 +150,18 @@ class FillRevisionReceipt(CanonicalModel):
 
 
 class FeeRevisionRequest(CanonicalModel):
-    """One fee revision linked to its fill (a DISTINCT economic event)."""
+    """One fee revision linked to its fill (a DISTINCT economic event).
+
+    Revision 1 (``INITIAL``) charges the fill's fee under the versioned
+    policy. Higher revisions (Plan 02 Task 6) follow a busted/corrected
+    fill: they recompute the order's fee target from the active fill
+    facts and book the signed delta against what the order's fee streams
+    have actually charged.
+    """
 
     fill_execution_id: NonEmptyStr
     revision: PositiveInt
+    revision_kind: FeeRevisionKind = FeeRevisionKind.INITIAL
     fee_policy: FeePolicy
     source_authority: NonEmptyStr
     effective_at: UtcInstant
@@ -136,26 +172,44 @@ class FeeRevisionRequest(CanonicalModel):
     def validate_times(self) -> "FeeRevisionRequest":
         if self.as_of < self.effective_at:
             raise ValueError("as_of cannot precede effective_at")
+        if self.revision == 1:
+            if self.revision_kind is not FeeRevisionKind.INITIAL:
+                raise ValueError(
+                    "fee revision 1 is the INITIAL charge of the stream"
+                )
+        elif self.revision_kind is FeeRevisionKind.INITIAL:
+            raise ValueError(
+                "higher fee revisions require a BUSTED or CORRECTED kind"
+            )
         return self
 
 
 class FeeRevisionReceipt(CanonicalModel):
     """The durable outcome of one recorded fee revision.
 
-    ``event_id`` is ``None`` exactly when the computed charge is zero: the
+    ``event_id`` is ``None`` exactly when the booked delta is zero: the
     registry row still records the fee fact, but no capital changed so no
     economic event exists and the capital version stays quiet.
+
+    For the INITIAL revision the component fields and ``total_cents`` are
+    the charged amounts (and ``booked_delta_cents`` equals the total). For
+    Task 6 bust/correction revisions the component fields restate the
+    order's recomputed fee target under the request's policy, and
+    ``booked_delta_cents`` is the signed amount actually booked (a refund
+    when negative).
     """
 
     fill_execution_id: NonEmptyStr
     order_id: NonEmptyStr
     revision: PositiveInt
+    revision_kind: FeeRevisionKind
     event_id: NonEmptyStr | None
     fee_policy_version: NonEmptyStr
     commission_cents: NonNegativeCents
     stamp_tax_cents: NonNegativeCents
     transfer_fee_cents: NonNegativeCents
     total_cents: NonNegativeCents
+    booked_delta_cents: int
     capital_version: NonNegativeInt
     stream_version: NonNegativeInt
 
