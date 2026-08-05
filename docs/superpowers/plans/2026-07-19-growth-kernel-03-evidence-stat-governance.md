@@ -72,11 +72,11 @@ def publish(self, signed: SignedEnvelope, payload: bytes) -> ActiveEvidenceRecor
 
 **Interfaces:** Produces atomic `reserve_attempt_and_seal_trial()`, immutable target-policy registration, `enroll_expected_sessions()` and session revisions `RUN | NO_SIGNAL | BLOCKED | NO_RUN | DATA_UNKNOWN | SESSION_CANCELLED`.
 
-- [ ] **Step 1: Write failing tests** for seal-before-signal cutoff, immutable economic lineage/program, exactly one champion/challenger, target `PolicySnapshot` registration that is explicitly non-executable, fixed assessment dates and calendar spine enrollment before observations.
-- [ ] **Step 2: Add tests** proving attempt reservation and Trial/SAP seal either both commit or neither; cancelled exchange sessions use a signed calendar revision and `SESSION_CANCELLED`, not deletion; finalized missing run becomes `NO_RUN`.
-- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_{trials,session_spine}.py -v`.
-- [ ] **Step 4: Implement one governance transaction** for attempt reservation + Trial/SAP/Stage seal + target registration. Activation types are rejected from this repository.
-- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): seal trials targets and expected sessions"`.
+- [x] **Step 1: Write failing tests** for seal-before-signal cutoff, immutable economic lineage/program, exactly one champion/challenger, target `PolicySnapshot` registration that is explicitly non-executable, fixed assessment dates and calendar spine enrollment before observations.
+- [x] **Step 2: Add tests** proving attempt reservation and Trial/SAP seal either both commit or neither; cancelled exchange sessions use a signed calendar revision and `SESSION_CANCELLED`, not deletion; finalized missing run becomes `NO_RUN`.
+- [x] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_{trials,session_spine}.py -v`.
+- [x] **Step 4: Implement one governance transaction** for attempt reservation + Trial/SAP/Stage seal + target registration. Activation types are rejected from this repository.
+- [x] **Step 5: Verify and commit** with `git commit -m "feat(v3): seal trials targets and expected sessions"`.
 
 ### Task 3: Outcome Finalizer, plan-line identity, and mode-pure portfolio paths
 
