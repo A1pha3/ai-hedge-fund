@@ -81,11 +81,11 @@ assert adjusted.risk_adjustment_count == 1
 
 **Interfaces:** Produces `GatewayAuthorityRepository.activate_trust_bundle()`, `activate_policy_and_envelope()`, `replace_envelope()`, `raise_entry_fence()` and read-only active-state projection.
 
-- [ ] **Step 1: Write failing tests** for invalid root/capability/predecessor, epoch rollback, wrong account/mode, policy/envelope fingerprint mismatch, two active envelopes, concurrent replacement, pure tightening and a fake “tightening” that adds behavior.
-- [ ] **Step 2: Add correction-fence tests** using Plan 03 protocol: signed `EntryFenceRaised` persists idempotently, increments fencing/authorization status, tombstones unclaimed entry, ACKs only after commit and never affects ExitMandate.
-- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/gateway/test_authority.py -v`.
-- [ ] **Step 4: Implement monotonic CAS**. Behavior-changing `PolicyActivation` and its complete envelope activate in one Gateway transaction; pure tightening may activate alone only when a mechanical subset check proves no new behavior/quantity/window/cap.
-- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): activate governed policy and entry authority"`.
+- [x] **Step 1: Write failing tests** for invalid root/capability/predecessor, epoch rollback, wrong account/mode, policy/envelope fingerprint mismatch, two active envelopes, concurrent replacement, pure tightening and a fake “tightening” that adds behavior.
+- [x] **Step 2: Add correction-fence tests** using Plan 03 protocol: signed `EntryFenceRaised` persists idempotently, increments fencing/authorization status, tombstones unclaimed entry, ACKs only after commit and never affects ExitMandate.
+- [x] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/gateway/test_authority.py -v`.
+- [x] **Step 4: Implement monotonic CAS**. Behavior-changing `PolicyActivation` and its complete envelope activate in one Gateway transaction; pure tightening may activate alone only when a mechanical subset check proves no new behavior/quantity/window/cap.
+- [x] **Step 5: Verify and commit** with `git commit -m "feat(v3): activate governed policy and entry authority"`.
 
 ### Task 5: Atomic reserve and PortfolioDecisionSeal idempotency
 
