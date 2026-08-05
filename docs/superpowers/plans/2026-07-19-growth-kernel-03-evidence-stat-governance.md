@@ -92,8 +92,8 @@ def publish(self, signed: SignedEnvelope, payload: bytes) -> ActiveEvidenceRecor
 
 **Interfaces:** Produces `AttemptLedger`, `EvidenceConsumptionLedger`, `GlobalMultiplicityBudgetLedger`, `reserve_evaluation_units()` and `consume_primary_promotion()`.
 
-- [ ] **Step 1: Write failing tests** for failed/abandoned attempt consumption, fixed plan, cross-lineage/program repackaging, concurrent reservations, outcome revision, partial fill and relabeled evaluation unit.
-- [ ] **Step 2: Create independent DB uniqueness constraints**:
+- [x] **Step 1: Write failing tests** for failed/abandoned attempt consumption, fixed plan, cross-lineage/program repackaging, concurrent reservations, outcome revision, partial fill and relabeled evaluation unit.
+- [x] **Step 2: Create independent DB uniqueness constraints**:
 
 ```text
 (research_program_id, evidence_id, PRIMARY_PROMOTION)
@@ -102,9 +102,9 @@ def publish(self, signed: SignedEnvelope, payload: bytes) -> ActiveEvidenceRecor
 
 Do not collapse them into one four-column key.
 
-- [ ] **Step 3: Add global multiplicity tests** proving a new program/lineage/name cannot escape the governance-wide alpha/e-value budget; idempotent retry returns the original consumption, conflicting retry writes nothing.
-- [ ] **Step 4: Verify RED/GREEN** with `uv run pytest tests/offensive/v3/evidence/test_{attempts,consumption,multiplicity}.py -v`.
-- [ ] **Step 5: Commit** with `git commit -m "feat(v3): prevent evidence and evaluation-unit reuse"`.
+- [x] **Step 3: Add global multiplicity tests** proving a new program/lineage/name cannot escape the governance-wide alpha/e-value budget; idempotent retry returns the original consumption, conflicting retry writes nothing.
+- [x] **Step 4: Verify RED/GREEN** with `uv run pytest tests/offensive/v3/evidence/test_{attempts,consumption,multiplicity}.py -v`.
+- [x] **Step 5: Commit** with `git commit -m "feat(v3): prevent evidence and evaluation-unit reuse"`.
 
 ### Task 5: Continuous portfolio evaluator and conservative promotion gates
 
