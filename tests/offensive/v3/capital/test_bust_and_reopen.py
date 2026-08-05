@@ -56,7 +56,10 @@ from src.screening.offensive.v3.capital.reserves import (
     ReserveReleaseReason,
     ReserveReleaseRequest,
 )
-from src.screening.offensive.v3.capital.rounding import round_half_even_div
+from src.screening.offensive.v3.capital.rounding import (
+    MICROS_PER_CENT,
+    round_half_even_div,
+)
 from src.screening.offensive.v3.contracts import (
     CashEconomicEventLeg,
     CashReceivableEconomicEventLeg,
@@ -1405,7 +1408,15 @@ def test_property_interleaved_bust_correction_sequences_conserve(
         elif choice == "correct_entry":
             entry = data.draw(st.sampled_from(active_entries))
             quantity = data.draw(st.sampled_from([25, 50, 75]))
-            if quantity == entry["quantity"]:
+            price_micros = data.draw(
+                st.sampled_from(
+                    [8_000_000, 10_000_000, 12_000_000, 15_000_000]
+                )
+            )
+            new_gross = round_half_even_div(
+                price_micros * quantity, MICROS_PER_CENT
+            )
+            if quantity == entry["quantity"] and new_gross == entry["gross"]:
                 continue  # identical fact: not an economic correction
             receipt, _ = repository.record_execution_correction(
                 correction_request(
@@ -1413,14 +1424,14 @@ def test_property_interleaved_bust_correction_sequences_conserve(
                     repository,
                     revision=_next_revision(repository, entry["execution_id"]),
                     superseded_quantity=int(entry["quantity"]),
-                    corrected_price_micros=10_000_000,
+                    corrected_price_micros=price_micros,
                     corrected_quantity=quantity,
                     step=step,
                 )
             )
             step += 1
             entry["quantity"] = quantity
-            entry["gross"] = 100_000 * quantity // 100
+            entry["gross"] = new_gross
             if lot.quantity <= 0:
                 lot.entry_blocked = True
         elif choice == "correct_exit":
@@ -1429,7 +1440,12 @@ def test_property_interleaved_bust_correction_sequences_conserve(
             quantity = data.draw(
                 st.integers(min_value=1, max_value=ceiling + 25)
             )
-            if quantity == exit_["quantity"]:
+            price_micros = data.draw(
+                st.sampled_from(
+                    [9_000_000, 11_000_000, 13_000_000, 16_000_000]
+                )
+            )
+            if quantity == exit_["quantity"] and price_micros == 11_000_000:
                 continue
             receipt, _ = repository.record_execution_correction(
                 correction_request(
@@ -1439,7 +1455,7 @@ def test_property_interleaved_bust_correction_sequences_conserve(
                     side=ExecutionSide.EXIT,
                     revision=_next_revision(repository, exit_["execution_id"]),
                     superseded_quantity=int(exit_["quantity"]),
-                    corrected_price_micros=11_000_000,
+                    corrected_price_micros=price_micros,
                     corrected_quantity=quantity,
                     step=step,
                 )
