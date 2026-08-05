@@ -25,8 +25,10 @@ real policy activation through the Plan 04 gateway.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
-from datetime import datetime
+import sqlite3
+from datetime import datetime, timezone
 from decimal import Decimal
 from fractions import Fraction
 from pathlib import Path
@@ -263,6 +265,7 @@ from src.screening.offensive.v3.storage.schema import (
 
 __all__ = [
     "AccountBinding",
+    "BackupManifest",
     "CapitalCommand",
     "CapitalCommandPayload",
     "CapitalConflict",
@@ -278,6 +281,29 @@ class CapitalConflict(RuntimeError):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.details = MappingProxyType(details)
+
+
+class BackupManifest(CanonicalModel):
+    """One consistent capital ledger backup and its durable identity.
+
+    The manifest binds the account binding, the schema version, every
+    monotone version the store carries, the durable gateway cursors and the
+    backup content root (sha256 of the backup database bytes). Plan 04 owns
+    the durable inbox/outbox; until then both cursors are None and the
+    manifest records exactly that.
+    """
+
+    binding_content_hash: NonEmptyStr
+    schema_major: int
+    ledger_schema_version: int
+    stream_version: int
+    capital_version: int
+    risk_epoch: int
+    stage_loss_state_version: int
+    durable_inbox_cursor: str | None = None
+    durable_outbox_cursor: str | None = None
+    content_root: NonEmptyStr
+    created_at: UtcInstant
 
 
 # ``AccountBinding`` lives in ``capital/identity.py`` since Plan 02 Task 3 so
@@ -5594,6 +5620,205 @@ class CapitalRepository:
         with self._engine.connect() as conn:
             with conn.begin():
                 return verify_conservation(conn, self._metadata)
+
+    # -- Plan 02 Task 7: backup, rebuild, verification ---------------------
+
+    @property
+    def db_path(self) -> Path:
+        return self._database_path
+
+    def backup_consistent(self, backup_path: str | Path) -> BackupManifest:
+        """One consistent ledger snapshot plus its binding manifest.
+
+        The backup is an online SQLite snapshot of the committed state; the
+        manifest binds account, schema, every monotone version, the durable
+        gateway cursors (owned by Plan 04; None until then) and the content
+        root. A failed backup never advances any watermark: checkpoints are
+        untouched and a partial file is the caller's to remove.
+        """
+
+        backup_path = Path(backup_path)
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        source = sqlite3.connect(str(self._database_path))
+        try:
+            destination = sqlite3.connect(str(backup_path))
+            try:
+                source.backup(destination)
+            finally:
+                destination.close()
+        finally:
+            source.close()
+        content_root = hashlib.sha256(backup_path.read_bytes()).hexdigest()
+        with self._engine.connect() as conn:
+            binding_row = conn.execute(
+                sa.text(
+                    "SELECT binding_content_hash FROM account_capital_truth"
+                )
+            ).first()
+            if binding_row is None or not binding_row[0]:
+                raise CapitalConflict(
+                    "backup_requires_bound_account",
+                    "a backup manifest must bind the account identity",
+                )
+            meta = {
+                row.key: row.value
+                for row in conn.execute(
+                    sa.text("SELECT key, value FROM gateway_meta")
+                )
+            }
+        manifest = BackupManifest(
+            binding_content_hash=str(binding_row[0]),
+            schema_major=SCHEMA_MAJOR,
+            ledger_schema_version=int(meta.get("schema_version", "0")),
+            stream_version=self.stream_version(),
+            capital_version=self.capital_version(),
+            risk_epoch=int(meta.get("risk_epoch", "0")),
+            stage_loss_state_version=int(
+                meta.get("stage_loss_state_version", "0")
+            ),
+            durable_inbox_cursor=None,
+            durable_outbox_cursor=None,
+            content_root=content_root,
+            created_at=datetime.now(timezone.utc),
+        )
+        manifest_path = backup_path.with_name(
+            backup_path.name + ".manifest.json"
+        )
+        manifest_path.write_text(
+            manifest.model_dump_json(indent=2), encoding="utf-8"
+        )
+        return manifest
+
+    @classmethod
+    def restore_backup(
+        cls,
+        manifest: BackupManifest,
+        backup_path: str | Path,
+        new_path: str | Path,
+    ) -> "CapitalRepository":
+        """Restore one verified backup to a fresh ledger path.
+
+        The backup bytes must hash to the manifest content root before any
+        trust is granted; the restored store's binding and versions must
+        then match the manifest exactly.
+        """
+
+        backup_path = Path(backup_path)
+        new_path = Path(new_path)
+        actual_root = hashlib.sha256(backup_path.read_bytes()).hexdigest()
+        if actual_root != manifest.content_root:
+            raise CapitalConflict(
+                "backup_content_root_mismatch",
+                "backup bytes do not hash to the manifest content root",
+                expected_content_root=manifest.content_root,
+                actual_content_root=actual_root,
+            )
+        new_path.parent.mkdir(parents=True, exist_ok=True)
+        new_path.write_bytes(backup_path.read_bytes())
+        repository = cls.initialize(new_path)
+        with repository._engine.connect() as conn:
+            binding_row = conn.execute(
+                sa.text(
+                    "SELECT binding_content_hash FROM account_capital_truth"
+                )
+            ).first()
+            meta = {
+                row.key: row.value
+                for row in conn.execute(
+                    sa.text("SELECT key, value FROM gateway_meta")
+                )
+            }
+        if (
+            binding_row is None
+            or str(binding_row[0]) != manifest.binding_content_hash
+        ):
+            raise CapitalConflict(
+                "backup_binding_mismatch",
+                "restored ledger binding differs from the manifest",
+            )
+        if repository.stream_version() != int(manifest.stream_version):
+            raise CapitalConflict(
+                "backup_stream_mismatch",
+                "restored stream version differs from the manifest",
+            )
+        if repository.capital_version() != int(manifest.capital_version):
+            raise CapitalConflict(
+                "backup_capital_mismatch",
+                "restored capital version differs from the manifest",
+            )
+        if int(meta.get("schema_version", "0")) != int(
+            manifest.ledger_schema_version
+        ):
+            raise CapitalConflict(
+                "backup_schema_mismatch",
+                "restored schema version differs from the manifest",
+            )
+        return repository
+
+    def rebuild_projections(self) -> tuple[bool, tuple[str, ...]]:
+        """Recompute projection invariants from the append-only history.
+
+        Conservation carries the cash identity, per-lot quantities and
+        basis, stream contiguity and registry linkage; the lifetime water
+        mark must additionally equal the confirmed NAV history. Returns the
+        verdict with human-readable failure details.
+        """
+
+        details: list[str] = []
+        try:
+            self.assert_conservation()
+        except CapitalConflict as exc:
+            details.append(f"capital conservation failed: {exc}")
+            return False, tuple(details)
+        except Exception as exc:  # unknown event kinds, malformed rows
+            details.append(f"capital conservation failed: {exc!r}")
+            return False, tuple(details)
+        with self._engine.connect() as conn:
+            observation = conn.execute(
+                sa.text("SELECT MAX(nav_cents) AS m FROM nav_observations")
+            ).one()
+            projection = conn.execute(
+                sa.text(
+                    "SELECT lifetime_high_water_mark_cents AS hwm"
+                    " FROM capital_projection"
+                )
+            ).one()
+        if observation.m is not None and int(observation.m) != int(
+            projection.hwm
+        ):
+            details.append(
+                "lifetime_high_water_mark_cents does not match the"
+                " confirmed NAV observations"
+            )
+            return False, tuple(details)
+        return True, tuple(details)
+
+    def verify_ledger(self) -> "LedgerVerificationReport":
+        """Full fail-closed verification of this ledger."""
+
+        from src.screening.offensive.v3.capital.verify import (
+            LedgerVerificationReport,
+            VerificationStatus,
+        )
+
+        rebuild_ok, details = self.rebuild_projections()
+        conservation_status = (
+            VerificationStatus.PASS
+            if not any(
+                detail.startswith("capital conservation failed")
+                for detail in details
+            )
+            else VerificationStatus.FAIL
+        )
+        return LedgerVerificationReport(
+            capital_conservation=conservation_status,
+            projection_rebuild=(
+                VerificationStatus.PASS
+                if rebuild_ok
+                else VerificationStatus.FAIL
+            ),
+            details=tuple(details),
+        )
 
     # -- Plan 02 Task 3: genesis units, external flows, NAV lifecycle ---------
 

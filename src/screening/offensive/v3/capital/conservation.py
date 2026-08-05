@@ -1259,6 +1259,20 @@ def verify_conservation(
         # An unbound ledger holds no economic facts: conservation is void.
         return _empty_report()
 
+    # Every committed event must carry a frozen economic kind; the replay
+    # consumes only typed facts, so an unknown kind fails closed here even
+    # when the event carries no legs.
+    known_kinds = {kind.value for kind in EconomicEventKind}
+    distinct_kinds = connection.execute(
+        sa.text("SELECT DISTINCT event_kind FROM economic_events")
+    ).all()
+    for row in distinct_kinds:
+        if row.event_kind not in known_kinds:
+            _fail(
+                "unknown event kind in the economic history",
+                event_kind=row.event_kind,
+            )
+
     # -- replay inputs ---------------------------------------------------------
 
     economic = _replay_economic_events(connection)
