@@ -25,7 +25,10 @@ IMMUTABLE_TABLES: tuple[str, ...] = (
     "nav_observations",
     "risk_epoch_history",
     "risk_snapshot_seals",
-    "session_checkpoints",
+    # session_checkpoints is deliberately NOT immutable: one checkpoint per
+    # (session, phase) legitimately advances its stream watermark within
+    # the same phase (crash restart converges on it). History tables stay
+    # append-only; the checkpoint row is operational state, not history.
     "stage_loss_budget_activations",
     "stage_loss_charges",
 )

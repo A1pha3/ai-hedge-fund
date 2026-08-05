@@ -60,7 +60,6 @@ IMMUTABLE_TABLES = frozenset(
         "nav_observations",
         "risk_epoch_history",
         "risk_snapshot_seals",
-        "session_checkpoints",
         "stage_loss_budget_activations",
         "stage_loss_charges",
     }
@@ -455,8 +454,6 @@ def test_immutable_tables_reject_update_and_delete(
         " SET revision_kind = 'X' WHERE canonical_event_id = 'eco-seed-1'",
         "execution_revisions": "UPDATE execution_revisions"
         " SET revision_kind = 'X' WHERE execution_revision_id = 'xrev-seed'",
-        "session_checkpoints": "UPDATE session_checkpoints"
-        " SET stream_version = 999 WHERE session = '2026-08-03'",
         "entry_tombstones": "UPDATE entry_tombstones"
         " SET tombstone_reason = 'x' WHERE entry_identity = 'entry-seed'",
         "exit_obligation_reopens": "UPDATE exit_obligation_reopens"

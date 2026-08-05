@@ -389,10 +389,13 @@ def test_entry_bust_after_closed_lot_reverses_legs_and_halts(
     assert links[0].revision_kind == "EXECUTION_REVISION"
 
     # Negative position is preserved exactly: never clamped, never dropped.
+    # The busted entry funded no basis in the final fact set, so the
+    # phantom exit carries zero consumed basis (replay caps consumption at
+    # the available basis).
     row = _position_row(repository)
     assert row.settled_quantity_units == -100
     assert row.tradable_quantity_units == -100
-    assert row.cost_basis_cents == -100_000
+    assert row.cost_basis_cents == 0
     discrepancies = repository.reconciliation_discrepancies()
     assert len(discrepancies) == 1
     assert discrepancies[0].economic_lot_id == "lot-1"
@@ -1143,22 +1146,121 @@ def test_bust_then_fee_bust_converges_in_either_order(
     assert left.total_gross_exposure_cents == right.total_gross_exposure_cents == 0
 
 
+def test_price_only_entry_correction_after_full_exit_conserves(
+    repository: CapitalRepository,
+) -> None:
+    """Regression: price-only entry correction after a full exit.
+
+    The final active facts (corrected entry + exit) replay to a flat lot
+    with zero basis. The incremental delta view stranded the extra basis
+    on the closed lot and broke the master conservation identity.
+    """
+    deposit(repository, 1_000_000, 1)
+    repository.record_fill_revision(
+        fill_request("exec-e", repository, step=2)
+    )
+    repository.record_fill_revision(
+        fill_request(
+            "exec-x",
+            repository,
+            order_id="ord-exit",
+            side=ExecutionSide.EXIT,
+            price_micros=11_000_000,
+            step=3,
+        )
+    )
+    receipt, snapshot = repository.record_execution_correction(
+        correction_request(
+            "exec-e",
+            repository,
+            revision=_next_revision(repository, "exec-e"),
+            superseded_quantity=100,
+            corrected_price_micros=12_000_000,
+            corrected_quantity=100,
+            step=4,
+        )
+    )
+    assert receipt.reopened is False
+    assert receipt.reconciliation_halted is False
+    row = _position_row(repository)
+    assert row.settled_quantity_units == 0
+    assert row.cost_basis_cents == 0
+    # The corrected entry cost 20_000 more; exit proceeds are unchanged.
+    assert snapshot.available_cash_cents == (
+        1_000_000 - 100_000 - 20_000 + 110_000
+    )
+    repository.assert_conservation()
+
+
 # ---------------------------------------------------------------------------
 # Property: conservation holds through interleaved bust/correction/reopen
 # ---------------------------------------------------------------------------
 
 
 class _LotState:
+    """Mirror of the kernel's final active-fact lot replay.
+
+    Re-projection is retroactive, so the model tracks the ACTIVE fill set
+    in stream order and replays it for every assertion - incremental
+    quantity/basis bookkeeping cannot mirror consumption that a later
+    revision moves through earlier exits.
+    """
+
     def __init__(self) -> None:
-        self.quantity = 0
-        self.basis = 0
-        self.entries: list[dict[str, int]] = []
-        self.exits: list[dict[str, int]] = []
-        self.entry_blocked = False  # flat/terminal lots accept no entries
+        self.fills: list[dict] = []
+        self.entry_blocked = False  # exiting/flattened lots accept no entries
+
+    def replay(self) -> tuple[int, int]:
+        quantity = 0
+        basis = 0
+        for fill in self.fills:
+            if not fill["active"]:
+                continue
+            if fill["side"] is ExecutionSide.ENTRY:
+                quantity += int(fill["quantity"])
+                basis += int(fill["gross"])
+                continue
+            before = quantity
+            fill_quantity = int(fill["quantity"])
+            if fill_quantity == before:
+                consumed = basis
+            elif before > 0:
+                consumed = round_half_even_div(
+                    basis * fill_quantity, before
+                )
+            else:
+                consumed = 0
+            consumed = max(0, min(consumed, max(basis, 0)))
+            quantity -= fill_quantity
+            basis -= consumed
+        return quantity, basis
+
+    @property
+    def quantity(self) -> int:
+        return self.replay()[0]
+
+    @property
+    def basis(self) -> int:
+        return self.replay()[1]
 
     @property
     def impossible(self) -> bool:
-        return self.quantity < 0 or self.basis < 0
+        quantity, basis = self.replay()
+        return quantity < 0 or basis < 0
+
+    def active_entries(self) -> list[dict]:
+        return [
+            fill
+            for fill in self.fills
+            if fill["active"] and fill["side"] is ExecutionSide.ENTRY
+        ]
+
+    def active_exits(self) -> list[dict]:
+        return [
+            fill
+            for fill in self.fills
+            if fill["active"] and fill["side"] is ExecutionSide.EXIT
+        ]
 
 
 @settings(
@@ -1196,11 +1298,10 @@ def test_property_interleaved_bust_correction_sequences_conserve(
             )
         )
         step += 1
-        lot.quantity += quantity
-        lot.basis += 100_000 * quantity // 100
-        lot.entries.append(
+        lot.fills.append(
             {
                 "execution_id": execution_id,
+                "side": ExecutionSide.ENTRY,
                 "quantity": quantity,
                 "gross": 100_000 * quantity // 100,
                 "active": True,
@@ -1212,7 +1313,6 @@ def test_property_interleaved_bust_correction_sequences_conserve(
         nonlocal fill_counter, step
         fill_counter += 1
         execution_id = f"exec-x{fill_counter}"
-        before_quantity = lot.quantity
         repository.record_fill_revision(
             fill_request(
                 execution_id,
@@ -1225,22 +1325,14 @@ def test_property_interleaved_bust_correction_sequences_conserve(
             )
         )
         step += 1
-        consumed = (
-            lot.basis
-            if quantity == before_quantity
-            else round_half_even_div(lot.basis * quantity, before_quantity)
-        )
-        lot.quantity -= quantity
-        lot.basis -= consumed
         # Any exit moves the lot to EXIT_PENDING permanently; the kernel
         # rejects entries into exiting or closed lots.
         lot.entry_blocked = True
-        lot.exits.append(
+        lot.fills.append(
             {
                 "execution_id": execution_id,
+                "side": ExecutionSide.EXIT,
                 "quantity": quantity,
-                "gross": 110_000 * quantity // 100,
-                "consumed": consumed,
                 "active": True,
             }
         )
@@ -1248,8 +1340,8 @@ def test_property_interleaved_bust_correction_sequences_conserve(
 
     operations = data.draw(st.integers(min_value=1, max_value=12))
     for _ in range(operations):
-        active_entries = [entry for entry in lot.entries if entry["active"]]
-        active_exits = [exit_ for exit_ in lot.exits if exit_["active"]]
+        active_entries = lot.active_entries()
+        active_exits = lot.active_exits()
         choices = []
         if not lot.entry_blocked:
             choices.append("entry")
@@ -1279,19 +1371,18 @@ def test_property_interleaved_bust_correction_sequences_conserve(
                     entry["execution_id"],
                     repository,
                     revision=_next_revision(repository, entry["execution_id"]),
-                    superseded_quantity=entry["quantity"],
+                    superseded_quantity=int(entry["quantity"]),
                     step=step,
                 )
             )
             step += 1
             entry["active"] = False
-            lot.quantity -= entry["quantity"]
-            lot.basis -= entry["gross"]
             if lot.quantity <= 0:
                 lot.entry_blocked = True
             assert receipt.reconciliation_halted == lot.impossible
         elif choice == "bust_exit":
             exit_ = data.draw(st.sampled_from(active_exits))
+            quantity_before = lot.quantity
             receipt, _ = repository.record_execution_revision(
                 bust_request(
                     exit_["execution_id"],
@@ -1299,15 +1390,12 @@ def test_property_interleaved_bust_correction_sequences_conserve(
                     revision=_next_revision(repository, exit_["execution_id"]),
                     order_id="ord-exit",
                     side=ExecutionSide.EXIT,
-                    superseded_quantity=exit_["quantity"],
+                    superseded_quantity=int(exit_["quantity"]),
                     step=step,
                 )
             )
             step += 1
             exit_["active"] = False
-            quantity_before = lot.quantity
-            lot.quantity += exit_["quantity"]
-            lot.basis += exit_["consumed"]
             if lot.quantity > 0:
                 # Reopen is the flat/nonpositive-to-positive transition:
                 # a partial exit bust keeps the lot live without one.
@@ -1324,23 +1412,20 @@ def test_property_interleaved_bust_correction_sequences_conserve(
                     entry["execution_id"],
                     repository,
                     revision=_next_revision(repository, entry["execution_id"]),
-                    superseded_quantity=entry["quantity"],
+                    superseded_quantity=int(entry["quantity"]),
                     corrected_price_micros=10_000_000,
                     corrected_quantity=quantity,
                     step=step,
                 )
             )
             step += 1
-            lot.quantity += quantity - entry["quantity"]
-            new_gross = 100_000 * quantity // 100
-            lot.basis += new_gross - entry["gross"]
             entry["quantity"] = quantity
-            entry["gross"] = new_gross
+            entry["gross"] = 100_000 * quantity // 100
             if lot.quantity <= 0:
                 lot.entry_blocked = True
         elif choice == "correct_exit":
             exit_ = data.draw(st.sampled_from(active_exits))
-            ceiling = max(1, lot.quantity + exit_["quantity"])
+            ceiling = max(1, lot.quantity + int(exit_["quantity"]))
             quantity = data.draw(
                 st.integers(min_value=1, max_value=ceiling + 25)
             )
@@ -1353,32 +1438,14 @@ def test_property_interleaved_bust_correction_sequences_conserve(
                     order_id="ord-exit",
                     side=ExecutionSide.EXIT,
                     revision=_next_revision(repository, exit_["execution_id"]),
-                    superseded_quantity=exit_["quantity"],
+                    superseded_quantity=int(exit_["quantity"]),
                     corrected_price_micros=11_000_000,
                     corrected_quantity=quantity,
                     step=step,
                 )
             )
             step += 1
-            before_quantity = lot.quantity + exit_["quantity"]
-            basis_after_reversal = lot.basis + exit_["consumed"]
-            new_consumed = (
-                basis_after_reversal
-                if quantity == before_quantity
-                else round_half_even_div(
-                    basis_after_reversal * quantity, before_quantity
-                )
-                if before_quantity > 0
-                else 0
-            )
-            # The kernel caps consumption at the lot's available basis;
-            # the excess corrected quantity stays as preserved negative
-            # shares.
-            new_consumed = min(new_consumed, max(basis_after_reversal, 0))
-            lot.quantity += exit_["quantity"] - quantity
-            lot.basis += exit_["consumed"] - new_consumed
             exit_["quantity"] = quantity
-            exit_["consumed"] = new_consumed
             if lot.quantity <= 0:
                 lot.entry_blocked = True
 

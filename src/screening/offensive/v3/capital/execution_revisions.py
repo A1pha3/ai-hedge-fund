@@ -49,11 +49,13 @@ every mandate revision the lot has ever seen.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated
 
+import sqlalchemy as sa
 from pydantic import Field, model_validator
 
 from src.screening.offensive.v3.capital.fees import FeeRevisionKind
@@ -644,6 +646,173 @@ def lot_fact_for_revision(
     )
 
 
+# ---------------------------------------------------------------------------
+# Final active-fact replay: the single lot-truth code path
+# ---------------------------------------------------------------------------
+#
+# Re-projection is retroactive: the committed truth of a revision-touched
+# lot is its FINAL active fact set replayed in original stream order, not
+# the sum of incremental deltas. Incremental replay cannot move consumption
+# booked by earlier exits, so e.g. a price-only entry correction after a
+# full exit would strand basis on a flat lot. The kernel projection and the
+# conservation replay both consume this one implementation.
+
+
+@dataclass(frozen=True)
+class FinalLotFill:
+    """One active fill contribution to a lot's final replay."""
+
+    stream_version: int
+    side: ExecutionSide
+    quantity: int
+    gross_cents: int
+
+
+def replay_final_lot_fills(fills: list[FinalLotFill]) -> LotReplayState:
+    """Replay one lot's final active fills in stream order.
+
+    Entries add quantity and basis; exits consume basis round-half-even
+    (exact remainder on whole-lot exits), capped at the available basis: an
+    exit beyond the replayed entries exports preserved negative shares and
+    consumes nothing further.
+    """
+
+    state = LotReplayState()
+    for fill in sorted(fills, key=lambda item: item.stream_version):
+        if fill.side is ExecutionSide.ENTRY:
+            state.quantity += fill.quantity
+            state.basis_cents += fill.gross_cents
+            continue
+        before = state.quantity
+        if fill.quantity == before:
+            consumed = state.basis_cents
+        elif before > 0:
+            consumed = round_half_even_div(
+                state.basis_cents * fill.quantity, before
+            )
+        else:
+            consumed = 0
+        consumed = max(0, min(consumed, max(state.basis_cents, 0)))
+        state.consumed_basis_total_cents += consumed
+        state.quantity -= fill.quantity
+        state.basis_cents -= consumed
+    return state
+
+
+def final_lot_fills(
+    connection: "sa.engine.Connection",
+    position_lineage_id: str,
+    economic_lot_id: str,
+) -> list[FinalLotFill]:
+    """Final active fill contributions of one lot from the registry.
+
+    The latest committed revision of each execution wins (busts leave no
+    contribution); each contribution keeps its ORIGINAL fill's stream
+    position, because a correction replaces the fact at its original point
+    in history. Fee revisions carry order-level fee deltas, never lot
+    quantity/basis facts, and are skipped.
+    """
+
+    revision_rows = connection.execute(
+        sa.text(
+            "SELECT er.execution_id AS execution_id,"
+            " er.revision AS revision,"
+            " er.revision_kind AS revision_kind,"
+            " e.payload_json AS payload_json,"
+            " e.stream_version AS stream_version,"
+            " e.economic_event_id AS economic_event_id"
+            " FROM execution_revisions er"
+            " JOIN economic_events e"
+            " ON e.payload_content_hash = er.payload_content_hash"
+            " WHERE e.position_lineage_id = :lineage"
+            " AND e.economic_lot_id = :lot"
+            " ORDER BY er.execution_id, er.revision"
+        ),
+        {"lineage": position_lineage_id, "lot": economic_lot_id},
+    ).all()
+    final_by_execution: dict[str, object] = {}
+    first_seen: dict[str, int] = {}
+    for row in revision_rows:
+        execution_id = str(row.execution_id)
+        stream_version = int(row.stream_version)
+        if (
+            execution_id not in first_seen
+            or stream_version < first_seen[execution_id]
+        ):
+            first_seen[execution_id] = stream_version
+        final_by_execution[execution_id] = row
+
+    leg_rows = connection.execute(
+        sa.text(
+            "SELECT e.economic_event_id AS economic_event_id,"
+            " l.asset_kind AS asset_kind,"
+            " l.direction AS direction,"
+            " l.cash_amount_cents AS cash_amount_cents,"
+            " l.quantity_units AS quantity_units"
+            " FROM economic_events e"
+            " JOIN economic_event_legs l"
+            " ON l.economic_event_id = e.economic_event_id"
+            " WHERE e.position_lineage_id = :lineage"
+            " AND e.economic_lot_id = :lot"
+        ),
+        {"lineage": position_lineage_id, "lot": economic_lot_id},
+    ).all()
+    legs_by_event: dict[str, list[tuple[str, str, int, int]]] = {}
+    for leg in leg_rows:
+        legs_by_event.setdefault(str(leg.economic_event_id), []).append(
+            (
+                str(leg.asset_kind),
+                str(leg.direction),
+                int(leg.cash_amount_cents or 0),
+                int(leg.quantity_units or 0),
+            )
+        )
+
+    fills: list[FinalLotFill] = []
+    for execution_id, row in final_by_execution.items():
+        revision_kind = str(row.revision_kind)
+        if revision_kind == "FILL_BUST":
+            continue
+        if revision_kind == "FILL_CORRECTION":
+            fact = json.loads(str(row.payload_json)).get(
+                "execution_revision"
+            ) or {}
+            fills.append(
+                FinalLotFill(
+                    stream_version=first_seen[execution_id],
+                    side=ExecutionSide(str(fact["side"])),
+                    quantity=int(fact["corrected_quantity"] or 0),
+                    gross_cents=int(fact["corrected_gross_cents"] or 0),
+                )
+            )
+        elif revision_kind == "FILL":
+            quantity = 0
+            gross = 0
+            side = ExecutionSide.ENTRY
+            for asset_kind, direction, cash, qty in legs_by_event.get(
+                str(row.economic_event_id), []
+            ):
+                if asset_kind == "SECURITY":
+                    quantity = qty
+                    side = (
+                        ExecutionSide.ENTRY
+                        if direction == "CREDIT"
+                        else ExecutionSide.EXIT
+                    )
+                elif asset_kind == "CASH":
+                    gross = cash
+            fills.append(
+                FinalLotFill(
+                    stream_version=first_seen[execution_id],
+                    side=side,
+                    quantity=quantity,
+                    gross_cents=gross,
+                )
+            )
+        # FEE / FEE_BUST / FEE_CORRECTION: no lot quantity/basis facts.
+    return fills
+
+
 __all__ = [
     "EVENT_REVISION_LINK_KIND",
     "FEE_BUST_KIND",
@@ -664,15 +833,18 @@ __all__ = [
     "ExecutionRevisionFactKind",
     "ExecutionRevisionReceipt",
     "ExecutionRevisionRequest",
+    "FinalLotFill",
     "LotEventFact",
     "LotReplayState",
     "ReconciliationDiscrepancy",
     "ReopenedEconomicLot",
     "execution_revision_legs",
+    "final_lot_fills",
     "lot_fact_for_revision",
     "lot_tombstone_identity",
     "registry_kind_for_fee_revision",
     "registry_kind_for_fill_revision",
+    "replay_final_lot_fills",
     "replay_lot_fact",
     "reserve_tombstone_identity",
 ]

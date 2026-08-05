@@ -7,9 +7,10 @@ module carries the report types and the command-line verifier:
 
     python -m src.screening.offensive.v3.capital.verify --db PATH
 
-The verifier opens the ledger read-only in intent (it never appends),
-prints ``capital_conservation=... projection_rebuild=...`` and exits zero
-only when both dimensions pass.
+The verifier opens an EXISTING ledger idempotently (it never appends and
+never creates a missing database), prints
+``capital_conservation=... projection_rebuild=...`` and exits zero only
+when both dimensions pass.
 """
 
 from __future__ import annotations
@@ -55,9 +56,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    from pathlib import Path
+
     from src.screening.offensive.v3.capital.repository import (
         CapitalRepository,
     )
+
+    # The verifier never creates ledgers: a missing database is a usage
+    # error, not an implicit initialization.
+    if not Path(args.db).exists():
+        parser.error(f"ledger database not found: {args.db}")
 
     repository = CapitalRepository.initialize(args.db)
     report = repository.verify_ledger()

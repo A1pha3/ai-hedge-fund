@@ -64,9 +64,11 @@ from src.screening.offensive.v3.capital.execution_revisions import (
     ReconciliationDiscrepancy,
     ReopenedEconomicLot,
     execution_revision_legs,
+    final_lot_fills,
     lot_tombstone_identity,
     registry_kind_for_fee_revision,
     registry_kind_for_fill_revision,
+    replay_final_lot_fills,
     replay_lot_fact,
     reserve_tombstone_identity,
 )
@@ -1952,33 +1954,21 @@ class GatewayTransactionContext:
                 available_cash_cents=available_cash_cents,
             )
 
-        quantity_delta = 0
-        basis_delta = 0
         if fact.fact_kind is ExecutionRevisionFactKind.FILL:
-            if fact.superseded_quantity is not None:
-                assert fact.superseded_gross_cents is not None
-                superseded_quantity = int(fact.superseded_quantity)
-                superseded_gross = int(fact.superseded_gross_cents)
-                if fact.side is ExecutionSide.ENTRY:
-                    quantity_delta -= superseded_quantity
-                    basis_delta -= superseded_gross
-                else:
-                    quantity_delta += superseded_quantity
-                    basis_delta += int(
-                        fact.reversed_consumed_basis_cents or 0
-                    )
-            if fact.corrected_quantity is not None:
-                assert fact.corrected_gross_cents is not None
-                corrected_quantity = int(fact.corrected_quantity)
-                corrected_gross = int(fact.corrected_gross_cents)
-                if fact.side is ExecutionSide.ENTRY:
-                    quantity_delta += corrected_quantity
-                    basis_delta += corrected_gross
-                else:
-                    quantity_delta -= corrected_quantity
-                    basis_delta -= int(
-                        fact.corrected_consumed_basis_cents or 0
-                    )
+            # Single code path with the conservation replay: the lot's
+            # committed truth is its FINAL active fact set replayed in
+            # original stream order (incremental deltas cannot move
+            # consumption booked by earlier exits, so a price-only entry
+            # correction after a full exit would otherwise strand basis).
+            # This revision's registry row was inserted before projection,
+            # so the replay already sees it.
+            final_state = replay_final_lot_fills(
+                final_lot_fills(
+                    self._connection,
+                    fact.position_lineage_id,
+                    fact.economic_lot_id,
+                )
+            )
             positions_table = self._table("positions")
             row = self._connection.execute(
                 positions_table.select().where(
@@ -1997,14 +1987,15 @@ class GatewayTransactionContext:
                     economic_lot_id=fact.economic_lot_id,
                 )
             quantity_before = int(row.settled_quantity_units)
-            quantity_after = quantity_before + quantity_delta
+            quantity_after = final_state.quantity
             now = utc_iso(event.recorded_at)
             values: dict[str, Any] = {
                 "settled_quantity_units": quantity_after,
                 "tradable_quantity_units": (
-                    int(row.tradable_quantity_units) + quantity_delta
+                    int(row.tradable_quantity_units)
+                    + (quantity_after - quantity_before)
                 ),
-                "cost_basis_cents": int(row.cost_basis_cents) + basis_delta,
+                "cost_basis_cents": final_state.basis_cents,
                 "updated_by_event_id": event.economic_event_id,
                 "updated_at": now,
             }
@@ -4852,35 +4843,28 @@ class CapitalRepository:
                     max(reversed_state.basis_cents, 0),
                 )
 
-            full_fact = LotEventFact(
-                event_id="",
-                stream_version=0,
-                kind="REVISION",
-                revision_kind=request.revision_kind,
-                superseded_side=effective_side,
-                superseded_gross_cents=superseded_gross,
-                superseded_quantity=superseded_quantity,
-                reversed_consumed_basis_cents=reversed_consumed_basis or 0,
-                corrected_gross_cents=corrected_gross,
-                corrected_quantity=(
-                    request.corrected_quantity
-                    if request.corrected_quantity is not None
-                    else 0
-                ),
-                corrected_consumed_basis_cents=(
-                    corrected_consumed_basis or 0
-                ),
+            # Final-fact truth: this execution's active contribution is
+            # replaced by the requested revision, so the final quantity is
+            # the committed projection adjusted by exactly that swap
+            # (entries contribute positive shares, exits negative). The
+            # final basis is never negative (replayed consumption is capped
+            # at the available basis), so impossibility is quantity-only.
+            side_sign = (
+                1
+                if original["side"] is ExecutionSide.ENTRY
+                else -1
             )
-            after_state = LotReplayState(
-                quantity=quantity_before,
-                basis_cents=basis_before,
-                consumed_basis_total_cents=prior_state.consumed_basis_total_cents,
+            replaced_quantity = side_sign * superseded_quantity
+            new_quantity = (
+                side_sign * request.corrected_quantity
+                if request.revision_kind is ExecutionRevisionKind.CORRECTED
+                else 0
             )
-            replay_lot_fact(after_state, full_fact)
-            quantity_after = after_state.quantity
-            basis_after = after_state.basis_cents
+            quantity_after = (
+                quantity_before - replaced_quantity + new_quantity
+            )
             reopened = quantity_before <= 0 < quantity_after
-            impossible = quantity_after < 0 or basis_after < 0
+            impossible = quantity_after < 0
 
             fact = ExecutionRevisionFact(
                 fact_kind=ExecutionRevisionFactKind.FILL,
@@ -5041,10 +5025,11 @@ class CapitalRepository:
                     )
                 )
 
+            # The registry row lands before projection: the final-fact lot
+            # replay inside the projection reads it.
             snapshot = context.run_append(
                 command,
-                after_event_insert_hook=None,
-                after_projection_hook=register_revision,
+                after_event_insert_hook=register_revision,
             )
             receipt = ExecutionRevisionReceipt(
                 execution_id=request.execution_id,
@@ -5598,10 +5583,11 @@ class CapitalRepository:
                         )
                     )
 
+            # The registry row lands before projection, mirroring the fill
+            # revision path.
             snapshot = context.run_append(
                 command,
-                after_event_insert_hook=None,
-                after_projection_hook=register_revision,
+                after_event_insert_hook=register_revision,
             )
             return (
                 build_receipt(

@@ -227,6 +227,36 @@ def test_checkpoint_restart_converges_idempotently(
     assert service.watermark(session) == first.stream_version
 
 
+def test_checkpoint_same_phase_advances_watermark(
+    repository: CapitalRepository,
+) -> None:
+    deposit(repository, 1_000_000, 1)
+    service = CheckpointService(repository)
+    session = "2026-08-03"
+    first = service.advance(
+        SessionCheckpointRequest(
+            session=session,
+            phase=SESSION_PHASES[1],
+            as_of=_moment(2),
+            expected_stream_version=repository.stream_version(),
+        )
+    )
+    # The stream advances under the same phase (late facts land); the
+    # checkpoint row advances its watermark instead of appending a row.
+    deposit(repository, 500_000, 3)
+    second = service.advance(
+        SessionCheckpointRequest(
+            session=session,
+            phase=SESSION_PHASES[1],
+            as_of=_moment(4),
+            expected_stream_version=repository.stream_version(),
+        )
+    )
+    assert second.phase == first.phase
+    assert second.stream_version > first.stream_version
+    assert service.watermark(session) == second.stream_version
+
+
 def test_checkpoint_rejects_earlier_as_of(
     repository: CapitalRepository,
 ) -> None:
