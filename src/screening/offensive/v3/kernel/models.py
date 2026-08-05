@@ -16,6 +16,9 @@ from src.screening.offensive.v3.contracts import (
     UtcInstant,
 )
 from src.screening.offensive.v3.contracts.base import CanonicalModel
+from src.screening.offensive.v3.contracts.authorization import (
+    CapitalAuthorizationEnvelope,
+)
 from src.screening.offensive.v3.contracts.capital import (
     CapitalRiskSnapshot,
     NonNegativeCents,
@@ -45,6 +48,10 @@ class BlockReason(StrEnum):
     DEADLINE_MISSED = "DEADLINE_MISSED"
     NO_AUTHORIZED_ENVELOPE = "NO_AUTHORIZED_ENVELOPE"
     NO_SIGNAL = "NO_SIGNAL"
+    CAPACITY_EXHAUSTED = "CAPACITY_EXHAUSTED"
+    LOT_FLOOR_ZERO = "LOT_FLOOR_ZERO"
+    MISSING_ADV = "MISSING_ADV"
+    PRICE_BOUNDARY_INVALID = "PRICE_BOUNDARY_INVALID"
 
 
 class RiskDecisionStatus(StrEnum):
@@ -93,6 +100,32 @@ class RawCandidate(CanonicalModel):
     evidence_ids: tuple[Sha256, ...] = ()
 
 
+class DeadlineContract(CanonicalModel):
+    """Explicit time-point contract; ordering is validated fail-closed.
+
+    close_finalized <= seal_creation_deadline < permit_issue_deadline
+    < permit_expires_at <= gateway_send_deadline < broker_cutoff.
+    """
+
+    HASH_DOMAIN: ClassVar[str] = "ai-hedge-fund.v3.kernel.deadlines.v1"
+
+    close_finalized_at: UtcInstant
+    seal_creation_deadline: UtcInstant
+    permit_issue_deadline: UtcInstant
+    permit_expires_at: UtcInstant
+    gateway_send_deadline: UtcInstant
+    broker_auction_cutoff: UtcInstant
+
+    def ordering_valid(self) -> bool:
+        return (
+            self.close_finalized_at <= self.seal_creation_deadline
+            < self.permit_issue_deadline
+            < self.permit_expires_at
+            <= self.gateway_send_deadline
+            < self.broker_auction_cutoff
+        )
+
+
 class KernelInput(CanonicalModel):
     """The complete frozen input of one growth-kernel decision cycle."""
 
@@ -103,10 +136,13 @@ class KernelInput(CanonicalModel):
     decision_cycle_id: NonEmptyStr
     mode: ExecutionMode
     policy_activation: PolicyActivation
+    envelope: CapitalAuthorizationEnvelope
     capital: CapitalRiskSnapshot
+    deadlines: DeadlineContract
     trusted_evidence_cutoff: UtcInstant
-    close_finalized_at: UtcInstant | None
     raw_candidates: tuple[RawCandidate, ...] = ()
+    price_micros_by_candidate: tuple[tuple[str, int], ...] = ()
+    industry_by_candidate: tuple[tuple[str, str], ...] = ()
 
 
 class NoTradeDecision(CanonicalModel):
@@ -165,6 +201,7 @@ class PortfolioDecision(CanonicalModel):
 
 __all__ = [
     "BlockReason",
+    "DeadlineContract",
     "KernelInput",
     "NoTradeDecision",
     "PortfolioDecision",
