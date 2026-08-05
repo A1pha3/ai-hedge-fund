@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - 唯一权威规范是 `docs/superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md` Revision 2；计划冲突时以规范为准，并先修计划。
-- Plan 01 Revision 2 contracts/policy/trust/ports 与 Plan 02 AccountCapitalTruth / Gateway Authority Store primitives 已实现（2026-08-05 Plan 02 独立审阅 BLOCK→修复→MERGE-WITH-FOLLOWUPS 合并，守恒恒等式经最终活跃事实 replay 统一口径）；Revision 1 compatibility 中的旧 `CapitalAuthorization`、`DecisionSeal` 和本地 registry 不是最终接口。该实现仍无 activation、签发、资本 authority、Kernel/Gateway 或可执行路径；Plan 02 台账只是资本真相存储，Plan 03–07 不得把结构 port、capital version 或守恒验证当作权限。
+- Plan 01 Revision 2 contracts/policy/trust/ports、Plan 02 AccountCapitalTruth / Gateway Authority Store primitives、Plan 03 Evidence Store/统计评估/治理授权 primitives 已实现（Plan 02：2026-08-05 BLOCK→修复→MERGE-WITH-FOLLOWUPS；Plan 03：2026-08-05 MERGE-WITH-FOLLOWUPS→P1 修复（签发预算绑定、fence 激活门、adaptive 评估）→合并）；守恒恒等式经最终活跃事实 replay 统一口径。Revision 1 compatibility 中的旧 `CapitalAuthorization`、`DecisionSeal` 和本地 registry 不是最终接口。该实现仍无 activation CAS、Kernel/Gateway 或可执行路径：Plan 03 签发的 envelope/授权候选全部 INACTIVE，Plan 04–07 不得把结构 port、capital version、守恒验证或 INACTIVE envelope 当作权限。
 - `data/paper_trading_backtest/`、`data/paper_trading/`、`data/paper_trading_v2/` 不得被 v3 测试或 shadow 修改；所有测试存储使用 `tmp_path`。
 - v3 在签名 migration CAS flip 前不是资本 writer；flip 后 v2 只读，任何时刻禁止资本双写或无人接收外部事件。
 - producer 只写候选证据；Governance、Authorizer、Publisher、Finalizer、Capital Gateway 和 broker adapter 使用独立 capability/namespace。
