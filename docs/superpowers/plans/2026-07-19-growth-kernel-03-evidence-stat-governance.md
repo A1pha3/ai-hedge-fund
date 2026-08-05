@@ -110,11 +110,11 @@ Do not collapse them into one four-column key.
 
 **Interfaces:** Produces `PortfolioEvaluation`, `evaluate_frozen_policy()`, `evaluate_predictable_adaptive()`, `check_minimum_evidence()` and `check_tail_capacity()`.
 
-- [ ] **Step 1: Write deterministic golden tests** for excess daily log growth, paired champion/challenger decision days, outcome count, decision-day count, ESS, chronological outer folds, MEE, one-sided 95% LCB, 2x slippage, adverse window, MDD/CDaR/overshoot, capacity and pending finality.
-- [ ] **Step 2: Add leakage tests** proving outer future windows never tune hyperparameters and official OOS checks store `ingested_at/commit_sequence <= signal cutoff`; post-cutoff revision is excluded from the original evaluation.
-- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_statistics.py -v`.
-- [ ] **Step 4: Implement transparent estimators**. Stateful tail metrics use continuous replay or complete per-scenario replay, never stitched independent return blocks. Minimum evidence checks 150 mature plan-line outcomes, 60 decision days, ESS >= 60, 80 tickers, 12 months and a complete adverse window as distinct predicates.
-- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): evaluate conservative continuous portfolio evidence"`.
+- [x] **Step 1: Write deterministic golden tests** for excess daily log growth, paired champion/challenger decision days, outcome count, decision-day count, ESS, chronological outer folds, MEE, one-sided 95% LCB, 2x slippage, adverse window, MDD/CDaR/overshoot, capacity and pending finality.
+- [x] **Step 2: Add leakage tests** proving outer future windows never tune hyperparameters and official OOS checks store `ingested_at/commit_sequence <= signal cutoff`; post-cutoff revision is excluded from the original evaluation.
+- [x] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_statistics.py -v`.
+- [x] **Step 4: Implement transparent estimators**. Stateful tail metrics use continuous replay or complete per-scenario replay, never stitched independent return blocks. Minimum evidence checks 150 mature plan-line outcomes, 60 decision days, ESS >= 60, 80 tickers, 12 months and a complete adverse window as distinct predicates.
+- [x] **Step 5: Verify and commit** with `git commit -m "feat(v3): evaluate conservative continuous portfolio evidence"`.
 
 ### Task 6: EDGE Authorizer and governed EXPLORATION/RECOVERY issuance
 
