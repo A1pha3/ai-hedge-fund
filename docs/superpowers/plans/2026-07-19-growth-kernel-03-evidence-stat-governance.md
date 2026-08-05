@@ -82,11 +82,11 @@ def publish(self, signed: SignedEnvelope, payload: bytes) -> ActiveEvidenceRecor
 
 **Interfaces:** Produces `OutcomeFinalizer.finalize_due(as_of)` and `OutcomeEvidence` revisions tied to `plan_line_economic_contract_key` plus distinct decision-day evaluation units.
 
-- [ ] **Step 1: Write failing tests** for T+1/T+10 session ordinals, no-fill, partial fill, late fill, EXIT_PENDING, fee/company-action finality, raw close exclusion, proxy/manual/broker separation, bust/reopen and unavailable finality.
-- [ ] **Step 2: Add counting tests** proving all partial fills/fee revisions/corrections of one plan-line contract count as one mature outcome, while each pre-registered decision day contributes at most one governance evaluation unit; 150 outcomes and 60 decision days/ESS remain separate fields.
-- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_outcomes.py -v`.
-- [ ] **Step 4: Implement finalizer** from AccountCapitalTruth/read models. Official portfolio path uses daily unit NAV by mode projection; broker account economics remain complete even if an out-of-protocol trade is unattributed.
-- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): finalize economic outcomes without sample inflation"`.
+- [x] **Step 1: Write failing tests** for T+1/T+10 session ordinals, no-fill, partial fill, late fill, EXIT_PENDING, fee/company-action finality, raw close exclusion, proxy/manual/broker separation, bust/reopen and unavailable finality.
+- [x] **Step 2: Add counting tests** proving all partial fills/fee revisions/corrections of one plan-line contract count as one mature outcome, while each pre-registered decision day contributes at most one governance evaluation unit; 150 outcomes and 60 decision days/ESS remain separate fields.
+- [x] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_outcomes.py -v`.
+- [x] **Step 4: Implement finalizer** from AccountCapitalTruth/read models. Official portfolio path uses daily unit NAV by mode projection; broker account economics remain complete even if an out-of-protocol trade is unattributed.
+- [x] **Step 5: Verify and commit** with `git commit -m "feat(v3): finalize economic outcomes without sample inflation"`.
 
 ### Task 4: Attempt, dual-key evidence consumption, and global multiplicity ledgers
 

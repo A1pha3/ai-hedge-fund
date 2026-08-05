@@ -692,6 +692,43 @@ class EvidenceRepository:
 
     # -- store metadata ------------------------------------------------------
 
+    def persist_payload(self, payload: bytes) -> str:
+        """Durably store raw producer payload bytes; returns the hash.
+
+        Orphan blobs are safe; envelopes without durable payloads are
+        impossible.
+        """
+
+        return self._blobs.put_durable(payload)
+
+    def raw_payload(self, content_hash: str) -> bytes:
+        """Raw producer payload bytes by content hash."""
+
+        return self._blobs.get(content_hash)
+
+    def payload_bytes(self, record: ActiveEvidenceRecord) -> bytes:
+        """The durable producer payload of one committed record."""
+
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                sa.text(
+                    "SELECT payload_content_hash FROM evidence_records"
+                    " WHERE issuer_namespace = :ns"
+                    " AND evidence_id = :evidence_id"
+                    " AND revision = :revision"
+                ),
+                {
+                    "ns": self._issuer_namespace,
+                    "evidence_id": record.evidence.evidence_id,
+                    "revision": record.revision,
+                },
+            ).first()
+        if row is None:
+            raise EvidenceStoreError(
+                "record_unknown", "no committed row for record"
+            )
+        return self._blobs.get(str(row.payload_content_hash))
+
     def commit_sequence(self) -> int:
         with self._engine.connect() as conn:
             return int(self._head(conn).last_commit_sequence)
