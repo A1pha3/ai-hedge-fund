@@ -145,8 +145,8 @@ git diff --check
 
 Expected: all pass; help exits 0; fixture verifier reports `capital_conservation=PASS projection_rebuild=PASS`.
 
-- [ ] **Step 4: Update `AGENTS.md`** to “v3 capital/authority store primitives implemented; not authoritative, no active policy/envelope/seal”.
-- [ ] **Step 5: Commit** scoped capital, migration, test and documentation files.
+- [x] **Step 4: Update `AGENTS.md`** to “v3 capital/authority store primitives implemented; not authoritative, no active policy/envelope/seal”.
+- [x] **Step 5: Commit** scoped capital, migration, test and documentation files.
 
 ## Completion Gate
 

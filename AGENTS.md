@@ -39,7 +39,7 @@ uv run python src/main.py --daily-action   # 读缓存, ~3 秒, 输出次日 BUY
 
 任何影响上述语义的代码变更，必须同步更新权威设计、机器可读策略快照（实现后）、契约/故障注入测试和迁移说明；不得通过修改报告文案掩盖台账、授权或证据冲突。
 
-### 当前 v3 已实现范围（2026-08-04）
+### 当前 v3 已实现范围（2026-08-05）
 
 已实现 Plan 01 Revision 2 Tasks 1–5 的无存储 strict/frozen **候选领域契约、纯验证与 final structural ports**：六个 current runtime-checkable ports 只提供结构接口，不提供实现或权限；active evidence query 是四种 concrete `EvidenceRecord` 的闭合 union，verifier 显式标注 current-head witness 与 trusted time。Plan 04 前，production `src` 的 `*.py`/`*.pyi` 必须保持 zero static `GrowthKernelPort` references；仅允许 `contracts/ports.py` 的 top-level Protocol 定义/精确 list-or-tuple `__all__`，以及 `contracts/__init__.py` 的 top-level 精确 import/`__all__`。There is no downstream typing or runtime exception：import、attribute、alias、annotation、runtime check、quoted/reflection token、stub 与 contracts star import 均拒绝。Plan 04 只有在 concrete strict/frozen `KernelInput`/`NoTradeDecision`、真实入口重验及独立审阅的 replacement gate 同时落地后才能改变此边界，不能把 generic port 当作预授权。Revision 1 primitives 继续按 `dccb76c5` 冻结；current policy/trust verifier 的 exact-type/non-virtual-dispatch 防御、active plan-record 绑定和 unknown publication fail-closed 语义不变。所有 witness、`Verified*` 结果和 ports 都不是 activation token 或权限。
 
@@ -49,7 +49,9 @@ Dynamic or fragmented string construction is outside this static proof. Plan 04 
 
 Tasks 1–5 implementation is present and the Plan 01 completion gate is closed (2026-08-04): the checked-in snapshot matrix (`tests/offensive/v3/contracts/test_revision2_snapshot_matrix.py` + `fixtures/revision2/`) covers all public decision/capital/execution/evidence/trust/policy model schema goldens, strict round-trip and canonical hashes, independently recomputed artifact hashes, protected domain preimages, public enum/alias types and port signatures. Gate closure is a re-verifiable documentation statement; it does not make any port, policy candidate, or verified witness active authority.
 
-**目标架构仍未上线，也没有资本授权。** 仍未实现 Evidence/Trust/Policy/Capital Authority Store、activation CAS、authoritative writer、Authorizer、Growth Kernel、Capital Gateway、broker connection、authority flip、签名服务或任何可执行资本路径。现有 Revision 1 ports/`DecisionSeal` 只能留在显式 compatibility namespace，不得进入 final `CapabilityVerifier` 或继续作为最终接口扩散。
+Plan 02（AccountCapitalTruth 与 Gateway Authority Store）primitives 已实现（2026-08-05）：append-only 资本台账（整数 quanta、SQLite WAL+FK、UPDATE/DELETE 不可变触发器、Alembic 迁移 0001–0005）、exact fills/fees/reserves 投影与守恒重验、公司行动 lot/exit 继承、NAV 单位与生命周期、`CapitalRiskSnapshot` 与 stage loss 单调消费、bust/correction 重投影与 exit 义务重开（负不可能状态原样保留、从不 clamp）、session checkpoints、backup/restore 与 `capital.verify` 全量验证（`capital_conservation=PASS projection_rebuild=PASS`）。这些是资本真相与权威存储的 primitives：不读 producer/evidence 库、不激活授权、不产生可执行 seal、不发送订单、不连 broker；capital version、risk epoch 与 stage loss budget 均不构成权限。
+
+**目标架构仍未上线，也没有资本授权。** 仍未实现 Evidence/Trust/Policy authoritative writer、activation CAS、Authorizer、Growth Kernel、Capital Gateway、broker connection、authority flip、签名服务或任何可执行资本路径。Plan 02 台账只是资本真相存储，没有 entry/exit 授权语义。现有 Revision 1 ports/`DecisionSeal` 只能留在显式 compatibility namespace，不得进入 final `CapabilityVerifier` 或继续作为最终接口扩散。
 
 ## 数据完整性（⚠ 最重要，曾因此误判）
 
