@@ -41,8 +41,8 @@
 
 **Interfaces:** Produces `RawCandidate`, `KernelInput`, `RiskDecision`, `drawdown_multiplier()` and `apply_portfolio_risk_once()`.
 
-- [ ] **Step 1: Write failing tests** in `test_risk.py` for 9.99/10/12.5/14.99/15% drawdown, stale/negative NAV, open/pending/live/reserved/ambiguous/exit-pending/unattributed exposure, program/lineage/stage/global caps and mixed capital versions.
-- [ ] **Step 2: Add double-scaling tests** and prove the same multiplier scales both each unscaled lineage target and the unscaled portfolio gross ceiling before capacity/lot rounding.
+- [x] **Step 1: Write failing tests** in `test_risk.py` for 9.99/10/12.5/14.99/15% drawdown, stale/negative NAV, open/pending/live/reserved/ambiguous/exit-pending/unattributed exposure, program/lineage/stage/global caps and mixed capital versions.
+- [x] **Step 2: Add double-scaling tests** and prove the same multiplier scales both each unscaled lineage target and the unscaled portfolio gross ceiling before capacity/lot rounding.
 
 ```python
 adjusted = apply_portfolio_risk_once(
@@ -53,9 +53,9 @@ adjusted = apply_portfolio_risk_once(
 assert adjusted.risk_adjustment_count == 1
 ```
 
-- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/kernel/test_risk.py -v`.
-- [ ] **Step 4: Implement pure risk module**; any unknown component returns a typed block, never zero/default exposure.
-- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): apply complete portfolio risk once"`.
+- [x] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/kernel/test_risk.py -v`.
+- [x] **Step 4: Implement pure risk module**; any unknown component returns a typed block, never zero/default exposure.
+- [x] **Step 5: Verify and commit** with `git commit -m "feat(v3): apply complete portfolio risk once"`.
 
 ### Task 2: Admission, ranking, capacity, and integer sizing
 
