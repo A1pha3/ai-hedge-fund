@@ -1307,6 +1307,7 @@ def test_property_interleaved_bust_correction_sequences_conserve(
                 "side": ExecutionSide.ENTRY,
                 "quantity": quantity,
                 "gross": 100_000 * quantity // 100,
+                "price": 10_000_000,
                 "active": True,
             }
         )
@@ -1336,6 +1337,7 @@ def test_property_interleaved_bust_correction_sequences_conserve(
                 "execution_id": execution_id,
                 "side": ExecutionSide.EXIT,
                 "quantity": quantity,
+                "price": 11_000_000,
                 "active": True,
             }
         )
@@ -1432,6 +1434,7 @@ def test_property_interleaved_bust_correction_sequences_conserve(
             step += 1
             entry["quantity"] = quantity
             entry["gross"] = new_gross
+            entry["price"] = price_micros
             if lot.quantity <= 0:
                 lot.entry_blocked = True
         elif choice == "correct_exit":
@@ -1445,8 +1448,11 @@ def test_property_interleaved_bust_correction_sequences_conserve(
                     [9_000_000, 11_000_000, 13_000_000, 16_000_000]
                 )
             )
-            if quantity == exit_["quantity"] and price_micros == 11_000_000:
-                continue
+            if (
+                quantity == exit_["quantity"]
+                and price_micros == exit_["price"]
+            ):
+                continue  # identical fact: not an economic correction
             receipt, _ = repository.record_execution_correction(
                 correction_request(
                     exit_["execution_id"],
@@ -1462,6 +1468,7 @@ def test_property_interleaved_bust_correction_sequences_conserve(
             )
             step += 1
             exit_["quantity"] = quantity
+            exit_["price"] = price_micros
             if lot.quantity <= 0:
                 lot.entry_blocked = True
 
