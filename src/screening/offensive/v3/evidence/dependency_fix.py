@@ -261,6 +261,34 @@ class DependencyFixLedger:
         return str(row.status)
 
 
+class ActivationGate:
+    """Port the Plan 04 Gateway replaces.
+
+    Evidence revisions may activate only while their bound dependency-fix
+    manifest is ACTIVE (all fences ACKed, dependencies active). A
+    fence-without-activation may overblock but never underblock.
+    """
+
+    def require_activation_allowed(self, fence_manifest_id: str) -> None:
+        raise NotImplementedError
+
+
+class FenceActivationGate(ActivationGate):
+    """Fence ACK gate over the DependencyFixLedger."""
+
+    def __init__(self, ledger: DependencyFixLedger) -> None:
+        self._ledger = ledger
+
+    def require_activation_allowed(self, fence_manifest_id: str) -> None:
+        if self._ledger.status(fence_manifest_id) != "ACTIVE":
+            raise DependencyFixError(
+                "fence_not_active",
+                "revision activation requires an ACTIVE dependency-fix"
+                " manifest (all fence ACKs, dependencies active)",
+                fence_manifest_id=fence_manifest_id,
+            )
+
+
 class ResearchImporterError(RuntimeError):
     """Fail-closed rejection of a legacy research import."""
 
@@ -337,9 +365,11 @@ class ResearchImporter:
 
 
 __all__ = [
+    "ActivationGate",
     "DependencyFixError",
     "DependencyFixLedger",
     "DependencyFixManifest",
+    "FenceActivationGate",
     "ResearchImporter",
     "ResearchImporterError",
 ]

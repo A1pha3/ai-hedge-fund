@@ -34,6 +34,9 @@ from src.screening.offensive.v3.contracts.evidence import (
     ProviderPublicationState,
     SUPPORTED_SCHEMA_MAJOR,
 )
+from src.screening.offensive.v3.evidence.dependency_fix import (
+    ActivationGate,
+)
 from src.screening.offensive.v3.evidence.repository import (
     EvidenceRepository,
 )
@@ -610,14 +613,23 @@ class OutcomeFinalizer:
         )
 
     def revise_outcome(
-        self, contract_key: str, *, program: str
+        self,
+        contract_key: str,
+        *,
+        program: str,
+        activation_gate: "ActivationGate",
+        fence_manifest_id: str,
     ) -> int | None:
         """Re-measure a finalized plan line after capital revisions.
 
         A bust/correction that changes the economic facts appends an
         outcome revision (the original outcome is never rewritten).
-        Returns the new revision, or None when nothing changed.
+        Activation is fence-gated: the bound dependency-fix manifest must
+        be ACTIVE (all fences ACKed). Returns the new revision, or None
+        when nothing changed.
         """
+
+        activation_gate.require_activation_allowed(fence_manifest_id)
 
         with self._engine.begin() as conn:
             finalized = self._finalized(conn, contract_key)

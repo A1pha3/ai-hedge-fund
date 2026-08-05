@@ -22,6 +22,12 @@ from src.screening.offensive.v3.contracts.authorization import (
     CapitalAuthorizationEnvelope,
 )
 from src.screening.offensive.v3.contracts.base import ExecutionMode
+from src.screening.offensive.v3.evidence.consumption import (
+    AttemptLedger,
+    AttemptStatus,
+    EvidenceConsumptionLedger,
+    LedgerError,
+)
 from src.screening.offensive.v3.evidence.statistics import (
     PortfolioEvaluation,
 )
@@ -74,7 +80,10 @@ class EdgeAssessmentRequest:
     mdd_cap: float
     cdar_cap: float
     envelope: CapitalAuthorizationEnvelope
-    consumption_payload_hash: str
+    research_program_id: str
+    attempt_id: str
+    sample_evidence_id: str | None = None
+    sample_evaluation_unit_id: str | None = None
 
 
 def _configure_connection(dbapi_connection: object, _record: object) -> None:
@@ -95,6 +104,8 @@ class Authorizer:
         database_path: str,
         signer: Callable[[bytes], SignedEnvelope],
         clock: Callable[[], datetime],
+        attempts: AttemptLedger,
+        consumption: EvidenceConsumptionLedger,
         expected_mode: ExecutionMode,
         expected_behavior_fingerprint: str,
         expected_cost_version: str,
@@ -103,6 +114,8 @@ class Authorizer:
     ) -> None:
         self._signer = signer
         self._clock = clock
+        self._attempts = attempts
+        self._consumption = consumption
         self._expected_mode = expected_mode
         self._expected_behavior = expected_behavior_fingerprint
         self._expected_cost = expected_cost_version
@@ -222,6 +235,28 @@ class Authorizer:
             # Sign AFTER every gate; a signer failure writes nothing.
             payload = envelope.model_dump_json().encode("utf-8")
             signed = self._signer(payload)
+            # Issuance consumes the sample and attempt budgets. The signed
+            # bytes are discarded if consumption fails: no budget leak can
+            # mint an envelope, and a failed signer leaves no consumption.
+            try:
+                self._consumption.consume_primary_promotion(
+                    research_program_id=request.research_program_id,
+                    attempt_id=request.attempt_id,
+                    payload_hash=envelope.artifact_hash(),
+                    evidence_id=request.sample_evidence_id,
+                    governance_minted_evaluation_unit_id=(
+                        request.sample_evaluation_unit_id
+                    ),
+                )
+            except LedgerError as exc:
+                raise AuthorizerError(
+                    "sample_reuse",
+                    "sample identity already consumed; issuance rejected",
+                    reason=exc.code,
+                ) from exc
+            self._attempts.close(
+                request.attempt_id, AttemptStatus.CONSUMED
+            )
             conn.execute(
                 sa.text(
                     "INSERT INTO issued_envelopes (authorization_id,"
@@ -238,7 +273,7 @@ class Authorizer:
                     "hash": envelope.artifact_hash(),
                     "signed_json": signed.model_dump_json(),
                     "issued_at": now.isoformat(),
-                    "payload_hash": request.consumption_payload_hash,
+                    "payload_hash": envelope.artifact_hash(),
                 },
             )
         return envelope, signed

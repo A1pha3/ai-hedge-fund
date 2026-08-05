@@ -24,6 +24,13 @@ from src.screening.offensive.v3.evidence.authorizer import (
     AuthorizerError,
     EdgeAssessmentRequest,
 )
+from src.screening.offensive.v3.evidence.consumption import (
+    AttemptLedger,
+    AttemptStatus,
+    EvidenceConsumptionLedger,
+    GlobalMultiplicityBudgetLedger,
+    MultiplicityBudgetKind,
+)
 from src.screening.offensive.v3.evidence.statistics import (
     PortfolioEvaluation,
 )
@@ -259,11 +266,33 @@ def _dummy_signer():
 
 
 @pytest.fixture()
-def authorizer(tmp_path: Path) -> Authorizer:
+def ledgers(tmp_path: Path):
+    budget = GlobalMultiplicityBudgetLedger(
+        str(tmp_path / "budget.sqlite3")
+    )
+    budget.set_budget(MultiplicityBudgetKind.ALPHA, 100)
+    attempts = AttemptLedger(
+        str(tmp_path / "attempts.sqlite3"),
+        budget=budget,
+        clock=_Clock(NOW),
+    )
+    consumption = EvidenceConsumptionLedger(
+        str(tmp_path / "consumption.sqlite3"),
+        attempts=attempts,
+        clock=_Clock(NOW),
+    )
+    return budget, attempts, consumption
+
+
+@pytest.fixture()
+def authorizer(tmp_path: Path, ledgers) -> Authorizer:
+    _, attempts, consumption = ledgers
     return Authorizer(
         database_path=str(tmp_path / "authorizer.sqlite3"),
         signer=_dummy_signer(),
         clock=_Clock(NOW),
+        attempts=attempts,
+        consumption=consumption,
         expected_mode=MODE,
         expected_behavior_fingerprint=HASH,
         expected_cost_version="cn-a-share-costs.v1",
@@ -286,19 +315,37 @@ def _request(authorizer=None, **overrides) -> EdgeAssessmentRequest:
         "mdd_cap": 0.10,
         "cdar_cap": 0.15,
         "envelope": _envelope(),
-        "consumption_payload_hash": HASH,
+        "research_program_id": "prog-1",
+        "attempt_id": "attempt-edge",
+        "sample_evidence_id": "sample-edge-1",
     }
     values.update(overrides)
     return EdgeAssessmentRequest(**values)
 
 
+def _reserve(attempts, attempt_id="attempt-edge") -> None:
+    attempts.reserve(
+        attempt_id=attempt_id,
+        research_program_id="prog-1",
+        economic_lineage_id="eline-1",
+        family_id="btst.limit-up-breakout",
+        frozen_plan_hash=HASH,
+    )
+
+
 def test_edge_issuance_signs_inactive_complete_envelope(
-    authorizer: Authorizer,
+    authorizer: Authorizer, ledgers,
 ) -> None:
+    budget, attempts, _ = ledgers
+    _reserve(attempts)
     envelope, signed = authorizer.assess_and_issue_edge(_request())
     assert envelope.authorization_kind is AuthorizationKind.EDGE
     assert authorizer.issued_status("auth-1") == "INACTIVE"
     assert signed.payload_hash
+    # Issuance consumes the global multiplicity budget (via the attempt
+    # reservation) and closes the attempt as CONSUMED.
+    assert budget.consumed(MultiplicityBudgetKind.ALPHA) == 1
+    assert attempts.status("attempt-edge") is AttemptStatus.CONSUMED
 
 
 @pytest.mark.parametrize(
@@ -349,8 +396,9 @@ def test_edge_gates_fail_closed(
 
 
 def test_second_independent_envelope_is_rejected(
-    authorizer: Authorizer, tmp_path: Path
+    authorizer: Authorizer, tmp_path: Path, ledgers
 ) -> None:
+    _reserve(ledgers[1])
     authorizer.assess_and_issue_edge(_request())
     # Simulate an already-ACTIVE envelope in the registry.
     import sqlalchemy as sa
@@ -373,31 +421,96 @@ def test_second_independent_envelope_is_rejected(
 
 
 def test_signer_failure_leaves_no_envelope_and_retry_is_deterministic(
-    tmp_path: Path,
+    tmp_path: Path, ledgers,
 ) -> None:
+    budget, attempts, consumption = ledgers
     failing = _FailingSigner()
     authorizer = Authorizer(
         database_path=str(tmp_path / "authorizer.sqlite3"),
         signer=failing,
         clock=_Clock(NOW),
+        attempts=attempts,
+        consumption=consumption,
         expected_mode=MODE,
         expected_behavior_fingerprint=HASH,
         expected_cost_version="cn-a-share-costs.v1",
         expected_execution_version="t1-open-t10-open.v1",
         expected_broker_account_id=None,
     )
+    _reserve(attempts)
     with pytest.raises(RuntimeError):
         authorizer.assess_and_issue_edge(_request())
-    # A failed signature leaves no consumption and no issued envelope.
+    # A failed signature leaves no consumption and no issued envelope:
+    # the budget count stays at the reservation (1), the attempt stays
+    # RESERVED, and the sample is unconsumed (a later identical
+    # consumption would still succeed).
     with pytest.raises(AuthorizerError):
         authorizer.issued_status("auth-1")
     assert failing.calls == 1
-    # Deterministic retry after the signer recovers.
+    assert budget.consumed(MultiplicityBudgetKind.ALPHA) == 1
+    assert attempts.status("attempt-edge") is AttemptStatus.RESERVED
+    consumption.consume_primary_promotion(
+        research_program_id="prog-1",
+        attempt_id="attempt-edge",
+        evidence_id="sample-edge-1",
+        payload_hash=HASH,
+    )
+    # Deterministic retry after the signer recovers: reserve a fresh
+    # attempt/sample so the issuance path is clean.
+    _reserve(attempts, "attempt-edge-2")
     authorizer._signer = _dummy_signer()
-    envelope, _ = authorizer.assess_and_issue_edge(_request())
+    envelope, _ = authorizer.assess_and_issue_edge(
+        _request(
+            attempt_id="attempt-edge-2",
+            sample_evidence_id="sample-edge-2",
+        )
+    )
     assert authorizer.issued_status(envelope.authorization_id) == (
         "INACTIVE"
     )
+
+
+def test_reissue_same_sample_is_rejected(authorizer: Authorizer, ledgers):
+    budget, attempts, _ = ledgers
+    _reserve(attempts)
+    authorizer.assess_and_issue_edge(_request())
+    _reserve(attempts, "attempt-edge-b")
+    with pytest.raises(AuthorizerError) as excinfo:
+        authorizer.assess_and_issue_edge(
+            _request(
+                attempt_id="attempt-edge-b",
+                envelope=_envelope(authorization_id="auth-dup"),
+            )
+        )
+    assert excinfo.value.code == "sample_reuse"
+    # The failed issuance consumed no additional sample budget: only the
+    # two attempt reservations count.
+    assert budget.consumed(MultiplicityBudgetKind.ALPHA) == 2
+
+
+def _issuer(tmp_path: Path, *, signer=None):
+    budget = GlobalMultiplicityBudgetLedger(
+        str(tmp_path / "issuer-budget.sqlite3")
+    )
+    budget.set_budget(MultiplicityBudgetKind.ALPHA, 100)
+    attempts = AttemptLedger(
+        str(tmp_path / "issuer-attempts.sqlite3"),
+        budget=budget,
+        clock=_Clock(NOW),
+    )
+    consumption = EvidenceConsumptionLedger(
+        str(tmp_path / "issuer-consumption.sqlite3"),
+        attempts=attempts,
+        clock=_Clock(NOW),
+    )
+    issuer = GovernanceIssuer(
+        database_path=str(tmp_path / "issuer.sqlite3"),
+        signer=signer or _dummy_signer(),
+        clock=_Clock(NOW),
+        attempts=attempts,
+        consumption=consumption,
+    )
+    return issuer, attempts, budget
 
 
 def test_exploration_requires_broker_confirmed(tmp_path: Path) -> None:
@@ -412,11 +525,8 @@ def test_exploration_requires_broker_confirmed(tmp_path: Path) -> None:
             kind=AuthorizationKind.EXPLORATION,
             mode=MODE,  # proxy: forbidden for exploration
         )
-    issuer = GovernanceIssuer(
-        database_path=str(tmp_path / "issuer.sqlite3"),
-        signer=_dummy_signer(),
-        clock=_Clock(NOW),
-    )
+    issuer, attempts, _ = _issuer(tmp_path)
+    _reserve(attempts, "attempt-issuer-1")
     valid = _envelope(
         kind=AuthorizationKind.EXPLORATION,
         mode=ExecutionMode.BROKER_CONFIRMED,
@@ -426,7 +536,12 @@ def test_exploration_requires_broker_confirmed(tmp_path: Path) -> None:
     tampered = valid.model_copy(update={"mode": MODE})
     with pytest.raises(IssuerError) as excinfo:
         issuer.issue_exploration(
-            ExplorationIssuanceRequest(envelope=tampered)
+            ExplorationIssuanceRequest(
+                envelope=tampered,
+                research_program_id="prog-1",
+                attempt_id="attempt-issuer-1",
+                sample_evidence_id="sample-issuer-1",
+            )
         )
     assert excinfo.value.code == "exploration_requires_broker_confirmed"
 
@@ -449,21 +564,24 @@ def test_exploration_cap_limited_to_two_percent(tmp_path: Path) -> None:
 
 
 def test_exploration_issuance_and_renewal(tmp_path: Path) -> None:
-    issuer = GovernanceIssuer(
-        database_path=str(tmp_path / "issuer.sqlite3"),
-        signer=_dummy_signer(),
-        clock=_Clock(NOW),
-    )
+    issuer, attempts, _ = _issuer(tmp_path)
     envelope = _envelope(
         kind=AuthorizationKind.EXPLORATION,
         mode=ExecutionMode.BROKER_CONFIRMED,
         broker_account_id="acct-1",
         broker_account_fingerprint=HASH,
     )
+    _reserve(attempts, "attempt-expl-1")
     issued, _ = issuer.issue_exploration(
-        ExplorationIssuanceRequest(envelope=envelope)
+        ExplorationIssuanceRequest(
+            envelope=envelope,
+            research_program_id="prog-1",
+            attempt_id="attempt-expl-1",
+            sample_evidence_id="sample-expl-1",
+        )
     )
     assert issuer.issued_status(issued.authorization_id) == "INACTIVE"
+    assert attempts.status("attempt-expl-1") is AttemptStatus.CONSUMED
     # Renewal cites the prior exploration.
     renewal_envelope = _envelope(
         kind=AuthorizationKind.EXPLORATION,
@@ -483,9 +601,13 @@ def test_exploration_issuance_and_renewal(tmp_path: Path) -> None:
         ),
         authorization_id="auth-exploration-2",
     )
+    _reserve(attempts, "attempt-expl-2")
     renewed, _ = issuer.issue_exploration(
         ExplorationIssuanceRequest(
             envelope=renewal_envelope,
+            research_program_id="prog-1",
+            attempt_id="attempt-expl-2",
+            sample_evidence_id="sample-expl-2",
             renewal_of_authorization_id="auth-1",
         )
     )
@@ -513,6 +635,9 @@ def test_exploration_issuance_and_renewal(tmp_path: Path) -> None:
         issuer.issue_exploration(
             ExplorationIssuanceRequest(
                 envelope=bad_renewal,
+                research_program_id="prog-1",
+                attempt_id="attempt-expl-3",
+                sample_evidence_id="sample-expl-3",
                 renewal_of_authorization_id="does-not-exist",
             )
         )
@@ -520,11 +645,7 @@ def test_exploration_issuance_and_renewal(tmp_path: Path) -> None:
 
 
 def test_recovery_requires_inherited_versions(tmp_path: Path) -> None:
-    issuer = GovernanceIssuer(
-        database_path=str(tmp_path / "issuer.sqlite3"),
-        signer=_dummy_signer(),
-        clock=_Clock(NOW),
-    )
+    issuer, attempts, _ = _issuer(tmp_path)
     envelope = _envelope(
         kind=AuthorizationKind.RECOVERY,
         risk_epoch=4,
@@ -535,6 +656,9 @@ def test_recovery_requires_inherited_versions(tmp_path: Path) -> None:
         issuer.issue_recovery(
             RecoveryIssuanceRequest(
                 envelope=envelope,
+                research_program_id="prog-1",
+                attempt_id="attempt-rec-1",
+                sample_evidence_id="sample-rec-1",
                 inherited_authorization_id="auth-prior",
                 inherited_risk_epoch=4,
                 inherited_stage_loss_version=6,
@@ -546,30 +670,35 @@ def test_recovery_requires_inherited_versions(tmp_path: Path) -> None:
         issuer.issue_recovery(
             RecoveryIssuanceRequest(
                 envelope=envelope,
+                research_program_id="prog-1",
+                attempt_id="attempt-rec-1",
+                sample_evidence_id="sample-rec-1",
                 inherited_authorization_id="auth-prior",
                 inherited_risk_epoch=3,
                 inherited_stage_loss_version=7,
             )
         )
     assert excinfo.value.code == "recovery_risk_epoch_mismatch"
-    # Correct inherited versions issue an INACTIVE candidate.
+    # Correct inherited versions issue an INACTIVE candidate and consume
+    # the attempt budget.
+    _reserve(attempts, "attempt-rec-1")
     issued, _ = issuer.issue_recovery(
         RecoveryIssuanceRequest(
             envelope=envelope,
+            research_program_id="prog-1",
+            attempt_id="attempt-rec-1",
+            sample_evidence_id="sample-rec-1",
             inherited_authorization_id="auth-prior",
             inherited_risk_epoch=4,
             inherited_stage_loss_version=7,
         )
     )
     assert issuer.issued_status(issued.authorization_id) == "INACTIVE"
+    assert attempts.status("attempt-rec-1") is AttemptStatus.CONSUMED
 
 
 def test_expired_manifest_is_rejected(tmp_path: Path) -> None:
-    issuer = GovernanceIssuer(
-        database_path=str(tmp_path / "issuer.sqlite3"),
-        signer=_dummy_signer(),
-        clock=_Clock(NOW),
-    )
+    issuer, attempts, _ = _issuer(tmp_path)
     expired = _envelope(
         kind=AuthorizationKind.RECOVERY,
         issued_at=NOW - timedelta(days=2),
@@ -580,6 +709,9 @@ def test_expired_manifest_is_rejected(tmp_path: Path) -> None:
         issuer.issue_recovery(
             RecoveryIssuanceRequest(
                 envelope=expired,
+                research_program_id="prog-1",
+                attempt_id="attempt-exp-1",
+                sample_evidence_id="sample-exp-1",
                 inherited_authorization_id="auth-prior",
                 inherited_risk_epoch=1,
                 inherited_stage_loss_version=3,
@@ -589,13 +721,14 @@ def test_expired_manifest_is_rejected(tmp_path: Path) -> None:
 
 
 def test_issuer_cannot_sign_edge(tmp_path: Path) -> None:
-    issuer = GovernanceIssuer(
-        database_path=str(tmp_path / "issuer.sqlite3"),
-        signer=_dummy_signer(),
-        clock=_Clock(NOW),
-    )
+    issuer, attempts, _ = _issuer(tmp_path)
     with pytest.raises(IssuerError) as excinfo:
         issuer.issue_exploration(
-            ExplorationIssuanceRequest(envelope=_envelope())  # EDGE kind
+            ExplorationIssuanceRequest(
+                envelope=_envelope(),  # EDGE kind
+                research_program_id="prog-1",
+                attempt_id="attempt-kind-1",
+                sample_evidence_id="sample-kind-1",
+            )
         )
     assert excinfo.value.code == "envelope_kind_mismatch"

@@ -14,6 +14,7 @@ from src.screening.offensive.v3.evidence.statistics import (
     MINIMUM_MATURE_OUTCOMES,
     MINIMUM_MONTHS,
     MINIMUM_TICKERS,
+    OUTER_FOLD_FRACTION,
     MinimumEvidenceReport,
     StatisticsError,
     apply_slippage_drag,
@@ -22,6 +23,7 @@ from src.screening.offensive.v3.evidence.statistics import (
     conditional_drawdown_at_risk,
     effective_sample_size,
     evaluate_frozen_policy,
+    evaluate_predictable_adaptive,
     excess_daily_log_growth,
     maximum_drawdown,
     one_sided_lower_bound,
@@ -235,3 +237,77 @@ def test_tail_capacity_gates() -> None:
     assert tight["passes"] is False
     loose = check_tail_capacity(evaluation, mdd_cap=0.5, cdar_cap=0.5)
     assert loose["passes"] is True
+
+
+def test_predictable_adaptive_golden_paired_decision_days() -> None:
+    champion = (0.002,) * 10
+    challenger = (0.001,) * 10
+    evaluation = evaluate_predictable_adaptive(
+        champion_daily_returns=champion,
+        challenger_daily_returns=challenger,
+        minimum_economic_effect=0.0,
+        evaluated_at=NOW,
+        evidence_cutoff=CUTOFF,
+    )
+    # Paired differences are exactly 0.001 on every decision day.
+    assert evaluation.paired_difference_mean == pytest.approx(0.001)
+    assert evaluation.observation_count == 10
+    # Chronological split: evaluation fold first, outer fold last.
+    expected_eval = max(2, int(10 * (1.0 - OUTER_FOLD_FRACTION)))
+    assert evaluation.evaluation_fold_size == expected_eval
+    assert evaluation.outer_fold_size == 10 - expected_eval
+    assert evaluation.outer_fold_difference_mean == pytest.approx(0.001)
+    # Zero-variance golden sample: the t-based one-sided LCB equals the
+    # paired mean exactly, and clears MEE.
+    assert evaluation.paired_difference_lcb_95 == pytest.approx(0.001)
+    assert evaluation.passes_economic_gate()
+
+
+def test_predictable_adaptive_outer_fold_is_chronological_and_untuned(
+) -> None:
+    # First 7 days favor the champion; the final 3 days (the outer fold)
+    # favor the challenger. The evaluator must NOT use the outer fold for
+    # the LCB gate, and must report it separately.
+    champion = (0.003,) * 7 + (0.0005,) * 3
+    challenger = (0.001,) * 7 + (0.002,) * 3
+    evaluation = evaluate_predictable_adaptive(
+        champion_daily_returns=champion,
+        challenger_daily_returns=challenger,
+        minimum_economic_effect=0.0,
+        evaluated_at=NOW,
+        evidence_cutoff=CUTOFF,
+    )
+    assert evaluation.evaluation_fold_size == 7
+    assert evaluation.outer_fold_size == 3
+    assert evaluation.outer_fold_difference_mean == pytest.approx(
+        0.0005 - 0.002
+    )
+    assert evaluation.paired_difference_mean == pytest.approx(0.002)
+
+
+def test_predictable_adaptive_rejects_bad_inputs() -> None:
+    with pytest.raises(StatisticsError):
+        evaluate_predictable_adaptive(
+            champion_daily_returns=(0.001, 0.001),
+            challenger_daily_returns=(0.001,),
+            minimum_economic_effect=0.0,
+            evaluated_at=NOW,
+            evidence_cutoff=CUTOFF,
+        )
+    with pytest.raises(StatisticsError):
+        evaluate_predictable_adaptive(
+            champion_daily_returns=(0.001, 0.001, 0.001),
+            challenger_daily_returns=(0.001, 0.001, 0.001),
+            minimum_economic_effect=0.0,
+            evaluated_at=NOW,
+            evidence_cutoff=CUTOFF,
+            outer_fold_fraction=1.5,
+        )
+    with pytest.raises(StatisticsError):
+        evaluate_predictable_adaptive(
+            champion_daily_returns=(0.001, 0.002),
+            challenger_daily_returns=(0.001, 0.002),
+            minimum_economic_effect=0.0,
+            evaluated_at=NOW,
+            evidence_cutoff=CUTOFF,
+        )

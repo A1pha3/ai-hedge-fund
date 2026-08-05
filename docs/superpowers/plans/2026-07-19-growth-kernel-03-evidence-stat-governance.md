@@ -148,9 +148,9 @@ Expected: all pass; importer mutates no source and reports `authorization_eligib
 
 ## Completion Gate
 
-- [ ] Every evidence hash resolves to retained payload, source/parser metadata and trusted store time/sequence.
+- [x] Every evidence hash resolves to retained payload, source/parser metadata and trusted store time/sequence.
 - [x] Every enrolled official session has an immutable status or signed cancellation revision.
 - [x] Partial fill/correction cannot inflate outcome or decision-day counts.
 - [x] Both primary-promotion unique keys and the global multiplicity budget are enforced under concurrency.
 - [x] EDGE/EXPLORATION/RECOVERY issuer capabilities are distinct; every candidate envelope is a complete portfolio policy and inactive by default.
-- [ ] Correction activation always follows durable Gateway entry-fence ACK; exits remain unaffected.
+- [x] Correction activation always follows durable Gateway entry-fence ACK; exits remain unaffected.

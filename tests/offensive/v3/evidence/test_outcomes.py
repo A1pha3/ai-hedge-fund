@@ -40,6 +40,12 @@ from src.screening.offensive.v3.contracts import (
     EconomicLegDirection,
 )
 from src.screening.offensive.v3.evidence.blob_store import BlobStore
+from src.screening.offensive.v3.evidence.dependency_fix import (
+    DependencyFixError,
+    DependencyFixLedger,
+    DependencyFixManifest,
+    FenceActivationGate,
+)
 from src.screening.offensive.v3.evidence.outcomes import (
     OutcomeFinalizer,
     OutcomeFinalizerError,
@@ -395,6 +401,48 @@ def world(tmp_path: Path) -> _World:
     return _World(tmp_path)
 
 
+def _fence_gate(tmp_path: Path, *, activate: bool = True):
+    ledger = DependencyFixLedger(
+        str(tmp_path / "fence.sqlite3"), clock=world_clock()
+    )
+    manifest = DependencyFixManifest(
+        dependency_fix_id="fence-outcome",
+        revision_ordinal=1,
+        plan_evidence_fence="a" * 64,
+        trial_manifest_fence="b" * 64,
+        target_policy_fence="c" * 64,
+    )
+    payload = manifest.model_dump_json().encode("utf-8")
+    import hashlib
+    from base64 import b64encode
+
+    from src.screening.offensive.v3 import trust
+
+    signed = trust.SignedEnvelope(
+        issuer_id="governance.service",
+        key_id="key-1",
+        schema_major=2,
+        artifact=trust.ArtifactKind.PLAN,
+        namespace="governance.dependency-fix",
+        mode=ExecutionMode.DAILY_BAR_PROXY,
+        capability_version="governance.dependency-fix.v1",
+        capability_scope="dependency-fix:outcome",
+        payload_hash=hashlib.sha256(payload).hexdigest(),
+        payload=payload,
+        signature=b64encode(b"0" * 64).decode("ascii"),
+    )
+    ledger.submit(manifest, signed)
+    if activate:
+        for fence in manifest.fences():
+            ledger.acknowledge_fence("fence-outcome", fence)
+        ledger.activate("fence-outcome")
+    return FenceActivationGate(ledger)
+
+
+def world_clock():
+    return _Clock(NOW)
+
+
 ENTRY_TIME = datetime.combine(
     ENTRY_SESSION, datetime.min.time(), tzinfo=UTC
 ) + timedelta(hours=9, minutes=30)
@@ -504,8 +552,9 @@ def test_mode_pure_excludes_other_mode_fills(world: _World) -> None:
 
 
 def test_bust_after_finalization_appends_outcome_revision(
-    world: _World,
+    world: _World, tmp_path: Path,
 ) -> None:
+    world_tmp_path = tmp_path
     from src.screening.offensive.v3.contracts import ExecutionRevisionKind
 
     world.fill(
@@ -540,14 +589,23 @@ def test_bust_after_finalization_appends_outcome_revision(
         revision=2,
         revision_kind=ExecutionRevisionKind.BUSTED,
     )
-    revision = world.finalizer.revise_outcome("pl-bust", program=PROGRAM)
+    gate = _fence_gate(world_tmp_path)
+    revision = world.finalizer.revise_outcome(
+        "pl-bust",
+        program=PROGRAM,
+        activation_gate=gate,
+        fence_manifest_id="fence-outcome",
+    )
     assert revision == 2
     fact = world.finalizer.outcome_fact("pl-bust")
     assert fact.classification == "NO_FILL"
     assert fact.realized_pnl_cents is None
     # Nothing changed: a second revise is a no-op.
     assert world.finalizer.revise_outcome(
-        "pl-bust", program=PROGRAM
+        "pl-bust",
+        program=PROGRAM,
+        activation_gate=gate,
+        fence_manifest_id="fence-outcome",
     ) is None
 
 
@@ -630,3 +688,46 @@ def _side_exit():
     from src.screening.offensive.v3.contracts import ExecutionSide
 
     return ExecutionSide.EXIT
+
+
+def test_outcome_revision_requires_active_fence(
+    world: _World, tmp_path: Path
+) -> None:
+    from src.screening.offensive.v3.contracts import ExecutionRevisionKind
+
+    world.fill(
+        "exec-e",
+        side=_side_entry(),
+        price_micros=10_000_000,
+        quantity=100,
+        effective_at=ENTRY_TIME,
+    )
+    world.fill(
+        "exec-x",
+        side=_side_exit(),
+        price_micros=11_000_000,
+        quantity=100,
+        effective_at=EXIT_TIME,
+    )
+    world.finalizer.register_plan_line(world.plan_line("pl-fence"))
+    world.finalizer.finalize_due(DUE, program=PROGRAM)
+    world.fill(
+        "exec-e",
+        side=_side_entry(),
+        price_micros=10_000_000,
+        quantity=100,
+        effective_at=ENTRY_TIME,
+        revision=2,
+        revision_kind=ExecutionRevisionKind.BUSTED,
+    )
+    pending_gate = _fence_gate(tmp_path, activate=False)
+    with pytest.raises(DependencyFixError) as excinfo:
+        world.finalizer.revise_outcome(
+            "pl-fence",
+            program=PROGRAM,
+            activation_gate=pending_gate,
+            fence_manifest_id="fence-outcome",
+        )
+    assert excinfo.value.code == "fence_not_active"
+    # The outcome stays revision 1 (nothing activated).
+    assert world.evidence.get("outcome:pl-fence").revision == 1

@@ -304,6 +304,90 @@ def check_minimum_evidence(report: MinimumEvidenceReport) -> dict[str, bool]:
     }
 
 
+OUTER_FOLD_FRACTION: Final[float] = 0.3
+
+
+class AdaptiveEvaluation(CanonicalModel):
+    """Predictable adaptive evaluation: champion vs challenger on paired
+    decision days with a chronological outer fold.
+
+    The outer fold is the final chronological slice; it is reported but
+    never tuned on (leakage guard).
+    """
+
+    paired_difference_mean: float
+    paired_difference_lcb_95: float
+    observation_count: int
+    evaluation_fold_size: int
+    outer_fold_size: int
+    outer_fold_difference_mean: float | None
+    minimum_economic_effect: float
+    lcb_above_mee: bool
+    evaluated_at: datetime
+    evidence_cutoff: datetime
+
+    def passes_economic_gate(self) -> bool:
+        return self.lcb_above_mee
+
+
+def evaluate_predictable_adaptive(
+    *,
+    champion_daily_returns: Sequence[float],
+    challenger_daily_returns: Sequence[float],
+    minimum_economic_effect: float,
+    evaluated_at: datetime,
+    evidence_cutoff: datetime,
+    outer_fold_fraction: float = OUTER_FOLD_FRACTION,
+) -> AdaptiveEvaluation:
+    """Paired champion/challenger evaluation over decision days.
+
+    Deterministic transparent estimators: paired daily differences on the
+    chronological evaluation fold (first ``1 - fraction`` of days) with a
+    one-sided 95% t LCB; the final chronological fold is reported as the
+    outer fold and never tunes anything.
+    """
+
+    champion = list(champion_daily_returns)
+    challenger = list(challenger_daily_returns)
+    if len(champion) != len(challenger):
+        raise StatisticsError(
+            "series_length_mismatch",
+            "champion and challenger must align day by day",
+        )
+    if len(champion) < 3:
+        raise StatisticsError(
+            "sample_too_small",
+            "adaptive evaluation needs at least three decision days",
+        )
+    if not (0.0 < outer_fold_fraction < 1.0):
+        raise StatisticsError(
+            "outer_fold_fraction_invalid",
+            "outer fold fraction must stay inside (0, 1)",
+        )
+    differences = [
+        champ - chal for champ, chal in zip(champion, challenger)
+    ]
+    n = len(differences)
+    evaluation_size = max(2, int(n * (1.0 - outer_fold_fraction)))
+    evaluation_fold = differences[:evaluation_size]
+    outer_fold = differences[evaluation_size:]
+    lcb = one_sided_lower_bound(evaluation_fold)
+    return AdaptiveEvaluation(
+        paired_difference_mean=float(_mean(evaluation_fold)),
+        paired_difference_lcb_95=float(lcb),
+        observation_count=n,
+        evaluation_fold_size=len(evaluation_fold),
+        outer_fold_size=len(outer_fold),
+        outer_fold_difference_mean=(
+            float(_mean(outer_fold)) if outer_fold else None
+        ),
+        minimum_economic_effect=float(minimum_economic_effect),
+        lcb_above_mee=bool(lcb > minimum_economic_effect),
+        evaluated_at=evaluated_at,
+        evidence_cutoff=evidence_cutoff,
+    )
+
+
 def check_tail_capacity(
     evaluation: PortfolioEvaluation,
     *,
@@ -323,7 +407,9 @@ def check_tail_capacity(
 
 
 __all__ = [
+    "AdaptiveEvaluation",
     "CONFIDENCE_LEVEL",
+    "OUTER_FOLD_FRACTION",
     "MINIMUM_DECISION_DAYS",
     "MINIMUM_ESS",
     "MINIMUM_MATURE_OUTCOMES",
@@ -338,6 +424,7 @@ __all__ = [
     "conditional_drawdown_at_risk",
     "effective_sample_size",
     "evaluate_frozen_policy",
+    "evaluate_predictable_adaptive",
     "excess_daily_log_growth",
     "maximum_drawdown",
     "one_sided_lower_bound",

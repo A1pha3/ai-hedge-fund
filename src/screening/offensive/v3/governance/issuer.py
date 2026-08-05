@@ -27,6 +27,12 @@ from src.screening.offensive.v3.contracts.authorization import (
     CapitalAuthorizationEnvelope,
 )
 from src.screening.offensive.v3.contracts.base import ExecutionMode
+from src.screening.offensive.v3.evidence.consumption import (
+    AttemptLedger,
+    AttemptStatus,
+    EvidenceConsumptionLedger,
+    LedgerError,
+)
 
 EXPLORATION_AGGREGATE_CAP: Final = Fraction(Decimal("0.02"))
 
@@ -58,15 +64,23 @@ class IssuerError(RuntimeError):
 @dataclass(frozen=True)
 class ExplorationIssuanceRequest:
     envelope: CapitalAuthorizationEnvelope
+    research_program_id: str
+    attempt_id: str
+    sample_evidence_id: str | None = None
+    sample_evaluation_unit_id: str | None = None
     renewal_of_authorization_id: str | None = None
 
 
 @dataclass(frozen=True)
 class RecoveryIssuanceRequest:
     envelope: CapitalAuthorizationEnvelope
+    research_program_id: str
+    attempt_id: str
     inherited_authorization_id: str
     inherited_risk_epoch: int
     inherited_stage_loss_version: int
+    sample_evidence_id: str | None = None
+    sample_evaluation_unit_id: str | None = None
 
 
 def _configure_connection(dbapi_connection: object, _record: object) -> None:
@@ -87,9 +101,13 @@ class GovernanceIssuer:
         database_path: str,
         signer: Callable[[bytes], SignedEnvelope],
         clock: Callable[[], datetime],
+        attempts: AttemptLedger,
+        consumption: EvidenceConsumptionLedger,
     ) -> None:
         self._signer = signer
         self._clock = clock
+        self._attempts = attempts
+        self._consumption = consumption
         self._engine = sa.create_engine(
             f"sqlite:///{database_path}",
             connect_args={"check_same_thread": False},
@@ -98,6 +116,39 @@ class GovernanceIssuer:
         with self._engine.begin() as conn:
             for ddl in _SCHEMA_DDL:
                 conn.execute(sa.text(ddl))
+
+    def _consume_budgets(
+        self,
+        envelope: CapitalAuthorizationEnvelope,
+        *,
+        research_program_id: str,
+        attempt_id: str,
+        sample_evidence_id: str | None,
+        sample_evaluation_unit_id: str | None,
+    ) -> None:
+        """Consume sample/attempt budgets after a successful signature.
+
+        A failed signer leaves no consumption; a consumption failure
+        discards the signed bytes and records no envelope.
+        """
+
+        try:
+            self._consumption.consume_primary_promotion(
+                research_program_id=research_program_id,
+                attempt_id=attempt_id,
+                payload_hash=envelope.artifact_hash(),
+                evidence_id=sample_evidence_id,
+                governance_minted_evaluation_unit_id=(
+                    sample_evaluation_unit_id
+                ),
+            )
+        except LedgerError as exc:
+            raise IssuerError(
+                "sample_reuse",
+                "sample identity already consumed; issuance rejected",
+                reason=exc.code,
+            ) from exc
+        self._attempts.close(attempt_id, AttemptStatus.CONSUMED)
 
     def _record(
         self,
@@ -189,6 +240,15 @@ class GovernanceIssuer:
                 )
         payload = envelope.model_dump_json().encode("utf-8")
         signed = self._signer(payload)
+        self._consume_budgets(
+            envelope,
+            research_program_id=request.research_program_id,
+            attempt_id=request.attempt_id,
+            sample_evidence_id=request.sample_evidence_id,
+            sample_evaluation_unit_id=(
+                request.sample_evaluation_unit_id
+            ),
+        )
         self._record(
             envelope,
             signed,
@@ -256,6 +316,15 @@ class GovernanceIssuer:
             )
         payload = envelope.model_dump_json().encode("utf-8")
         signed = self._signer(payload)
+        self._consume_budgets(
+            envelope,
+            research_program_id=request.research_program_id,
+            attempt_id=request.attempt_id,
+            sample_evidence_id=request.sample_evidence_id,
+            sample_evaluation_unit_id=(
+                request.sample_evaluation_unit_id
+            ),
+        )
         self._record(
             envelope,
             signed,
