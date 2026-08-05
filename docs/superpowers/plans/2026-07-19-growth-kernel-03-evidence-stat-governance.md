@@ -120,11 +120,11 @@ Do not collapse them into one four-column key.
 
 **Interfaces:** Produces `Authorizer.assess_and_issue_edge()`, `GovernanceIssuer.issue_exploration()`, `issue_recovery()` and signed inactive `CapitalAuthorizationEnvelope` candidates.
 
-- [ ] **Step 1: Write adversarial tests** for stale/missing benchmark, mode/account/behavior/cost mismatch, below-MEE LCB, target worse than baseline, tail breach, reused sample/budget, multiple independent envelopes, exploration >2%, exploration renewal, first broker portfolio >2%, recovery ignoring inherited risk/loss and expired manifest.
-- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_authorizer.py tests/offensive/v3/governance/test_issuer.py -v`.
-- [ ] **Step 3: Implement separate issuer transactions**. Authorizer alone signs `EDGE`; Governance alone signs `EXPLORATION | RECOVERY`. `EXPLORATION` 强制 `BROKER_CONFIRMED` 且只声明受限证据采集，不声明 live edge；`RECOVERY` 引用既有 grants/assessments 和全部继承风险/loss versions，不制造新 grant。Each transaction consumes its local attempt/sample/global budget and signs one complete target portfolio envelope. Result remains inactive until Plan 04 Gateway CAS.
-- [ ] **Step 4: Add signer-failure test**: a failed external signer call leaves no consumption or issued envelope; a retry is deterministic.
-- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): issue complete governed authorization envelopes"`.
+- [x] **Step 1: Write adversarial tests** for stale/missing benchmark, mode/account/behavior/cost mismatch, below-MEE LCB, target worse than baseline, tail breach, reused sample/budget, multiple independent envelopes, exploration >2%, exploration renewal, first broker portfolio >2%, recovery ignoring inherited risk/loss and expired manifest.
+- [x] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_authorizer.py tests/offensive/v3/governance/test_issuer.py -v`.
+- [x] **Step 3: Implement separate issuer transactions**. Authorizer alone signs `EDGE`; Governance alone signs `EXPLORATION | RECOVERY`. `EXPLORATION` 强制 `BROKER_CONFIRMED` 且只声明受限证据采集，不声明 live edge；`RECOVERY` 引用既有 grants/assessments 和全部继承风险/loss versions，不制造新 grant。Each transaction consumes its local attempt/sample/global budget and signs one complete target portfolio envelope. Result remains inactive until Plan 04 Gateway CAS.
+- [x] **Step 4: Add signer-failure test**: a failed external signer call leaves no consumption or issued envelope; a retry is deterministic.
+- [x] **Step 5: Verify and commit** with `git commit -m "feat(v3): issue complete governed authorization envelopes"`.
 
 ### Task 7: Fail-closed dependency correction and research-only import
 
