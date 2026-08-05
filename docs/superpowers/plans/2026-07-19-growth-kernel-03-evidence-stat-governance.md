@@ -130,10 +130,10 @@ Do not collapse them into one four-column key.
 
 **Interfaces:** Produces `DependencyTracker.prepare_correction()`, `EntryFenceClient.raise_and_wait_ack()`, `activate_corrected_revision()` and a dry-run-first legacy importer.
 
-- [ ] **Step 1: Write crash/race tests** for correction prepare, Gateway unavailable, fence ACK persisted, crash before revision activation, duplicate fence, old authorization status and concurrent entry attempt. Safety rule: revision is never active before durable fence ACK; fence-without-activation may overblock but never underblock.
-- [ ] **Step 2: Implement the protocol** using a Plan 04 port fake now; Plan 04 replaces it with the real Gateway. Do not hold an Evidence DB transaction open across network I/O and do not claim distributed atomicity.
-- [ ] **Step 3: Implement** `scripts/v3_import_research_evidence.py --dry-run` forcing imported material to `RESEARCH_RECONSTRUCTION | PRIOR`, retaining provenance gaps and `authorization_eligible=0`.
-- [ ] **Step 4: Run full checks**.
+- [x] **Step 1: Write crash/race tests** for correction prepare, Gateway unavailable, fence ACK persisted, crash before revision activation, duplicate fence, old authorization status and concurrent entry attempt. Safety rule: revision is never active before durable fence ACK; fence-without-activation may overblock but never underblock.
+- [x] **Step 2: Implement the protocol** using a Plan 04 port fake now; Plan 04 replaces it with the real Gateway. Do not hold an Evidence DB transaction open across network I/O and do not claim distributed atomicity.
+- [x] **Step 3: Implement** `scripts/v3_import_research_evidence.py --dry-run` forcing imported material to `RESEARCH_RECONSTRUCTION | PRIOR`, retaining provenance gaps and `authorization_eligible=0`.
+- [x] **Step 4: Run full checks**.
 
 ```bash
 uv run pytest tests/offensive/v3/evidence/ tests/offensive/v3/governance/ -v
@@ -149,8 +149,8 @@ Expected: all pass; importer mutates no source and reports `authorization_eligib
 ## Completion Gate
 
 - [ ] Every evidence hash resolves to retained payload, source/parser metadata and trusted store time/sequence.
-- [ ] Every enrolled official session has an immutable status or signed cancellation revision.
-- [ ] Partial fill/correction cannot inflate outcome or decision-day counts.
-- [ ] Both primary-promotion unique keys and the global multiplicity budget are enforced under concurrency.
-- [ ] EDGE/EXPLORATION/RECOVERY issuer capabilities are distinct; every candidate envelope is a complete portfolio policy and inactive by default.
+- [x] Every enrolled official session has an immutable status or signed cancellation revision.
+- [x] Partial fill/correction cannot inflate outcome or decision-day counts.
+- [x] Both primary-promotion unique keys and the global multiplicity budget are enforced under concurrency.
+- [x] EDGE/EXPLORATION/RECOVERY issuer capabilities are distinct; every candidate envelope is a complete portfolio policy and inactive by default.
 - [ ] Correction activation always follows durable Gateway entry-fence ACK; exits remain unaffected.

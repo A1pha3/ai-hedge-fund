@@ -359,3 +359,44 @@ def test_manifest_signature_mismatch_is_rejected(world: _World) -> None:
     with pytest.raises(DependencyFixError) as excinfo:
         world.ledger.submit(manifest, other)
     assert excinfo.value.code == "manifest_signature_mismatch"
+
+
+def test_crash_before_activation_keeps_revision_pending(
+    world: _World, tmp_path: Path
+) -> None:
+    """A crash between submit/ack and activation never leaves the
+    revision active: reopening the store shows the durable state."""
+
+    manifest = _manifest("fix-crash")
+    world.ledger.submit(manifest, _signed_manifest(world, manifest))
+    for fence in manifest.fences():
+        world.ledger.acknowledge_fence("fix-crash", fence)
+    # Simulate a crash before activation: drop the handle, reopen.
+    reopened = DependencyFixLedger(
+        str(tmp_path / "dependency.sqlite3"), clock=world.clock
+    )
+    assert reopened.status("fix-crash") == "PENDING"
+    # Fence ACKs survived the crash and activation still works.
+    reopened.activate("fix-crash")
+    assert reopened.status("fix-crash") == "ACTIVE"
+
+
+def test_duplicate_fence_ack_is_idempotent(world: _World) -> None:
+    manifest = _manifest("fix-dup")
+    world.ledger.submit(manifest, _signed_manifest(world, manifest))
+    assert world.ledger.acknowledge_fence(
+        "fix-dup", manifest.plan_evidence_fence
+    ) is True
+    assert world.ledger.acknowledge_fence(
+        "fix-dup", manifest.plan_evidence_fence
+    ) is True  # nothing written the second time
+
+
+def test_repeat_activation_is_idempotent(world: _World) -> None:
+    manifest = _manifest("fix-repeat")
+    world.ledger.submit(manifest, _signed_manifest(world, manifest))
+    for fence in manifest.fences():
+        world.ledger.acknowledge_fence("fix-repeat", fence)
+    world.ledger.activate("fix-repeat")
+    world.ledger.activate("fix-repeat")  # old status: no-op
+    assert world.ledger.status("fix-repeat") == "ACTIVE"
