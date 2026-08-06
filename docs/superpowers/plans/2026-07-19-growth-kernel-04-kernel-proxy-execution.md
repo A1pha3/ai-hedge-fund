@@ -123,11 +123,11 @@ No network call occurs inside the DB transaction. After commit the owner either 
 
 **Interfaces:** Produces `derive_exit_mandates()`, `claim_due_exit_work()`, `record_exit_attempt()`, `reconcile_exit()` and correction-driven reopen.
 
-- [ ] **Step 1: Write transition tests** for T+10 ordinal, partial exit, suspension/limit state, unknown tradable quantity, existing live exit leaves, cancel-late-fill, terminal legal event, successor security and fill bust reopening a closed lot.
-- [ ] **Step 2: Add dependency-outage tests** proving exits continue when policy/envelope/Authorizer/Publisher/entry endpoints are unavailable or risk/stage halt is active.
-- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/gateway/test_exits.py -v`.
-- [ ] **Step 4: Implement mandate quantity** as verified tradable quantity minus proven live exit leaves. Unknown quantity schedules query/reconcile and sends zero new sell quantity; it never guesses or oversells. Mandates and leases are durable/restartable.
-- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): persist independent exit obligations"`.
+- [x] **Step 1: Write transition tests** for T+10 ordinal, partial exit, suspension/limit state, unknown tradable quantity, existing live exit leaves, cancel-late-fill, terminal legal event, successor security and fill bust reopening a closed lot.
+- [x] **Step 2: Add dependency-outage tests** proving exits continue when policy/envelope/Authorizer/Publisher/entry endpoints are unavailable or risk/stage halt is active.
+- [x] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/gateway/test_exits.py -v`.
+- [x] **Step 4: Implement mandate quantity** as verified tradable quantity minus proven live exit leaves. Unknown quantity schedules query/reconcile and sends zero new sell quantity; it never guesses or oversells. Mandates and leases are durable/restartable.
+- [x] **Step 5: Verify and commit** with `git commit -m "feat(v3): persist independent exit obligations"`.
 
 ### Task 8: DAILY_BAR_PROXY and MANUAL_CONFIRMED execution
 
