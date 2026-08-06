@@ -101,9 +101,9 @@ assert adjusted.risk_adjustment_count == 1
 
 **Interfaces:** Produces `issue_permit()`, `make_outbox_durable()`, `claim_send()` and entry states through `SUBMISSION_AMBIGUOUS | BROKER_ACK` without network delivery.
 
-- [ ] **Step 1: Write adversarial tests** for old active seal, wrong permit nonce, quantity increase, expired issue/permit/send deadlines, stale envelope/capital/risk/stage/fence versions, halt, duplicate claim and two competing dispatchers.
-- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/gateway/test_entry_state.py -v`.
-- [ ] **Step 3: Implement final send-right transaction**:
+- [x] **Step 1: Write adversarial tests** for old active seal, wrong permit nonce, quantity increase, expired issue/permit/send deadlines, stale envelope/capital/risk/stage/fence versions, halt, duplicate claim and two competing dispatchers.
+- [x] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/gateway/test_entry_state.py -v`.
+- [x] **Step 3: Implement final send-right transaction**:
 
 ```python
 with gateway.begin_immediate() as tx:
@@ -116,8 +116,8 @@ with gateway.begin_immediate() as tx:
 
 No network call occurs inside the DB transaction. After commit the owner either sends the exact immutable payload with the same client ID or records ambiguous/receipt state.
 
-- [ ] **Step 4: Add crash matrix** before/after each state and prove an unclaimed outbox can be tombstoned while claimed state always remains worst-case live exposure.
-- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): linearize final entry send rights"`.
+- [x] **Step 4: Add crash matrix** before/after each state and prove an unclaimed outbox can be tombstoned while claimed state always remains worst-case live exposure.
+- [x] **Step 5: Verify and commit** with `git commit -m "feat(v3): linearize final entry send rights"`.
 
 ### Task 7: ExitMandate and economic-lot lifecycle
 
