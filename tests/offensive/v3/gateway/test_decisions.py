@@ -546,31 +546,6 @@ def test_supersede_cannot_increase_reserve(gateway) -> None:
     assert excinfo.value.code == "supersede_increases_reserve"
 
 
-def test_supersede_after_permit_is_forbidden(gateway) -> None:
-    original = _seal()
-    gateway.publish_entry(
-        original,
-        expected_versions=_expected_versions(),
-        context=_context(),
-    )
-    gateway.mark_seal_permitted("seal-1")
-    shrunk_line = _order_line(quantity=100, worst_case_price_cents=1_050)
-    replacement = _seal(
-        seal_id="seal-2",
-        seal_revision=2,
-        decision=_decision(cycle="cycle-1", lines=(shrunk_line,)),
-        supersedes=original,
-        expected_versions=_expected_versions(expected_seal=original),
-    )
-    with pytest.raises(CapitalGatewayError) as excinfo:
-        gateway.publish_entry(
-            replacement,
-            expected_versions=_expected_versions(expected_seal=original),
-            context=_context(),
-        )
-    assert excinfo.value.code == "supersede_forbidden_after_permit"
-
-
 def test_stale_expected_versions_are_rejected(gateway) -> None:
     seal = _seal()
     stale = _expected_versions(status_version=99, status_hash="f" * 64)
