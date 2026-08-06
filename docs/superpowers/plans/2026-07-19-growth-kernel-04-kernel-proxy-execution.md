@@ -91,11 +91,11 @@ assert adjusted.risk_adjustment_count == 1
 
 **Interfaces:** Produces `CapitalGateway.publish_entry()` and `active_seal()`.
 
-- [ ] **Step 1: Write failing tests** for economic key `(portfolio_id, signal_session, decision_cycle_id)`, identical rerun, same-key/different-payload, epoch change with same key, stale expected versions, reserve failure and two-process race.
-- [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/gateway/test_decisions.py -v`.
-- [ ] **Step 3: Implement one immediate transaction**: reverify active trust/policy/envelope/capital/risk/stage/fence; insert decision; reserve exact worst-case cash/exposure; publish active `PortfolioDecisionSeal`. Any failure rolls back all three.
-- [ ] **Step 4: Add supersede tests**. Before permit, an explicit legal shrink/cancel may replace active seal under the same economic key/revision chain; after permit or outbox state, no quantity increase or key escape is allowed.
-- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): seal and reserve portfolio entries atomically"`.
+- [x] **Step 1: Write failing tests** for economic key `(portfolio_id, signal_session, decision_cycle_id)`, identical rerun, same-key/different-payload, epoch change with same key, stale expected versions, reserve failure and two-process race.
+- [x] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/gateway/test_decisions.py -v`.
+- [x] **Step 3: Implement one immediate transaction**: reverify active trust/policy/envelope/capital/risk/stage/fence; insert decision; reserve exact worst-case cash/exposure; publish active `PortfolioDecisionSeal`. Any failure rolls back all three.
+- [x] **Step 4: Add supersede tests**. Before permit, an explicit legal shrink/cancel may replace active seal under the same economic key/revision chain; after permit or outbox state, no quantity increase or key escape is allowed.
+- [x] **Step 5: Verify and commit** with `git commit -m "feat(v3): seal and reserve portfolio entries atomically"`.
 
 ### Task 6: Permit, durable outbox, and SEND_CLAIMED linearization
 
