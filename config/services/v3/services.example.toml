@@ -1,0 +1,44 @@
+# Plan 05 Task 9 — V3 shadow 服务 CLI 接线配置示例。
+#
+# 这是【示例】配置; 复制为 services.toml (或显式 --v3-config 路径) 后按本机路径
+# 调整。所有路径相对 repo root (CLI 由 __file__ 推导 repo root, 不依赖 cwd;
+# 也可填绝对路径)。详见 docs/runbooks/v3-shadow-services.md。
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# 安全边界 (shadow-only 阶段)
+# ─────────────────────────────────────────────────────────────────────────────
+# 本配置只含 CLI shadow 编排接线所需的【v3 namespace】路径与 sizing caps。
+# 【privileged service-owned】路径(capital ledger / signer keystore / governance
+# authority DB / broker credential)刻意【不在本配置内】— CLI 不读取、不构造、
+# 不触达这些路径。shadow-only 阶段 CLI 是同一 OS 用户下同一文件系统主体, OS 级
+# ACL 不可达 (Plan 06+ privileged worker 进程层的事); 本 plan 的守卫是结构性
+# default-deny: AST 扫描 CLI 模块 (src/cli/v3_shadow.py) 无 governance/authority
+# 写面 import+调用, 且 CLI 可访问的窄 flow 读面不暴露 authority 写面。
+
+[paths]
+# v3 shadow namespace 路径 (CLI 构造库层服务时使用)。相对 repo root。
+# shadow 是 ephemeral: 每次运行可覆盖, 不跨进程持久化 (InMemoryShadowStore)。
+portfolio_id = "paper-v3"
+evidence_database = "data/v3_shadow/evidence.sqlite3"
+blob_root = "data/v3_shadow/blobs"
+capital_ledger = "data/v3_shadow/capital.sqlite3"
+gateway_database = "data/v3_shadow/gateway.sqlite3"
+# JSON 工件落盘目录 (render_json 输出; render_text 上 stdout)。绝不写 v2 reports 目录。
+shadow_artifacts_dir = "data/v3_shadow/artifacts"
+
+[policy]
+# PolicySnapshot JSON 路径 (config/policies/v3/*.json)。runtime_mode 由此文件的
+# PolicySnapshot.runtime_mode 决定 (off|shadow|btst_canary|authoritative)。
+# 轮换 policy 只改本键, 不改代码。默认 v1 (runtime_mode=off)。
+path = "config/policies/v3/policy-v1.json"
+
+[sizing]
+# Kernel SizingConfig (kernel/sizing.py:26)。policy JSON 无对应物 (policy.capital
+# 是比例且 off 全 0), 故 CLI shadow 编排独立配。单位: cents (整数)。
+# 这些是【shadow 观测口径】caps — 真实 authority envelope 的 gross cap 在 Plan 06+
+# governance 激活后由 envelope 提供, 不在此。
+per_ticker_gross_cap_cents = 500000
+per_industry_gross_cap_cents = 1500000
+per_day_gross_cap_cents = 3000000
+portfolio_gross_cap_cents = 5000000
+worst_case_fee_ppm = 3000
