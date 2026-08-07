@@ -161,6 +161,7 @@ from src.screening.offensive.v3.contracts.evidence import (
     EvidenceRecord,
     SignalEvidence,
 )
+from src.screening.offensive.v3.kernel.admission import BTST_FAMILY
 from src.screening.offensive.v3.kernel.models import (
     BlockReason,
     KernelInput,
@@ -630,7 +631,17 @@ class DailyActionFlow:
                 RawCandidate(
                     candidate_id=candidate_id,
                     producer_namespace=envelope.subject_producer,
-                    family_id=envelope.family_id or "",
+                    # family_id 用 kernel admission 白名单常量 ``BTST_FAMILY``
+                    # (= "btst.limit-up-breakout", kernel/admission.py:25), 与
+                    # lineage/stage/program (下) 同从授权 grant 语义取, 完成
+                    # docstring 既定 "取授权 grant 才 ADMITTED" 意图。真实
+                    # producer 信封的 ``family_id`` 是 ``btst:<snapshot_id>``
+                    # (producers/btst.py:20, 非白名单) — 用之会被 admission 恒
+                    # BLOCKED(NO_AUTHORIZED_ENVELOPE) (kernel/admission.py:100,
+                    # 白名单外一律拒绝), 使真实 shadow 链路恒 NoTrade。这是
+                    # Task 9 S2b 硬阻塞 B 修复 (真实 producer+kernel 组合回归
+                    # 测试 test_daily_action_flow_family_fix.py 锁定)。
+                    family_id=BTST_FAMILY,
                     economic_lineage_id=grant.economic_lineage_id,
                     research_program_id=grant.research_program_id,
                     stage_id=grant.stage_id,

@@ -25,6 +25,7 @@ from src.screening.offensive.v3.reporting.service import (
     ReportingService,
     ShadowDecisionReader,
 )
+from src.screening.offensive.v3.reporting.shadow_store import InMemoryShadowStore
 
 __all__ = [
     "AccountCapitalView",
@@ -34,6 +35,7 @@ __all__ = [
     "FILL_PROVENANCE_BROKER",
     "FILL_PROVENANCE_MANUAL",
     "FILL_PROVENANCE_PROXY",
+    "InMemoryShadowStore",
     "PendingExitView",
     "PerformanceView",
     "PlannedEntryView",

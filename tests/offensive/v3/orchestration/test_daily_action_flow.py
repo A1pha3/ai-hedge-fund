@@ -1103,12 +1103,19 @@ def test_shadow_lines_are_canonically_sorted(tmp_path: Path) -> None:
 
 
 def test_shadow_construction_failure_is_recorded_not_crashed(tmp_path: Path) -> None:
-    """M-3 回归: ShadowDecision 构造期 validator 异常 (如 GLOBAL 证据
-    family_id=None → RawCandidate family 校验失败) 记入 kernel 步 reason,
-    run() 不崩溃, shadow_decision_status=failed。"""
+    """M-3 回归: ShadowDecision 构造期异常 (如 evidence_id 格式非法 →
+    ``_evidence_ticker`` 解析失败) 记入 kernel 步 reason, run() 不崩溃,
+    shadow_decision_status=failed。
+
+    触发机制更新 (S2b): 原用 GLOBAL 证据 ``family_id=None`` 依赖
+    ``family_id=envelope.family_id or ""`` 的空串路径; S2b 后 ``family_id``
+    硬编码 ``BTST_FAMILY`` 不再读 envelope.family_id, 改用非法 evidence_id
+    (``split(":")[2]`` IndexError) 触发构造期异常 — 同样落入 kernel 步
+    try/except。"""
     kernel = _FakeKernel(_portfolio_decision())
     persister = _FakePersister()
-    # producer 返回 family_id=None 的 GLOBAL 证据记录 (构造 RawCandidate 触发)
+    # producer 返回 evidence_id 格式非法的证据记录 (构造 RawCandidate 时
+    # _evidence_ticker split(":")[2] 抛 IndexError)
     records = (_global_scope_record(),)
     flow = _make_flow(
         producer=_FakeProducer(records=records),
@@ -1144,12 +1151,17 @@ def test_shadow_decision_uses_same_grant_as_kernel(tmp_path: Path) -> None:
 
 
 def _global_scope_record():
-    """family_id=None 的 GLOBAL 证据记录 (EvidenceEnvelope 契约允许)。"""
+    """evidence_id 格式非法的证据记录 (``split(":")[2]`` 触发 IndexError)。
+
+    S2b 前用 ``family_id=None`` 触发构造失败; S2b 后 family_id 硬编码
+    ``BTST_FAMILY``, 改用非法 evidence_id (不足 3 段) 使 ``_evidence_ticker``
+    解析失败。保留 GLOBAL scope 以贴合 M-3 "GLOBAL 证据" 语义。
+    """
     from src.screening.offensive.v3.contracts.base import EvidenceScope
     from src.screening.offensive.v3.contracts.evidence import SignalEvidence
 
     envelope = SignalEvidence(
-        evidence_id="global:snap-1:300001.SZ:btst_breakout:selected",
+        evidence_id="global",
         subject_scope=EvidenceScope.GLOBAL,
         subject_producer="btst",
         family_id=None,
