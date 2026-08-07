@@ -42,6 +42,17 @@ from .governance_api import (
     SEAL_APPROVAL_REQUIRED,
 )
 from .identity import ServiceIdentity
+from .lifecycle_scheduler import (
+    LifecycleCycleResult,
+    LifecycleScheduler,
+    LifecycleSchedulerError,
+    RECONCILE_PASS_REASON,
+    SCHEDULER_EXIT_BUDGET_EXHAUSTED,
+    SCHEDULER_MAX_CLAIMS_NEGATIVE,
+    SCHEDULER_RATE_BUDGET_NEGATIVE,
+    SCHEDULER_RECONCILE_BUDGET_EXHAUSTED,
+    SCHEDULER_SHUTDOWN,
+)
 from .market_publisher import MarketPublisherService, NOT_A_SNAPSHOT_ERROR_CODE
 from .outcome_finalizer import OutcomeFinalizerService
 from .trusted_clock import DEFAULT_CLOCK_SOURCE, DEFAULT_MAX_SKEW, TrustedClock
@@ -61,6 +72,9 @@ __all__ = [
     "HDR_SERVICE_IDENTITY",
     "HDR_SERVICE_SCHEMA_MAJOR",
     "IdentityError",
+    "LifecycleCycleResult",
+    "LifecycleScheduler",
+    "LifecycleSchedulerError",
     "MarketPublisherService",
     "NOT_A_SNAPSHOT_ERROR_CODE",
     "OutcomeFinalizerService",
@@ -71,6 +85,12 @@ __all__ = [
     "POLICY_APPROVAL_REQUIRED",
     "PrivateAccessError",
     "ProcessLease",
+    "RECONCILE_PASS_REASON",
+    "SCHEDULER_EXIT_BUDGET_EXHAUSTED",
+    "SCHEDULER_MAX_CLAIMS_NEGATIVE",
+    "SCHEDULER_RATE_BUDGET_NEGATIVE",
+    "SCHEDULER_RECONCILE_BUDGET_EXHAUSTED",
+    "SCHEDULER_SHUTDOWN",
     "SEAL_APPROVAL_ARTIFACT_REJECTED",
     "SEAL_APPROVAL_NAMESPACE_MISMATCH",
     "SEAL_APPROVAL_REQUIRED",
