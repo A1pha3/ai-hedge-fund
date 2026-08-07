@@ -1,6 +1,16 @@
 """V3 服务边界: 身份、可信时钟、UDS 客户端与共享 ACL 工具。"""
 
 from .authorizer_api import AuthorizerApi
+from .capital_gateway_api import (
+    CapitalGatewayApi,
+    EXECUTION_AUTHORITY_DISABLED,
+    POLICY_APPROVAL_ARTIFACT_KINDS,
+    POLICY_APPROVAL_ARTIFACT_REJECTED,
+    POLICY_APPROVAL_NAMESPACE,
+    POLICY_APPROVAL_NAMESPACE_MISMATCH,
+    POLICY_APPROVAL_REQUIRED,
+    SEND_CLAIMED_DISABLED,
+)
 from .clients import ServiceClient
 from .common import (
     ConflictingRequestError,
@@ -39,9 +49,11 @@ from .trusted_clock import DEFAULT_CLOCK_SOURCE, DEFAULT_MAX_SKEW, TrustedClock
 __all__ = [
     "APPROVAL_ARTIFACT_KINDS",
     "AuthorizerApi",
+    "CapitalGatewayApi",
     "ConflictingRequestError",
     "DEFAULT_CLOCK_SOURCE",
     "DEFAULT_MAX_SKEW",
+    "EXECUTION_AUTHORITY_DISABLED",
     "GovernanceApi",
     "HDR_IDEMPOTENCY_KEY",
     "HDR_PAYLOAD_HASH",
@@ -52,11 +64,17 @@ __all__ = [
     "MarketPublisherService",
     "NOT_A_SNAPSHOT_ERROR_CODE",
     "OutcomeFinalizerService",
+    "POLICY_APPROVAL_ARTIFACT_KINDS",
+    "POLICY_APPROVAL_ARTIFACT_REJECTED",
+    "POLICY_APPROVAL_NAMESPACE",
+    "POLICY_APPROVAL_NAMESPACE_MISMATCH",
+    "POLICY_APPROVAL_REQUIRED",
     "PrivateAccessError",
     "ProcessLease",
     "SEAL_APPROVAL_ARTIFACT_REJECTED",
     "SEAL_APPROVAL_NAMESPACE_MISMATCH",
     "SEAL_APPROVAL_REQUIRED",
+    "SEND_CLAIMED_DISABLED",
     "SchemaNegotiationError",
     "ServiceBoundaryError",
     "ServiceClient",
