@@ -337,6 +337,7 @@ def _compose_daily_action_services(
     deadlines,
     trusted_evidence_cutoff,
     v2_plans_reader,
+    snapshot_loader=None,
 ):
     """构造 DailyActionFlow + ReportingService + 共享 InMemoryShadowStore。
 
@@ -390,7 +391,7 @@ def _compose_daily_action_services(
     flow = DailyActionFlow(
         lifecycle_reader=capital_reader,
         capital_reader=capital_reader,
-        snapshot_loader=None,
+        snapshot_loader=snapshot_loader,
         btst_producer=btst_producer,
         evidence_store=evidence_store,
         kernel=kernel,
