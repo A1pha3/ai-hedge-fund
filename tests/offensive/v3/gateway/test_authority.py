@@ -484,6 +484,91 @@ def test_concurrent_replacement_one_wins(gateway) -> None:
     assert excinfo.value.code == "envelope_cas_conflict"
 
 
+def test_concurrent_replacement_never_yields_two_active(
+    tmp_path,
+) -> None:
+    # Real concurrency (threading.Barrier), not the serial simulation above:
+    # two dispatchers both read the same ACTIVE envelope and race to
+    # SUPERSEDE it. The rowcount guard plus the partial unique index on
+    # ACTIVE rows must leave exactly one ACTIVE envelope either way.
+    import threading
+
+    db_path = str(tmp_path / "gateway-race.sqlite3")
+    clock = _Clock(NOW)
+    setup = GatewayAuthorityRepository(
+        database_path=db_path,
+        mode=ExecutionMode.DAILY_BAR_PROXY,
+        broker_account_id=None,
+        bundle_verifier=None,
+        clock=clock,
+    )
+    policy = _policy_activation()
+    envelope = _envelope(policy)
+    setup.activate_policy_and_envelope(policy, envelope)
+    first = _envelope(
+        policy,
+        authorization_id="auth-race-first",
+        authorization_version=2,
+        portfolio_gross_cap=Decimal("0.015"),
+        grants=(
+            _grant(capital_tier=2, lineage_gross_cap=Decimal("0.015")),
+        ),
+    )
+    second = _envelope(
+        policy,
+        authorization_id="auth-race-second",
+        authorization_version=2,
+        portfolio_gross_cap=Decimal("0.01"),
+        grants=(
+            _grant(capital_tier=2, lineage_gross_cap=Decimal("0.01")),
+        ),
+    )
+    barrier = threading.Barrier(2)
+    outcomes: list[str] = [None, None]
+
+    def worker(idx: int, replacement) -> None:
+        repo = GatewayAuthorityRepository(
+            database_path=db_path,
+            mode=ExecutionMode.DAILY_BAR_PROXY,
+            broker_account_id=None,
+            bundle_verifier=None,
+            clock=clock,
+        )
+        barrier.wait()
+        try:
+            repo.replace_envelope(envelope, replacement)
+            outcomes[idx] = "replaced"
+        except GatewayAuthorityError as exc:
+            outcomes[idx] = exc.code
+
+    threads = [
+        threading.Thread(target=worker, args=(0, first)),
+        threading.Thread(target=worker, args=(1, second)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    winners = [outcome for outcome in outcomes if outcome == "replaced"]
+    # The race may be won by exactly one writer (the other fails its CAS),
+    # or - when the SQLite snapshot serializes the writes - by one writer
+    # with the other hitting the unique-index conflict. Two winners must be
+    # impossible; every outcome must be a clean conflict or success.
+    assert len(winners) == 1, outcomes
+    final = GatewayAuthorityRepository(
+        database_path=db_path,
+        mode=ExecutionMode.DAILY_BAR_PROXY,
+        broker_account_id=None,
+        bundle_verifier=None,
+        clock=clock,
+    )
+    with final._engine.connect() as conn:
+        rows = final._active_envelope_row(conn, envelope.portfolio_id)
+    assert rows is not None
+    assert rows[0] in {"auth-race-first", "auth-race-second"}
+
+
 def test_fence_raise_is_idempotent_and_fences_portfolio(gateway) -> None:
     repo, _ = gateway
     policy = _policy_activation()

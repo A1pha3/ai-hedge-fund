@@ -62,6 +62,12 @@ _SCHEMA_DDL: Final[tuple[str, ...]] = (
     )
     """,
     """
+    -- One active envelope per portfolio, enforced at the database level so
+    -- concurrent replace/activate cannot both win a read-then-write CAS.
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_active_envelope_per_portfolio
+        ON envelope_registry (portfolio_id) WHERE status = 'ACTIVE'
+    """,
+    """
     CREATE TABLE IF NOT EXISTS entry_fences (
         fence_id TEXT PRIMARY KEY,
         portfolio_id TEXT NOT NULL,
@@ -406,7 +412,7 @@ class GatewayAuthorityRepository:
                         "replacement envelope does not bind the new policy",
                     )
             now = self._clock().isoformat()
-            conn.execute(
+            superseded = conn.execute(
                 sa.text(
                     "UPDATE envelope_registry SET status = 'SUPERSEDED',"
                     " status_changed_at = :now"
@@ -418,6 +424,14 @@ class GatewayAuthorityRepository:
                     "auth_id": current_envelope.authorization_id,
                 },
             )
+            if superseded.rowcount != 1:
+                # The read-then-write CAS lost: another writer already moved
+                # this envelope (or a unique index already carries the active
+                # row). Fail closed - never activate a second ACTIVE row.
+                raise GatewayAuthorityError(
+                    "envelope_cas_conflict",
+                    "active envelope changed before replacement",
+                )
             try:
                 conn.execute(
                     sa.text(
