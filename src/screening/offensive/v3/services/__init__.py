@@ -1,0 +1,55 @@
+"""V3 服务边界: 身份、可信时钟、UDS 客户端与共享 ACL 工具。"""
+
+from .clients import ServiceClient
+from .common import (
+    ConflictingRequestError,
+    HDR_IDEMPOTENCY_KEY,
+    HDR_PAYLOAD_HASH,
+    HDR_SERVICE_CAPABILITY,
+    HDR_SERVICE_IDENTITY,
+    HDR_SERVICE_SCHEMA_MAJOR,
+    IdentityError,
+    lease_path_for,
+    PrivateAccessError,
+    ProcessLease,
+    SchemaNegotiationError,
+    ServiceBoundaryError,
+    ServiceTimeoutError,
+    socket_path_for,
+    SocketAclError,
+    StaleLeaseError,
+    V3_SCHEMA_MAJOR,
+    V3_SOCKET_MODE,
+    validate_process_lease,
+    validate_socket_acl,
+)
+from .identity import ServiceIdentity
+from .trusted_clock import DEFAULT_CLOCK_SOURCE, DEFAULT_MAX_SKEW, TrustedClock
+
+__all__ = [
+    "ConflictingRequestError",
+    "DEFAULT_CLOCK_SOURCE",
+    "DEFAULT_MAX_SKEW",
+    "HDR_IDEMPOTENCY_KEY",
+    "HDR_PAYLOAD_HASH",
+    "HDR_SERVICE_CAPABILITY",
+    "HDR_SERVICE_IDENTITY",
+    "HDR_SERVICE_SCHEMA_MAJOR",
+    "IdentityError",
+    "PrivateAccessError",
+    "ProcessLease",
+    "SchemaNegotiationError",
+    "ServiceBoundaryError",
+    "ServiceClient",
+    "ServiceIdentity",
+    "ServiceTimeoutError",
+    "SocketAclError",
+    "StaleLeaseError",
+    "TrustedClock",
+    "V3_SCHEMA_MAJOR",
+    "V3_SOCKET_MODE",
+    "lease_path_for",
+    "socket_path_for",
+    "validate_process_lease",
+    "validate_socket_acl",
+]
