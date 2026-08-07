@@ -1,6 +1,12 @@
 """V3 服务边界: 身份、可信时钟、UDS 客户端与共享 ACL 工具。"""
 
 from .authorizer_api import AuthorizerApi
+from .auto_producer_api import (
+    AUTO_PRODUCER_NOT_SHADOW,
+    AutoProducerApi,
+    AutoProducerApiError,
+)
+from .btst_producer_api import BtstProducerApi
 from .capital_gateway_api import (
     CapitalGatewayApi,
     EXECUTION_AUTHORITY_DISABLED,
@@ -59,7 +65,11 @@ from .trusted_clock import DEFAULT_CLOCK_SOURCE, DEFAULT_MAX_SKEW, TrustedClock
 
 __all__ = [
     "APPROVAL_ARTIFACT_KINDS",
+    "AUTO_PRODUCER_NOT_SHADOW",
     "AuthorizerApi",
+    "AutoProducerApi",
+    "AutoProducerApiError",
+    "BtstProducerApi",
     "CapitalGatewayApi",
     "ConflictingRequestError",
     "DEFAULT_CLOCK_SOURCE",
