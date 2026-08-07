@@ -468,6 +468,7 @@ def _official_context(
     price_micros: int | None = FILL_PRICE_MICROS,
     quantity: int | None = 100,
     order_line_id: str | None = "line-1",
+    security_id: str = "600000.SH",
 ) -> ManualRecordContext:
     """Context for the official OOS record path (pre-sealed plan present)."""
 
@@ -483,7 +484,7 @@ def _official_context(
         execution_id=execution_id,
         order_id=(permit_line.client_order_id if permit_line is not None else "client-line-1"),
         side=ExecutionSide.ENTRY,
-        security_id="600000.SH",
+        security_id=security_id,
         price_micros=price_micros,
         quantity=quantity,
         seal=seal,
@@ -805,6 +806,58 @@ def test_out_of_protocol_halt_clears_only_after_reconciled(
     assert cleared.reconciliation_latch is ReconciliationLatchState.CLEAR
     # Cash restored minus the still-charged fee (fee revisions follow fills).
     assert cleared.available_cash_cents == 1_000_000 - FILL_FEE_CENTS
+    repository.assert_conservation()
+
+
+def test_official_record_contradicting_plan_security_lands_unattributed(
+    service, capital, seal, permit
+) -> None:
+    # spec §18 权限 (manual-OOS review): an operator that presents a valid
+    # seal+permit whose client_order_id matches, but records a DIFFERENT
+    # security than the permit line authorized, is a trade that contradicts
+    # its plan. It must NOT be booked as attributed official OOS on the plan's
+    # lineage/reserve; it lands as unattributed sentinel risk + halt, exactly
+    # like an out-of-protocol trade. Binding on client_order_id alone (the
+    # pre-fix behavior) would silently attribute a mismatched fill.
+    result = service.record(
+        # permit line authorizes 600000.SH; operator records 999999.SZ.
+        context=_official_context(
+            capital, seal, permit, security_id="999999.SZ"
+        ),
+    )
+    assert result.official_oos is False
+    assert result.unattributed is True
+    fill = result.fill_receipt
+    assert fill.unattributed is True
+    assert fill.economic_lot_id.startswith("unattributed:")
+    snapshot = capital.capital_risk_snapshot(NOW)
+    assert snapshot.reconciliation_latch is (
+        ReconciliationLatchState.RECONCILIATION_HALT
+    )
+    assert snapshot.unattributed_risk_cents == FILL_GROSS_CENTS
+    capital.assert_conservation()
+
+
+def test_official_record_exceeding_permitted_quantity_lands_unattributed(
+    service, repository
+) -> None:
+    # A recorded quantity above the permit line's permitted_quantity_units also
+    # contradicts the plan and must not be attributed to the sealed reserve.
+    _deposit(repository, 10_000_000, 1)
+    seal = _manual_seal(_api())
+    permit = _manual_permit(_api(), seal)
+    result = service.record(
+        # permit line permits 100 units; operator records 500.
+        context=_official_context(
+            repository, seal, permit, quantity=500
+        ),
+    )
+    assert result.official_oos is False
+    assert result.unattributed is True
+    snapshot = repository.capital_risk_snapshot(NOW)
+    assert snapshot.reconciliation_latch is (
+        ReconciliationLatchState.RECONCILIATION_HALT
+    )
     repository.assert_conservation()
 
 

@@ -227,6 +227,12 @@ class ManualExecutionService:
         official = self._is_official(context)
         if official:
             self._require_official_plan(context)
+            # A real trade that contradicts its plan (different security or
+            # quantity above the permitted amount) is downgraded to
+            # out-of-protocol: it stays economically real but lands as
+            # unattributed sentinel risk instead of official OOS.
+            if self._contradicts_plan(context):
+                official = False
         else:
             self._require_out_of_protocol(context)
         mode = self._mode_for(context, official)
@@ -427,6 +433,27 @@ class ManualExecutionService:
     def _is_official(self, context: ManualRecordContext) -> bool:
         return context.seal is not None and context.permit is not None
 
+    def _contradicts_plan(self, context: ManualRecordContext) -> bool:
+        """True when the recorded trade contradicts its pre-sealed plan line.
+
+        A real trade that contradicts its plan (a different security, or a
+        quantity above the permitted amount) is still economically real, so
+        it must be booked as unattributed sentinel risk - never as official
+        OOS attributed to the sealed lineage and reserve. Before this check
+        only the client order id was compared, and a mismatched security or
+        quantity silently rode the official path until the capital kernel
+        failed it as ``reserve_unknown`` (an exception, not a downgrade).
+        """
+        permit_line = self._permit_line_for(
+            context.permit, context.order_line_id
+        )
+        assert permit_line is not None  # guarded by _require_official_plan
+        if permit_line.security_id != context.security_id:
+            return True
+        if context.quantity > int(permit_line.permitted_quantity_units):
+            return True
+        return False
+
     def _require_official_plan(self, context: ManualRecordContext) -> None:
         seal = context.seal
         permit = context.permit
@@ -444,7 +471,9 @@ class ManualExecutionService:
                 order_line_id=context.order_line_id,
             )
         # The recorded economics must match the pre-sealed plan line: the
-        # client order id is the canonical join, and the security must agree.
+        # client order id is the canonical join; security and quantity
+        # agreement is enforced as a downgrade, not a rejection (see
+        # _contradicts_plan).
         if permit_line.client_order_id != context.order_id:
             raise ExecutionError(
                 "manual_plan_binding_missing",
