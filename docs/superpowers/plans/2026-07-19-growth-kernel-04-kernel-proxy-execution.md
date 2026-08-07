@@ -65,7 +65,7 @@ assert adjusted.risk_adjustment_count == 1
 - [ ] **Step 2: Verify RED** with `uv run pytest tests/offensive/v3/kernel/test_{admission,capacity,sizing}.py -v`.
 - [ ] **Step 3: Implement order**: validate complete frozen input → admit → deterministic rank → apply risk once → constrain by cash/risk/ADV/ticker/industry/portfolio → integer-lot floor → worst-case reserve. Remaining cash is not reallocated after observed T+1 fills.
 - [ ] **Step 4: Add invariance tests** proving producer-supplied weights/risk labels cannot bypass central limits and input permutation does not change selected orders.
-- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): size authorized portfolio entries deterministically"`.
+- [x] **Step 5: Verify and commit** with `git commit -m "feat(v3): size authorized portfolio entries deterministically"`.
 
 ### Task 3: Pure portfolio decision and explicit deadline contract
 
@@ -133,11 +133,11 @@ No network call occurs inside the DB transaction. After commit the owner either 
 
 **Interfaces:** Produces `DailyBarProxy.execute_open()` and `ManualExecutionService.record/correct()` with permanent mode provenance.
 
-- [ ] **Step 1: Write proxy tests** for pre-sealed T+1 open, one-price limit ambiguity, ordinary limit touch, suspension, missing bar, late command, partial cash and fixed slippage/cost version. No known executable open means unknown/cash, never a stale-close fill.
-- [ ] **Step 2: Write manual tests** requiring pre-sealed plan for official OOS, operator/source/observed/attachment hash/exact price/quantity/fees; reject broker namespace. An out-of-protocol real trade is first recorded in AccountCapitalTruth, marked `UNATTRIBUTED_RISK`, excluded from official OOS and latches no-entry until reconciled.
-- [ ] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/execution/test_{proxy,manual}.py -v`.
-- [ ] **Step 4: Implement mode-specific adapters**; later broker matching links the same economic fact or posts delta correction, never copies it into another mode.
-- [ ] **Step 5: Verify and commit** with `git commit -m "feat(v3): execute auditable proxy and manual modes"`.
+- [x] **Step 1: Write proxy tests** for pre-sealed T+1 open, one-price limit ambiguity, ordinary limit touch, suspension, missing bar, late command, partial cash and fixed slippage/cost version. No known executable open means unknown/cash, never a stale-close fill.
+- [x] **Step 2: Write manual tests** requiring pre-sealed plan for official OOS, operator/source/observed/attachment hash/exact price/quantity/fees; reject broker namespace. An out-of-protocol real trade is first recorded in AccountCapitalTruth, marked `UNATTRIBUTED_RISK`, excluded from official OOS and latches no-entry until reconciled.
+- [x] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/execution/test_{proxy,manual}.py -v`.
+- [x] **Step 4: Implement mode-specific adapters**; later broker matching links the same economic fact or posts delta correction, never copies it into another mode.
+- [x] **Step 5: Verify and commit** with `git commit -m "feat(v3): execute auditable proxy and manual modes"`.
 
 ### Task 9: Integrated Kernel/Gateway/Exit verification
 
