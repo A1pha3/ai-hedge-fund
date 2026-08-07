@@ -1,4 +1,4 @@
-"""Plan 05 Task 8 (RED skeleton): ``DailyOperatorProjection`` — 操作员每日状态投影。
+"""Plan 05 Task 8: ``DailyOperatorProjection`` — 操作员每日状态投影。
 
 一份 ``DailyOperatorProjection`` 是从 v3 各子系统**只读投影**派生出的单一
 权威操作员视图, 同时渲染为 JSON (``render_json``) 与中文终端文本
@@ -56,13 +56,6 @@ capital_read_status 值域 (读失败 vs 新鲜度)
 - ``"unknown"`` — 读成功但 ``completeness`` 为 ``INCOMPLETE`` 或新鲜度无法判定
                   (对应 ``BlockReason.UNKNOWN_CAPITAL_FRESHNESS``)。stale/unknown
                   都是读成功后的新鲜度判定, 不是读失败。
-
--------------------------------------------------------------------------------
-注意: 本模块当前是 RED 骨架 — 所有派生逻辑 (``headline_status``、子视图构造
-的 ``from_snapshot`` 类方法等) 方法体 ``raise NotImplementedError``, 由主代理
-随后实现 GREEN (从字段派生标签)。dataclass 字段定义本身是真实契约, 测试与
-renderer 依赖其形状。
--------------------------------------------------------------------------------
 """
 
 from __future__ import annotations
@@ -273,9 +266,6 @@ class DailyOperatorProjection:
 
         该优先级保证 spec 约束 3: 存在 pending/block/halt 时绝不返回
         ``"no_signal"``, "今日无信号" 只在无任何阻断/待处理时出现。
-
-        RED: 本方法当前 ``raise NotImplementedError``; GREEN 由主代理按上述
-        优先级实现。
         """
         # tier 1 — halt 类 (最高优先; 风控/对账/stage-loss 闸门)。
         if self.risk_halted:

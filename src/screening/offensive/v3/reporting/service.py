@@ -1,4 +1,4 @@
-"""Plan 05 Task 8 (RED skeleton): ``ReportingService`` — 从 v3 子系统只读投影派生 ``DailyOperatorProjection``。
+"""Plan 05 Task 8: ``ReportingService`` — 从 v3 子系统只读投影派生 ``DailyOperatorProjection``。
 
 reporting service 是一个**纯只读组合器**: 它**绝不**给 gateway 加 portfolio-wide
 listing query (gateway 按 design 是 keyed-only, ``test_entry_projection.py:7``),
@@ -17,7 +17,7 @@ reads")。
   ``risk_snapshot`` / ``authority_state`` / ``entry_state`` / ``active_seal`` /
   ``exit_state`` / ``lifecycle_state`` (后者的真实透传见
   ``services/capital_gateway_api.py``)。本任务内 ``lifecycle_state`` 是新增的
-  RED 方法 (透传 ``CapitalRepository.lifecycle_state``, capital/repository.py:
+  quiet 读方法 (透传 ``CapitalRepository.lifecycle_state``, capital/repository.py:
   5811)。
 - ``shadow_reader`` — ``ShadowDecisionReader`` Protocol (本模块定义); 读回持久化
   的 ``ShadowDecision``。当前 ``ShadowPersisterPort`` (orchestration/
@@ -28,7 +28,7 @@ reads")。
   (discrepancy), ``None`` → 不对比。
 
 -------------------------------------------------------------------------------
-对账逻辑 (GREEN contract; RED 当前 build raise NotImplementedError)
+对账逻辑 (GREEN contract)
 -------------------------------------------------------------------------------
 ``build(portfolio_id, signal_session, as_of)`` 依序:
 
@@ -59,11 +59,6 @@ reads")。
 
 任一 step 的部分失败不阻止其余 step; projection 恒构建。最终返回不可变
 ``DailyOperatorProjection``。
-
--------------------------------------------------------------------------------
-注意: 本模块当前是 RED 骨架 — ``ReportingService.build`` 方法体
-``raise NotImplementedError``, 由主代理随后实现 GREEN。
--------------------------------------------------------------------------------
 """
 
 from __future__ import annotations
@@ -164,10 +159,9 @@ class ReportingService:
     ) -> DailyOperatorProjection:
         """派生一份 ``DailyOperatorProjection`` (keyed 读组合, 只读, 不崩溃)。
 
-        GREEN contract 见模块 docstring "对账逻辑"; RED 当前 ``raise
-        NotImplementedError``。任一 step 部分失败 → ``partial_failure``, 但
-        projection 仍构建并返回。两个 renderer 共享返回的同一实例, 绝不独立
-        查状态。
+        GREEN contract 见模块 docstring "对账逻辑"。任一 step 部分失败 →
+        ``partial_failure``, 但 projection 仍构建并返回。两个 renderer 共享返回
+        的同一实例, 绝不独立查状态。
         """
         from types import MappingProxyType
 

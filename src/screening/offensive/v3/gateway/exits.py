@@ -224,8 +224,10 @@ class ExitLaneProjection:
     revision_kind: ExitMandateRevisionKind = ExitMandateRevisionKind.INITIAL
     """Mandate revision provenance (INITIAL / QUANTITY_REFRESH /
     REOPENED_BY_CORRECTION). Plan 05 Task 8 reporting 投影用此字段区分
-    ``reopened_by_correction`` 状态。带默认值 ``INITIAL`` 以兼容现有
-    ``exit_state`` 构造点 (本 plan RED 阶段不改构造处, GREEN 再填真实值)。"""
+    ``reopened_by_correction`` 状态。带默认值 ``INITIAL`` 以兼容未显式传
+    ``revision_kind`` 的既有构造点; ``exit_state`` (exits.py:1194) 已从活跃
+    mandate 行填真实值 (``ExitMandateRevisionKind(str(active.revision_kind))``,
+    DB 未知值 fail-closed 抛 ValueError)。"""
 
 
 class ExitLane:

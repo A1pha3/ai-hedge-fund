@@ -1,4 +1,4 @@
-"""Plan 05 Task 4: 独立 durable lifecycle scheduler(RED 骨架).
+"""Plan 05 Task 4: 独立 durable lifecycle scheduler.
 
 可重启的 worker 服务: 每轮 ``run_cycle`` 做 bounded work — claim 到期 exit
 义务 → 在**独立** exit/reconcile 速率预算内提交 dispatch fact → 处理注册
@@ -31,9 +31,6 @@ worker 身份: 每轮 claim 以本实例的 ``worker_id`` 为 lease 主体; 同�
 mandate 已被 lease 时其他 worker 拿不到它(到期前不双发)。``derive_and_claim``
 将返回的 claims 交给调用方(可直接 ``submit_exit``); ``run_cycle`` 只提交
 自己 claim 阶段拿到的 claims。
-
-注意: 本模块当前是 RED 骨架 — 所有方法体 ``raise NotImplementedError``,
-由主代理随后实现 GREEN(透传 ExitLane + 上述 fail-closed 守卫)。
 """
 
 from __future__ import annotations

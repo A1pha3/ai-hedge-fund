@@ -1,4 +1,4 @@
-"""Plan 05 Task 7 (RED skeleton): DailyActionFlow — --daily-action lifecycle-first 编排。
+"""Plan 05 Task 7: DailyActionFlow — --daily-action lifecycle-first 编排。
 
 一次 ``run`` 产出一份 ``DailyActionFlowResult``: 只读资本投影 + lifecycle
 义务查询 + 已验证快照加载 + 影子决策 (BTST producer → GrowthKernel → 持久化
@@ -128,9 +128,6 @@ key = 步名: ``"lifecycle" | "capital" | "snapshot" | "evidence" | "producer" |
   ``"shadow_decision"`` 键持有 skip reason)。
 ok 步无条目; ``"no_signal"`` 不是失败 (合法 NoTrade 形态), 不记条目;
 OFF 模式整体无条目。
-
-注意: 本模块当前是 RED 骨架 — 方法体一律 ``raise NotImplementedError``,
-由主代理随后实现 GREEN (契约以本 docstring 为准)。
 """
 
 from __future__ import annotations
@@ -335,7 +332,7 @@ class DailyActionFlow:
             trusted_evidence_cutoff: kernel input 的 PIT 证据截止时刻; 同时是
                 ``evidence_store.active_revision`` 的 cutoff。
             evidence_ids: 本次运行要加载的 frozen evidence ids (通常来自
-                快照的候选证据; RED 阶段由调用方注入)。
+                快照的候选证据, 由调用方注入)。
             v2_plans_reader: 返回当日 v2 计划对象 tuple 的只读 reader
                 (元素只需 ``.ticker``; ``None`` → 不对比)。
             program: 本 flow 的 program 标签, 默认 ``"daily-action"``。

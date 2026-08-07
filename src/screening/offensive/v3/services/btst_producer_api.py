@@ -1,4 +1,4 @@
-"""Plan 05 Task 5 (RED skeleton): BtstProducerApi — BTST raw evidence 服务.
+"""Plan 05 Task 5: BtstProducerApi — BTST raw evidence 服务.
 
 薄适配器: 构造时内部自建 ``EvidenceRepository`` (issuer_namespace="btst")。
 ``produce_and_publish`` 委托纯函数层 ``produce_btst_signals``, 对每枚信封
@@ -16,9 +16,6 @@ BTST 不做 runtime gate: ``RuntimeMode.BTST_CANARY`` 是 BTST 产出的合法
 未知 evidence_id 或早于首笔提交的 cutoff 返回 ``None`` (不抛错)。
 
 signer 私有: 本服务持有 ``_signer``, 不暴露任何公开访问器。
-
-注意: 本模块当前是 RED 骨架 — 所有方法体 ``raise NotImplementedError``,
-由主代理随后实现 GREEN (透传 store)。
 """
 
 from __future__ import annotations

@@ -41,9 +41,6 @@ Import 边界: 模块顶层只允许 import ``contracts`` / ``capital`` / ``gate
 
 signer 私有: 本服务持有 ``_signer``(若后续 plan 引入签名面)不得暴露任何
 公开访问器。
-
-注意: 本模块当前是 RED 骨架 — 所有方法体 ``raise NotImplementedError``, 由主
-代理随后实现 GREEN(直接透传底层 + 上述 fail-closed 守卫)。
 """
 
 from __future__ import annotations
@@ -235,9 +232,6 @@ class CapitalGatewayApi:
         按 ledger 单账户进行; 未绑定账户底层抛 ``CapitalConflict("account_not_
         bound")``)。reporting service 用此值派生 projection 的 lifecycle 终结/
         破产状态 (terminating / insolvent)。
-
-        注意: 本方法当前是 RED 骨架 — ``raise NotImplementedError``, 由主代理
-        随后实现 GREEN (直接 ``return self._capital.lifecycle_state()``)。
         """
         return self._capital.lifecycle_state()
 

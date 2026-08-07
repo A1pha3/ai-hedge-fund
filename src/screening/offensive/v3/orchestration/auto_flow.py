@@ -1,4 +1,4 @@
-"""Plan 05 Task 6 (RED skeleton): AutoFlow — --auto 独立 shadow 编排。
+"""Plan 05 Task 6: AutoFlow — --auto 独立 shadow 编排。
 
 三步 sequential 独立提交 (无跨步回滚, 前步失败不阻止后步; 后步失败不回填
 前步、不伪装全成功), 只由 loaded candidate policy 的 ``runtime_mode`` 投影
@@ -56,9 +56,6 @@ mode 投影 (run() 第一件事 = ``mode_provider()``):
 outcome 步的 ``as_of`` = ``datetime.combine(signal_date, time(15, 0,
 tzinfo=timezone.utc))`` — signal_date 15:00 UTC, 与 Task 5 信封时间链
 起点约定一致。
-
-注意: 本模块当前是 RED 骨架 — 方法体一律 ``raise NotImplementedError``,
-由主代理随后实现 GREEN。
 """
 
 from __future__ import annotations

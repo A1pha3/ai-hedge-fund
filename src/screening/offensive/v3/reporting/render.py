@@ -1,4 +1,4 @@
-"""Plan 05 Task 8 (RED skeleton): JSON / 中文终端 renderer — 共享同一 projection。
+"""Plan 05 Task 8: JSON / 中文终端 renderer — 共享同一 projection。
 
 两个 renderer (``render_json`` / ``render_text``) **只从传入的
 ``DailyOperatorProjection`` 实例读**, 绝不独立查询状态、绝不调用任何 reader /
@@ -14,11 +14,6 @@ renderer 只负责呈现。
 
 两个 renderer 的状态标签必须一致 (都来自同一 ``headline_status()``), 由 golden
 test ``test_json_and_text_share_one_projection`` 锁定。
-
--------------------------------------------------------------------------------
-注意: 本模块当前是 RED 骨架 — ``render_json`` / ``render_text`` 方法体
-``raise NotImplementedError``, 由主代理随后实现 GREEN。
--------------------------------------------------------------------------------
 """
 
 from __future__ import annotations
@@ -141,7 +136,6 @@ def render_json(projection: DailyOperatorProjection) -> str:
     open_fence_count / planned_entries / pending_exits / shadow /
     account_capital_view / performance_view / partial_failure / discrepancy /
     execution_authority / headline_status)。绝不独立查状态、绝不调用任何 reader。
-    RED 当前 ``raise NotImplementedError``。
     """
     return json.dumps(
         _projection_dict(projection),
@@ -160,7 +154,7 @@ def render_text(projection: DailyOperatorProjection) -> str:
     约束 3)。仅 headline_status() == "no_signal" 时展示 "今日无信号"。
     ``execution_authority`` 文案恒标注 "无执行授权 (shadow)"。账户资本视图与
     业绩视图分别用独立标注呈现 (spec 约束 4)。绝不独立查状态、绝不调用任何
-    reader。RED 当前 ``raise NotImplementedError``。
+    reader。
     """
     headline = projection.headline_status()
     lines: list[str] = []

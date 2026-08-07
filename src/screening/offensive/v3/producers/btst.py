@@ -1,4 +1,4 @@
-"""Plan 05 Task 5 (RED skeleton): BTST raw targets/features 信号生产者 (纯函数层).
+"""Plan 05 Task 5: BTST raw targets/features 信号生产者 (纯函数层).
 
 纯函数: 只消费 ``VerifiedDailyActionSnapshot``, 构造不可变 ``SignalEvidence``
 信封并返回; 无网络/文件 I/O, 不触碰 store。内部调用

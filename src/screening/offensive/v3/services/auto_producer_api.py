@@ -1,4 +1,4 @@
-"""Plan 05 Task 5 (RED skeleton): AutoProducerApi — Auto 全市场 shadow-only 证据服务.
+"""Plan 05 Task 5: AutoProducerApi — Auto 全市场 shadow-only 证据服务.
 
 薄适配器: 构造时内部自建 ``EvidenceRepository`` (issuer_namespace="auto")。
 ``produce_and_publish`` 先过 runtime gate, 再委托纯函数层
@@ -16,9 +16,6 @@ runtime gate (fail-closed): ``runtime_mode_provider`` 在每次
 未知 evidence_id 或早于首笔提交的 cutoff 返回 ``None`` (不抛错)。
 
 signer 私有: 本服务持有 ``_signer``, 不暴露任何公开访问器。
-
-注意: 本模块当前是 RED 骨架 — 所有方法体 ``raise NotImplementedError``,
-由主代理随后实现 GREEN (透传 store + 上述 fail-closed 守卫)。
 """
 
 from __future__ import annotations
