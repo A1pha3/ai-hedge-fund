@@ -141,9 +141,9 @@ No network call occurs inside the DB transaction. After commit the owner either 
 
 ### Task 9: Integrated Kernel/Gateway/Exit verification
 
-- [ ] Add import-boundary test: Kernel has no storage/network/v2 imports.
-- [ ] Add projection test: planned entry rows equal active executable seals; shadow/blocked/tombstoned/ambiguous are separately visible.
-- [ ] Run:
+- [x] Add import-boundary test: Kernel has no storage/network/v2 imports.
+- [x] Add projection test: planned entry rows equal active executable seals; shadow/blocked/tombstoned/ambiguous are separately visible.
+- [x] Run:
 
 ```bash
 uv run pytest tests/offensive/v3/kernel/ tests/offensive/v3/gateway/ tests/offensive/v3/execution/ -v
