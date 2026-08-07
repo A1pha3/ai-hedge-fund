@@ -1782,6 +1782,17 @@ def run_auto_screening(
             composite_by_ticker=composite_by_ticker,
         )
 
+        # Plan 05 Task 9: v3 shadow 编排 hook (v2 渲染后; 库层编排 + rc 保护)。
+        # trade_date 是 YYYYMMDD string (effective); auto_reports_dir 在作用域。
+        # run_v3_shadow_auto 内部吞掉一切 v3 异常, 绝不改写本函数 return 的 v2 rc。
+        from src.cli.v3_shadow import run_v3_shadow_auto
+
+        run_v3_shadow_auto(
+            signal_date=datetime.strptime(trade_date, "%Y%m%d").date(),
+            reports_dir=auto_reports_dir,
+            data_dir=auto_reports_dir.parent,
+        )
+
         return result.exit_code
     finally:
         try:

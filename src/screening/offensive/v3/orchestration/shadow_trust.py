@@ -248,6 +248,9 @@ class ShadowTrustContext:
 
     - ``verifier`` / ``head_provider``: 注入 EvidenceRepository / ProducerApi
       (它们在 publish 时验证签名 evidence)。
+    - ``bundle_verifier``: ``TrustBundleVerifier`` 鸭子类型, 注入
+      ``CapitalGatewayApi.bundle_verifier`` (gateway authority 读面用它验证 signed
+      bundle; shadow 只读路径不调用激活, 但构造需一个合法对象)。
     - ``active_bundle_hash``: 当前 signed trust bundle 的 artifact_hash, 用于合成
       authority 的 envelope.trust_bundle_hash (内部一致)。
     - ``signer_for(namespace)``: 返回该 namespace 的 signer callable (注入对应
@@ -255,6 +258,7 @@ class ShadowTrustContext:
     """
 
     verifier: v3_trust.CapabilityVerifier
+    bundle_verifier: v3_trust.TrustBundleVerifier
     head_provider: _HeadProvider
     active_bundle_hash: str
     _signers: dict[str, Callable[[bytes], SignedEnvelope]]
@@ -356,9 +360,8 @@ def build_shadow_trust_context(
     signed_bundle = v3_trust.SignedTrustBundle(
         bundle=bundle, registry=registry, signature=root_signature
     )
-    verifier = v3_trust.CapabilityVerifier(
-        v3_trust.TrustBundleVerifier((anchor,)), (signed_bundle,)
-    )
+    bundle_verifier = v3_trust.TrustBundleVerifier((anchor,))
+    verifier = v3_trust.CapabilityVerifier(bundle_verifier, (signed_bundle,))
     head = v3_trust.CurrentTrustHeadWitness(
         active_trust_bundle_hash=bundle.artifact_hash(),
         registry_epoch=bundle.registry_epoch,
@@ -368,6 +371,7 @@ def build_shadow_trust_context(
     )
     return ShadowTrustContext(
         verifier=verifier,
+        bundle_verifier=bundle_verifier,
         head_provider=_HeadProvider(head),
         active_bundle_hash=bundle.artifact_hash(),
         _signers=signers,
