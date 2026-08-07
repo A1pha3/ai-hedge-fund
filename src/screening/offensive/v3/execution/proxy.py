@@ -463,6 +463,7 @@ class DailyBarProxy:
         reserve_binding,
     ) -> ProxyLineResult:
         released_reserve_cents = self._release_remaining_reserve(
+            permit_line=permit_line,
             reserve_binding=reserve_binding,
             context=context,
         )
@@ -525,21 +526,26 @@ class DailyBarProxy:
     def _release_remaining_reserve(
         self,
         *,
+        permit_line,
         reserve_binding,
         context: ProxyExecutionContext,
     ) -> int:
         """Release an unfilled line's remaining reserve back to cash.
 
-        Reports the sealed reserve amount that belongs to this line: that
-        value is stable across replays, so a crash between the capital
-        release and the durable record still converges. The capital release
-        itself is idempotent - a reserve already walked to RELEASED by a
-        prior attempt is left untouched.
+        Reports the permit line's remaining reserve - the amount the kernel
+        actually holds LIVE for this line. A permit-time shrink already
+        released the sealed surplus to available cash at issue time, so the
+        kernel holds only ``remaining_reserve_cents``; reporting the sealed
+        total would overstate the release. That value is a frozen permit
+        artifact, so it is stable across replays and a crash between the
+        capital release and the durable record still converges. The capital
+        release itself is idempotent - a reserve already walked to RELEASED by
+        a prior attempt is left untouched.
         """
 
         if reserve_binding is None:
             return 0
-        reported = int(reserve_binding.reserved_cash_cents)
+        reported = int(permit_line.remaining_reserve_cents)
         source_id = reserve_binding.reservation_allocation_id
         if self._reserve_is_live(source_id, context):
             context.repository.release_reserve(

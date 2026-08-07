@@ -514,12 +514,21 @@ def _seed_reserves(
     seal,
     *,
     amounts: dict[str, int] | None = None,
+    skip: set[str] | None = None,
 ) -> None:
-    """Open the live reserves the seal admission would have created."""
+    """Open the live reserves the seal admission would have created.
+
+    ``skip`` names order lines whose reserve the gateway already released in
+    full at permit time (a zeroed line): the kernel holds no LIVE reserve for
+    them, so no reserve is seeded.
+    """
 
     amounts = amounts or {}
+    skip = skip or set()
     lines_by_id = {line.order_line_id: line for line in seal.proposal.order_lines}
     for step, item in enumerate(seal.line_reserve_bindings, start=2):
+        if item.order_line_id in skip:
+            continue
         order_line = lines_by_id[item.order_line_id]
         repository.reserve_entry(
             ReserveEntryRequest(
@@ -1073,15 +1082,17 @@ def test_execute_open_fills_permitted_quantity_not_sealed(
 
 
 def test_zero_quantity_allow_line_releases_reserve_without_filling(
-    proxy, capital, seal, api
+    proxy, repository, seal, api
 ) -> None:
     # A permit line the gateway zeroed (a mechanical cap left it no executable
     # quantity) is contract-valid: execution.py forces every sealed line to
     # appear in the permit, so an unfundable line lands as permitted_quantity=0
     # with no client order id. The proxy must never route it through the fill
     # table - a zero-quantity fill is not a valid capital fact. It resolves
-    # NO_FILL, releases the line's reserve, and records the outcome, even when
-    # the daily bar would otherwise resolve FILLED (limit touched).
+    # NO_FILL and records the outcome, even when the daily bar would otherwise
+    # resolve FILLED (limit touched). The gateway already released the zeroed
+    # line's reserve in full at permit time, so the kernel holds no LIVE
+    # reserve for it and the proxy releases nothing (remaining_reserve == 0).
     sealed_lines = seal.proposal.order_lines
     zero_line = _permit_line(
         api,
@@ -1089,14 +1100,18 @@ def test_zero_quantity_allow_line_releases_reserve_without_filling(
         permitted_quantity=0,
         reason_code=api.PermitReasonCode.CASH_REDUCTION,
     )
+    assert zero_line.remaining_reserve_cents == 0
     permit = _proxy_permit(
         api,
         seal,
         permit_lines=(_permit_line(api, sealed_lines[0]), zero_line),
     )
+    _deposit(repository, 1_000_000, 1)
+    # The kernel holds line-1's reserve LIVE; the zeroed line-2 has none.
+    _seed_reserves(repository, seal, skip={"line-2"})
     # Both bars touch the limit; without the short-circuit line-2 would resolve
     # FILLED and crash the fill request (quantity must be positive).
-    result = _execute(proxy, capital, seal, permit)
+    result = _execute(proxy, repository, seal, permit)
 
     first, second = result.lines
     assert first.verdict is OpenExecutionVerdict.FILLED  # line-1 still fills
@@ -1104,15 +1119,16 @@ def test_zero_quantity_allow_line_releases_reserve_without_filling(
     assert second.reason == "permit_quantity_zero"
     assert second.fill_receipt is None
     assert second.fee_receipt is None
-    # The line's locked reserve returns to cash; nothing was spent on it.
-    assert second.released_reserve_cents == LINE_2_RESERVE
+    # Nothing was reserved LIVE for the zeroed line, so nothing is released.
+    assert second.released_reserve_cents == 0
     record_by_line = {
         record.order_line_id: record for record in result.execution_records
     }
     assert record_by_line["line-2"].verdict is OpenExecutionVerdict.NO_FILL
     assert record_by_line["line-2"].reason == "permit_quantity_zero"
     assert record_by_line["line-2"].fill_price_cents is None
-    snapshot = capital.capital_risk_snapshot(NOW)
+    assert record_by_line["line-2"].released_reserve_cents == 0
+    snapshot = repository.capital_risk_snapshot(NOW)
     assert snapshot.reserved_cash_cents == 0
     assert snapshot.restricted_cash_cents == 0
     assert snapshot.available_cash_cents == 1_000_000 - 104_000 - 502
@@ -1121,11 +1137,11 @@ def test_zero_quantity_allow_line_releases_reserve_without_filling(
         for position in snapshot.positions
     }
     assert quantities == {"600000.SH": 100}
-    capital.assert_conservation()
+    repository.assert_conservation()
 
 
 def test_zero_quantity_allow_line_is_idempotent_under_replay(
-    proxy, capital, seal, api
+    proxy, repository, seal, api
 ) -> None:
     sealed_lines = seal.proposal.order_lines
     zero_line = _permit_line(
@@ -1139,16 +1155,64 @@ def test_zero_quantity_allow_line_is_idempotent_under_replay(
         seal,
         permit_lines=(_permit_line(api, sealed_lines[0]), zero_line),
     )
-    _execute(proxy, capital, seal, permit)
+    _deposit(repository, 1_000_000, 1)
+    _seed_reserves(repository, seal, skip={"line-2"})
+    _execute(proxy, repository, seal, permit)
     # Replay the whole permit: line-1 fill is idempotent, line-2 NO_FILL is
     # idempotent, and cash is unchanged by the second pass.
-    replay = _execute(proxy, capital, seal, permit)
+    replay = _execute(proxy, repository, seal, permit)
     assert replay.lines[1].verdict is OpenExecutionVerdict.NO_FILL
     assert replay.lines[1].reason == "permit_quantity_zero"
-    assert replay.lines[1].released_reserve_cents == LINE_2_RESERVE
-    snapshot = capital.capital_risk_snapshot(NOW)
+    assert replay.lines[1].released_reserve_cents == 0
+    snapshot = repository.capital_risk_snapshot(NOW)
     assert snapshot.available_cash_cents == 1_000_000 - 104_000 - 502
-    capital.assert_conservation()
+    repository.assert_conservation()
+
+
+def test_shrunk_unfilled_line_releases_permit_remaining_not_sealed(
+    proxy, repository, api, seal
+) -> None:
+    # A permit-time shrink released part of the sealed reserve to available
+    # cash at issue time; the kernel now holds only the permit's remaining
+    # reserve LIVE. When such a shrunk line goes unfilled, the proxy must
+    # report the remaining reserve it actually releases - reporting the sealed
+    # total would overstate the release by the already-freed shrink surplus,
+    # an audit lie on a line where nothing was spent.
+    sealed_lines = seal.proposal.order_lines
+    shrunk = _permit_line(
+        api,
+        sealed_lines[1],
+        permitted_quantity=100,
+        reason_code=api.PermitReasonCode.CASH_REDUCTION,
+    )
+    permit = _proxy_permit(
+        api,
+        seal,
+        permit_lines=(_permit_line(api, sealed_lines[0]), shrunk),
+    )
+    shrunk_remaining = shrunk.remaining_reserve_cents  # 800 * 100 + 75 = 80_075
+    assert shrunk_remaining == 80_075
+    assert shrunk_remaining < LINE_2_RESERVE  # the shrink freed part already
+    _deposit(repository, 1_000_000, 1)
+    # The kernel holds the permit's remaining reserve LIVE, not the sealed sum.
+    _seed_reserves(repository, seal, amounts={"line-2": shrunk_remaining})
+    # line-1 fills; line-2 bar missing -> UNKNOWN, releases its remaining.
+    bars = {"600000.SH": _touching_bar("600000.SH")}
+    result = _execute(proxy, repository, seal, permit, bars=bars)
+    _, second = result.lines
+    assert second.verdict is OpenExecutionVerdict.UNKNOWN
+    assert second.reason == "missing_bar"
+    # The report equals what the kernel actually released, not the sealed sum.
+    assert second.released_reserve_cents == shrunk_remaining
+    record_by_line = {
+        record.order_line_id: record for record in result.execution_records
+    }
+    assert record_by_line["line-2"].released_reserve_cents == shrunk_remaining
+    snapshot = repository.capital_risk_snapshot(NOW)
+    # All restricted cash freed; nothing left reserved on the unfilled line.
+    assert snapshot.reserved_cash_cents == 0
+    assert snapshot.restricted_cash_cents == 0
+    repository.assert_conservation()
 
 
 def test_execute_open_rejects_broker_confirmed_permit(proxy, repository, api) -> None:
@@ -1281,7 +1345,7 @@ def test_execution_records_survive_restart(tmp_path, clock, capital, seal, permi
 
 
 def test_zero_quantity_line_survives_restart(
-    tmp_path, clock, capital, seal, api
+    tmp_path, clock, repository, seal, api
 ) -> None:
     sealed_lines = seal.proposal.order_lines
     zero_line = _permit_line(
@@ -1295,9 +1359,11 @@ def test_zero_quantity_line_survives_restart(
         seal,
         permit_lines=(_permit_line(api, sealed_lines[0]), zero_line),
     )
+    _deposit(repository, 1_000_000, 1)
+    _seed_reserves(repository, seal, skip={"line-2"})
     database_path = str(tmp_path / "proxy-zeroqty-restart.sqlite3")
     first_proxy = DailyBarProxy(database_path=database_path, clock=clock)
-    first = _execute(first_proxy, capital, seal, permit)
+    first = _execute(first_proxy, repository, seal, permit)
 
     restarted = DailyBarProxy(database_path=database_path, clock=clock)
     records = restarted.execution_records(permit.permit_id)
@@ -1312,7 +1378,7 @@ def test_zero_quantity_line_survives_restart(
     assert zero_record.verdict is OpenExecutionVerdict.NO_FILL
     assert zero_record.reason == "permit_quantity_zero"
     assert zero_record.fill_price_cents is None
-    capital.assert_conservation()
+    repository.assert_conservation()
 
 
 _PROXY_CRASH_PHASES = (
