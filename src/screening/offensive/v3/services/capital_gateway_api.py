@@ -52,6 +52,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Callable, Final
 
+from src.screening.offensive.v3.capital.flows import LifecycleState
 from src.screening.offensive.v3.capital.repository import CapitalRepository
 from src.screening.offensive.v3.contracts import (
     ArtifactKind,
@@ -223,6 +224,22 @@ class CapitalGatewayApi:
     ) -> ExitLaneProjection | None:
         """只读投影: 一个 lot 的 exit 义务; 无 mandate 返回 None。"""
         return self._exits.exit_state(position_lineage_id, economic_lot_id)
+
+    def lifecycle_state(self, portfolio_id: str) -> LifecycleState:
+        """只读投影: 绑定 ledger 的账户生命周期状态 (ACTIVE/TERMINATING/
+        TERMINATED/INSOLVENT)。
+
+        透传 ``capital.lifecycle_state()`` (capital/repository.py:5811), 与
+        ``risk_snapshot`` 同为 quiet 读面 — 绝不增长 stream/capital version,
+        绝不触发任何写路径。``portfolio_id`` 声明调用方期望的 portfolio (读取
+        按 ledger 单账户进行; 未绑定账户底层抛 ``CapitalConflict("account_not_
+        bound")``)。reporting service 用此值派生 projection 的 lifecycle 终结/
+        破产状态 (terminating / insolvent)。
+
+        注意: 本方法当前是 RED 骨架 — ``raise NotImplementedError``, 由主代理
+        随后实现 GREEN (直接 ``return self._capital.lifecycle_state()``)。
+        """
+        return self._capital.lifecycle_state()
 
     # -- authority 激活 / fence(必须显式签名批准输入) --------------------------
 
