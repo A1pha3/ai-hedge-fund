@@ -246,6 +246,53 @@ def test_decide_is_deterministic_across_candidate_order() -> None:
     assert replayed.canonical_bytes() == first.canonical_bytes()
 
 
+def test_producer_claim_is_clamped_to_grant_lineage_cap() -> None:
+    # spec line 759 (E-1 regression): the lineage sizing target is bounded by
+    # grant.lineage_gross_cap * NAV, not by the producer's self-reported
+    # unscaled_target. Portfolio cap is deliberately loose (0.10 => 1_000_000)
+    # and every config cap is 9_000_000, so ONLY grant enforcement can bound
+    # the size. grant cap=0.02, NAV=10_000_000 => lineage ceiling 200_000; a
+    # 9_000_000 producer claim must still size <= 200_000.
+    from decimal import Decimal
+
+    from test_admission import _envelope, _policy_activation
+
+    nav = 10_000_000
+    capital = _snapshot(
+        as_of=NOW,
+        valid_until=NOW + timedelta(hours=18),
+        as_observed_nav_cents=nav,
+        lifetime_high_water_mark_cents=nav,
+        active_epoch_high_water_mark_cents=nav,
+    )
+    policy = _policy_activation()
+    loose_envelope = _envelope(policy, portfolio_gross_cap=Decimal("0.10"))
+    greedy = _candidate(unscaled_target_gross_cents=9_000_000)
+    big_config = _config(
+        per_ticker_gross_cap_cents=9_000_000,
+        per_industry_gross_cap_cents=9_000_000,
+        per_day_gross_cap_cents=9_000_000,
+        portfolio_gross_cap_cents=9_000_000,
+    )
+    decision = GrowthKernel(big_config).decide(
+        _kernel_input(
+            raw_candidates=(greedy,),
+            capital=capital,
+            policy_activation=policy,
+            envelope=loose_envelope,
+        ),
+        trusted_at=NOW,
+    )
+    assert isinstance(decision, PortfolioDecision)
+    planned = [
+        line for line in decision.lines if line.status == "ENTRY_PLANNED"
+    ]
+    assert len(planned) == 1
+    gross = planned[0].quantity_units * 10_000_000 // 10_000
+    # Bounded by grant cap * NAV = 0.02 * 10_000_000 = 200_000, not the claim.
+    assert gross <= 200_000
+
+
 def test_drawdown_scaling_reduces_size_once() -> None:
     from decimal import Decimal
 
@@ -298,3 +345,32 @@ def test_drawdown_scaling_reduces_size_once() -> None:
     assert scaled.portfolio_gross_cap_cents == (
         int(nav * Decimal("0.02")) * 500_000 // 1_000_000
     )
+
+
+def test_decide_passes_existing_gross_exposure_to_sizing(monkeypatch) -> None:
+    # spec line 499 (F-1 regression): decide() must feed the frozen
+    # snapshot's total_gross_exposure_cents into size_portfolio so inherited
+    # exposure tightens the new-entry cap. Guards the wiring, which a pure
+    # sizing unit test cannot: the whole defect was decide() never passing it.
+    import src.screening.offensive.v3.kernel.decide as decide_mod
+
+    captured: dict[str, int] = {}
+    real_size_portfolio = decide_mod.size_portfolio
+
+    def _spy(**kwargs):
+        captured["existing"] = kwargs.get("existing_portfolio_gross_cents")
+        return real_size_portfolio(**kwargs)
+
+    monkeypatch.setattr(decide_mod, "size_portfolio", _spy)
+    capital = _snapshot(
+        as_of=NOW,
+        valid_until=NOW + timedelta(hours=18),
+        as_observed_nav_cents=10_000_000,
+        lifetime_high_water_mark_cents=10_000_000,
+        active_epoch_high_water_mark_cents=10_000_000,
+    )
+    GrowthKernel(_config()).decide(
+        _kernel_input(capital=capital),
+        trusted_at=NOW,
+    )
+    assert captured["existing"] == capital.total_gross_exposure_cents

@@ -97,15 +97,28 @@ class GrowthKernel:
             )
         # One risk application: the same multiplier scales every unscaled
         # lineage target and the portfolio ceiling before sizing.
+        #
+        # spec line 759 (E-1): the unscaled lineage target is the grant's
+        # lineage_gross_cap * NAV, and the producer's self-reported
+        # unscaled_target can only clamp it DOWN, never lift it above the
+        # granted cap. A producer cannot size beyond its authorized lineage
+        # ceiling by claiming a larger target.
+        nav = kernel_input.capital.as_observed_nav_cents
+        grant_cap_by_lineage = {
+            grant.economic_lineage_id: int(nav * grant.lineage_gross_cap)
+            for grant in kernel_input.envelope.lineage_grants
+        }
         unscaled_by_lineage: dict[str, int] = {}
         for candidate in admitted:
-            unscaled_by_lineage[
-                candidate.economic_lineage_id
-            ] = max(
-                unscaled_by_lineage.get(
-                    candidate.economic_lineage_id, 0
-                ),
+            lineage = candidate.economic_lineage_id
+            # The granted ceiling bounds the producer claim from above.
+            bounded_target = min(
                 candidate.unscaled_target_gross_cents,
+                grant_cap_by_lineage.get(lineage, 0),
+            )
+            unscaled_by_lineage[lineage] = max(
+                unscaled_by_lineage.get(lineage, 0),
+                bounded_target,
             )
         adjusted = apply_portfolio_risk_once(
             unscaled_lineage_targets=unscaled_by_lineage,
@@ -131,6 +144,11 @@ class GrowthKernel:
             config=self._config,
             adjusted_portfolio_gross_cap_cents=(
                 adjusted.adjusted_portfolio_gross_cap_cents
+            ),
+            # spec line 499: inherited gross exposure counts toward the
+            # portfolio cap, so new entries only consume the headroom.
+            existing_portfolio_gross_cents=(
+                kernel_input.capital.total_gross_exposure_cents
             ),
         )
         lines = decision_lines(sized)

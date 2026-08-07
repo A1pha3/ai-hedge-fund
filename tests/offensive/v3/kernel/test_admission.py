@@ -436,6 +436,58 @@ def test_producer_supplied_target_cannot_bypass_central_caps() -> None:
     assert gross <= 800_000
 
 
+def test_existing_portfolio_exposure_tightens_new_entry_cap() -> None:
+    # spec line 499: inherited open/pending/live/reserved exposure all counts
+    # toward the portfolio gross cap; new entries may only consume the
+    # headroom that remains, never a fresh full cap. A portfolio cap of
+    # 800_000 with 600_000 of pre-existing gross leaves only 200_000 of
+    # headroom, so the new line is bounded to 200 units at 10.00, not 800.
+    greedy = _candidate(unscaled_target_gross_cents=10_000_000)
+    lines = size_portfolio(
+        ranked_candidates=(greedy,),
+        adjusted_target_gross_by_lineage={"eline-1": 10_000_000},
+        price_micros_by_candidate={"cand-1": 10_000_000},
+        industry_by_candidate={"cand-1": "electronics"},
+        available_cash_cents=10_000_000,
+        existing_portfolio_gross_cents=600_000,
+        config=_config(
+            per_ticker_gross_cap_cents=10_000_000,
+            per_industry_gross_cap_cents=10_000_000,
+            per_day_gross_cap_cents=10_000_000,
+            portfolio_gross_cap_cents=800_000,
+        ),
+    )
+    (line,) = lines
+    assert line.status == "ENTRY_PLANNED"
+    gross = line.quantity_units * 10_000_000 // 10_000
+    # Only the 200_000 headroom, not the full 800_000 cap.
+    assert gross <= 200_000
+    assert line.quantity_units == 200
+
+
+def test_existing_exposure_at_cap_blocks_all_new_entries() -> None:
+    # When pre-existing gross already meets the portfolio cap, there is zero
+    # headroom and every new candidate is capacity-blocked, never sized.
+    greedy = _candidate(unscaled_target_gross_cents=10_000_000)
+    lines = size_portfolio(
+        ranked_candidates=(greedy,),
+        adjusted_target_gross_by_lineage={"eline-1": 10_000_000},
+        price_micros_by_candidate={"cand-1": 10_000_000},
+        industry_by_candidate={"cand-1": "electronics"},
+        available_cash_cents=10_000_000,
+        existing_portfolio_gross_cents=800_000,
+        config=_config(
+            per_ticker_gross_cap_cents=10_000_000,
+            per_industry_gross_cap_cents=10_000_000,
+            per_day_gross_cap_cents=10_000_000,
+            portfolio_gross_cap_cents=800_000,
+        ),
+    )
+    (line,) = lines
+    assert line.status == "BLOCKED"
+    assert line.block_reason is BlockReason.CAPACITY_EXHAUSTED
+
+
 def test_decision_lines_keep_blocked_lines_visible(authority) -> None:
     candidate = _candidate(unscaled_target_gross_cents=50_000)
     lines = size_portfolio(

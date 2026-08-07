@@ -107,6 +107,7 @@ def size_portfolio(
     available_cash_cents: int,
     config: SizingConfig,
     adjusted_portfolio_gross_cap_cents: int | None = None,
+    existing_portfolio_gross_cents: int = 0,
 ) -> tuple[SizedCandidate, ...]:
     """Size admitted candidates into integer-lot entry lines.
 
@@ -114,11 +115,22 @@ def size_portfolio(
     the same order regardless of input permutation. When the risk-adjusted
     portfolio ceiling is supplied, it bounds the portfolio gross instead
     of the static config cap.
+
+    ``existing_portfolio_gross_cents`` is the inherited gross exposure
+    already held by the portfolio (open/pending/live/reserved/unattributed,
+    aggregated once by the caller). Per spec line 499 it counts toward the
+    portfolio gross cap, so new entries may only consume the remaining
+    headroom - never a fresh full cap on top of existing exposure.
     """
 
     if available_cash_cents < 0:
         raise SizingError(
             "negative_available_cash", "available cash cannot be negative"
+        )
+    if existing_portfolio_gross_cents < 0:
+        raise SizingError(
+            "negative_existing_gross",
+            "existing portfolio gross cannot be negative",
         )
     effective_config = config
     if adjusted_portfolio_gross_cap_cents is not None:
@@ -143,7 +155,7 @@ def size_portfolio(
     ticker_used: dict[str, int] = {}
     industry_used: dict[str, int] = {}
     day_used = 0
-    portfolio_used = 0
+    portfolio_used = existing_portfolio_gross_cents
     lines: list[SizedCandidate] = []
     for candidate in ranked_candidates:
         lineage_target = adjusted_target_gross_by_lineage.get(
