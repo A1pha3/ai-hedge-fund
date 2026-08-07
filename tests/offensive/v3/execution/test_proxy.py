@@ -1072,6 +1072,85 @@ def test_execute_open_fills_permitted_quantity_not_sealed(
     repository.assert_conservation()
 
 
+def test_zero_quantity_allow_line_releases_reserve_without_filling(
+    proxy, capital, seal, api
+) -> None:
+    # A permit line the gateway zeroed (a mechanical cap left it no executable
+    # quantity) is contract-valid: execution.py forces every sealed line to
+    # appear in the permit, so an unfundable line lands as permitted_quantity=0
+    # with no client order id. The proxy must never route it through the fill
+    # table - a zero-quantity fill is not a valid capital fact. It resolves
+    # NO_FILL, releases the line's reserve, and records the outcome, even when
+    # the daily bar would otherwise resolve FILLED (limit touched).
+    sealed_lines = seal.proposal.order_lines
+    zero_line = _permit_line(
+        api,
+        sealed_lines[1],
+        permitted_quantity=0,
+        reason_code=api.PermitReasonCode.CASH_REDUCTION,
+    )
+    permit = _proxy_permit(
+        api,
+        seal,
+        permit_lines=(_permit_line(api, sealed_lines[0]), zero_line),
+    )
+    # Both bars touch the limit; without the short-circuit line-2 would resolve
+    # FILLED and crash the fill request (quantity must be positive).
+    result = _execute(proxy, capital, seal, permit)
+
+    first, second = result.lines
+    assert first.verdict is OpenExecutionVerdict.FILLED  # line-1 still fills
+    assert second.verdict is OpenExecutionVerdict.NO_FILL
+    assert second.reason == "permit_quantity_zero"
+    assert second.fill_receipt is None
+    assert second.fee_receipt is None
+    # The line's locked reserve returns to cash; nothing was spent on it.
+    assert second.released_reserve_cents == LINE_2_RESERVE
+    record_by_line = {
+        record.order_line_id: record for record in result.execution_records
+    }
+    assert record_by_line["line-2"].verdict is OpenExecutionVerdict.NO_FILL
+    assert record_by_line["line-2"].reason == "permit_quantity_zero"
+    assert record_by_line["line-2"].fill_price_cents is None
+    snapshot = capital.capital_risk_snapshot(NOW)
+    assert snapshot.reserved_cash_cents == 0
+    assert snapshot.restricted_cash_cents == 0
+    assert snapshot.available_cash_cents == 1_000_000 - 104_000 - 502
+    quantities = {
+        position.security_id: position.settled_quantity
+        for position in snapshot.positions
+    }
+    assert quantities == {"600000.SH": 100}
+    capital.assert_conservation()
+
+
+def test_zero_quantity_allow_line_is_idempotent_under_replay(
+    proxy, capital, seal, api
+) -> None:
+    sealed_lines = seal.proposal.order_lines
+    zero_line = _permit_line(
+        api,
+        sealed_lines[1],
+        permitted_quantity=0,
+        reason_code=api.PermitReasonCode.CASH_REDUCTION,
+    )
+    permit = _proxy_permit(
+        api,
+        seal,
+        permit_lines=(_permit_line(api, sealed_lines[0]), zero_line),
+    )
+    _execute(proxy, capital, seal, permit)
+    # Replay the whole permit: line-1 fill is idempotent, line-2 NO_FILL is
+    # idempotent, and cash is unchanged by the second pass.
+    replay = _execute(proxy, capital, seal, permit)
+    assert replay.lines[1].verdict is OpenExecutionVerdict.NO_FILL
+    assert replay.lines[1].reason == "permit_quantity_zero"
+    assert replay.lines[1].released_reserve_cents == LINE_2_RESERVE
+    snapshot = capital.capital_risk_snapshot(NOW)
+    assert snapshot.available_cash_cents == 1_000_000 - 104_000 - 502
+    capital.assert_conservation()
+
+
 def test_execute_open_rejects_broker_confirmed_permit(proxy, repository, api) -> None:
     broker_seal = _seal(api)  # helper default: BROKER_CONFIRMED + account
     broker_permit = _permit(api, seal=broker_seal)
@@ -1198,6 +1277,41 @@ def test_execution_records_survive_restart(tmp_path, clock, capital, seal, permi
     assert replay_ids == first_ids
     # The restart replay stays converged: no duplicate economic effect.
     assert capital.capital_version() == capital_version
+    capital.assert_conservation()
+
+
+def test_zero_quantity_line_survives_restart(
+    tmp_path, clock, capital, seal, api
+) -> None:
+    sealed_lines = seal.proposal.order_lines
+    zero_line = _permit_line(
+        api,
+        sealed_lines[1],
+        permitted_quantity=0,
+        reason_code=api.PermitReasonCode.CASH_REDUCTION,
+    )
+    permit = _proxy_permit(
+        api,
+        seal,
+        permit_lines=(_permit_line(api, sealed_lines[0]), zero_line),
+    )
+    database_path = str(tmp_path / "proxy-zeroqty-restart.sqlite3")
+    first_proxy = DailyBarProxy(database_path=database_path, clock=clock)
+    first = _execute(first_proxy, capital, seal, permit)
+
+    restarted = DailyBarProxy(database_path=database_path, clock=clock)
+    records = restarted.execution_records(permit.permit_id)
+    # The durable records round-trip exactly through a restart.
+    assert records == first.execution_records
+    # The zero-quantity line persists with no client order id (not a "None"
+    # string) and a NO_FILL verdict, never a stale fill.
+    zero_record = next(
+        record for record in records if record.order_line_id == "line-2"
+    )
+    assert zero_record.client_order_id is None
+    assert zero_record.verdict is OpenExecutionVerdict.NO_FILL
+    assert zero_record.reason == "permit_quantity_zero"
+    assert zero_record.fill_price_cents is None
     capital.assert_conservation()
 
 

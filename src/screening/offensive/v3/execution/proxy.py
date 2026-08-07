@@ -53,6 +53,7 @@ from src.screening.offensive.v3.execution.lifecycle import (
     ExecutionError,
     OpenExecutionResolution,
     OpenExecutionVerdict,
+    REASON_PERMIT_QUANTITY_ZERO,
     resolve_open_execution,
 )
 
@@ -69,7 +70,7 @@ _SCHEMA_DDL = (
     " execution_id TEXT PRIMARY KEY,"
     " permit_id TEXT NOT NULL,"
     " order_line_id TEXT NOT NULL,"
-    " client_order_id TEXT NOT NULL,"
+    " client_order_id TEXT,"  # NULL on a zero-quantity line (no sendable order)
     " security_id TEXT NOT NULL,"
     " verdict TEXT NOT NULL,"
     " reason TEXT NOT NULL,"
@@ -105,7 +106,7 @@ class ProxyLineResult:
     """The resolved outcome of one permit line."""
 
     order_line_id: str
-    client_order_id: str
+    client_order_id: str | None  # None on a zero-quantity line (no sendable order)
     verdict: OpenExecutionVerdict
     reason: str
     fill_price_cents: int | None
@@ -121,7 +122,7 @@ class ProxyExecutionRecord:
     execution_id: str
     permit_id: str
     order_line_id: str
-    client_order_id: str
+    client_order_id: str | None  # None on a zero-quantity line (no sendable order)
     security_id: str
     verdict: OpenExecutionVerdict
     reason: str
@@ -312,16 +313,25 @@ class DailyBarProxy:
         reserve_binding,
         send_deadline: datetime,
     ) -> ProxyLineResult:
-        side = ExecutionSide.ENTRY
-        limit_price_cents = int(permit_line.limit_price_cents)
-        bar = self._usable_bar_for(proposal_line, bars)
-        resolution = resolve_open_execution(
-            side=side,
-            limit_price_cents=limit_price_cents,
-            bar=bar,
-            command_at=context.command_at,
-            send_deadline=send_deadline,
-        )
+        # A permit line the gateway zeroed carries no executable quantity, so
+        # it is already determined unexecutable: the daily bar is irrelevant
+        # and it must never reach the fill table (a zero-quantity fill is not a
+        # valid capital fact). Release its reserve and record NO_FILL.
+        if int(permit_line.permitted_quantity_units) == 0:
+            resolution = OpenExecutionResolution(
+                OpenExecutionVerdict.NO_FILL, None, REASON_PERMIT_QUANTITY_ZERO
+            )
+        else:
+            side = ExecutionSide.ENTRY
+            limit_price_cents = int(permit_line.limit_price_cents)
+            bar = self._usable_bar_for(proposal_line, bars)
+            resolution = resolve_open_execution(
+                side=side,
+                limit_price_cents=limit_price_cents,
+                bar=bar,
+                command_at=context.command_at,
+                send_deadline=send_deadline,
+            )
         # Reject a divergent replay before any capital write: once a line is
         # durably resolved, the proxy never re-judges it against a new bar.
         self._require_consistent_replay(permit_id, permit_line, resolution)
@@ -574,7 +584,10 @@ class DailyBarProxy:
         return f"lot:{proposal_line.order_line_id}"
 
     def _execution_id(self, permit_line) -> str:
-        return f"proxy:{permit_line.client_order_id}"
+        # A zero-quantity line carries no client order id; fall back to its
+        # sealed order line id so every permit line gets a stable execution id.
+        identity = permit_line.client_order_id or permit_line.order_line_id
+        return f"proxy:{identity}"
 
     # -- durable resolution ------------------------------------------------
 
@@ -648,8 +661,11 @@ class DailyBarProxy:
         return self._execution_record_from_result(permit_id, permit_line, result)
 
     def _resolution_artifact(self, permit_line, result: ProxyLineResult) -> str:
+        # client_order_id is None on a zero-quantity line (the gateway emits no
+        # sendable order for it); coerce it so the artifact stays a stable,
+        # deterministic string for every line.
         parts = [
-            permit_line.client_order_id,
+            str(permit_line.client_order_id),
             result.verdict.value,
             result.reason,
             str(result.fill_price_cents),
@@ -685,7 +701,9 @@ class DailyBarProxy:
             execution_id=str(row.execution_id),
             permit_id=str(row.permit_id),
             order_line_id=str(row.order_line_id),
-            client_order_id=str(row.client_order_id),
+            client_order_id=(
+                str(row.client_order_id) if row.client_order_id is not None else None
+            ),
             security_id=str(row.security_id),
             verdict=verdict,
             reason=str(row.reason),

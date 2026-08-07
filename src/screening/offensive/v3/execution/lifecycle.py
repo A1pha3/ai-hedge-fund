@@ -122,6 +122,10 @@ REASON_ONE_PRICE_LIMIT_UP: Final[str] = "one_price_limit_up"
 REASON_ONE_PRICE_LIMIT_DOWN: Final[str] = "one_price_limit_down"
 REASON_LIMIT_TOUCHED: Final[str] = "limit_touched"
 REASON_LIMIT_NOT_TOUCHED: Final[str] = "limit_not_touched"
+# A permit line the gateway zeroed (a mechanical cap left it no executable
+# quantity) never reaches the bar decision table: it is already determined
+# unexecutable, so the proxy releases its reserve and records NO_FILL.
+REASON_PERMIT_QUANTITY_ZERO: Final[str] = "permit_quantity_zero"
 
 
 def resolve_open_execution(
@@ -201,6 +205,7 @@ __all__ = [
     "REASON_MISSING_BAR",
     "REASON_ONE_PRICE_LIMIT_DOWN",
     "REASON_ONE_PRICE_LIMIT_UP",
+    "REASON_PERMIT_QUANTITY_ZERO",
     "REASON_SUSPENDED_BAR",
     "resolve_open_execution",
 ]
