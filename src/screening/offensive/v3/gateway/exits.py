@@ -221,6 +221,13 @@ class ExitLaneProjection:
     leased: bool
     outstanding_query_count: int
     stable_client_order_id: str
+    revision_kind: ExitMandateRevisionKind = ExitMandateRevisionKind.INITIAL
+    """Mandate revision provenance (INITIAL / QUANTITY_REFRESH /
+    REOPENED_BY_CORRECTION). Plan 05 Task 8 reporting 投影用此字段区分
+    ``reopened_by_correction`` 状态。带默认值 ``INITIAL`` 以兼容未显式传
+    ``revision_kind`` 的既有构造点; ``exit_state`` (exits.py:1194) 已从活跃
+    mandate 行填真实值 (``ExitMandateRevisionKind(str(active.revision_kind))``,
+    DB 未知值 fail-closed 抛 ValueError)。"""
 
 
 class ExitLane:
@@ -1186,6 +1193,7 @@ class ExitLane:
             leased=int(lease_row.n) > 0,
             outstanding_query_count=int(queries.n),
             stable_client_order_id=str(active.stable_client_order_id),
+            revision_kind=ExitMandateRevisionKind(str(active.revision_kind)),
         )
 
     def _active_mandate_row(

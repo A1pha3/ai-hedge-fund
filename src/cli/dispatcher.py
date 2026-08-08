@@ -1264,6 +1264,18 @@ def _resolve_daily_action(
             else:
                 rendered = rendered + "\n" + render_no_signal()
         print(rendered)
+        # Plan 05 Task 9: v3 shadow 编排 hook (v2 渲染后; 库层编排 + rc 保护)。
+        # signal_date/reports_dir/data_dir/v2_run 均在作用域; with 块不引入新作用域。
+        # v2_plans_reader 闭包 v2_run.plans (元素有 .ticker); v2 退出码由本函数
+        # return 0 决定, v3 失败在 run_v3_shadow_daily_action 内被吞, 绝不改写 rc。
+        from src.cli.v3_shadow import run_v3_shadow_daily_action
+
+        run_v3_shadow_daily_action(
+            signal_date=signal_date,
+            reports_dir=reports_dir,
+            data_dir=data_dir,
+            v2_plans_reader=lambda _date: tuple(v2_run.plans),
+        )
     return 0
 
 

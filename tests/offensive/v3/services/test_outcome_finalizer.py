@@ -1,0 +1,590 @@
+"""Plan 05 Task 2 (RED): OutcomeFinalizerService 能力矩阵 + 透传行为。
+
+覆盖 Step 1 能力矩阵(import 边界、无 gateway/capital 方法、kind 隔离、
+signer 私有)与最终化透传(register_plan_line / finalize_due / outcome_fact
+直通底层 OutcomeFinalizer)。
+
+本文件引用尚未实现的服务骨架(方法体一律 raise NotImplementedError);
+当前应整体 RED, 由主代理随后实现 GREEN。
+"""
+
+from __future__ import annotations
+
+import hashlib
+from base64 import b64encode
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+)
+
+from src.screening.offensive.v3 import trust
+from src.screening.offensive.v3.capital.fees import FeePolicy
+from src.screening.offensive.v3.capital.fills import (
+    FeeRevisionRequest,
+    FillAttribution,
+    FillRevisionRequest,
+)
+from src.screening.offensive.v3.capital.identity import AccountBinding
+from src.screening.offensive.v3.capital.repository import (
+    CapitalCommand,
+    CapitalCommandPayload,
+    CapitalRepository,
+)
+from src.screening.offensive.v3.contracts import (
+    canonical_json_bytes,
+    CashEconomicEventLeg,
+    CashReceivableEconomicEventLeg,
+    EconomicAssetKind,
+    EconomicEventKind,
+    EconomicLegDirection,
+    ExecutionMode,
+    SUPPORTED_SCHEMA_MAJOR,
+)
+from src.screening.offensive.v3.contracts.governance import TrustBundle
+from src.screening.offensive.v3.evidence.blob_store import BlobStore
+from src.screening.offensive.v3.evidence.outcomes import (
+    OutcomeEvidence,
+    OutcomeFinalizerError,
+    PlanLineDefinition,
+)
+from src.screening.offensive.v3.evidence.repository import (
+    EvidenceRepository,
+)
+from src.screening.offensive.v3.evidence.session_spine import (
+    SessionEnrollment,
+    SessionSpine,
+)
+from src.screening.offensive.v3.services import outcome_finalizer as of_module
+from src.screening.offensive.v3.services.outcome_finalizer import (
+    OutcomeFinalizerService,
+)
+
+UTC = timezone.utc
+NOW = datetime(2026, 8, 5, 9, 0, tzinfo=UTC)
+HASH = "e" * 64
+NAMESPACE = "evidence.outcomes.test"
+PROGRAM = "prog-1"
+LINEAGE = "lineage-outcome"
+SIGNAL = date(2026, 6, 1)
+SESSIONS = [SIGNAL + timedelta(days=offset) for offset in range(1, 13)]
+ENTRY_SESSION = SESSIONS[0]
+EXIT_SESSION = SESSIONS[9]
+
+POLICY = FeePolicy(
+    fee_policy_version="fee-schedule-2026-v1",
+    commission_rate_ppm=3_000,
+    min_commission_cents=500,
+    stamp_tax_rate_ppm=1_000,
+    transfer_fee_rate_ppm=20,
+)
+ATTRIBUTION = FillAttribution(
+    producer_namespace="btst",
+    research_program_id=PROGRAM,
+    economic_lineage_id=LINEAGE,
+    stage_id="stage-1",
+)
+
+GATEWAY_METHODS = (
+    "activate_trust_bundle",
+    "activate_policy_and_envelope",
+    "replace_envelope",
+    "raise_entry_fence",
+    "acknowledge_fence",
+    "active_state",
+    "publish_entry",
+    "issue_permit",
+    "make_outbox_durable",
+)
+CAPITAL_METHODS = (
+    "run_append",
+    "append_atomic",
+    "record_fill_revision",
+    "record_fee_revision",
+    "confirm_observed_nav",
+)
+
+
+class _Clock:
+    def __init__(self, start: datetime) -> None:
+        self.now_value = start
+
+    def __call__(self) -> datetime:
+        return self.now_value
+
+
+def _public_key_b64(private_key: Ed25519PrivateKey) -> str:
+    return b64encode(
+        private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+    ).decode("ascii")
+
+
+def _root_context(registry):
+    root_key = Ed25519PrivateKey.generate()
+    root_public = _public_key_b64(root_key)
+    root_hash = hashlib.sha256(
+        root_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+    ).hexdigest()
+    anchor = trust.RootTrustAnchor(
+        root_hash=root_hash,
+        root_key_id="offline-root-1",
+        public_key=root_public,
+        valid_from=NOW - timedelta(days=30),
+        valid_until=NOW + timedelta(days=30),
+        revoked_at=None,
+    )
+    bundle = TrustBundle(
+        registry_epoch=1,
+        predecessor_bundle_hash="0" * 64,
+        root_hash=root_hash,
+        root_key_id=anchor.root_key_id,
+        trusted_issuer_registry_hash=registry.content_hash(),
+        issued_at=NOW - timedelta(minutes=5),
+        expires_at=NOW + timedelta(days=1),
+        revoked_at=None,
+        issuer_id="offline-governance-root",
+        issuer_capability="root.trust.bundle.v1",
+        schema_major=2,
+    )
+    signature = b64encode(
+        root_key.sign(trust.trust_bundle_signature_preimage(bundle, registry))
+    ).decode("ascii")
+    signed_bundle = trust.SignedTrustBundle(
+        bundle=bundle, registry=registry, signature=signature
+    )
+    verifier = trust.TrustBundleVerifier((anchor,))
+    delegate = trust.CapabilityVerifier(verifier, (signed_bundle,))
+    head = trust.CurrentTrustHeadWitness(
+        active_trust_bundle_hash=bundle.artifact_hash(),
+        registry_epoch=bundle.registry_epoch,
+        head_version=bundle.registry_epoch,
+        store_version=1,
+        observed_at=NOW,
+    )
+
+    class _HeadProvider:
+        def current_trust_head(self, trusted_at):
+            return head
+
+    return delegate, _HeadProvider()
+
+
+class _World:
+    def __init__(self, tmp_path: Path) -> None:
+        self.clock = _Clock(NOW)
+        # Plan 02 capital ledger (read model for the finalizer). The
+        # account binds implicitly on the first appended command.
+        self.capital = CapitalRepository.initialize(
+            tmp_path / "capital.sqlite3"
+        )
+        self._seed_cash(10_000_000, 0)
+        # Session spine.
+        self.spine = SessionSpine(
+            database_path=str(tmp_path / "spine.sqlite3"),
+            clock=self.clock,
+        )
+        self.spine.enroll_expected_sessions(
+            tuple(
+                SessionEnrollment(
+                    research_program_id=PROGRAM,
+                    signal_session=session,
+                    assessment_date=session,
+                )
+                for session in SESSIONS
+            )
+            + (
+                SessionEnrollment(
+                    research_program_id=PROGRAM,
+                    signal_session=SIGNAL,
+                    assessment_date=SIGNAL,
+                ),
+            )
+        )
+        # Evidence store with an OUTCOME_FINALIZER issuer.
+        self.finalizer_key = Ed25519PrivateKey.generate()
+        capability = trust.Capability(
+            artifact=trust.ArtifactKind.OUTCOME,
+            namespace=NAMESPACE,
+            mode=ExecutionMode.DAILY_BAR_PROXY,
+            schema_major=SUPPORTED_SCHEMA_MAJOR,
+            capability_version="outcome-finalizer.v1",
+            scope="evidence:outcomes.test",
+            valid_from=NOW - timedelta(days=1),
+            valid_until=NOW + timedelta(days=1),
+            revoked_at=None,
+        )
+        issuer = trust.TrustedIssuer(
+            issuer_id="outcome.finalizer",
+            key_id="finalizer-key-1",
+            issuer_kind=trust.IssuerKind.OUTCOME_FINALIZER,
+            public_key=_public_key_b64(self.finalizer_key),
+            valid_from=NOW - timedelta(days=1),
+            valid_until=NOW + timedelta(days=1),
+            revoked_at=None,
+            capabilities=(capability,),
+        )
+        verifier, head_provider = _root_context(
+            trust.TrustedRegistry(issuers=(issuer,))
+        )
+        self.evidence = EvidenceRepository(
+            database_path=str(tmp_path / "evidence.sqlite3"),
+            blob_store=BlobStore(tmp_path / "blobs"),
+            verifier=verifier,
+            trust_head_provider=head_provider,
+            issuer_namespace=NAMESPACE,
+            clock=self.clock,
+        )
+        self._capability = capability
+        self.service = OutcomeFinalizerService(
+            database_path=str(tmp_path / "finalizer.sqlite3"),
+            capital_engine=self.capital.engine,
+            evidence_repository=self.evidence,
+            session_spine=self.spine,
+            signer=self._sign,
+            clock=self.clock,
+            issuer_namespace="outcome.finalizer",
+            behavior_fingerprint=HASH,
+        )
+
+    def _sign(self, payload: bytes):
+        digest = hashlib.sha256(payload).hexdigest()
+        protected = canonical_json_bytes(
+            {
+                "artifact": self._capability.artifact,
+                "capability_scope": self._capability.scope,
+                "capability_version": self._capability.capability_version,
+                "issuer_id": "outcome.finalizer",
+                "key_id": "finalizer-key-1",
+                "mode": self._capability.mode,
+                "namespace": self._capability.namespace,
+                "payload": b64encode(payload).decode("ascii"),
+                "payload_hash": digest,
+                "schema_major": self._capability.schema_major,
+            }
+        )
+        signature = self.finalizer_key.sign(protected)
+        return trust.SignedEnvelope(
+            issuer_id="outcome.finalizer",
+            key_id="finalizer-key-1",
+            schema_major=self._capability.schema_major,
+            artifact=self._capability.artifact,
+            namespace=self._capability.namespace,
+            mode=self._capability.mode,
+            capability_version=self._capability.capability_version,
+            capability_scope=self._capability.scope,
+            payload_hash=digest,
+            payload=payload,
+            signature=b64encode(signature).decode("ascii"),
+        )
+
+    def _seed_cash(self, cents: int, seq: int) -> None:
+        from decimal import Decimal
+
+        amount = Decimal(cents) / 100
+        binding = self._binding()
+        receivable_id = f"rcv-{seq}"
+        self.capital.append_atomic(
+            CapitalCommand(
+                idempotency_key=f"declare-{seq}",
+                account_binding=binding,
+                expected_stream_version=self.capital.stream_version(),
+                as_of=NOW,
+                payload=CapitalCommandPayload(
+                    event_kind=EconomicEventKind.DIVIDEND_RECEIVABLE,
+                    effective_at=NOW,
+                    source_authority="test.seed",
+                    legs=(
+                        CashReceivableEconomicEventLeg(
+                            leg_id=f"declare-{seq}-r",
+                            direction=EconomicLegDirection.CREDIT,
+                            asset_kind=EconomicAssetKind.CASH_RECEIVABLE,
+                            receivable_id=receivable_id,
+                            security_id="000001.SZ",
+                            cash_amount=amount,
+                        ),
+                    ),
+                ),
+            )
+        )
+        self.capital.append_atomic(
+            CapitalCommand(
+                idempotency_key=f"settle-{seq}",
+                account_binding=binding,
+                expected_stream_version=self.capital.stream_version(),
+                as_of=NOW + timedelta(seconds=30),
+                payload=CapitalCommandPayload(
+                    event_kind=EconomicEventKind.DIVIDEND_CASH_SETTLED,
+                    effective_at=NOW + timedelta(seconds=30),
+                    source_authority="test.seed",
+                    legs=(
+                        CashReceivableEconomicEventLeg(
+                            leg_id=f"settle-{seq}-r",
+                            direction=EconomicLegDirection.DEBIT,
+                            asset_kind=EconomicAssetKind.CASH_RECEIVABLE,
+                            receivable_id=receivable_id,
+                            security_id="000001.SZ",
+                            cash_amount=amount,
+                        ),
+                        CashEconomicEventLeg(
+                            leg_id=f"settle-{seq}-c",
+                            direction=EconomicLegDirection.CREDIT,
+                            asset_kind=EconomicAssetKind.CASH,
+                            cash_amount=amount,
+                        ),
+                    ),
+                ),
+            )
+        )
+
+    def _binding(self) -> AccountBinding:
+        return AccountBinding(
+            portfolio_id="pf-finalize",
+            mode=ExecutionMode.DAILY_BAR_PROXY,
+            broker_account_id=None,
+            base_currency="CNY",
+            environment_fingerprint="ab" * 32,
+        )
+
+    def fill(
+        self,
+        execution_id: str,
+        *,
+        side,
+        price_micros: int,
+        quantity: int,
+        effective_at: datetime,
+        lot: str = "lot-1",
+    ):
+        request = FillRevisionRequest(
+            execution_id=execution_id,
+            revision=1,
+            order_id=f"ord-{execution_id}",
+            side=side,
+            security_id="600000.SH",
+            price_micros=price_micros,
+            quantity=quantity,
+            position_lineage_id=LINEAGE,
+            economic_lot_id=lot,
+            attribution=ATTRIBUTION,
+            source_authority="broker.test",
+            effective_at=effective_at,
+            as_of=effective_at + timedelta(seconds=1),
+            expected_stream_version=self.capital.stream_version(),
+        )
+        return self.capital.record_fill_revision(request)
+
+    def fee(self, execution_id: str, *, effective_at: datetime) -> None:
+        self.capital.record_fee_revision(
+            FeeRevisionRequest(
+                fill_execution_id=execution_id,
+                revision=1,
+                fee_policy=POLICY,
+                source_authority="broker.test",
+                effective_at=effective_at,
+                as_of=effective_at + timedelta(seconds=2),
+                expected_stream_version=self.capital.stream_version(),
+            )
+        )
+
+    def plan_line(self, contract_key: str = "pl-1", **overrides):
+        values = {
+            "plan_line_economic_contract_key": contract_key,
+            "producer_namespace": "btst",
+            "economic_lineage_id": LINEAGE,
+            "stage_id": "stage-1",
+            "family_id": "btst.limit-up-breakout",
+            "mode": ExecutionMode.DAILY_BAR_PROXY,
+            "execution_version": "t1-open-t10-open.v1",
+            "cost_version": "cn-a-share-costs.v1",
+            "signal_session": SIGNAL,
+            "entry_session_ordinal": 1,
+            "exit_session_ordinal": 10,
+        }
+        values.update(overrides)
+        return PlanLineDefinition(**values)
+
+
+@pytest.fixture()
+def world(tmp_path: Path) -> _World:
+    return _World(tmp_path)
+
+
+def _forbidden_import_segments(source: str) -> list[str]:
+    violations: list[str] = []
+    for line in source.splitlines():
+        if not line or line[0].isspace():
+            continue
+        if line.startswith("import "):
+            module = (
+                line[len("import "):].split(" as ")[0].split(",")[0].strip()
+            )
+        elif line.startswith("from "):
+            module = line[len("from "):].split(" import ")[0].strip()
+        else:
+            continue
+        for segment in module.split("."):
+            if segment in {"capital", "gateway", "execution"}:
+                violations.append(line)
+                break
+    return violations
+
+
+ENTRY_TIME = datetime.combine(
+    ENTRY_SESSION, datetime.min.time(), tzinfo=UTC
+) + timedelta(hours=9, minutes=30)
+EXIT_TIME = datetime.combine(
+    EXIT_SESSION, datetime.min.time(), tzinfo=UTC
+) + timedelta(hours=9, minutes=30)
+DUE = EXIT_TIME + timedelta(hours=7)
+
+
+def _side_entry():
+    from src.screening.offensive.v3.contracts import ExecutionSide
+
+    return ExecutionSide.ENTRY
+
+
+def _side_exit():
+    from src.screening.offensive.v3.contracts import ExecutionSide
+
+    return ExecutionSide.EXIT
+
+
+# --------------------------------------------------------------------------
+# Step 1: 能力矩阵
+# --------------------------------------------------------------------------
+
+
+def test_import_boundaries_no_capital_gateway_execution(world: _World) -> None:
+    source = Path(of_module.__file__).read_text(encoding="utf-8")
+    assert _forbidden_import_segments(source) == []
+
+
+def test_api_surface_excludes_gateway_capital_and_other_lanes(
+    world: _World,
+) -> None:
+    service = world.service
+    # 服务应暴露的三个方法
+    assert callable(service.register_plan_line)
+    assert callable(service.finalize_due)
+    assert callable(service.outcome_fact)
+    # gateway 状态激活/入口发布/permits 一律不得出现
+    for name in GATEWAY_METHODS:
+        assert not hasattr(service, name), name
+    # capital 写入面一律不得出现
+    for name in CAPITAL_METHODS:
+        assert not hasattr(service, name), name
+    # 其它 lane 的发布/查询面一律不得出现
+    for name in (
+        "publish_snapshot",
+        "active_snapshot",
+        "raw_payload",
+        "assess_edge",
+        "issued_status",
+        "seal_trial",
+        "issue_exploration",
+        "issue_recovery",
+        "sealed_trial",
+        "target_policy",
+    ):
+        assert not hasattr(service, name), name
+
+
+def test_kind_isolation_only_outcome_evidence_is_written(
+    world: _World,
+) -> None:
+    world.fill(
+        "exec-e",
+        side=_side_entry(),
+        price_micros=10_000_000,
+        quantity=100,
+        effective_at=ENTRY_TIME,
+    )
+    world.fee("exec-e", effective_at=ENTRY_TIME)
+    world.fill(
+        "exec-x",
+        side=_side_exit(),
+        price_micros=11_000_000,
+        quantity=100,
+        effective_at=EXIT_TIME,
+        lot="lot-1",
+    )
+    world.service.register_plan_line(world.plan_line())
+    finalized = world.service.finalize_due(DUE, program=PROGRAM)
+    assert finalized == ("pl-1",)
+    # 服务写入 evidence store 的只有 OUTCOME kind 记录
+    record = world.evidence.get("outcome:pl-1")
+    assert isinstance(record.evidence, OutcomeEvidence)
+    assert record.evidence.evidence_kind == "outcome"
+
+
+def test_signer_is_private_no_public_accessor(world: _World) -> None:
+    service = world.service
+    assert hasattr(service, "_signer")
+    for name in ("signer", "get_signer", "sign", "signing_key"):
+        assert not hasattr(service, name), name
+
+
+# --------------------------------------------------------------------------
+# Step 3: 最终化透传
+# --------------------------------------------------------------------------
+
+
+def test_filled_plan_line_finalizes_exactly_one_outcome(world: _World) -> None:
+    world.fill(
+        "exec-e",
+        side=_side_entry(),
+        price_micros=10_000_000,
+        quantity=100,
+        effective_at=ENTRY_TIME,
+    )
+    world.fee("exec-e", effective_at=ENTRY_TIME)
+    world.fill(
+        "exec-x",
+        side=_side_exit(),
+        price_micros=11_000_000,
+        quantity=100,
+        effective_at=EXIT_TIME,
+        lot="lot-1",
+    )
+    definition = world.plan_line()
+    world.service.register_plan_line(definition)
+    finalized = world.service.finalize_due(DUE, program=PROGRAM)
+    assert finalized == ("pl-1",)
+    fact = world.service.outcome_fact("pl-1")
+    assert fact.classification == "FILLED"
+    assert fact.entry_session == ENTRY_SESSION
+    assert fact.exit_session == EXIT_SESSION
+    assert fact.entry_gross_cents == 100_000
+    assert fact.exit_gross_cents == 110_000
+    assert fact.fees_cents > 0
+    assert fact.realized_pnl_cents == (
+        fact.exit_gross_cents - fact.entry_gross_cents - fact.fees_cents
+    )
+    # Re-finalizing is idempotent: still exactly one outcome.
+    assert world.service.finalize_due(DUE, program=PROGRAM) == ()
+
+
+def test_no_fill_line_finalizes_as_no_fill(world: _World) -> None:
+    definition = world.plan_line("pl-empty")
+    world.service.register_plan_line(definition)
+    finalized = world.service.finalize_due(DUE, program=PROGRAM)
+    assert finalized == ("pl-empty",)
+    fact = world.service.outcome_fact("pl-empty")
+    assert fact.classification == "NO_FILL"
+    assert fact.realized_pnl_cents is None
+
+
+def test_unknown_plan_line_outcome_fails_closed(world: _World) -> None:
+    with pytest.raises(OutcomeFinalizerError) as excinfo:
+        world.service.outcome_fact("pl-never-registered")
+    assert excinfo.value.code == "outcome_unknown"
