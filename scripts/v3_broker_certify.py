@@ -274,7 +274,15 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         " tool we print the bound area hashes for manual cross-check.",
         file=sys.stderr,
     )
-    print(json.dumps({"area_hashes": profile.area_hashes()}, indent=2))
+    print(
+        json.dumps(
+            {
+                "profile_hash": profile.profile_hash(),
+                "area_hashes": profile.area_hashes(),
+            },
+            indent=2,
+        )
+    )
     # Reference the verifier symbol so the import is not flagged unused.
     _ = verify_broker_enablement
     _ = envelope

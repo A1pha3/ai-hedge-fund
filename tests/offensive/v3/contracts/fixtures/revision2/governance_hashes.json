@@ -49,8 +49,8 @@
   },
   "BrokerEnablementManifest": {
     "approval_preimage_domain": "ai-hedge-fund.v3.governance.broker-enablement-manifest.approval-preimage.v1",
-    "approval_preimage_hash": "8a9526f1b0a6dbba9ee4961faa8a347cf0e0c50ec42b9277dcb681eea9ddbc3f",
-    "artifact_hash": "7557f2a7eca10186359468ac59718553ce7db00cf077e6855d5a4d251ebb60fa",
+    "approval_preimage_hash": "9e90723c9039dcb65ab0a055fca1c4245fe8177a704aa6efa21d3bcb2eaa6728",
+    "artifact_hash": "e419c3616081fdbf406309ec0155024084741177356e2e20bfeb008c4859defd",
     "hash_domain": "ai-hedge-fund.v3.governance.broker-enablement-manifest.v1",
     "payload": {
       "approval_attestations": [
@@ -59,7 +59,7 @@
           "approval_capability": "governance.manifest.approve.v1",
           "approval_scope": "BROKER_ENABLEMENT_MANIFEST",
           "approved_at": "2026-07-19T07:58:00Z",
-          "approved_manifest_preimage_hash": "8a9526f1b0a6dbba9ee4961faa8a347cf0e0c50ec42b9277dcb681eea9ddbc3f",
+          "approved_manifest_preimage_hash": "9e90723c9039dcb65ab0a055fca1c4245fe8177a704aa6efa21d3bcb2eaa6728",
           "approver_id": "alice",
           "key_id": "alice-key",
           "schema_major": 2
@@ -69,7 +69,7 @@
           "approval_capability": "governance.manifest.approve.v1",
           "approval_scope": "BROKER_ENABLEMENT_MANIFEST",
           "approved_at": "2026-07-19T07:59:00Z",
-          "approved_manifest_preimage_hash": "8a9526f1b0a6dbba9ee4961faa8a347cf0e0c50ec42b9277dcb681eea9ddbc3f",
+          "approved_manifest_preimage_hash": "9e90723c9039dcb65ab0a055fca1c4245fe8177a704aa6efa21d3bcb2eaa6728",
           "approver_id": "bob",
           "key_id": "bob-key",
           "schema_major": 2
@@ -93,6 +93,7 @@
       "one_shot": true,
       "pagination_cursor_retention_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "portfolio_id": "portfolio-1",
+      "profile_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "schema_major": 2,
       "trusted_clock_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }

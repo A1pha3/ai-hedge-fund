@@ -45,6 +45,7 @@ def _unsigned_manifest(model_name: str) -> dict[str, object]:
             "auction_tif_cutoff_hash": HASH,
             "exit_rate_limit_hash": HASH,
             "credential_session_network_fencing_hash": HASH,
+            "profile_hash": HASH,
         }
     else:
         payload = _manifest_common(

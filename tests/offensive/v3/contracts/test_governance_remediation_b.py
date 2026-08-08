@@ -146,6 +146,7 @@ def _broker_manifest() -> dict[str, object]:
         "auction_tif_cutoff_hash": HASH,
         "exit_rate_limit_hash": HASH,
         "credential_session_network_fencing_hash": HASH,
+        "profile_hash": HASH,
     }
     return _approve_manifest(
         "BrokerEnablementManifest", "BROKER_ENABLEMENT_MANIFEST", proposal

@@ -955,6 +955,10 @@ class BrokerEnablementManifest(_TwoPersonOneShotManifest):
     auction_tif_cutoff_hash: Sha256
     exit_rate_limit_hash: Sha256
     credential_session_network_fencing_hash: Sha256
+    # 整体绑定 (audit Vuln1): 上面的逐区 hash 只覆盖命名区; 整体 profile
+    # hash 覆盖 profile 全部字段 (execution_semantics / *_version_hashes /
+    # profile_id 等), 任何未逐区列出的字段漂移也在此被拒绝.
+    profile_hash: Sha256
 
 
 class DisasterRecoveryManifest(_TwoPersonOneShotManifest):

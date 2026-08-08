@@ -257,6 +257,9 @@ def enablement_proposal(
         "credential_session_network_fencing_hash": area[
             "credential_session_network_fencing_hash"
         ],
+        # 整体绑定 (audit Vuln1): 任何未逐 area 列出的 profile 字段
+        # (execution_semantics / *_version_hashes / profile_id) 漂移也被捕获.
+        "profile_hash": profile.profile_hash(),
     }
     values.update(overrides)
     return values
@@ -676,3 +679,50 @@ def test_production_adapter_requires_verified_enablement() -> None:
     with pytest.raises(ProductionAdapterError) as excinfo:
         ProductionBrokerAdapter.from_profile(profile)
     assert excinfo.value.code == "BROKER_ADAPTER_NOT_CERTIFIED"
+
+
+# ===========================================================================
+# audit Vuln1: 未逐 area 列出的 profile 字段也被整体绑定
+# ===========================================================================
+#
+# area_hashes() 只覆盖 10 个命名区; execution_semantics / *_version_hashes /
+# profile_id 不在其中. 仅逐区比对时, 篡改这些字段的 profile 换绑到一份
+# (对原 profile) 有效签名的 manifest 仍会通过校验. 整体 profile_hash 伞形
+# 绑定后, 任何字段漂移都被 PROFILE_HASH_MISMATCH 捕获.
+
+
+def test_tampered_late_fill_semantics_rejected() -> None:
+    # 攻击: 直接构造绕过 certify 的篡改 profile —— late-fill 语义被改成
+    # SILENTLY_DROPPED (成交回报可静默丢弃, 资金账与券商账漂移). 该区域
+    # 不在 area_hashes() 的 10 个命名区内, 只有整体 profile_hash 能捕获.
+    profile = _profile()
+    fabric, key, cap = _fabric_and_key()
+    manifest = approved_enablement_manifest(profile)
+    envelope = _signed_envelope(fabric, key, cap, manifest)
+    tampered = _profile(
+        execution=ExecutionSemanticsProfile(
+            partial_fill_supported=True,
+            cancel_semantics="cancel_reduces_leaves",
+            expiry_semantics="expire_at_session_end",
+            late_fill_semantics=LateFillSemantics.SILENTLY_DROPPED,
+            proven_at=NOW,
+        )
+    )
+    with pytest.raises(BrokerEnablementError) as excinfo:
+        _verify(envelope, fabric, cap, tampered)
+    assert excinfo.value.code == "PROFILE_HASH_MISMATCH"
+
+
+def test_tampered_version_hashes_rejected() -> None:
+    # 攻击: 篡改 api/sdk/docs 版本哈希 —— 绑定过的版本清单被偷换成未审计
+    # 版本, 也不在任何命名区内.
+    profile = _profile()
+    fabric, key, cap = _fabric_and_key()
+    manifest = approved_enablement_manifest(profile)
+    envelope = _signed_envelope(fabric, key, cap, manifest)
+    tampered = profile.model_copy(
+        update={"api_version_hashes": (_version("evil-api"),)}
+    )
+    with pytest.raises(BrokerEnablementError) as excinfo:
+        _verify(envelope, fabric, cap, tampered)
+    assert excinfo.value.code == "PROFILE_HASH_MISMATCH"

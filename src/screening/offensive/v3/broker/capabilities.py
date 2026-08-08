@@ -499,6 +499,11 @@ def verify_broker_enablement(
     4. Account/currency/area binding: every manifest hash field must equal
        the corresponding proven profile area; any drift is rejected with a
        code naming the offending area.
+    5. Umbrella binding (audit Vuln1): the manifest's overall ``profile_hash``
+       must equal the profile's own hash, so fields not covered by a named
+       area (execution_semantics / *_version_hashes / profile_id) cannot
+       drift either. Checked after the area loop so a named-area drift keeps
+       its precise diagnostic code.
     """
 
     verified = verifier.verify(
@@ -544,6 +549,14 @@ def verify_broker_enablement(
                 _AREA_CODES.get(field_name, "AREA_MISMATCH"),
                 f"manifest {field_name!r} does not match the proven profile",
             )
+
+    if manifest.profile_hash != profile.profile_hash():
+        raise BrokerEnablementError(
+            "PROFILE_HASH_MISMATCH",
+            "manifest profile_hash does not match the proven profile; a"
+            " profile field outside the named areas (execution_semantics,"
+            " version hashes, profile_id) has drifted",
+        )
 
     return VerifiedBrokerEnablement(
         manifest=manifest,
