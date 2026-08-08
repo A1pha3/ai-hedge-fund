@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime as _dt
-
 import pandas as pd
 
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
@@ -311,6 +309,74 @@ def test_industry_data_zero_still_misses():
     assert result.hit is False, "行业涨幅 0.0 < 2.0 应正常 miss (非降级)"
 
 
+def test_strength_components_exported_to_metadata():
+    """因子审计契约 (2026-08-08): detect() 必须把 5 个 strength 分量导出到 metadata.
+
+    研究/运行时同一函数: 因子审计器复核「现有分量是否仍在挣它的 0.20 权重」时,
+    读的就是 detect() 实际用于打分的那组值, 不是另一份独立实现 → 消灭口径偏差.
+    若此契约被破坏, 基于真实 detect-hit 的审计会失去对齐锚点.
+    """
+    prices = _prices_with_limit_up_today()
+    today = prices.iloc[-1]["date"].strftime("%Y%m%d")
+    recs_today = [FundFlowRecord(ticker="X", date=today, close=11.0, pct_change=10.0, main_net_inflow=5_000_000, main_net_pct=8.0)]
+    old_recs = []
+    for i in range(1, 21):
+        d = (prices.iloc[-1 - i]["date"]).strftime("%Y%m%d")
+        old_recs.append(FundFlowRecord(ticker="X", date=d, close=10.0, pct_change=0.0, main_net_inflow=100_000, main_net_pct=0.5))
+    ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=3.0)
+    result = BtstBreakoutSetup().detect("X", today, ctx)
+    assert result.hit is True
+    for key in ("weekday_score", "board_score", "position_score", "squeeze_score", "volume_score", "energy_bonus"):
+        assert key in result.metadata, f"metadata 缺 strength 分量 {key}"
+    # 分量与 trigger_strength 自洽: weekday 已移出 (2026-08-09 Q1),
+    # strength = min(1, 0.25*(board+position+squeeze+volume) + energy_bonus)
+    m = result.metadata
+    expected = min(
+        1.0,
+        0.25 * (m["board_score"] + m["position_score"] + m["squeeze_score"] + m["volume_score"]) + m["energy_bonus"],
+    )
+    assert abs(result.trigger_strength - expected) < 1e-9, (
+        f"导出的分量应能重建 trigger_strength: {result.trigger_strength} vs {expected}")
+
+
+def test_weekday_does_not_affect_trigger_strength():
+    """回归守卫 (2026-08-09, factor_audit Q1): 星期几不再影响 trigger_strength.
+
+    weekday_score 当初凭 n=133 单 regime 样本「Wed-Fri 78% vs Mon-Tue 51%」给 0.20 权重.
+    全量复核 (factor_audit, 21232 信号日) 无区分度 — E[r] 反号、跨窗 H1 反 H2 正、
+    Wilson 未分离 → 移出 strength, 保留 metadata 观测 (day-of-week 效应是真信息,
+    只是不配权重). 见 data/reports/factor_audit_decision_pack_2026-08-08.md (Q1).
+
+    锁语义: 同一构造、仅改变信号日的星期, trigger_strength 必须完全相同.
+    用两组日历 (触发日分别落在周一 vs 周五) 跑 detect, 断言 strength 相等.
+    """
+    def _run(anchor: str) -> float:
+        dates = pd.bdate_range(anchor, periods=22)
+        closes = [10.0] * 21 + [11.0]
+        closes[-6] = 10.5  # pre_runup ≤5%
+        pct = [0.0] * 20 + [0.0, 10.0]
+        prices = pd.DataFrame({"date": dates, "close": closes, "open": closes, "high": closes,
+                               "low": closes, "pct_change": pct, "volume": [1000.0] * 22})
+        today = prices.iloc[-1]["date"].strftime("%Y%m%d")
+        recs_today = [FundFlowRecord(ticker="X", date=today, close=11.0, pct_change=10.0,
+                                     main_net_inflow=5_000_000, main_net_pct=8.0)]
+        old_recs = []
+        for i in range(1, 21):
+            d = (prices.iloc[-1 - i]["date"]).strftime("%Y%m%d")
+            old_recs.append(FundFlowRecord(ticker="X", date=d, close=10.0, pct_change=0.0,
+                                           main_net_inflow=100_000, main_net_pct=0.5))
+        ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=3.0)
+        r = BtstBreakoutSetup().detect("X", today, ctx)
+        assert r.hit is True
+        return r.trigger_strength
+
+    # 触发日分别落在周二 (weekday_score=0, anchor 06-01) vs 周五 (weekday_score=1, anchor 06-04).
+    low = _run("2026-06-01")   # 触发日周二, weekday_score=0
+    high = _run("2026-06-04")  # 触发日周五, weekday_score=1
+    assert abs(low - high) < 1e-9, (
+        f"weekday 不应影响 strength: weekday=0 {low} vs weekday=1 {high}")
+
+
 def test_compute_limit_up_streak_counts_consecutive_limit_ups():
     """连板数 helper: 从 trigger 日向前数连续涨停日 (含 trigger 日).
 
@@ -381,14 +447,14 @@ def test_no_streak_bonus_for_two_consecutive_limit_ups():
     assert result.metadata["limit_up_streak"] == 2, "构造为 2连板 (T-1+T 均涨停)"
 
     # 用同一组 helper 重算 base 公式, 断言 strength == base (streak_bonus 已移除).
+    # weekday 已移出 strength (2026-08-09 Q1), base = 0.25*(board+position+squeeze+volume).
     trigger_idx = len(prices) - 1
     pre_window = prices.iloc[trigger_idx - 5 : trigger_idx]
     position_score, squeeze_score = _compute_trend_vol_scores(pre_window, prices, trigger_idx)
-    weekday_score = 1.0 if _dt.strptime(today, "%Y%m%d").weekday() >= 2 else 0.0
     board_score = _board_quality_score("X")
     volume_score = _compute_volume_score(prices, trigger_idx)
-    base = min(1.0, 0.20 * weekday_score + 0.20 * board_score + 0.20 * position_score
-               + 0.20 * squeeze_score + 0.20 * volume_score)
+    base = min(1.0, 0.25 * board_score + 0.25 * position_score
+               + 0.25 * squeeze_score + 0.25 * volume_score)
     # streak=2 不再给 bonus; position=0.0 (T-1 close 在 5 日窗口顶部) → energy_bonus=0
     assert abs(result.trigger_strength - base) < 1e-9, (
         f"streak_bonus 已移除, 2连板不应改变 strength: got {result.trigger_strength}, base {base}")
@@ -426,11 +492,11 @@ def test_no_streak_bonus_for_high_streaks():
     trigger_idx = len(prices) - 1
     pre_window = prices.iloc[trigger_idx - 5 : trigger_idx]
     position_score, squeeze_score = _compute_trend_vol_scores(pre_window, prices, trigger_idx)
-    weekday_score = 1.0 if _dt.strptime(today, "%Y%m%d").weekday() >= 2 else 0.0
     board_score = _board_quality_score("X")
     volume_score = _compute_volume_score(prices, trigger_idx)
-    base = min(1.0, 0.20 * weekday_score + 0.20 * board_score + 0.20 * position_score
-               + 0.20 * squeeze_score + 0.20 * volume_score)
+    # weekday 已移出 strength (2026-08-09 Q1), base = 0.25*(board+position+squeeze+volume).
+    base = min(1.0, 0.25 * board_score + 0.25 * position_score
+               + 0.25 * squeeze_score + 0.25 * volume_score)
     # streak=3 → streak_bonus=0; position=0.0 → energy_bonus=0 → strength == base (无任何 bonus)
     assert abs(result.trigger_strength - base) < 1e-9, (
         f"3+连板不应得 streak_bonus: got {result.trigger_strength}, base {base}")
@@ -484,12 +550,12 @@ def test_energy_bonus_not_granted_when_squeeze_neutral():
     assert position_score == 1.0, "构造应使 position=1.0 (T-1 在 5 日下半区)"
     assert squeeze_score == 0.5, "构造应使 squeeze=0.5 (前段全平 prior_atr=0 回退)"
 
-    weekday_score = 1.0 if _dt.strptime(today, "%Y%m%d").weekday() >= 2 else 0.0
     board_score = _board_quality_score("X")
     volume_score = _compute_volume_score(prices, trigger_idx)
+    # weekday 已移出 strength (2026-08-09 Q1); 无 bonus 期望 = 0.25*四项 (energy_bonus=0).
     expected_no_bonus = min(
         1.0,
-        0.20 * weekday_score + 0.20 * board_score + 0.20 * position_score + 0.20 * squeeze_score + 0.20 * volume_score,
+        0.25 * board_score + 0.25 * position_score + 0.25 * squeeze_score + 0.25 * volume_score,
     )
     # squeeze=0.5 (中性) 绝不可触发 "完整弹簧释放" bonus.
     assert abs(result.trigger_strength - expected_no_bonus) < 1e-9, (

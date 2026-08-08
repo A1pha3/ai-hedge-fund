@@ -397,16 +397,22 @@ class BtstBreakoutSetup(Setup):
         stop_price = trigger_close * (1 + range_based_stop_pct)
         invalidation = f"价格跌破 {stop_price:.2f} (盘整区底部 {range_low:.2f}, {range_based_stop_pct:+.1%})"
 
-        # trigger_strength: 5 因子等权 alpha ranker + 能量耦合 bonus.
-        #   weekday:  Wed-Fri 78% win vs Mon-Tue 51% (n=133, 2026 单 regime 样本, 待跨周期验证)
+        # trigger_strength: 4 因子等权 alpha ranker (0.25 each) + 能量耦合 bonus.
         #   board:    002/300 61.1% vs 000/001 44.9% (n=1212, 626 票全 universe 回测)
-        #   position: Donchian 下半区(新鲜突破) vs 上半区(追高)
-        #   squeeze:  波动率压缩(弹簧压紧) vs 未压缩
-        #   volume:   成交量比率 (0.8-1.5x 最佳, 0.5-0.8x 最差 ≈ 49.7% 无 α)
+        #   position: Donchian 下半区(新鲜突破) vs 上半区(追高) — 审计唯一真金 (+6.3pp 胜率)
+        #   squeeze:  波动率压缩(弹簧压紧) vs 未压缩 — 弱正向 (观察)
+        #   volume:   成交量比率 (温和放量佳, 极端量差; 离散 0.9/1.0 映射待重标定)
         # 能量耦合: position+squeeze 同时=1 = 完整弹簧释放, 给 0.08 bonus.
+        #
+        # weekday_score 已移出 strength (2026-08-09, factor_audit 复核): 当初凭 n=133 单
+        # regime 样本「Wed-Fri 78% vs Mon-Tue 51%」给 0.20 权重, 但全量复核 (21232 信号日)
+        # 无区分度 — E[r] 反号、跨窗 H1 反 H2 正 (方向漂移)、Wilson 未分离. 0.20 权重在
+        # 稀释真信号 → 移除, 剩 4 项归一化到 0.25 (保持刻度与 _MIN_TRIGGER_STRENGTH 不变).
+        # weekday_score 保留在 metadata 供观测 (day-of-week 效应是真信息, 只是不配权重).
+        # 见 data/reports/factor_audit_decision_pack_2026-08-08.md (Q1).
 
         trade_dow = _dt.strptime(trade_date, "%Y%m%d").weekday()  # 0=Mon
-        weekday_score = 1.0 if trade_dow >= 2 else 0.0  # Wed-Fri=1, Mon-Tue=0
+        weekday_score = 1.0 if trade_dow >= 2 else 0.0  # Wed-Fri=1, Mon-Tue=0 (仅观测, 不进 strength)
         board_score = _board_quality_score(ticker)  # 002/300=1.0, 688/60x=0.95, 000=0.0
 
         # 位置因子: 用涨停前 5 日 close 计算
@@ -438,7 +444,8 @@ class BtstBreakoutSetup(Setup):
         # E[r] 同步走弱. 因子前提不再成立 → streak 不再进 trigger_strength, 仅作 metadata
         # 暴露供 dogfood 观测. 见 data/reports/streak_factor_revalidation.json.
         streak = _compute_limit_up_streak(prices, trigger_idx, limit_up_pct)
-        strength = min(1.0, 0.20 * weekday_score + 0.20 * board_score + 0.20 * position_score + 0.20 * squeeze_score + 0.20 * volume_score + energy_bonus)
+        # weekday_score 已移出 (见上方注释); 剩 4 项各 0.25 + energy_bonus.
+        strength = min(1.0, 0.25 * board_score + 0.25 * position_score + 0.25 * squeeze_score + 0.25 * volume_score + energy_bonus)
 
         return DetectionResult(
             hit=True,
@@ -455,6 +462,14 @@ class BtstBreakoutSetup(Setup):
                 "limit_up_pct_threshold": limit_up_pct,
                 "range_low": range_low,
                 "range_based_stop_pct": round(range_based_stop_pct, 4),
+                # 5 个 strength 分量导出 (2026-08-08): 研究/运行时同一函数,
+                # 供 dogfood 观测 + 因子审计器基于真实 detect-hit 复核.
+                "weekday_score": weekday_score,
+                "board_score": board_score,
+                "position_score": position_score,
+                "squeeze_score": squeeze_score,
+                "volume_score": volume_score,
+                "energy_bonus": energy_bonus,
             },
             degraded=degraded,
             degradation_reason=degradation_reason,
