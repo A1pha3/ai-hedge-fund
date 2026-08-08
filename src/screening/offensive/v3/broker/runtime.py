@@ -62,32 +62,30 @@ class BrokerRuntime:
     writer_id: str
     recovery: DisasterRecoveryCoordinator | None = None
 
+    @property
+    def _authority(self) -> WriterHandoff | DisasterRecoveryCoordinator:
+        """The single fencing authority: the DR coordinator when present (a
+        completed recovery establishes the new writer + fencing epoch and
+        subsumes the handoff fence), else the WriterHandoff. Centralizing this
+        choice keeps the epoch and the fence check on the same authority."""
+
+        return self.recovery if self.recovery is not None else self.handoff
+
     def current_fencing_epoch(self) -> int:
         """The live fencing epoch from the fence authority (DR wins)."""
 
-        if self.recovery is not None:
-            return self.recovery.fencing_epoch
-        return self.handoff.fencing_epoch
+        return self._authority.fencing_epoch
 
     def _fence(self) -> None:
         """Fail-closed fence before any dispatcher call (zero side effects).
 
-        The fence authority is the DR coordinator when present (a completed
-        recovery establishes the new writer + fencing epoch and subsumes the
-        handoff fence), else the WriterHandoff. The epoch passed to the fence
-        is always that same authority's live epoch, so the two fencing
-        authorities are never arbitrated against each other.
+        The epoch passed to the fence is always the fencing authority's own
+        live epoch, read at send time (never a construction-time snapshot), so
+        the two fencing authorities are never arbitrated against each other.
         """
 
-        if self.recovery is not None:
-            # fence_send enforces RECOVERY_COMPLETE (entry gate), the live
-            # writer, and the live fencing epoch in one call.
-            self.recovery.fence_send(
-                writer_id=self.writer_id, epoch=self.recovery.fencing_epoch
-            )
-            return
-        self.handoff.fence_send(
-            writer_id=self.writer_id, epoch=self.handoff.fencing_epoch
+        self._authority.fence_send(
+            writer_id=self.writer_id, epoch=self._authority.fencing_epoch
         )
 
     def submit_entry(self, permit, expected_versions, *, context) -> DispatchOutcome:
