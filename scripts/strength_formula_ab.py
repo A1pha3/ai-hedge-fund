@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.factor_audit import _wilson_ci, scan  # noqa: E402
 
-OUT_PATH = Path("data/reports/q1_weekday_formula_ab.json")
+OUT_PATH = Path("data/reports/q2_volume_recalib_formula_ab.json")
 GATE = 0.50  # _MIN_TRIGGER_STRENGTH (daily_action)
 
 
@@ -41,15 +41,34 @@ def _energy_bonus(position_score: float, squeeze_score: float) -> float:
 
 
 def formula_old(c: dict) -> float:
-    """A = 移除前: 5 项各 0.20 (含 weekday)."""
+    """A = 现行 (Q1 已落地 3111c11a): 4 项各 0.25, volume 用旧阶梯映射 volume_score."""
     eb = _energy_bonus(c["position_score"], c["squeeze_score"])
-    return min(1.0, 0.20 * (c["weekday_score"] + c["board_score"] + c["position_score"] + c["squeeze_score"] + c["volume_score"]) + eb)
+    return min(1.0, 0.25 * (c["board_score"] + c["position_score"] + c["squeeze_score"] + c["volume_score"]) + eb)
+
+
+def _volume_score_recalib(ratio: float | None) -> float:
+    """Q2 候选重标定: 连续 volume_ratio 直接映射, 中段抬两端压 (倒 U 证据).
+
+    细桶 + split-half (2026-08-09, n=17994): 0.7-2.0x 平坦最优 (WR 43-45%),
+    <0.5x 与 >3.0x 跨窗一致差. 消除旧阶梯 0.8-1.0x 被低估的倒挂.
+    """
+    if ratio is None:
+        return 0.5  # 数据不足, 中性 (与生产回退一致)
+    if ratio < 0.5:
+        return 0.0
+    if ratio < 0.7:
+        return 0.4
+    if ratio < 2.0:
+        return 1.0
+    if ratio < 3.0:
+        return 0.6
+    return 0.2
 
 
 def formula_new(c: dict) -> float:
-    """B = 移除后 (已落地 3111c11a): 4 项各 0.25 (不含 weekday)."""
+    """B = Q2 候选: 4 项各 0.25, volume 换成连续重标定."""
     eb = _energy_bonus(c["position_score"], c["squeeze_score"])
-    return min(1.0, 0.25 * (c["board_score"] + c["position_score"] + c["squeeze_score"] + c["volume_score"]) + eb)
+    return min(1.0, 0.25 * (c["board_score"] + c["position_score"] + c["squeeze_score"] + _volume_score_recalib(c["volume_ratio"])) + eb)
 
 
 def _stats(rets: list[float]) -> dict:
@@ -109,14 +128,14 @@ def main() -> None:
 
     result = {
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "purpose": "Q1 (weekday 移除) 公式 A/B: 历史数据验证审计器预测, 不等 dogfood",
+        "purpose": "Q2 (volume 重标定) 公式 A/B: 历史数据验证候选公式, 通过才落",
         "universe": {**meta, "executable_with_return": len(exe)},
         "caliber": "price-eligible 全量宇宙, T+1 open -> T+10 close, execution-adjusted",
         "criterion_1_rank_ic": {
-            "old_5x0.20": ic_old,
-            "new_4x0.25": ic_new,
+            "old_vol_stair": ic_old,
+            "new_vol_recalib": ic_new,
             "delta": round(ic_new - ic_old, 5),
-            "reading": "delta >= 0 → 移除 weekday 没丢排序信息",
+            "reading": "delta > 0 → 重标定提升排序信息",
         },
         "criterion_2_top_decile": {
             "top_by_old": _stats([s["t10_return"] for s in top_old]),
@@ -124,8 +143,8 @@ def main() -> None:
             "overlap_ratio": round(overlap, 4),
         },
         "criterion_3_gate_0.50_transfusion": {
-            "newly_pass (weekday=0 被提升)": _stats(newly_pass),
-            "newly_block (weekday=1 被降权)": _stats(newly_block),
+            "newly_pass (重标定提升)": _stats(newly_pass),
+            "newly_block (重标定降权)": _stats(newly_block),
             "kept_pass_参照": _stats(keep_pass),
             "reading": "newly_pass 不弱于 newly_block → 换血是赚的或平价",
         },
@@ -134,7 +153,7 @@ def main() -> None:
     }
 
     # 预登记判定
-    np_s, nb_s = result["criterion_3_gate_0.50_transfusion"]["newly_pass (weekday=0 被提升)"], result["criterion_3_gate_0.50_transfusion"]["newly_block (weekday=1 被降权)"]
+    np_s, nb_s = result["criterion_3_gate_0.50_transfusion"]["newly_pass (重标定提升)"], result["criterion_3_gate_0.50_transfusion"]["newly_block (重标定降权)"]
     ic_ok = bool(ic_new >= ic_old)
     transfusion_ok = bool(np_s["mean_t10_return"] >= nb_s["mean_t10_return"]) if np_s["n"] and nb_s["n"] else None
     confirmed = bool(ic_ok and (transfusion_ok in (True, None)))
@@ -142,14 +161,14 @@ def main() -> None:
         "rank_ic_not_worse": bool(ic_ok),
         "transfusion_not_worse": transfusion_ok,
         "prediction_confirmed": confirmed,
-        "note": "兑现 → 审计器可信, 可推进 Q2-Q5; 落空 → 因子层区分度≠组合层收益, 修审计器",
+        "note": "兑现 → 采纳 Q2 重标定; 落空 → 保持现行阶梯映射",
     }
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUT_PATH.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print("\n" + "=" * 72)
-    print("Q1 公式 A/B (weekday 移除): 旧 5×0.20 vs 新 4×0.25")
+    print("Q2 公式 A/B (volume 重标定): 旧阶梯映射 vs 新连续重标定")
     print("=" * 72)
     print(f"判据1 rank IC:  旧 {ic_old:+.4f}  新 {ic_new:+.4f}  (Δ{ic_new-ic_old:+.4f})  {'✅ 不劣' if ic_ok else '❌ 变劣'}")
     print(f"判据2 top10%:   旧 WR {result['criterion_2_top_decile']['top_by_old']['winrate']:.1%} E[r] {result['criterion_2_top_decile']['top_by_old']['mean_t10_return']:+.2%}"

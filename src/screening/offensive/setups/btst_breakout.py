@@ -186,21 +186,24 @@ def _compute_absolute_low_vol_score(prices: pd.DataFrame, trigger_idx: int) -> f
 
 
 def _compute_volume_score(prices: pd.DataFrame, trigger_idx: int) -> float:
-    """成交量因子评分 (0~1), 基于 2409 涨停样本历史回测 (2026-07, 626 只).
+    """成交量因子评分 (0~1) — 2026-08-09 连续重标定 (factor_audit Q2).
 
-    回测结论:
-      1.0-1.2x: 61.4% 胜率 / +6.05%  → 1.0 (最佳成交量区)
-      0.8-1.0x: 58.2% / +5.38%        → 0.9
-      1.2-1.5x: 59.8% / +5.84%        → 0.9
-      1.5-2.0x: 55.6% / +4.91%        → 0.4 (噪讯区, 无增量 α)
-      0.5-0.8x: 49.7% / +2.82%        → 0.0 (回避区, 无 α)
-      <0.5: 极低量偏弱 (非中性)       → 0.4 (2026-07-19 实测 price-eligible n=190 WR43.2%/E[r]-0.06%, 勿 flip→0.5)
-      >5.0: 样本不足                  → 0.5 (中性)
+    旧实现是 2026-07 小样本的离散阶梯 (1.0-1.2x→1.0 称"最佳" 61.4% 胜率), 全量复核
+    (factor_audit, n=17994) 发现 0.9/1.0 映射倒挂 — 给 1.0 的桶实测胜率不高于给 0.9 的.
+    细桶 + split-half 跨窗证据 (T+1 open -> T+10 close, execution-adjusted):
+      <0.5x:      WR 33-41% E[r] 负   (极度缩量, 跨窗一致差)     → 0.0
+      0.5-0.7x:   WR ~42%            (缩量, 偏弱)                → 0.4
+      0.7-2.0x:   WR 43-45% E[r]+0.1~0.6% (温和放量=最佳平台)    → 1.0
+      2.0-3.0x:   WR ~43%            (放量, 尚可)                → 0.6
+      >=3.0x:     WR 38% E[r] 负     (过度换手, 跨窗一致差)      → 0.2
+    连续 volume_ratio 直接映射 (中抬两端的倒 U), 消除旧阶梯 0.8-1.0x 被低估的倒挂.
+    采纳前已过 strength_formula_ab A/B: rank IC Δ+0.0092, 换血方向正确, 秩相关 0.94.
+    见 data/reports/q2_volume_recalib_formula_ab.json.
 
-    第一性原理 (修正后):
+    第一性原理 (不变):
     - A 股涨停本质是多空博弈锁定: 缩量涨停 ≠ 弱势 (可以是筹码锁定)
-    - 放量涨停可能代表抛压大 / 筹码换手 → 后续回撤风险高
-    - 最优量 = 温和放量 (刚好够 drive price up 但不过度换手)
+    - 温和放量 (0.7-2.0x) = 刚好够 drive price up 但不过度换手 = 最优
+    - 过度放量 (>=3.0x) = 抛压大/换手过高 → 后续回撤风险高
     """
     if prices is None or len(prices) < 2:
         return 0.5
@@ -223,18 +226,14 @@ def _compute_volume_score(prices: pd.DataFrame, trigger_idx: int) -> float:
         ratio = today_vol / avg_vol
 
         if ratio < 0.5:
-            return 0.4  # 极低量, 略弱
-        if ratio < 0.8:
-            return 0.0  # 回避区: 49.7% 胜率 ≈ 无 α
-        if ratio < 1.0:
-            return 0.9  # 优质区: 58.2%
-        if ratio < 1.2:
-            return 1.0  # 最佳区: 61.4%
-        if ratio < 1.5:
-            return 0.9  # 优质区: 59.8%
+            return 0.0  # 极度缩量, 跨窗一致差
+        if ratio < 0.7:
+            return 0.4  # 缩量偏弱
         if ratio < 2.0:
-            return 0.4  # 噪讯区: 55.6%, 收益摊薄
-        return 0.3  # >2.0x: 换手率过高, 55.1% 但收益显著偏低 (+2.83%)
+            return 1.0  # 温和放量最佳平台 (0.7-2.0x)
+        if ratio < 3.0:
+            return 0.6  # 放量尚可
+        return 0.2  # >=3.0x 过度换手, 跨窗一致差
     except Exception:
         return 0.5
 
@@ -420,13 +419,9 @@ class BtstBreakoutSetup(Setup):
         pre_window = prices.iloc[ref_idx : trigger_idx]  # 5 个交易日的 OHLCV
         position_score, squeeze_score = _compute_trend_vol_scores(pre_window, prices, trigger_idx)
 
-        # ★ 成交量因子 (2026-07 历史回测: 626 只股票, 2409 涨停样本实测):
-        # 1.0-1.2x: 61.4% 胜率 / +6.05% ← 最佳
-        # 0.8-1.0x: 58.2% / +5.38%  ← 优质
-        # 1.2-1.5x: 59.8% / +5.84%  ← 优质
-        # 1.5-2.0x: 55.6% / +4.91%  ← 中性偏弱 (噪音)
-        # 0.5-0.8x: 49.7% / +2.82%  ← 回避区 (无 α)
-        # <0.5: 极低量偏弱 → 0.4 (2026-07-19 实测非中性, 勿 flip→0.5); >5.0: 样本少, 中性
+        # ★ 成交量因子: 2026-08-09 连续重标定 (factor_audit Q2), 倒 U 映射,
+        # 证据见 _compute_volume_score docstring. 旧 2026-07 阶梯的细分数据已被
+        # 全量复核证伪 (0.9/1.0 倒挂), 不再赘述.
         volume_score = _compute_volume_score(prices, trigger_idx)
 
         # energy_bonus 仅在 position+squeeze 同时=1.0 (完整弹簧释放) 时发放.

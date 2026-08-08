@@ -377,6 +377,34 @@ def test_weekday_does_not_affect_trigger_strength():
         f"weekday 不应影响 strength: weekday=0 {low} vs weekday=1 {high}")
 
 
+def test_volume_score_recalibrated_inverted_u_mapping():
+    """锚定 2026-08-09 连续重标定 (factor_audit Q2) 的倒 U 映射.
+
+    阈值由全量复核 (n=17994, split-half 跨窗一致) 定, 是数据驱动常量 — 将来会被
+    定期复核, 此测试锚定当前值防无声漂移. 构造: 今日 volume / 前20日均量 = 指定比率.
+    """
+    from src.screening.offensive.setups.btst_breakout import _compute_volume_score
+
+    def _mk(ratio: float) -> pd.DataFrame:
+        n = 25
+        vols = [1000.0] * (n - 1) + [1000.0 * ratio]  # 前 20 日均 1000, 今日 = ratio×
+        closes = [10.0] * n
+        return pd.DataFrame({"date": pd.bdate_range("2026-06-01", periods=n), "close": closes,
+                             "open": closes, "high": closes, "low": closes, "volume": vols})
+
+    idx = 24  # 今日 (最后一天)
+    assert _compute_volume_score(_mk(0.3), idx) == 0.0   # 极度缩量
+    assert _compute_volume_score(_mk(0.6), idx) == 0.4   # 缩量偏弱
+    assert _compute_volume_score(_mk(0.8), idx) == 1.0   # 温和放量 (平台)
+    assert _compute_volume_score(_mk(1.2), idx) == 1.0   # 温和放量
+    assert _compute_volume_score(_mk(1.8), idx) == 1.0   # 温和放量
+    assert _compute_volume_score(_mk(2.5), idx) == 0.6   # 放量尚可
+    assert _compute_volume_score(_mk(4.0), idx) == 0.2   # 过度换手
+    # 单调性: 平台 (1.0) 高于两端, 且 >2.0 低于平台 (倒 U 两端压)
+    assert _compute_volume_score(_mk(1.2), idx) > _compute_volume_score(_mk(0.3), idx)
+    assert _compute_volume_score(_mk(1.2), idx) > _compute_volume_score(_mk(4.0), idx)
+
+
 def test_compute_limit_up_streak_counts_consecutive_limit_ups():
     """连板数 helper: 从 trigger 日向前数连续涨停日 (含 trigger 日).
 
