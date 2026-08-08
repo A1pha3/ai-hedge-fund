@@ -726,3 +726,26 @@ def test_tampered_version_hashes_rejected() -> None:
     with pytest.raises(BrokerEnablementError) as excinfo:
         _verify(envelope, fabric, cap, tampered)
     assert excinfo.value.code == "PROFILE_HASH_MISMATCH"
+
+
+def test_profile_hash_stable_across_json_roundtrip() -> None:
+    # 运维路径守卫: 生产 profile 经 v3_broker_certify 的 profile 子命令以
+    # model_dump(mode="json") 写盘, verify 子命令再 model_validate_json 读回.
+    # 若 profile_hash() 对序列化往返不幂等, 加载后 profile_hash 会漂移,
+    # enablement 全线拒真 (fail-closed, loud DoS). 锚定往返幂等防止未来
+    # schema 变更悄悄破坏它. canonical_bytes 走 sort_keys=True, dict 序漂移
+    # 不影响 hash, 故往返必须精确相等.
+    import json
+
+    profile = _profile()
+    # 真实运维路径: dict-dump -> json text -> validate (与 _cmd_profile/
+    # _cmd_verify 的写盘/读回格式一致).
+    reloaded = BrokerCapabilityProfile.model_validate_json(
+        json.dumps(profile.model_dump(mode="json"))
+    )
+    assert reloaded.profile_hash() == profile.profile_hash()
+    # 直接 JSON 往返同样稳定 (双保险, 覆盖 model_dump_json 路径).
+    reloaded2 = BrokerCapabilityProfile.model_validate_json(
+        profile.model_dump_json()
+    )
+    assert reloaded2.profile_hash() == profile.profile_hash()
