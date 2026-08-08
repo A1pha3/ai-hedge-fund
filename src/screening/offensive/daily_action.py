@@ -597,6 +597,24 @@ def _resolve_next_trade_date(
         return ""
 
 
+def _coerce_today_yyyymmdd(today: date | str | None) -> str:
+    """Normalize an injectable "today" to ``YYYYMMDD``.
+
+    ``None`` falls back to the real wall clock — the production default.
+    Tests pass an explicit value so calendar drift can never turn them red
+    (R90 family: a test that depends on wall-clock-vs-fixture arithmetic
+    silently goes red once the calendar crosses the fixture date).
+    """
+
+    if today is None:
+        return datetime.now().strftime("%Y%m%d")
+    if isinstance(today, datetime):
+        return today.strftime("%Y%m%d")
+    if isinstance(today, date):
+        return today.strftime("%Y%m%d")
+    return str(today).replace("-", "")
+
+
 def _current_cn_datetime() -> datetime:
     """Current wall time in the A-share operating timezone."""
     return datetime.now(_CN_TZ)
@@ -1747,6 +1765,7 @@ def render_daily_action(
     *,
     closed_positions: list[dict[str, Any]] | None = None,
     explain: bool = False,
+    today: date | str | None = None,
 ) -> str:
     """渲染机械动作 (decision support, 移除情绪)。
 
@@ -1756,6 +1775,9 @@ def render_daily_action(
             默认从 tracker.last_closed_positions 读 (generate_daily_action 已缓存).
         explain: 展开术语说明 + 执行规则 (默认隐藏, 用 --verbose 调出).
             跑了一周以上的 operator 已熟记规则, 默认精简去掉每天重复的 11 行噪音.
+        today: "剩N天" / 到期释放日程的 as-of 基准. 默认 None = 真实 wall clock
+            (生产). 测试必须显式注入, 否则日历越过持仓到期日后 release 分支
+            消失、断言落空 (R90 日历漂移家族).
     """
     from colorama import Fore, Style
 
@@ -1806,7 +1828,7 @@ def render_daily_action(
 
     # as_of 用今天 (而非信号日 trade_date) — operator 关心 "从今天起还要等几天仓位释放",
     # 不是 "从信号日起过了几天". 信号日做基准会让 "剩N天" 比直觉多 2-3 天.
-    today_str = datetime.now().strftime("%Y%m%d")
+    today_str = _coerce_today_yyyymmdd(today)
     open_details = tracker.open_positions_detail(as_of=today_str, price_loader=_load_prices_for_ticker)
     if open_details:
         lines.append(f"\n  {Fore.WHITE}📌 当前持仓 ({len(open_details)} 只, 敞口 {state.open_exposure:.0%}):{Style.RESET_ALL}")

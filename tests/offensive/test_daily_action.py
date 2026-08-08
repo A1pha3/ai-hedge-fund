@@ -2590,13 +2590,71 @@ def test_render_release_schedule_says_cap_cleared_when_dropping_below_limit(tmp_
 
     tracker = PaperTracker(journal_dir=tmp_path)
     # 50% 敞口, T+10 未来到期 → 释放后敞口降到 0% (< 60% 上限) → 应说 "可恢复"
-    # buy_date 用近期日期, 确保 days_to_maturity (以今天为基准) > 0.
     tracker.record_buy("20260710", "300308", "btst_breakout", 10, 10.0, 0.50, 9.0, 9.2, "fake")
 
-    out = da.render_daily_action([], "20260710", tracker)
+    # R90 日历漂移守卫: 持仓 20260710 + T+10 ≈ 20260724 到期. 若靠真实 wall
+    # clock, 日历一旦越过 20260724 仓位即"今日到期"、release 日程分支消失,
+    # 本断言无声变红. 必须显式注入到期前的 as-of "今天", 与日历脱钩.
+    out = da.render_daily_action([], "20260710", tracker, today="20260715")
 
     assert "可恢复出新仓" in out, f"释放后敞口降回上限内, 应告诉 operator 可恢复, 实际:\n{out}"
     assert "仍超" not in out
+
+
+def test_render_release_schedule_uses_injected_today_not_wall_clock(tmp_path, monkeypatch):
+    """`today` 注入必须真正驱动 release 日程, 使渲染与真实日历完全脱钩.
+
+    R90 回归守卫: 同一笔 20260710 买入的持仓 (T+10 ≈ 20260724 到期),
+    注入到期前的 as-of 应渲染 "最近到期…可恢复出新仓" 日程; 注入到期日之后
+    的 as-of 应让该日程消失 (仓位已 "今日到期"). 两个分支都不读真实 wall clock,
+    故无论今天日历为何本测试都成立.
+    """
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
+    monkeypatch.setattr(da, "_setup_policy_lines", lambda **kw: [], raising=False)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
+
+    # 到期前 as-of: release 日程渲染, 且含 "可恢复出新仓".
+    tracker_before = PaperTracker(journal_dir=tmp_path / "before")
+    tracker_before.record_buy("20260710", "300308", "btst_breakout", 10, 10.0, 0.50, 9.0, 9.2, "fake")
+    out_before = da.render_daily_action([], "20260710", tracker_before, today="20260715")
+    assert "最近到期" in out_before and "可恢复出新仓" in out_before, (
+        f"到期前 as-of 应渲染 release 日程, 实际:\n{out_before}"
+    )
+
+    # 到期日之后 as-of: 仓位已到期, release 日程消失.
+    tracker_after = PaperTracker(journal_dir=tmp_path / "after")
+    tracker_after.record_buy("20260710", "300308", "btst_breakout", 10, 10.0, 0.50, 9.0, 9.2, "fake")
+    out_after = da.render_daily_action([], "20260710", tracker_after, today="20260808")
+    assert "可恢复出新仓" not in out_after, (
+        f"到期后 as-of 不应再有 release 日程, 实际:\n{out_after}"
+    )
+
+
+def test_render_release_schedule_default_today_uses_wall_clock(tmp_path, monkeypatch):
+    """默认 (不传 today) 仍走真实 wall clock — 生产行为不被注入参数改变.
+
+    用一个必然未到期 (相对真实今天) 的买入, 只验证不崩溃且持仓段渲染,
+    不断言具体日期, 使本测试自身也对日历免疫.
+    """
+    from datetime import datetime as _dt
+
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
+    monkeypatch.setattr(da, "_setup_policy_lines", lambda **kw: [], raising=False)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
+
+    # 买入日 = 真实今天, 到期必然在未来 → release 日程必然渲染.
+    real_today = _dt.now().strftime("%Y%m%d")
+    tracker = PaperTracker(journal_dir=tmp_path)
+    tracker.record_buy(real_today, "300308", "btst_breakout", 10, 10.0, 0.50, 9.0, 9.2, "fake")
+
+    out = da.render_daily_action([], real_today, tracker)
+    assert "当前持仓" in out and "300308" in out, f"默认 wall-clock 路径应正常渲染持仓, 实际:\n{out}"
 
 
 def test_render_candidate_list_truncates_with_rest_count(tmp_path, monkeypatch):
