@@ -1484,6 +1484,11 @@ def scan_from_verified_snapshot(
         )
 
     def flow_records(ticker: str, rows: Sequence[Any]) -> list[FundFlowRecord]:
+        # main_net_pct=0.0 是有意的诚实哨兵, 不是静默清零: snapshot 的
+        # FrozenFlowRow 只持久化 main_net_inflow (daily_action_snapshot.py),
+        # 根本不带 main_net_pct —— 该字段在此数据源中不存在. 从别处补真实 pct
+        # 会绕过 provenance gate (本次扫描必须只消费 verified snapshot), 故填
+        # 0.0 表示 "本路径无此数据". 下游不得把它当作真实资金流比率解读.
         return [
             FundFlowRecord(
                 ticker=ticker,

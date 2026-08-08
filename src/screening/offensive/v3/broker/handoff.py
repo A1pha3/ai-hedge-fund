@@ -16,6 +16,12 @@ permanently invalid: any subsequent send under it is fenced.
 If the broker cannot revoke an old session, handoff cannot complete and
 entry stays fenced (DRAINING/BROKER_RECONCILED hold); only exit, query,
 and reconcile may continue.
+
+The legal state order is linear and enforced per-method by ``_require``:
+
+    ACTIVE -> DRAINING -> BROKER_RECONCILED -> HANDOFF_COMPLETE
+    HANDOFF_COMPLETE -> ACTIVE   (only via activate_new_writer, re-arming
+                                  a fresh writer under the new epoch)
 """
 
 from __future__ import annotations
@@ -38,14 +44,6 @@ class HandoffState(StrEnum):
     DRAINING = "draining"
     BROKER_RECONCILED = "broker_reconciled"
     HANDOFF_COMPLETE = "handoff_complete"
-
-
-_VALID_TRANSITIONS: dict[HandoffState, frozenset[HandoffState]] = {
-    HandoffState.ACTIVE: frozenset({HandoffState.DRAINING}),
-    HandoffState.DRAINING: frozenset({HandoffState.BROKER_RECONCILED}),
-    HandoffState.BROKER_RECONCILED: frozenset({HandoffState.HANDOFF_COMPLETE}),
-    HandoffState.HANDOFF_COMPLETE: frozenset(),
-}
 
 
 @dataclass(frozen=True)
@@ -122,6 +120,17 @@ class WriterHandoff:
         """Advance DRAINING -> BROKER_RECONCILED once no live/ambiguous remain."""
 
         self._require(HandoffState.DRAINING, "report_drained")
+        # Conservation cross-check against begin_drain: a drain can only ever
+        # reduce the in-flight count. Reporting more remaining than the old
+        # worker declared at drain start means orders materialized out of
+        # nowhere — fail closed rather than hand off on an impossible count.
+        if remaining_live > self._live_orders or remaining_ambiguous > self._ambiguous_orders:
+            raise HandoffError(
+                "HANDOFF_DRAIN_INFLATED",
+                f"drain reports remaining live={remaining_live}/"
+                f"ambiguous={remaining_ambiguous} above begin_drain "
+                f"{self._live_orders}/{self._ambiguous_orders}",
+            )
         if remaining_live > 0:
             raise HandoffError(
                 "LIVE_ORDER_REMAINS",

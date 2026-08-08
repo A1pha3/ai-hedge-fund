@@ -122,6 +122,48 @@ def test_ambiguous_order_remaining_blocks_handoff() -> None:
     assert excinfo.value.code == "AMBIGUOUS_ORDER_REMAINS"
 
 
+# -- drain conservation cross-check (m2) ------------------------------------
+
+
+def test_drain_cannot_report_more_live_than_begin_drain() -> None:
+    """remaining_live 超过 begin_drain 声明数 = 凭空多出订单, fail closed."""
+
+    h = WriterHandoff()
+    h.begin_drain(live_orders=1, ambiguous_orders=0)
+    with pytest.raises(HandoffError) as excinfo:
+        h.report_drained(remaining_live=2, remaining_ambiguous=0)
+    assert excinfo.value.code == "HANDOFF_DRAIN_INFLATED"
+    # 仍在 DRAINING, 未前进.
+    assert h.state is HandoffState.DRAINING
+
+
+def test_drain_cannot_report_more_ambiguous_than_begin_drain() -> None:
+    h = WriterHandoff()
+    h.begin_drain(live_orders=0, ambiguous_orders=1)
+    with pytest.raises(HandoffError) as excinfo:
+        h.report_drained(remaining_live=0, remaining_ambiguous=3)
+    assert excinfo.value.code == "HANDOFF_DRAIN_INFLATED"
+
+
+def test_drain_within_declared_count_still_blocked_by_positive_remaining() -> None:
+    """守恒核对不遮蔽既有守卫: 剩余在声明数内但仍 >0 时按 LIVE_ORDER_REMAINS."""
+
+    h = WriterHandoff()
+    h.begin_drain(live_orders=2, ambiguous_orders=0)
+    with pytest.raises(HandoffError) as excinfo:
+        h.report_drained(remaining_live=1, remaining_ambiguous=0)
+    assert excinfo.value.code == "LIVE_ORDER_REMAINS"
+
+
+def test_drain_zero_remaining_within_declared_count_advances() -> None:
+    """守恒核对不误伤正常路径: 声明 2, 全 drained → 正常前进."""
+
+    h = WriterHandoff()
+    h.begin_drain(live_orders=2, ambiguous_orders=1)
+    h.report_drained(remaining_live=0, remaining_ambiguous=0)
+    assert h.state is HandoffState.BROKER_RECONCILED
+
+
 # -- fence proof -----------------------------------------------------------
 
 
