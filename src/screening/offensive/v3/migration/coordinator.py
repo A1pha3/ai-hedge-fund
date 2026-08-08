@@ -156,6 +156,15 @@ class MigrationCoordinator:
             return MigrationState.DISCOVERED
         return MigrationState(row["state"])
 
+    def _source_root_or_pending(self) -> str:
+        """源尚不存在 (迁移前) 时返回全零根, 不做 InventoryError 硬失败."""
+
+        if not self._source_path.exists():
+            return "0" * 64
+        return capture_v2_inventory(
+            self._source_path, ledger_id=self._ledger_id
+        ).source_root
+
     def advance(self, target: MigrationState) -> StateRecord:
         current = self.current_state()
         if _INDEX[target] < _INDEX[current]:
@@ -168,9 +177,7 @@ class MigrationCoordinator:
                 ILLEGAL_TRANSITION,
                 f"cannot skip {current} -> {target}",
             )
-        root = capture_v2_inventory(
-            self._source_path, ledger_id=self._ledger_id
-        ).source_root
+        root = self._source_root_or_pending()
         entered = self._clock()
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
