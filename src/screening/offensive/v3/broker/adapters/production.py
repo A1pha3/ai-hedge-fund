@@ -17,6 +17,10 @@ from typing import TYPE_CHECKING
 from src.screening.offensive.v3.broker.ports import BrokerPort
 
 if TYPE_CHECKING:
+    from src.screening.offensive.v3.broker.capabilities import (
+        BrokerCapabilityProfile,
+        VerifiedBrokerEnablement,
+    )
     from src.screening.offensive.v3.broker.ports import (
         BrokerAccountBinding,
         BrokerRawEnvelope,
@@ -45,6 +49,28 @@ class ProductionBrokerAdapter(BrokerPort):
             "production broker adapter is disabled until capability"
             " certification and a signed BrokerEnablementManifest complete",
         )
+
+    @classmethod
+    def from_profile(
+        cls,
+        profile: BrokerCapabilityProfile,
+        *,
+        enablement: VerifiedBrokerEnablement | None = None,
+    ) -> ProductionBrokerAdapter:
+        """Load one frozen capability profile.
+
+        The adapter may only construct when a verified
+        ``BrokerEnablementManifest`` binds the profile field-for-field.
+        Until that proof is supplied construction stays disabled.
+        """
+
+        if enablement is None:
+            raise ProductionAdapterError(
+                "BROKER_ADAPTER_NOT_CERTIFIED",
+                "a profile alone does not enable the adapter; a verified"
+                " BrokerEnablementManifest is required",
+            )
+        return cls()
 
     @property
     def account(self) -> BrokerAccountBinding:

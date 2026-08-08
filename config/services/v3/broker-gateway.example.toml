@@ -1,0 +1,53 @@
+# Plan 07 Task 2 — Broker Gateway 服务配置示例。
+#
+# 这是【示例】配置; 复制为 broker-gateway.toml 后按本机环境调整。
+# 所有路径相对 repo root (也可填绝对路径)。详见
+# docs/runbooks/v3-broker-gateway.md。
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# 安全边界 (disabled-by-default)
+# ─────────────────────────────────────────────────────────────────────────────
+# 默认生产 adapter 为 disabled; 在选定券商、账户环境、API 版本、合规和
+# sandbox/小额实测完成前, BROKER_CONFIRMED startup 必须失败。
+# CLI/Agent/producer/Governance/Authorizer 不持有 broker credential、adapter
+# key、network egress 或 Capital Gateway writable DSN — 这些【privileged】
+# 字段不在本配置内, 由独立 broker worker 进程持有。
+
+[broker]
+# 启用前必须为 true 且配套一个经 verify_broker_enablement 验证的清单。
+enabled = false
+# 冻结的 BrokerCapabilityProfile JSON 路径 (scripts/v3_broker_certify.py
+# profile 子命令产出)。production adapter 只加载这一个 profile, 其 hash 被
+# BrokerEnablementManifest 绑定。
+capability_profile = "data/v3_broker/profile.json"
+# 签名的 BrokerEnablementManifest envelope 路径 (双人批准, one-shot)。
+enablement_manifest = "data/v3_broker/enablement.signed.json"
+
+[broker.account]
+# 必须与 portfolio binding 精确相等: account/environment/currency/endpoint。
+account_id = "<broker-account-id>"
+environment = "sandbox"
+currency = "CNY"
+# endpoint / certificate 的 sha256 fingerprint。
+endpoint_fingerprint = "<64-hex-sha256>"
+
+[broker.durable_stores]
+# 所有 authenticated raw response 先写 durable broker inbox, 再 normalize。
+raw_inbox = "data/v3_broker/raw_inbox.sqlite3"
+# normalized execution revisions (Plan 02 入账)。
+execution_revisions = "data/v3_broker/exec_revisions.sqlite3"
+
+[broker.scheduler]
+# 独立 entry/exit/cancel/query 队列与限流预算 (Plan 07 Task 6)。
+entry_budget_per_minute = 10
+exit_budget_per_minute = 10
+query_budget_per_minute = 30
+
+[broker.handoff]
+# writer handoff fencing epoch (Plan 07 Task 7)。
+fencing_epoch_path = "data/v3_broker/fencing_epoch"
+
+[broker.disaster_recovery]
+# signed DisasterRecoveryManifest (Plan 07 Task 8)。
+recovery_manifest = "data/v3_broker/dr.signed.json"
+backup_root = "data/v3_broker/backup/"
