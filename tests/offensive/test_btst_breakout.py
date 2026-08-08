@@ -339,13 +339,14 @@ def test_compute_limit_up_streak_counts_consecutive_limit_ups():
     assert _compute_limit_up_streak(_df([0.0] * 10 + [20.0, 20.0]), 11, 19.5) == 2
 
 
-def test_streak_bonus_for_two_consecutive_limit_ups():
-    """连板数因子 (2026-07-19 实证, 9497 涨停样本 price-eligible): 2连板给 +0.04 streak_bonus.
+def test_no_streak_bonus_for_two_consecutive_limit_ups():
+    """回归守卫 (2026-08-08): 2连板不再给 streak_bonus — 因子正当性已反转.
 
-    首板 n=9019 WR45.5%/E+0.98% vs 2连板 n=456 WR48.0%/E+2.20% (+2.5pp WR).
-    但 streak×volume 交叉表显示 edge 部分被 volume_score 吸收 (2连板本就偏高量), 且
-    条件桶 n=58-137 噪讯 → 取 energy_bonus 半量 (+0.04, 单条件 vs energy 双条件).
-    3+连板 WR22.7% (高位连板破裂=反转, 暂不给 bonus).
+    streak_bonus=0.04 当初 (7/19) 凭 9497 样本「2连板 WR48.0% > 首板 45.5%」落地.
+    但 2026-08-08 全量复核 (1442 票 / 21232 涨停信号日 / 至 2026-08-07) 双口径
+    同向反转: 2连板 WR 39.0% vs 首板 43.3% (−4.25pp raw / −4.47pp exec-adjusted),
+    E[r] 同步走弱. 因子前提不再成立 → 移除 streak_bonus, streak 仅作 metadata 观测.
+    见 data/reports/streak_factor_revalidation.json.
 
     构造 2连板且过 pre_runup≤8%: T-5 close 10.0 → 先跌至 9.5 (T-2) 再连两涨停
     (9.5→10.45→11.495). pre_runup close[T-1]/close[T-5] = 10.45/10.0 = +4.5%.
@@ -376,9 +377,10 @@ def test_streak_bonus_for_two_consecutive_limit_ups():
 
     result = BtstBreakoutSetup().detect("X", today, ctx)
     assert result.hit is True
+    # streak 仍被计算并暴露供观测, 但不再影响 trigger_strength.
     assert result.metadata["limit_up_streak"] == 2, "构造为 2连板 (T-1+T 均涨停)"
 
-    # 用同一组 helper 重算 base 公式, 证明 strength == base + 0.08 (streak_bonus 实际生效).
+    # 用同一组 helper 重算 base 公式, 断言 strength == base (streak_bonus 已移除).
     trigger_idx = len(prices) - 1
     pre_window = prices.iloc[trigger_idx - 5 : trigger_idx]
     position_score, squeeze_score = _compute_trend_vol_scores(pre_window, prices, trigger_idx)
@@ -387,11 +389,9 @@ def test_streak_bonus_for_two_consecutive_limit_ups():
     volume_score = _compute_volume_score(prices, trigger_idx)
     base = min(1.0, 0.20 * weekday_score + 0.20 * board_score + 0.20 * position_score
                + 0.20 * squeeze_score + 0.20 * volume_score)
-    # streak=2 → +0.04; position=0.0 (T-1 close 在 5 日窗口顶部) → energy_bonus=0
-    expected = min(1.0, base + 0.04)
-    assert abs(result.trigger_strength - expected) < 1e-9, (
-        f"2连板应得 +0.04 streak_bonus: got {result.trigger_strength}, expected {expected}, base {base}")
-    assert abs(result.trigger_strength - base) >= 0.039, "streak_bonus 必须非零实际生效"
+    # streak=2 不再给 bonus; position=0.0 (T-1 close 在 5 日窗口顶部) → energy_bonus=0
+    assert abs(result.trigger_strength - base) < 1e-9, (
+        f"streak_bonus 已移除, 2连板不应改变 strength: got {result.trigger_strength}, base {base}")
 
 
 def test_no_streak_bonus_for_high_streaks():

@@ -242,11 +242,10 @@ def _compute_volume_score(prices: pd.DataFrame, trigger_idx: int) -> float:
 def _compute_limit_up_streak(prices: pd.DataFrame, trigger_idx: int, limit_up_pct: float) -> int:
     """计算截至 trigger_idx 的连续涨停天数 (连板数, 含 trigger 日本身).
 
-    第一性原理: A 股连板数是动量阶段最强预测因子之一。9497 涨停样本 price-eligible
-    回测 (2026-07-19): 首板 n=9019 WR45.5%/E[r]+0.98% | 2连板 n=456 WR48.0%/E[r]+2.20%
-    (+2.5pp WR, 动量确认但未过热) | 3+连板 n=22 WR22.7%/E[r]-4.34% (高位连板破裂=反转)。
-    故 streak==2 给 +0.04 bonus (见 detect; 经 streak×volume 交叉表对抗性校准, 证据偏弱且体积相关→半能量级), streak>=3 暂不给 (样本小且部分被 T+1 续涨停
-    自滤), 仅暴露 metadata 供后续复核。
+    2026-08-08 复核后仅作 metadata 观测, 不再进 trigger_strength: 当初的
+    streak_bonus=0.04 (7/19, 凭 9497 样本 2连板 WR48.0% > 首板 45.5%) 在全量复核
+    (1442 票/21232 信号日/至 2026-08-07) 下双口径反转 (2连板 WR 39.0% vs 首板 43.3%),
+    因子前提不再成立, bonus 已移除. 见 data/reports/streak_factor_revalidation.json.
 
     Args:
         prices: 单 ticker 价格 DataFrame (需含 pct_change 列)
@@ -432,18 +431,14 @@ class BtstBreakoutSetup(Setup):
         # 两 score 取值集合 {0.0, 0.5, 1.0}; ``>= 1.0`` == "都到满正值" 即文档意图.
         energy_bonus = 0.08 if position_score >= 1.0 and squeeze_score >= 1.0 else 0.0
 
-        # ★ 连板数因子 (2026-07-19 实证, 9497 涨停样本 price-eligible universe):
-        # 2连板 (streak=2) 给 +0.04 streak_bonus. unconditional WR48.0%/E[r]+2.20% vs 首板
-        # WR45.5%/+0.98% (+2.5pp WR); 但 streak×volume 交叉表 (对抗性审查) 显示 edge 部分
-        # 被 volume_score 吸收 — 2连板本就偏高量 (median 1.83 vs 首板 1.76), 控制体积后
-        # 0.5-1.5x 桶 +1.67pp (独立信号存在), 0.8-1.2x 桶 n=58 反转 -1.24pp (噪讯).
-        # 故取 energy_bonus 一半: streak 单条件 vs energy 双条件 (position+squeeze 同=1),
-        # 证据偏弱且体积相关 → 保守 +0.04. streak>=3 不给 (WR22.7% 高位连板破裂=反转,
-        # n=22 小, 部分被 T+1 续涨停 is_limit_up_unbuyable_next_day 自滤).
-        # 仅在池内重排序不改入池集合 → 低风险; 量级可经 dogfood 观测后再调。
+        # ★ 连板数因子 — 2026-08-08 因子复核后移除 streak_bonus.
+        # 当初 (7/19, commit 8c7fc078) 凭 9497 涨停样本「2连板 WR48.0% > 首板 45.5%」给
+        # streak==2 +0.04. 但全量复核 (1442 票 / 21232 涨停信号日 / 至 2026-08-07) 双口径
+        # 同向反转: 2连板 WR 39.0% vs 首板 43.3% (−4.25pp raw / −4.47pp exec-adjusted),
+        # E[r] 同步走弱. 因子前提不再成立 → streak 不再进 trigger_strength, 仅作 metadata
+        # 暴露供 dogfood 观测. 见 data/reports/streak_factor_revalidation.json.
         streak = _compute_limit_up_streak(prices, trigger_idx, limit_up_pct)
-        streak_bonus = 0.04 if streak == 2 else 0.0
-        strength = min(1.0, 0.20 * weekday_score + 0.20 * board_score + 0.20 * position_score + 0.20 * squeeze_score + 0.20 * volume_score + energy_bonus + streak_bonus)
+        strength = min(1.0, 0.20 * weekday_score + 0.20 * board_score + 0.20 * position_score + 0.20 * squeeze_score + 0.20 * volume_score + energy_bonus)
 
         return DetectionResult(
             hit=True,
