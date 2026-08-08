@@ -198,7 +198,72 @@ def test_unknown_quantity_enqueues_query_and_sells_zero() -> None:
     assert sched.queue_depth(WorkKind.QUERY) == 1
     # The exit is deferred (re-enqueued) pending truth.
     assert sched.queue_depth(WorkKind.EXIT) == 1
-    assert result.budget_remaining["exit"] == 2  # exit budget not consumed
+    # The executor invocation consumed a broker round-trip, so the exit
+    # budget is NOT refunded (audit M2): a consumed attempt cannot fund a
+    # second exit in the same cycle.
+    assert result.budget_remaining["exit"] == 1
+
+
+def test_unknown_quantity_does_not_double_spend_exit_budget() -> None:
+    """A consumed-but-unknown exit attempt must not free budget for a second
+    real exit in the same cycle (audit M2)."""
+    clock = Clock()
+    sched = BrokerLifecycleScheduler(
+        entry_budget=2, exit_budget=1, query_budget=2, reconcile_budget=2,
+        cutoff=CUTOFF, clock=clock,
+    )
+    sched.enqueue(WorkItem(WorkKind.EXIT, "x1", sellable_quantity_units=None))
+    sched.enqueue(WorkItem(WorkKind.EXIT, "x2"))
+    # x1 returns unknown; x2 must NOT run (budget already consumed by x1).
+    result = sched.run_cycle(
+        ScriptedExecutor([ExecutionOutcome.UNKNOWN_QUANTITY])
+    )
+    assert result.submitted == ()
+    assert any(i.item_id == "x1" for i in result.deferred)
+    assert any(i.item_id == "x2" for i in result.deferred)
+    # Exit budget was consumed by the unknown attempt, not double-spent.
+    assert result.budget_remaining["exit"] == 0
+
+
+def test_unknown_quantity_dedups_query_and_escalates_to_reconcile() -> None:
+    """A persistently unknown exit must not livelock: queries are deduped and
+    after the retry bound the exit escalates to RECONCILE (audit M3)."""
+    clock = Clock()
+    sched = BrokerLifecycleScheduler(
+        entry_budget=2, exit_budget=2, query_budget=100, reconcile_budget=100,
+        cutoff=CUTOFF, clock=clock, max_unknown_retries=2,
+    )
+    sched.enqueue(WorkItem(WorkKind.EXIT, "x1", sellable_quantity_units=None))
+    outcomes = [ExecutionOutcome.UNKNOWN_QUANTITY] * 50
+    # Drive several cycles; the exit keeps reporting unknown.
+    for _ in range(4):
+        sched.run_cycle(ScriptedExecutor(list(outcomes)))
+    # The exit left the retry loop (escalated, not deferred forever) and did
+    # NOT livelock: exit duty count never compounded.
+    assert sched.queue_depth(WorkKind.EXIT) == 0
+    # The reconciliation obligation persists exactly once (not exponentially),
+    # and the unknown-quantity query is deduped to at most one per item.
+    assert sched.queue_depth(WorkKind.RECONCILE) <= 1
+    assert sched.queue_depth(WorkKind.QUERY) <= 1
+    # No executor-budget explosion: the exit was never double-spent.
+    assert sched.queue_depth() <= 2
+
+
+def test_unknown_quantity_escalation_surfaces_reconcile() -> None:
+    """Once the retry bound is exceeded, the cycle surfaces the escalation so
+    the operator can act (audit M3): the exit is reported as an escalation."""
+    clock = Clock()
+    sched = BrokerLifecycleScheduler(
+        entry_budget=2, exit_budget=2, query_budget=100, reconcile_budget=100,
+        cutoff=CUTOFF, clock=clock, max_unknown_retries=1,
+    )
+    sched.enqueue(WorkItem(WorkKind.EXIT, "x1", sellable_quantity_units=None))
+    outcomes = [ExecutionOutcome.UNKNOWN_QUANTITY] * 50
+    escalations: list[str] = []
+    for _ in range(3):
+        result = sched.run_cycle(ScriptedExecutor(list(outcomes)))
+        escalations.extend(result.escalations)
+    assert "x1" in escalations
 
 
 # -- correction-driven exit reopen ------------------------------------------

@@ -261,6 +261,22 @@ class ExecutionNormalizer:
             )
             return NormalizeResult(revisions=(), halts=(halt,), final_state=state)
 
+        # A quantity-only correction that omits the corrected economics is
+        # ambiguous: "omitted" is indistinguishable from an explicit zero, so
+        # defaulting it to 0 would silently erase booked cost basis. Fail
+        # closed instead of fabricating notional/fee (audit C2).
+        if obs.corrected_notional_cents is None or obs.corrected_fee_cents is None:
+            halt = NormalizationHalt(
+                code=NormalizationHaltCode.CORRECTION_REDUCES_BELOW_ZERO,
+                client_order_id=obs.client_order_id,
+                message=(
+                    "correction must carry the corrected notional and fee;"
+                    " omitting them cannot be defaulted to zero"
+                ),
+                source_envelope_hash=obs.source_envelope_hash,
+            )
+            return NormalizeResult(revisions=(), halts=(halt,), final_state=state)
+
         # Step 1: bust the active cumulative to zero (inverse economics).
         bust_qty = -state.cumulative_quantity_units
         bust_notional = -state.cumulative_notional_cents
@@ -281,8 +297,8 @@ class ExecutionNormalizer:
         )
         # Step 2: apply the corrected cumulative from zero.
         corrected_qty = obs.corrected_quantity_units
-        corrected_notional = obs.corrected_notional_cents or 0
-        corrected_fee = obs.corrected_fee_cents or 0
+        corrected_notional = obs.corrected_notional_cents
+        corrected_fee = obs.corrected_fee_cents
         if corrected_qty < 0:
             halt = NormalizationHalt(
                 code=NormalizationHaltCode.CORRECTION_REDUCES_BELOW_ZERO,

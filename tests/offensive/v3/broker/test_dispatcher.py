@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 from dataclasses import replace as dc_replace
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -210,7 +211,90 @@ def test_crash_after_claim_resumes_via_resend(tmp_path) -> None:
     assert outcome.delivery is DeliveryOutcome.BROKER_ACK
 
 
-# -- Gateway-truth rejections happen at the claim boundary ------------------
+# -- reject is never an ACK (audit C1) ----------------------------------------
+
+
+def test_broker_reject_is_not_an_ack(tmp_path) -> None:
+    """A durable REJECT must not let the entry claim BROKER_ACK (audit C1)."""
+    actions = [
+        FakeAction.reject(broker_code="INSUFFICIENT_FUNDS"),
+        FakeAction.ack(broker_order_id="B-2"),
+    ]
+    dispatcher, rig, inbox = _rig_and_dispatcher(tmp_path, _scripted(actions))
+    outcome = dispatcher.run_once(
+        rig.permit, rig.permit.send_claim_expected_versions,
+        context=rig.claim_context,
+    )
+    # The rejected line is terminal but NOT accepted → the entry stays
+    # ambiguous pending reconciliation; it never claims full BROKER_ACK.
+    assert outcome.delivery is DeliveryOutcome.SUBMISSION_AMBIGUOUS
+    statuses = {s.client_order_id: s.status for s in outcome.submissions}
+    assert statuses["client-line-1"] == "rejected"
+    assert statuses["client-line-2"] == "acked"
+    assert inbox.count() == 2  # both receipts durably persisted
+    assert rig.gateway.entry_state(rig.seal.seal_id).status == "SUBMISSION_AMBIGUOUS"
+
+
+def test_resend_after_reject_never_promotes_to_ack(tmp_path) -> None:
+    """A reject followed by a successful resend of the other line still must
+    not promote the entry to BROKER_ACK (audit C1)."""
+    actions = [
+        FakeAction.reject(broker_code="INSUFFICIENT_FUNDS"),
+        FakeAction.timeout(),
+        FakeAction.ack(broker_order_id="B-2"),
+    ]
+    dispatcher, rig, inbox = _rig_and_dispatcher(tmp_path, _scripted(actions))
+    first = dispatcher.run_once(
+        rig.permit, rig.permit.send_claim_expected_versions,
+        context=rig.claim_context,
+    )
+    assert first.delivery is DeliveryOutcome.SUBMISSION_AMBIGUOUS
+    # Resend retries only the timed-out line; the rejected line is terminal.
+    second = dispatcher.resend(rig.permit, context=rig.claim_context)
+    assert [s.client_order_id for s in second.submissions] == ["client-line-2"]
+    # Even though every line now holds a terminal receipt, line-1 was REJECTED,
+    # so the entry must remain ambiguous rather than claim BROKER_ACK.
+    assert second.delivery is DeliveryOutcome.SUBMISSION_AMBIGUOUS
+    assert rig.gateway.entry_state(rig.seal.seal_id).status == "SUBMISSION_AMBIGUOUS"
+
+
+# -- resend preconditions: certified idempotency + broker cutoff (audit M4) ---
+
+
+def test_resend_after_cutoff_refused(tmp_path) -> None:
+    """A resend past the broker cutoff must be refused, not re-fired (M4)."""
+    actions = [FakeAction.timeout(), FakeAction.timeout()]
+    dispatcher, rig, inbox = _rig_and_dispatcher(tmp_path, _scripted(actions))
+    dispatcher.run_once(
+        rig.permit, rig.permit.send_claim_expected_versions,
+        context=rig.claim_context,
+    )
+    with pytest.raises(DispatcherError) as excinfo:
+        dispatcher.resend(
+            rig.permit,
+            context=rig.claim_context,
+            broker_cutoff=PERMIT_EXPIRES,
+            now=PERMIT_EXPIRES + timedelta(minutes=5),  # past cutoff
+        )
+    assert excinfo.value.code == "BROKER_CUTOFF_PASSED"
+
+
+def test_resend_without_certified_idempotency_refused(tmp_path) -> None:
+    """A resend whose client-id idempotency is not certified is refused (M4)."""
+    actions = [FakeAction.timeout(), FakeAction.timeout()]
+    dispatcher, rig, inbox = _rig_and_dispatcher(tmp_path, _scripted(actions))
+    dispatcher.run_once(
+        rig.permit, rig.permit.send_claim_expected_versions,
+        context=rig.claim_context,
+    )
+    with pytest.raises(DispatcherError) as excinfo:
+        dispatcher.resend(
+            rig.permit,
+            context=rig.claim_context,
+            certified_idempotent=False,
+        )
+    assert excinfo.value.code == "IDEMPOTENCY_UNPROVEN"
+
 
 
 def test_stale_risk_halt_blocks_claim_and_sends_nothing(tmp_path) -> None:

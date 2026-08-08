@@ -54,7 +54,7 @@ class LineSubmission:
     client_order_id: str
     security_id: str
     quantity_units: int
-    status: Literal["acked", "timeout"]
+    status: Literal["acked", "rejected", "timeout"]
     raw_revision: int | None
 
 
@@ -90,13 +90,16 @@ class BrokerDispatcher:
             )
 
     def _acked_client_ids(self) -> frozenset[str]:
-        """Client ids that already hold a durable authenticated receipt.
+        """Client ids holding a durable authenticated terminal receipt.
 
-        Derived from the durable inbox so it survives a dispatcher restart:
-        a line with a persisted submit receipt is done and is never resent.
+        Derived from the durable inbox so it survives a dispatcher restart.
+        Both ``order_ack`` (accepted) and ``order_reject`` (refused) receipts
+        make a line terminal: neither is ever resent. Critically, a REJECT is
+        NOT an acceptance — it only means the line is finished, so it must
+        never allow the entry to claim ``BROKER_ACK``.
         """
 
-        acked: set[str] = set()
+        terminal: set[str] = set()
         for record in self.inbox.iter_all():
             payload = record.envelope.payload
             client_id = payload.get("client_order_id")
@@ -105,8 +108,24 @@ class BrokerDispatcher:
                 isinstance(client_id, str)
                 and kind in {"order_ack", "order_reject"}
             ):
-                acked.add(client_id)
-        return frozenset(acked)
+                terminal.add(client_id)
+        return frozenset(terminal)
+
+    def _rejected_client_ids(self) -> frozenset[str]:
+        """Client ids holding a durable authenticated REJECT receipt.
+
+        A rejected line is proof of refusal; it must never be folded into an
+        entry-level ``BROKER_ACK``, even after a later resend re-reads the
+        inbox.
+        """
+
+        rejected: set[str] = set()
+        for record in self.inbox.iter_all():
+            payload = record.envelope.payload
+            client_id = payload.get("client_order_id")
+            if isinstance(client_id, str) and payload.get("kind") == "order_reject":
+                rejected.add(client_id)
+        return frozenset(rejected)
 
     def _commands_for(
         self,
@@ -179,12 +198,18 @@ class BrokerDispatcher:
         record = self.inbox.append(
             envelope, envelope_id=f"submit:{client_id}:{envelope.source_sequence}"
         )
+        # An authenticated envelope is a durable receipt, but only an
+        # order_ack is a broker acceptance. A broker REJECT is durable proof
+        # the line was refused: it is never an ACK, never resent, and never
+        # lets the entry claim BROKER_ACK (the entry stays ambiguous pending
+        # reconciliation rather than misrepresenting a rejected line as held).
+        status = "acked" if envelope.payload.get("kind") == "order_ack" else "rejected"
         return LineSubmission(
             order_line_id=order_line_id,
             client_order_id=client_id,
             security_id=command.security_id,
             quantity_units=command.quantity_units,
-            status="acked",
+            status=status,
             raw_revision=record.revision,
         )
 
@@ -199,11 +224,7 @@ class BrokerDispatcher:
             self._send_one(line_id, client_id, command)
             for line_id, client_id, command in commands
         )
-        delivery = (
-            DeliveryOutcome.BROKER_ACK
-            if all(sub.status == "acked" for sub in submissions)
-            else DeliveryOutcome.SUBMISSION_AMBIGUOUS
-        )
+        delivery = self._delivery_for(permit, submissions)
         self.gateway.record_delivery_outcome(
             claimed.seal_id,
             delivery,
@@ -217,15 +238,61 @@ class BrokerDispatcher:
             submissions=submissions,
         )
 
-    def resend(self, permit, *, context) -> DispatchOutcome:
-        """Retry the EXACT claimed client ids still lacking a durable ACK.
+    def _delivery_for(
+        self, permit, submissions: tuple[LineSubmission, ...]
+    ) -> DeliveryOutcome:
+        """Fail-closed delivery truth across the permit's lines.
 
-        The send right is already claimed (in-flight risk); resend reuses
-        the same client ids and payload for every line that does NOT yet
-        hold a durable authenticated receipt. Lines already acked are never
-        resent (no double-submit). Generating a new client id is forbidden.
-        If the deadlines have expired the caller must query, cancel, or
-        reconcile instead.
+        ``BROKER_ACK`` requires every permit line to hold a durable
+        authenticated acceptance (this pass's acked submissions plus any
+        previously persisted receipts) AND no line to have been rejected.
+        A rejected line is durable proof of refusal — never an ACK — so the
+        entry stays ``SUBMISSION_AMBIGUOUS`` pending reconciliation rather
+        than misrepresenting a rejected line as a held position.
+        """
+
+        receipted = set(self._acked_client_ids())
+        receipted.update(
+            sub.client_order_id
+            for sub in submissions
+            if sub.status in {"acked", "rejected"}
+        )
+        claimed_ids = {
+            line.client_order_id
+            for line in permit.permit_lines
+            if line.client_order_id is not None
+        }
+        rejected = set(self._rejected_client_ids())
+        rejected.update(
+            sub.client_order_id for sub in submissions if sub.status == "rejected"
+        )
+        any_rejected = bool(claimed_ids & rejected)
+        if claimed_ids <= receipted and not any_rejected:
+            return DeliveryOutcome.BROKER_ACK
+        return DeliveryOutcome.SUBMISSION_AMBIGUOUS
+
+    def resend(
+        self,
+        permit,
+        *,
+        context,
+        broker_cutoff: datetime | None = None,
+        certified_idempotent: bool | None = None,
+        now: datetime | None = None,
+    ) -> DispatchOutcome:
+        """Retry the EXACT claimed client ids still lacking a durable receipt.
+
+        The send right is already claimed (in-flight risk); resend reuses the
+        same client ids and payload for every line that does NOT yet hold a
+        durable authenticated terminal receipt (ack or reject). Lines already
+        terminal are never resent (no double-submit). Generating a new client
+        id is forbidden.
+
+        The plan permits a same-id retry only when certified idempotency
+        holds AND the broker cutoff remains valid. If a cutoff is supplied and
+        has already passed, or the caller explicitly reports idempotency is
+        not certified, a resend that would re-fire is refused: the operator
+        must query, cancel, or reconcile instead.
         """
 
         state = self.gateway.entry_state(permit.seal_id)
@@ -236,11 +303,11 @@ class BrokerDispatcher:
                 "RESEND_STATE_CONFLICT",
                 f"resend requires SUBMISSION_AMBIGUOUS, got {state.status}",
             )
-        acked = self._acked_client_ids()
+        terminal = self._acked_client_ids()
         commands: list[tuple[str, str, NewOrderCommand]] = []
         for line in permit.permit_lines:
             client_id = line.client_order_id
-            if client_id is None or client_id in acked:
+            if client_id is None or client_id in terminal:
                 continue
             command = NewOrderCommand(
                 client_order_id=client_id,
@@ -253,42 +320,33 @@ class BrokerDispatcher:
                 account=self.account,
             )
             commands.append((line.order_line_id, client_id, command))
-        if not commands:
-            # Every claimed line already holds a durable ACK; nothing to
-            # resend. Promote the entry to BROKER_ACK if still ambiguous.
-            if state.status == "SUBMISSION_AMBIGUOUS":
-                self.gateway.record_delivery_outcome(
-                    permit.seal_id,
-                    DeliveryOutcome.BROKER_ACK,
-                    submission_client_order_ids=tuple(
-                        line.client_order_id
-                        for line in permit.permit_lines
-                        if line.client_order_id is not None
-                    ),
+        if commands:
+            # A resend would re-fire live orders: enforce the plan's retry
+            # preconditions (certified idempotency + broker cutoff).
+            if broker_cutoff is not None and now is not None and now > broker_cutoff:
+                raise DispatcherError(
+                    "BROKER_CUTOFF_PASSED",
+                    "broker cutoff passed; resend forbidden — reconcile only",
                 )
-            return DispatchOutcome(
-                seal_id=permit.seal_id,
-                delivery=DeliveryOutcome.BROKER_ACK,
-                submissions=(),
-            )
+            if certified_idempotent is False:
+                raise DispatcherError(
+                    "IDEMPOTENCY_UNPROVEN",
+                    "client-order-id idempotency not certified for this"
+                    " resend; same-id retry forbidden",
+                )
         submissions = tuple(
             self._send_one(line_id, client_id, command)
             for line_id, client_id, command in commands
         )
-        all_client_ids = tuple(
-            line.client_order_id
-            for line in permit.permit_lines
-            if line.client_order_id is not None
-        )
-        delivery = (
-            DeliveryOutcome.BROKER_ACK
-            if all(sub.status == "acked" for sub in submissions)
-            else DeliveryOutcome.SUBMISSION_AMBIGUOUS
-        )
+        delivery = self._delivery_for(permit, submissions)
         self.gateway.record_delivery_outcome(
             permit.seal_id,
             delivery,
-            submission_client_order_ids=all_client_ids,
+            submission_client_order_ids=tuple(
+                line.client_order_id
+                for line in permit.permit_lines
+                if line.client_order_id is not None
+            ),
         )
         return DispatchOutcome(
             seal_id=permit.seal_id,

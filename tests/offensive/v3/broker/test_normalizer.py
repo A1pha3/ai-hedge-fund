@@ -175,6 +175,39 @@ def test_correction_busts_old_and_applies_new() -> None:
     assert state.revision_ordinal == 3
 
 
+def test_correction_omitting_economics_halts_not_zeroes() -> None:
+    """A correction omitting corrected notional/fee must halt, never silently
+    erase the booked cost basis by defaulting it to zero (audit C2)."""
+    norm = ExecutionNormalizer()
+    norm.apply(_obs(seq=1, qty=500, notional=500_000, fee=25))
+    # Quantity-only correction: omits corrected_notional_cents / corrected_fee_cents.
+    result = norm.apply(
+        _obs(seq=2, qty=500, notional=500_000, fee=25, kind="correction",
+             corrected_qty=400)
+    )
+    assert len(result.halts) == 1
+    assert result.halts[0].code is NormalizationHaltCode.CORRECTION_REDUCES_BELOW_ZERO
+    # The prior booked state is untouched (no zeroed cost basis fabricated).
+    state = norm.state_for("client-line-1")
+    assert state.cumulative_notional_cents == 500_000
+    assert state.cumulative_fee_cents == 25
+
+
+def test_correction_explicit_zero_notional_is_booked() -> None:
+    """An explicit corrected notional of zero is unambiguous and is booked —
+    distinguishable from an omitted (None) value (audit C2 contrast)."""
+    norm = ExecutionNormalizer()
+    norm.apply(_obs(seq=1, qty=500, notional=500_000, fee=25))
+    result = norm.apply(
+        _obs(seq=2, qty=500, notional=500_000, fee=25, kind="correction",
+             corrected_qty=0, corrected_notional=0, corrected_fee=0)
+    )
+    assert not result.halts
+    state = norm.state_for("client-line-1")
+    assert state.cumulative_quantity_units == 0
+    assert state.cumulative_notional_cents == 0
+
+
 def test_correction_without_active_fact_halts() -> None:
     norm = ExecutionNormalizer()
     result = norm.apply(

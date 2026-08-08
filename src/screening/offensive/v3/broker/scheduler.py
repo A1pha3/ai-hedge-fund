@@ -15,15 +15,20 @@ reconcile work queues and per-cycle rate buckets. The core invariants:
 - Broker throttle: a throttle response defers the item (re-enqueue) without
   consuming the bucket for that attempt or failing the cycle.
 - Unknown sellable quantity: an exit whose sellable shares are unknown
-  enqueues a query/reconcile and sells zero additional shares — it never
-  guesses a quantity.
+  enqueues a query and sells zero additional shares — it never guesses a
+  quantity. The executor invocation still consumed a broker round-trip, so
+  the exit rate budget is NOT refunded (a consumed attempt cannot fund a
+  second exit in the same cycle). Duplicate query items are never
+  re-enqueued, and once the unknown-quantity retries exceed the configured
+  bound the exit escalates to RECONCILE and is raised as a blocking
+  escalation rather than livelocking.
 - Correction-driven exit reopen: a correction that reopens a position
   recreates exit duty (a new EXIT work item) so an exit is never orphaned.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
@@ -60,6 +65,9 @@ class WorkItem:
     item_id: str
     sellable_quantity_units: int | None = None
     reopens_exit: bool = False
+    # Number of unknown-quantity retries this exit has already consumed;
+    # bounds escalation so a persistent unknown never livelocks.
+    attempts: int = 0
 
 
 @dataclass(frozen=True)
@@ -100,6 +108,8 @@ class CycleResult:
     rejected: tuple[WorkItem, ...] = ()
     enqueued_queries: tuple[str, ...] = ()
     enqueued_exits: tuple[str, ...] = ()
+    enqueued_reconciles: tuple[str, ...] = ()
+    escalations: tuple[str, ...] = ()
     budget_remaining: dict[str, int] = field(default_factory=dict)
 
 
@@ -115,12 +125,19 @@ class BrokerLifecycleScheduler:
         reconcile_budget: int,
         cutoff: datetime,
         clock,
+        max_unknown_retries: int = 3,
     ) -> None:
         if min(entry_budget, exit_budget, query_budget, reconcile_budget) < 0:
             raise SchedulerError(
                 "SCHEDULER_RATE_BUDGET_NEGATIVE",
                 "rate budgets must be non-negative",
             )
+        if max_unknown_retries < 1:
+            raise SchedulerError(
+                "SCHEDULER_UNKNOWN_RETRY_BOUND",
+                "max_unknown_retries must be at least 1",
+            )
+        self._max_unknown_retries = max_unknown_retries
         self._buckets: dict[WorkKind, _RateBucket] = {
             WorkKind.ENTRY: _RateBucket(entry_budget, entry_budget),
             WorkKind.EXIT: _RateBucket(exit_budget, exit_budget),
@@ -130,6 +147,8 @@ class BrokerLifecycleScheduler:
         self._cutoff = cutoff
         self._clock = clock
         self._queue: list[WorkItem] = []
+        self._pending_queries: set[str] = set()
+        self._pending_reconciles: set[str] = set()
         self._lease_holder: str | None = None
         self._lease_owner: str
 
@@ -179,6 +198,8 @@ class BrokerLifecycleScheduler:
         rejected: list[WorkItem] = []
         enqueued_queries: list[str] = []
         enqueued_exits: list[str] = []
+        enqueued_reconciles: list[str] = []
+        escalations: list[str] = []
         # Snapshot the queue; deferred items are re-appended after.
         pending = self._queue[:]
         self._queue.clear()
@@ -203,15 +224,36 @@ class BrokerLifecycleScheduler:
                 self._queue.append(item)
                 continue
             if result.outcome is ExecutionOutcome.UNKNOWN_QUANTITY:
-                # Unknown sellable shares: sell zero, enqueue a query (and a
-                # reconcile) and re-enqueue the exit once truth is known.
-                bucket.remaining += 1  # the exit did not actually sell
-                enqueued_queries.append(result.deferred_query_id or f"query:{item.item_id}")
-                self._queue.append(
-                    WorkItem(kind=WorkKind.QUERY, item_id=f"query:{item.item_id}")
-                )
-                self._queue.append(item)  # retry the exit once truth is known
+                # Unknown sellable shares: sell zero. The executor was invoked,
+                # so the round-trip already consumed rate budget — do NOT
+                # refund it (a consumed attempt cannot fund a second item this
+                # cycle, audit M2). An exit enqueues ONE deduped query to
+                # resolve the truth (never duplicated, so the queue cannot
+                # compound across cycles).
                 deferred.append(item)
+                if item.kind is WorkKind.EXIT:
+                    query_id = result.deferred_query_id or f"query:{item.item_id}"
+                    if query_id not in self._pending_queries:
+                        self._pending_queries.add(query_id)
+                        enqueued_queries.append(query_id)
+                        self._queue.append(WorkItem(kind=WorkKind.QUERY, item_id=query_id))
+                if item.attempts + 1 > self._max_unknown_retries:
+                    # Persistent unknown truth: surface as a blocking
+                    # escalation (audit M3). An exit hands its duty to ONE
+                    # deduped reconcile; a query/reconcile/entry that cannot
+                    # resolve truth escalates out of the loop entirely rather
+                    # than spawning more work.
+                    escalations.append(item.item_id)
+                    if item.kind is WorkKind.EXIT:
+                        reconcile_id = f"reconcile:{item.item_id}"
+                        if reconcile_id not in self._pending_reconciles:
+                            self._pending_reconciles.add(reconcile_id)
+                            enqueued_reconciles.append(item.item_id)
+                            self._queue.append(
+                                WorkItem(kind=WorkKind.RECONCILE, item_id=reconcile_id)
+                            )
+                else:
+                    self._queue.append(replace(item, attempts=item.attempts + 1))
                 continue
             if result.outcome is ExecutionOutcome.REOPENED_EXIT:
                 # A correction reopened a position: recreate exit duty so the
@@ -236,6 +278,8 @@ class BrokerLifecycleScheduler:
             rejected=tuple(rejected),
             enqueued_queries=tuple(enqueued_queries),
             enqueued_exits=tuple(enqueued_exits),
+            enqueued_reconciles=tuple(enqueued_reconciles),
+            escalations=tuple(escalations),
             budget_remaining={
                 kind.value: bucket.remaining for kind, bucket in self._buckets.items()
             },
