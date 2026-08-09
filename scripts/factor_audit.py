@@ -49,6 +49,7 @@ from src.screening.offensive.price_returns import chained_return_pct  # noqa: E4
 from src.screening.offensive.setups.btst_breakout import (  # noqa: E402
     _board_quality_score,
     _compute_limit_up_streak,
+    _compute_low_vol_score,
     _compute_trend_vol_scores,
     _compute_volume_score,
 )
@@ -113,6 +114,9 @@ def scan() -> tuple[list[dict], dict]:
             pre_window = df.iloc[ref_idx:i] if ref_idx >= 0 else df.iloc[0:0]
             position_score, squeeze_score = _compute_trend_vol_scores(pre_window, df, i)
             volume_score = _compute_volume_score(df, i)
+            # low_vol_score: Q6 新进 strength 的正交轴 (20日已实现波动率), 同口径纳入审计 —
+            # 复核双重计权是否真解除 + 它自身的区分度是否兑现. position 留作对照 (已移出 strength).
+            low_vol_score = _compute_low_vol_score(df, i)
             # volume_ratio: 与 _compute_volume_score 同口径的原始比率 (供连续分桶)
             volume_ratio = None
             if "volume" in df.columns and i >= 1:
@@ -152,6 +156,7 @@ def scan() -> tuple[list[dict], dict]:
                 "weekday_score": weekday_score,
                 "board_score": board_score,
                 "position_score": position_score,
+                "low_vol_score": low_vol_score,
                 "squeeze_score": squeeze_score,
                 "volume_score": volume_score,
                 "volume_ratio": volume_ratio,
@@ -257,7 +262,9 @@ def _time_block_split(signals: list[dict]) -> tuple[list[dict], list[dict], str]
 # 参与正交性/冗余问责的分量 (归一 [0,1] 的打分分量 + pre_runup 池过滤器).
 # volume_score 与 volume_ratio 同源, 只取离散 score 避免平凡自相关; pre_runup 连续,
 # 相关用 Spearman (秩) 天然抗量纲.
-ORTHO_FEATURES = ["board_score", "position_score", "squeeze_score", "volume_score", "pre_runup_pct"]
+# Q6 复核: strength 现含 low_vol (替换 position). 把 low_vol 与 position 都列入 —
+# 验证 low_vol 是否与 pre_runup 正交 (双重计权是否解除), 及 strength 分量间有无新冗余.
+ORTHO_FEATURES = ["board_score", "position_score", "low_vol_score", "squeeze_score", "volume_score", "pre_runup_pct"]
 
 
 def _spearman(x: list[float], y: list[float]) -> float:
