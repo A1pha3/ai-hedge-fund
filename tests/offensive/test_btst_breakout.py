@@ -326,15 +326,16 @@ def test_strength_components_exported_to_metadata():
     ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=3.0)
     result = BtstBreakoutSetup().detect("X", today, ctx)
     assert result.hit is True
-    for key in ("weekday_score", "board_score", "position_score", "low_vol_score", "squeeze_score", "volume_score", "energy_bonus"):
+    for key in ("weekday_score", "board_score", "position_score", "low_vol_score", "squeeze_score", "volume_score", "range_score", "energy_bonus"):
         assert key in result.metadata, f"metadata 缺 strength 分量 {key}"
     # 分量与 trigger_strength 自洽: weekday 已移出 (2026-08-09 Q1),
     # position 已移出 (2026-08-09 Q6, low_vol 替换, 双重计权本质解).
-    # strength = min(1, 0.25*(board+low_vol+squeeze+volume) + energy_bonus)
+    # range 进 strength (2026-08-09 新一轮挖掘, 4→5 分量 0.25→0.20 重新归一化).
+    # strength = min(1, 0.20*(board+low_vol+squeeze+volume+range) + energy_bonus)
     m = result.metadata
     expected = min(
         1.0,
-        0.25 * (m["board_score"] + m["low_vol_score"] + m["squeeze_score"] + m["volume_score"]) + m["energy_bonus"],
+        0.20 * (m["board_score"] + m["low_vol_score"] + m["squeeze_score"] + m["volume_score"] + m["range_score"]) + m["energy_bonus"],
     )
     assert abs(result.trigger_strength - expected) < 1e-9, (
         f"导出的分量应能重建 trigger_strength: {result.trigger_strength} vs {expected}")
@@ -423,6 +424,77 @@ def test_low_vol_score_filters_non_finite_returns():
         assert 0.0 <= v <= 1.0, f"归一化契约: 须在 [0,1], got {v}"
 
 
+def test_range_score_inverted_u_mapping():
+    """锚定 2026-08-09 盘中振幅因子 (新一轮挖掘) 的倒 U 映射.
+
+    阈值由全 universe 审计 (21232 信号日, exec-adjusted, split-half 跨窗一致) 定,
+    是数据驱动常量 — 将来会被定期 factor_audit 保质期复核 (同 streak/volume 教训).
+    倒 U: 一字锁死板 (<4%, 买不到) 与 盘中崩 (>=14%) 两端皆低, 健康博弈甜区 (6-11%) 满值.
+    """
+    from src.screening.offensive.setups.btst_breakout import _compute_range_score
+
+    def _mk(hi: float, lo: float) -> pd.DataFrame:
+        # idx21 = trigger; prev_close = close[20] = 10.0; range = (hi-lo)/10
+        n = 22
+        close = [10.0] * 21 + [11.0]
+        high = [10.0] * 21 + [hi]
+        low = [10.0] * 21 + [lo]
+        return pd.DataFrame({"date": pd.bdate_range("2026-06-01", periods=n), "close": close,
+                             "open": close, "high": high, "low": low,
+                             "pct_change": [0.0] * 21 + [10.0]})
+
+    idx = 21
+    assert _compute_range_score(_mk(10.0, 10.0), idx) == 0.2  # range 0   一字锁死板
+    assert _compute_range_score(_mk(10.4, 10.0), idx) == 0.4  # range 4%  [0.04,0.06)
+    assert _compute_range_score(_mk(10.8, 10.0), idx) == 1.0  # range 8%  甜区 [0.06,0.11)
+    assert _compute_range_score(_mk(11.0, 10.0), idx) == 1.0  # range 10% 甜区上沿 (<0.11)
+    assert _compute_range_score(_mk(11.2, 10.0), idx) == 0.4  # range 12% [0.11,0.14)
+    assert _compute_range_score(_mk(11.5, 10.0), idx) == 0.2  # range 15% 盘中崩 (>=0.14)
+    # 边界: r<0.04 → 0.2; 0.0399 锁死侧
+    assert _compute_range_score(_mk(10.399, 10.0), idx) == 0.2
+    # 倒 U 形状: 甜区满值严格高于两端 (经济意义锚定)
+    sweet = _compute_range_score(_mk(10.8, 10.0), idx)
+    assert sweet > _compute_range_score(_mk(10.0, 10.0), idx), "甜区应优于一字锁死板"
+    assert sweet > _compute_range_score(_mk(11.5, 10.0), idx), "甜区应优于盘中崩"
+    # hi<lo (数据错) → 0.5 中性回退
+    assert _compute_range_score(_mk(10.0, 11.0), idx) == 0.5
+
+
+def test_range_score_filters_non_finite():
+    """回归守卫 (2026-08-09): high/low/prev_close 含 ±inf/nan 时回退 0.5, 不返回 NaN.
+
+    与 _compute_low_vol_score 同族纪律 (对抗审查发现的 inf 家族): 非有限值漏进比较会
+    产生 NaN → min(1.0, NaN)=1.0 把 NaN 洗成满分过闸. range 同样须滤非有限值.
+    """
+    from src.screening.offensive.setups.btst_breakout import _compute_range_score
+
+    n = 22
+    base_close = [10.0] * 21 + [11.0]
+    for bad_col, bad_val in (("high", float("inf")), ("low", float("-inf")),
+                             ("high", float("nan")), ("close", float("nan"))):
+        close = list(base_close)
+        high = [10.0] * 21 + [11.5]
+        low = [10.0] * 21 + [10.0]
+        if bad_col == "high":
+            high = [10.0] * 21 + [bad_val]
+        elif bad_col == "low":
+            low = [10.0] * 21 + [bad_val]
+        else:  # close (污染前收 prev_close)
+            close[20] = bad_val
+        df = pd.DataFrame({"date": pd.bdate_range("2026-06-01", periods=n), "close": close,
+                           "open": close, "high": high, "low": low,
+                           "pct_change": [0.0] * 21 + [10.0]})
+        v = _compute_range_score(df, n - 1)
+        assert v == v, f"{bad_col}={bad_val} 应回退非 NaN, got {v}"
+        assert v == 0.5, f"{bad_col}={bad_val} 应回退 0.5 中性, got {v}"
+    # 数据不足: 无 high/low 列 → 0.5
+    df_nocol = pd.DataFrame({"date": pd.bdate_range("2026-06-01", periods=n),
+                             "close": base_close, "pct_change": [0.0] * 21 + [10.0]})
+    assert _compute_range_score(df_nocol, n - 1) == 0.5
+    # trigger_idx<1 (无前收) → 0.5
+    df_first = pd.DataFrame({"close": [11.0], "high": [11.5], "low": [10.0]})
+    assert _compute_range_score(df_first, 0) == 0.5
+
 
 def test_position_does_not_affect_trigger_strength():
     """回归守卫 (2026-08-09, geometry Q6): position_score 不再影响 trigger_strength.
@@ -470,7 +542,6 @@ def test_position_does_not_affect_trigger_strength():
     # position 相反 → 若 position 仍进 strength 必不等; 相等即证明 position 已被 low_vol 替换.
     assert abs(s_low_pos - s_high_pos) < 1e-9, (
         f"position 不应影响 strength: position=1 {s_low_pos} vs position=0 {s_high_pos}")
-
 
 
 def test_volume_score_recalibrated_inverted_u_mapping():
@@ -591,18 +662,19 @@ def test_no_streak_bonus_for_two_consecutive_limit_ups():
     assert result.metadata["limit_up_streak"] == 2, "构造为 2连板 (T-1+T 均涨停)"
 
     # 用同一组 helper 重算 base 公式, 断言 strength == base (streak_bonus 已移除).
-    # weekday 已移出 (Q1); position 已移出 (Q6, low_vol 替换). base = 0.25*(board+low_vol+squeeze+volume).
+    # weekday 已移出 (Q1); position 已移出 (Q6, low_vol 替换). base = 0.20*(board+low_vol+squeeze+volume+range).
     trigger_idx = len(prices) - 1
-    from src.screening.offensive.setups.btst_breakout import _compute_low_vol_score
+    from src.screening.offensive.setups.btst_breakout import _compute_low_vol_score, _compute_range_score
     pre_window = prices.iloc[trigger_idx - 5 : trigger_idx]
     position_score, squeeze_score = _compute_trend_vol_scores(pre_window, prices, trigger_idx)
     low_vol_score = _compute_low_vol_score(prices, trigger_idx)
     board_score = _board_quality_score("X")
     volume_score = _compute_volume_score(prices, trigger_idx)
+    range_score = _compute_range_score(prices, trigger_idx)
     # energy_bonus (squeeze=1 且 low_vol>=0.75) 按实测分量推导, 与生产一致
     energy = 0.08 if squeeze_score >= 1.0 and low_vol_score >= 0.75 else 0.0
-    base = min(1.0, 0.25 * board_score + 0.25 * low_vol_score
-               + 0.25 * squeeze_score + 0.25 * volume_score + energy)
+    base = min(1.0, 0.20 * board_score + 0.20 * low_vol_score
+               + 0.20 * squeeze_score + 0.20 * volume_score + 0.20 * range_score + energy)
     # streak=2 不再给 bonus
     assert abs(result.trigger_strength - base) < 1e-9, (
         f"streak_bonus 已移除, 2连板不应改变 strength: got {result.trigger_strength}, base {base}")
@@ -638,16 +710,17 @@ def test_no_streak_bonus_for_high_streaks():
     assert result.hit is True, "构造应通过所有 BTST 过滤 (pre_runup +6.48%)"
     assert result.metadata["limit_up_streak"] == 3
     trigger_idx = len(prices) - 1
-    from src.screening.offensive.setups.btst_breakout import _compute_low_vol_score
+    from src.screening.offensive.setups.btst_breakout import _compute_low_vol_score, _compute_range_score
     pre_window = prices.iloc[trigger_idx - 5 : trigger_idx]
     position_score, squeeze_score = _compute_trend_vol_scores(pre_window, prices, trigger_idx)
     low_vol_score = _compute_low_vol_score(prices, trigger_idx)
     board_score = _board_quality_score("X")
     volume_score = _compute_volume_score(prices, trigger_idx)
-    # weekday 已移出 (Q1); position 已移出 (Q6, low_vol 替换). base = 0.25*(board+low_vol+squeeze+volume).
+    range_score = _compute_range_score(prices, trigger_idx)
+    # weekday 已移出 (Q1); position 已移出 (Q6, low_vol 替换). base = 0.20*(board+low_vol+squeeze+volume+range).
     energy = 0.08 if squeeze_score >= 1.0 and low_vol_score >= 0.75 else 0.0
-    base = min(1.0, 0.25 * board_score + 0.25 * low_vol_score
-               + 0.25 * squeeze_score + 0.25 * volume_score + energy)
+    base = min(1.0, 0.20 * board_score + 0.20 * low_vol_score
+               + 0.20 * squeeze_score + 0.20 * volume_score + 0.20 * range_score + energy)
     # streak=3 → streak_bonus=0 → strength == base (无任何 streak bonus)
     assert abs(result.trigger_strength - base) < 1e-9, (
         f"3+连板不应得 streak_bonus: got {result.trigger_strength}, base {base}")
@@ -705,10 +778,13 @@ def test_energy_bonus_not_granted_when_squeeze_neutral():
 
     board_score = _board_quality_score("X")
     volume_score = _compute_volume_score(prices, trigger_idx)
-    # weekday 已移出 (Q1); position 已移出 (Q6, low_vol 替换). 无 bonus 期望 = 0.25*四项.
+    from src.screening.offensive.setups.btst_breakout import _compute_range_score
+    range_score = _compute_range_score(prices, trigger_idx)
+    # weekday 已移出 (Q1); position 已移出 (Q6, low_vol 替换). 无 bonus 期望 = 0.20*五项.
     expected_no_bonus = min(
         1.0,
-        0.25 * board_score + 0.25 * low_vol_score + 0.25 * squeeze_score + 0.25 * volume_score,
+        0.20 * board_score + 0.20 * low_vol_score + 0.20 * squeeze_score
+        + 0.20 * volume_score + 0.20 * range_score,
     )
     # squeeze=0.5 (中性) 绝不可触发 "完整弹簧释放" bonus.
     assert abs(result.trigger_strength - expected_no_bonus) < 1e-9, (

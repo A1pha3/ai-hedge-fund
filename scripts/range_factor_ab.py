@@ -1,5 +1,9 @@
 """range 因子池内 A/B (新一轮因子挖掘, 2026-08-09).
 
+状态: B (加 range) 已 owner 批准落地为生产公式 (commit 见 strength 0.20×5).
+本脚本是该决策的历史记录: formula_a = 落地前的 0.25×4 基线, formula_b = 落地后的 0.20×5.
+公式随因子迭代会继续漂移 — 权威公式始终在生产 btst_breakout.py, 本脚本不复用为「现状」基线.
+
 背景: factor_audit 提纯 range_pct=(high-low)/prev_close 涨停日盘中振幅, 全 universe 审计
 (exec-adjusted, median 主判据) 通过全部挖掘门:
   - Wilson 分离 (best [0.09,0.11) vs worst [0.14,inf)): 中位差 +4.10pp 胜率差 +6.67pp

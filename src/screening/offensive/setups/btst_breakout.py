@@ -288,6 +288,59 @@ def _compute_volume_score(prices: pd.DataFrame, trigger_idx: int) -> float:
         return 0.5
 
 
+def _compute_range_score(prices: pd.DataFrame, trigger_idx: int) -> float:
+    """盘中振幅因子评分 (0~1) — 2026-08-09 新增 (新一轮因子挖掘).
+
+    第一性原理: 现有 strength 分量 (board/low_vol/squeeze/volume) 全描述「涨停前」
+    状态, range 描述「封板过程本身」——涨停日的盘中振幅 (high-low)/prev_close. 它是
+    事件的正交时间帧 (与 6 个现有分量 |ρ|<0.10, 有效维 +1 整轴), 全 universe 审计
+    单因子 IC +0.0622 为全场最高 (强于 low_vol +0.0437 / squeeze +0.0236 等).
+
+    倒 U 经济意义 (exec-adjusted, median 主判据, 21232 信号日):
+      range<4%    一字锁死板: 全天封死, 次日买不到/追高反转  (median −4.42%)   → 0.2
+      4-6%        偏锁死, 偏弱                               (median −2.98%)   → 0.4
+      6-11%       健康博弈, 多空充分换手, 封板有质量          (median −1.62%, WR 44%) → 1.0  甜区
+      11-14%      偏振荡, 偏弱                               (median −2.80%)   → 0.4
+      >=14%       盘中崩: 封板过程剧烈振荡, 主力分歧/出逃     (median −5.71%, WR 37.3%) → 0.2
+
+    采纳前已过 range_factor_ab 池内 A/B (n=12302): 加为第 5 分量 (0.20×5) rank IC
+    +0.04595→+0.06278 (+37%), split-half 两半同升, top10% +0.99%→+1.31%, 门槛换血
+    放入 +0.51%/挡出 −0.12% (北极星方向). 归因排除重分权混淆 (rank IC 尺度不变,
+    增益全来自 range 进 sum). 见 data/reports/range_factor_decision_pack_2026-08-09.md.
+
+    数据不足 (无 high/low/close 列 / 无前收 / 非有限值 / hi<lo 数据错) 回退 0.5 中性
+    (与同族 _compute_low_vol_score 回退一致). 阈值是数据驱动常量, 将定期 factor_audit
+    保质期复跑 (同 streak/volume 教训: 因子会过期).
+    """
+    if prices is None or trigger_idx < 1 or trigger_idx >= len(prices):
+        return 0.5
+    try:
+        if "high" not in prices.columns or "low" not in prices.columns or "close" not in prices.columns:
+            return 0.5
+        high = pd.to_numeric(prices["high"], errors="coerce").values
+        low = pd.to_numeric(prices["low"], errors="coerce").values
+        close = pd.to_numeric(prices["close"], errors="coerce").values
+        prev_c = close[trigger_idx - 1]
+        hi, lo = high[trigger_idx], low[trigger_idx]
+        # 滤非有限值 (NaN/±inf) — 与 _compute_low_vol_score 同族纪律, 防 inf 漏进比较.
+        if not (math.isfinite(prev_c) and math.isfinite(hi) and math.isfinite(lo)):
+            return 0.5
+        if prev_c <= 0 or hi < lo:
+            return 0.5
+        r = (hi - lo) / prev_c
+        if r < 0.04:
+            return 0.2  # 一字锁死板: 买不到/追高反转 (median −4.42%)
+        if r < 0.06:
+            return 0.4
+        if r < 0.11:
+            return 1.0  # 甜区 [0.06,0.11): median −1.62%, WR ~44%
+        if r < 0.14:
+            return 0.4
+        return 0.2  # 盘中崩: median −5.71% 最差
+    except Exception:
+        return 0.5
+
+
 def _compute_limit_up_streak(prices: pd.DataFrame, trigger_idx: int, limit_up_pct: float) -> int:
     """计算截至 trigger_idx 的连续涨停天数 (连板数, 含 trigger 日本身).
 
@@ -446,11 +499,12 @@ class BtstBreakoutSetup(Setup):
         stop_price = trigger_close * (1 + range_based_stop_pct)
         invalidation = f"价格跌破 {stop_price:.2f} (盘整区底部 {range_low:.2f}, {range_based_stop_pct:+.1%})"
 
-        # trigger_strength: 4 因子等权 alpha ranker (0.25 each) + 能量耦合 bonus.
+        # trigger_strength: 5 因子等权 alpha ranker (0.20 each) + 能量耦合 bonus.
         #   board:    002/300 61.1% vs 000/001 44.9% (n=1212, 626 票全 universe 回测)
         #   low_vol:  20日已实现波动率 (低波=弹簧压紧) — 池内独立正交轴 (geometry Q6)
         #   squeeze:  波动率压缩(弹簧压紧) vs 未压缩 — 弱正向; Q6 后其信息多被 low_vol 连续轴吸收, 暂保留待复核
         #   volume:   成交量比率 (温和放量佳, 极端量差; 连续倒U重标定, 见 Q2)
+        #   range:    涨停日盘中振幅 (倒U; 封板过程质量) — 正交新维度, 单因子 IC 全场最高 (新一轮挖掘)
         # 能量耦合: squeeze + low_vol 同时满值 = 完整弹簧释放, 给 0.08 bonus.
         #
         # position_score 已移出 strength (2026-08-09, geometry-of-alpha Q6, 本质解):
@@ -484,6 +538,10 @@ class BtstBreakoutSetup(Setup):
         # 全量复核证伪 (0.9/1.0 倒挂), 不再赘述.
         volume_score = _compute_volume_score(prices, trigger_idx)
 
+        # 盘中振幅因子 (2026-08-09 新一轮挖掘): 涨停日 (high-low)/prev_close 倒 U 映射.
+        # 正交新维度 (封板过程 vs 涨停前状态), 池内 A/B rank IC +37%. 见 _compute_range_score.
+        range_score = _compute_range_score(prices, trigger_idx)
+
         # energy_bonus 仅在 squeeze=1.0 且 low_vol 满值 (完整弹簧释放) 时发放 (2026-08-09 Q6).
         # 原为 position+squeeze 同时=1.0; position 移出 strength 后, 改挂 squeeze + low_vol
         # (池内正交的压缩轴 + 压缩确认 = 完整弹簧释放). Finding A (2026-07-16): 旧阈值
@@ -499,8 +557,17 @@ class BtstBreakoutSetup(Setup):
         # E[r] 同步走弱. 因子前提不再成立 → streak 不再进 trigger_strength, 仅作 metadata
         # 暴露供 dogfood 观测. 见 data/reports/streak_factor_revalidation.json.
         streak = _compute_limit_up_streak(prices, trigger_idx, limit_up_pct)
-        # weekday/position 已移出 (见上方注释); 剩 4 项各 0.25 + energy_bonus.
-        strength = min(1.0, 0.25 * board_score + 0.25 * low_vol_score + 0.25 * squeeze_score + 0.25 * volume_score + energy_bonus)
+        # weekday/position 已移出 (见上方注释); 5 项各 0.20 + energy_bonus (2026-08-09
+        # range 进 strength, 4→5 分量重新归一化 0.25→0.20, _MIN_TRIGGER_STRENGTH 刻度不变).
+        strength = min(
+            1.0,
+            0.20 * board_score
+            + 0.20 * low_vol_score
+            + 0.20 * squeeze_score
+            + 0.20 * volume_score
+            + 0.20 * range_score
+            + energy_bonus,
+        )
 
         return DetectionResult(
             hit=True,
@@ -527,6 +594,7 @@ class BtstBreakoutSetup(Setup):
                 "low_vol_score": low_vol_score,    # Q6 新进 strength 的正交轴
                 "squeeze_score": squeeze_score,
                 "volume_score": volume_score,
+                "range_score": range_score,        # 新一轮挖掘: 封板过程正交新维度
                 "energy_bonus": energy_bonus,
             },
             degraded=degraded,
