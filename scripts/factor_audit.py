@@ -66,11 +66,16 @@ T_HORIZON = 10  # T+10 (与 known_distributions/natural_horizon 口径一致)
 # 时间块 split-half 是对重叠的诚实修正: 若 edge 只在一个半窗成立, 是单窗偶然, 不可信.
 
 # 待审计特征: 值由生产纯函数在 scan 时算出, 存进每条 signal 记录.
-# 连续值 (volume_ratio) 按预设区间分桶; 离散值 (0/0.5/1, streak) 直接按值分桶.
-# Q6: low_vol_score 新进 strength (0.25 权重) 必须进默认保质期监控; position_score 已移出
-# strength, 仍列入以持续对照 (它曾是真金, 现只观测 — 监控它是否彻底失效).
-DISCRETE_FEATURES = ["weekday_score", "board_score", "position_score", "low_vol_score", "squeeze_score", "volume_score", "streak"]
-CONTINUOUS_FEATURES = {"volume_ratio": [(0, 0.5), (0.5, 0.8), (0.8, 1.0), (1.0, 1.2), (1.2, 1.5), (1.5, 2.0), (2.0, math.inf)]}
+# 连续值 (volume_ratio, low_vol_score) 按预设区间分桶; 离散值 (0/0.5/1, streak) 直接按值分桶.
+# Q6: low_vol_score 是连续 [0,1] 浮点 (rv20 线性映射), 必须按区间分桶 — 误入 DISCRETE 会
+# 被 _bucket_key 的 str(float) 粉碎成上万孤桶 (n=1), verdict 失能 (对抗审查发现). 区间锚定
+# Q6 复核验证过的单调五分位 (E[r] 自低分桶 −0.039% 升至高分桶 +0.940%).
+# position_score 仍列入离散以持续对照 (已移出 strength, 监控其是否彻底失效).
+DISCRETE_FEATURES = ["weekday_score", "board_score", "position_score", "squeeze_score", "volume_score", "streak"]
+CONTINUOUS_FEATURES = {
+    "volume_ratio": [(0, 0.5), (0.5, 0.8), (0.8, 1.0), (1.0, 1.2), (1.2, 1.5), (1.5, 2.0), (2.0, math.inf)],
+    "low_vol_score": [(0.0, 0.2), (0.2, 0.4), (0.4, 0.6), (0.6, 0.8), (0.8, 1.0001)],
+}
 
 
 def _wilson_ci(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -295,8 +300,23 @@ def correlation_report(signals: list[dict]) -> dict:
     for a in ORTHO_FEATURES:
         matrix[a] = {b: (1.0 if a == b else round(_spearman(feats[a], feats[b]), 4)) for b in ORTHO_FEATURES}
 
-    # 有效维度 (participation ratio), NaN 置 0 后求特征值
-    M = np.array([[matrix[a][b] for b in ORTHO_FEATURES] for a in ORTHO_FEATURES], dtype=float)
+    # 退化分量检测 (对抗审查发现): 恒定/近恒定分量 (nunique<2) 使 _spearman 返回 NaN.
+    # 旧版 nan_to_num(nan=0.0) 把"无法测量相关"伪造成"完全正交", 退化分量被当独立轴,
+    # 反而抬高 effective_dimension 掩盖冗余. 正确做法: 剔除退化分量, 显式标注.
+    degenerate = [f for f in ORTHO_FEATURES if pd.Series(feats[f]).nunique() < 2]
+    active = [f for f in ORTHO_FEATURES if f not in degenerate]
+
+    if not active:
+        # 全退化 (小宇宙/单票夹具): 无可算相关, 跳过 numpy 空矩阵 (fill_diagonal/eigvalsh
+        # 要求 ≥2-d, 空矩阵崩溃). eff_dim=0 诚实反映"零可测独立方向".
+        return {
+            "n_executable": n, "features": ORTHO_FEATURES, "active_features": [],
+            "degenerate_features": degenerate, "spearman_matrix": matrix,
+            "effective_dimension": 0.0, "n_components": 0, "top_redundant_pairs": [],
+            "note": "全部分量退化 (nunique<2), 无可测相关 — 检查特征函数是否恒定返回值",
+        }
+
+    M = np.array([[matrix[a][b] for b in active] for a in active], dtype=float)
     M = np.nan_to_num(M, nan=0.0)
     np.fill_diagonal(M, 1.0)
     eig = np.linalg.eigvalsh(M)
@@ -311,11 +331,13 @@ def correlation_report(signals: list[dict]) -> dict:
     return {
         "n_executable": n,
         "features": ORTHO_FEATURES,
+        "active_features": active,
+        "degenerate_features": degenerate,
         "spearman_matrix": matrix,
         "effective_dimension": round(eff_dim, 2),
-        "n_components": len(ORTHO_FEATURES),
+        "n_components": len(active),
         "top_redundant_pairs": [{"a": a, "b": b, "rho": r} for a, b, r in pairs[:3]],
-        "note": "eff_dim << n_components → 复印件集合; position↔pre_runup 高 ρ → 防追高被双重计权, 该简化而非叠加",
+        "note": "eff_dim 基于 active 分量 (退化分量剔除); eff_dim << n_components → 复印件集合",
     }
 
 
@@ -328,7 +350,10 @@ def _verdict(exe_groups: dict[str, dict]) -> dict:
     worst = min(scored, key=lambda kv: kv[1]["mean_t10_return"])
     er_spread = (best[1]["mean_t10_return"] - worst[1]["mean_t10_return"]) * 100
     wr_spread = (best[1]["winrate"] - worst[1]["winrate"]) * 100
-    wilson_sep = best[1]["wilson_ci95"][0] > worst[1]["winrate"]
+    # 非重叠 CI 区间检验 (对抗审查修正): 旧版 best.CI.lower > worst.winrate 不对称 (一侧 CI
+    # 一侧点估计), 系统性偏松 — CI 实际重叠却被判分离, 倾向"留弱因子". 改为两侧都用 CI
+    # 边界 (best 下界 > worst 上界), 重叠区间诚实判"未分离".
+    wilson_sep = best[1]["wilson_ci95"][0] > worst[1]["wilson_ci95"][1]
     return {
         "best_bucket": best[0], "best": best[1],
         "worst_bucket": worst[0], "worst": worst[1],
