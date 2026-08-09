@@ -194,13 +194,18 @@ def _agg_returns(rets: list[float], n_signals: int) -> dict:
     n = len(rets)
     wins = sum(1 for r in rets if r > 0)
     lo, hi = _wilson_ci(wins, n)
+    s = sorted(rets)
+    # 标准中位数 (n 奇数两索引相等取该值; n 偶数取中间两值平均) — median 是 verdict 主判据,
+    # 用规范定义而非上中位数 sorted[n//2] (对抗审查第4轮: 后者偶数 n 系统性偏高, 当前全数据
+    # 最大偏差 0.065pp / 零选桶翻转, 但主判据须可复现). n=0 short-circuit 不访问空 s.
+    median = (s[n // 2] + s[(n - 1) // 2]) / 2 if n else 0.0
     return {
         "n_signals": n_signals,
         "n_with_t10_return": n,
         "winrate": round(wins / n, 4) if n else 0.0,
         "wilson_ci95": [round(lo, 4), round(hi, 4)],
         "mean_t10_return": round(sum(rets) / n, 5) if n else 0.0,
-        "median_t10_return": round(sorted(rets)[n // 2], 5) if n else 0.0,
+        "median_t10_return": round(median, 5),
     }
 
 
@@ -358,6 +363,11 @@ def _verdict(exe_groups: dict[str, dict]) -> dict:
     # 主判据 median (长尾免疫); tie-break 加 winrate 防精确相等.
     best = max(scored, key=lambda kv: (kv[1]["median_t10_return"], kv[1]["winrate"]))
     worst = min(scored, key=lambda kv: (kv[1]["median_t10_return"], kv[1]["winrate"]))
+    # 退化守卫 (对抗审查第4轮): 全桶 (median, winrate) 精确相等时 max/min 返回迭代首个,
+    # best==worst 指向同一桶 — 此刻零区分度, 早退避免展示层困惑 (median_spread=0,
+    # wilson 退化为 best.CI.lo>best.CI.hi 恒 False). 当前全数据零 tie, 纯防御.
+    if best[0] == worst[0]:
+        return {"note": "全桶同质 (median/winrate 精确相等), 无区分度", "n_buckets_ge30": len(scored)}
     median_spread = (best[1]["median_t10_return"] - worst[1]["median_t10_return"]) * 100
     mean_spread = (best[1]["mean_t10_return"] - worst[1]["mean_t10_return"]) * 100
     wr_spread = (best[1]["winrate"] - worst[1]["winrate"]) * 100
@@ -381,7 +391,7 @@ def _verdict(exe_groups: dict[str, dict]) -> dict:
             f"mean-best({mean_best_k})≠median-best({best[0]}): 存在右偏桶 mean 被长尾抬高 "
             "(典型=数据不足回退 0.5 桶) — 主判据(median/Wilson)不受影响, 该桶 E[r] 集中于少数极端结果"
         ) if diverge else "",
-        "note": "median-best>worst 且 Wilson 分离 => 有区分度; 否则权重待复核",
+        "note": "Wilson 胜率分离 => 有区分度 (median_spread 反映典型结果幅度, 恒>=0 非门控); 否则权重待复核",
     }
 
 
