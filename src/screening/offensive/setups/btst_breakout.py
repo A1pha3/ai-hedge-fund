@@ -201,17 +201,21 @@ def _compute_low_vol_score(prices: pd.DataFrame, trigger_idx: int) -> float:
 
     计算: 涨停前 20 日已实现波动率 (pct_change 日收益的截面口径, 不含涨停日本身),
     低波动 = 弹簧压紧的连续度量 (是 squeeze 0/1 开关的连续版, 同时回答了 Q5).
-    用 rv20 直接映射到 [0,1] (锚定池内实测分布, 见 q6 报告五分位):
-      rv20 <= 1.5%   → 1.0   (最低波, Q0-Q1, E[r] 最优侧的连续低波区)
-      rv20 >= 4.5%   → 0.0   (最高波, Q4, 区分度最差侧)
+    用 rv20 直接映射到 [0,1] (锚定池内实测分布, 见 q6 报告; 桶按 low_vol_score 升序,
+    Q0=最低分=最高波, Q4=最高分=最低波, E[r] 自 Q0 −0.71% 单调升至 Q4 +0.93%):
+      rv20 <= 1.5%   → 1.0   (最低波, 最高分侧, E[r] 最优的连续低波区)
+      rv20 >= 4.5%   → 0.0   (最高波, 最低分侧, 区分度最差)
       中间线性过渡. 数据不足 (<10 个有效日收益) 回退 0.5 中性 (与同族回退一致).
     """
-    if "pct_change" not in prices.columns or "close" not in prices.columns:
+    if "pct_change" not in prices.columns:
         return 0.5
     try:
         pct = pd.to_numeric(prices["pct_change"], errors="coerce").values
         window = pct[max(0, trigger_idx - 20):trigger_idx]  # 不含涨停日
-        window = window[~np.isnan(window)]
+        # 滤非有限值 (NaN 与 ±inf): 仅 isnan 会让 inf 漏进 np.std → NaN → 比较全 False →
+        # return NaN → min(1.0, NaN)=1.0 把 NaN 洗成满分过闸 (对抗审查发现). 与同列消费方
+        # chained_return_pct 的 math.isfinite 一致.
+        window = window[np.isfinite(window)]
         if len(window) < 10:
             return 0.5
         rv20 = float(np.std(window))  # 日收益波动率, 百分点量纲 (pct_change 已是 %)

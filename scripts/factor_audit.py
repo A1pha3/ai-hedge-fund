@@ -67,7 +67,9 @@ T_HORIZON = 10  # T+10 (与 known_distributions/natural_horizon 口径一致)
 
 # 待审计特征: 值由生产纯函数在 scan 时算出, 存进每条 signal 记录.
 # 连续值 (volume_ratio) 按预设区间分桶; 离散值 (0/0.5/1, streak) 直接按值分桶.
-DISCRETE_FEATURES = ["weekday_score", "board_score", "position_score", "squeeze_score", "volume_score", "streak"]
+# Q6: low_vol_score 新进 strength (0.25 权重) 必须进默认保质期监控; position_score 已移出
+# strength, 仍列入以持续对照 (它曾是真金, 现只观测 — 监控它是否彻底失效).
+DISCRETE_FEATURES = ["weekday_score", "board_score", "position_score", "low_vol_score", "squeeze_score", "volume_score", "streak"]
 CONTINUOUS_FEATURES = {"volume_ratio": [(0, 0.5), (0.5, 0.8), (0.8, 1.0), (1.0, 1.2), (1.2, 1.5), (1.5, 2.0), (2.0, math.inf)]}
 
 

@@ -149,11 +149,12 @@ def main() -> None:
     rho_lv_pos = _rank_ic([(s["low_vol_score"], s["position_score"]) for s in pool])
 
     # === low_vol 分桶区分度 (它配不配进公式) ===
+    # qcut 按 low_vol_score 升序: Q0=最低分=最高波, Q4=最高分=最低波.
     quint = pd.qcut(pd.Series([s["low_vol_score"] for s in pool]), 5, labels=False, duplicates="drop")
     low_vol_buckets = {}
     for qi in sorted(set(quint)):
         rets = [s["t10_return"] for s, q in zip(pool, quint) if q == qi]
-        low_vol_buckets[f"Q{qi} (低波→高波)" if qi == 0 else f"Q{qi}"] = _stats(rets)
+        low_vol_buckets[f"Q{qi} (最高波)" if qi == 0 else (f"Q{qi} (最低波)" if qi == 4 else f"Q{qi}")] = _stats(rets)
 
     # === 判据 1: rank IC ===
     ic = {f: _rank_ic([(s[f"strength_{f}"], s["t10_return"]) for s in pool]) for f in "ABC"}
@@ -183,7 +184,7 @@ def main() -> None:
         },
         "low_vol_discrimination": {
             "by_quintile": low_vol_buckets,
-            "reading": "Q0(最低波) 优于 Q4(最高波) 且单调 → low_vol 配进公式",
+            "reading": "E[r] 自 Q0(最高波, −0.71%) 单调升至 Q4(最低波, +0.93%) → 低波=高分=高收益, low_vol 配进公式",
         },
         "criterion_1_rank_ic": {f"formula_{f}": ic[f] for f in "ABC"},
         "criterion_2_top_decile": {f"formula_{f}": _stats([s["t10_return"] for s in top[f]]) for f in "ABC"},

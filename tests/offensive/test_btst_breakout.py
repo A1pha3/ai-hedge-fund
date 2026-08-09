@@ -404,6 +404,26 @@ def test_low_vol_score_inverted_mapping():
     assert _compute_low_vol_score(_mk(1.0), idx) > mid > _compute_low_vol_score(_mk(6.0), idx)
 
 
+def test_low_vol_score_filters_non_finite_returns():
+    """回归守卫 (2026-08-09, 对抗审查发现): pct_change 窗口含 ±inf 时不得返回 NaN.
+
+    仅滤 NaN 不滤 inf 时, np.std(含inf)→NaN → rv20 比较全 False → return NaN →
+    外层 min(1.0, NaN)=1.0 把 NaN 洗成满分过闸 (Python min 保留首参). 同列消费方
+    chained_return_pct 用 math.isfinite 硬ening — 此处必须同样滤非有限值.
+    """
+    from src.screening.offensive.setups.btst_breakout import _compute_low_vol_score
+
+    n = 25
+    for bad in (float("inf"), float("-inf"), float("nan")):
+        pcts = [0.0] * 20 + [bad, 1.0, -1.0, 1.0, 10.0]
+        df = pd.DataFrame({"date": pd.bdate_range("2026-06-01", periods=n), "close": [10.0] * n,
+                           "open": [10.0] * n, "high": [10.0] * n, "low": [10.0] * n, "pct_change": pcts})
+        v = _compute_low_vol_score(df, n - 1)
+        assert v == v, f"含 {bad} 窗口应滤掉而非返回 NaN, got {v}"
+        assert 0.0 <= v <= 1.0, f"归一化契约: 须在 [0,1], got {v}"
+
+
+
 def test_position_does_not_affect_trigger_strength():
     """回归守卫 (2026-08-09, geometry Q6): position_score 不再影响 trigger_strength.
 
@@ -453,6 +473,7 @@ def test_position_does_not_affect_trigger_strength():
 
 
 
+def test_volume_score_recalibrated_inverted_u_mapping():
     """锚定 2026-08-09 连续重标定 (factor_audit Q2) 的倒 U 映射.
 
     阈值由全量复核 (n=17994, split-half 跨窗一致) 定, 是数据驱动常量 — 将来会被
