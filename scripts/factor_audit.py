@@ -342,7 +342,16 @@ def correlation_report(signals: list[dict]) -> dict:
 
 
 def _verdict(exe_groups: dict[str, dict]) -> dict:
-    """从 executable 分桶提炼判定: 最佳桶 vs 最差桶, edge 方向与 Wilson 显著性."""
+    """从 executable 分桶提炼判定: 最佳桶 vs 最差桶, edge 方向与 Wilson 显著性.
+
+    best/worst 按 mean 选 (E[r]=策略期望收益, 对单调因子 low_vol/streak/volume_ratio 正确).
+    长尾鲁棒性诊断 (对抗审查第3轮): 涨停后 T+10 收益严重右偏 (mean+0.73% vs median−2.61%,
+    max+225%), 小/混合语义桶 (如各分量 0.5 的「数据不足回退」桶, n~128) 的 mean 会被单条
+    极端值抬高 → mean-best 误选噪声桶 (position/squeeze/volume_score 的 0.5 回退桶 mean 居
+    然最高, 但 winrate 最低). 同时算 median-best: 实测 mean-best≠median-best 恰好标中这 4
+    个被污染特征, 不触及 4 个干净单调因子 (零误报). 不改选桶准则为 winrate — 二元量级丢失会
+    打反 low_vol 方向; median 作对照 + 分歧警告, 让污染可见并给出可靠读法 (winrate_spread +
+    Wilson), 是否把 median 提为主判据留给 owner."""
     scored = [(k, g) for k, g in exe_groups.items() if g["n_with_t10_return"] >= 30]
     if len(scored) < 2:
         return {"note": "有效桶 <2 (n>=30), 样本不足以判区分度", "n_buckets_ge30": len(scored)}
@@ -354,12 +363,28 @@ def _verdict(exe_groups: dict[str, dict]) -> dict:
     # 一侧点估计), 系统性偏松 — CI 实际重叠却被判分离, 倾向"留弱因子". 改为两侧都用 CI
     # 边界 (best 下界 > worst 上界), 重叠区间诚实判"未分离".
     wilson_sep = best[1]["wilson_ci95"][0] > worst[1]["wilson_ci95"][1]
+    # 长尾分歧诊断: mean-best 与 median-best 不同 → best 桶 mean 被极端值抬高 (典型=0.5 回退桶).
+    # wr_spread<0 是交叉铁证: mean 选出的 best 胜率反比 worst 低 = 纯长尾幻象.
+    median_best_k = max(scored, key=lambda kv: kv[1]["median_t10_return"])[0]
+    median_worst_k = min(scored, key=lambda kv: kv[1]["median_t10_return"])[0]
+    median_spread = (max(g["median_t10_return"] for _, g in scored)
+                     - min(g["median_t10_return"] for _, g in scored)) * 100
+    diverge = best[0] != median_best_k
     return {
         "best_bucket": best[0], "best": best[1],
         "worst_bucket": worst[0], "worst": worst[1],
         "mean_return_spread_pp": round(er_spread, 2),
         "winrate_spread_pp": round(wr_spread, 2),
+        "median_return_spread_pp": round(median_spread, 2),
+        "median_best_bucket": median_best_k,
+        "median_worst_bucket": median_worst_k,
         "wilson_separated": bool(wilson_sep),
+        "robustness_warning": bool(diverge),
+        "robustness_note": (
+            f"⚠ mean-best({best[0]})≠median-best({median_best_k}): best 桶 mean 被长尾极端值抬高"
+            + ("且 winrate_spread 为负(铁证)" if wr_spread < 0 else "")
+            + " — 判读须看 winrate_spread + wilson_separated, 勿单凭 mean best/worst"
+        ) if diverge else "",
         "note": "best>worst 且 Wilson 分离 => 该分量有区分度; 否则权重待复核",
     }
 
@@ -413,6 +438,9 @@ def _print(feature: str, rep: dict) -> None:
         print(f"  → 最佳 {v['best_bucket']} vs 最差 {v['worst_bucket']}: "
               f"E[r]差 {v['mean_return_spread_pp']:+.2f}pp 胜率差 {v['winrate_spread_pp']:+.2f}pp "
               f"{'【Wilson分离】' if v['wilson_separated'] else '(未分离)'}")
+        if v.get("robustness_warning"):
+            print(f"  ⚠ 长尾污染: mean-best({v['best_bucket']})≠median-best({v['median_best_bucket']}), "
+                  f"best桶mean被极端值抬高 — 判读看胜率差/Wilson, 勿凭mean")
     tb = rep["time_blocks"]
     if tb["second_half"]:
         print(f"  跨窗(split@{tb['split_date']}): 见 JSON first_half/second_half")
