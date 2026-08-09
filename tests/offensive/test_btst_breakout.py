@@ -501,6 +501,26 @@ def test_volume_score_recalibrated_inverted_u_mapping():
     assert _compute_volume_score(_mk(1.2), idx) > _compute_volume_score(_mk(4.0), idx)
 
 
+def test_board_quality_score_q3_merge_mapping():
+    """Q3: 002/300/301 与 688/60x 合并到 0.95 (审计口径 Wilson 打平); 000/001 = 0.0.
+
+    锚定合并方向 = 降 (非升): 旧 002/300 = 1.0 → 0.95. 降方向在池内挡出 823 票
+    E[r]=-1.067% 的负 EV 边缘票 (其他分量弱、靠 board 满值勉强入池), 升则放入负 EV.
+    二值化后无 1.0 分量.
+    """
+    from src.screening.offensive.setups.btst_breakout import _board_quality_score
+
+    assert _board_quality_score("002530") == 0.95  # 中小板 (旧 1.0, Q3 降)
+    assert _board_quality_score("300724") == 0.95  # 创业板 (旧 1.0, Q3 降)
+    assert _board_quality_score("301088") == 0.95  # 创业板 (旧 1.0, Q3 降)
+    assert _board_quality_score("688981") == 0.95  # 科创板
+    assert _board_quality_score("600519") == 0.95  # 沪市主板
+    assert _board_quality_score("000001") == 0.0  # 深市主板 (审计显著最差)
+    assert _board_quality_score("001872") == 0.0  # 深市主板
+    # 二值化: 不再有 1.0 分量
+    assert _board_quality_score("002530") != 1.0
+
+
 def test_compute_limit_up_streak_counts_consecutive_limit_ups():
     """连板数 helper: 从 trigger 日向前数连续涨停日 (含 trigger 日).
 
