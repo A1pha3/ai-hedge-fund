@@ -75,6 +75,9 @@ DISCRETE_FEATURES = ["weekday_score", "board_score", "position_score", "squeeze_
 CONTINUOUS_FEATURES = {
     "volume_ratio": [(0, 0.5), (0.5, 0.8), (0.8, 1.0), (1.0, 1.2), (1.2, 1.5), (1.5, 2.0), (2.0, math.inf)],
     "low_vol_score": [(0.0, 0.2), (0.2, 0.4), (0.4, 0.6), (0.6, 0.8), (0.8, 1.0001)],
+    # range_pct: 涨停日盘中振幅 (high-low)/prev_close. 细分桶定位倒 U 甜区 —
+    # [0,4%) 一字锁死板 (exec 口径修正幸存者偏差), [6,9%) 预期甜区, [14%+) 预期盘中崩最差.
+    "range_pct": [(0.0, 0.04), (0.04, 0.06), (0.06, 0.09), (0.09, 0.11), (0.11, 0.14), (0.14, math.inf)],
 }
 
 
@@ -102,6 +105,8 @@ def scan() -> tuple[list[dict], dict]:
         pct = pd.to_numeric(df["pct_change"], errors="coerce").values
         close = pd.to_numeric(df["close"], errors="coerce").values
         open_ = pd.to_numeric(df["open"], errors="coerce").values if "open" in df.columns else close
+        high = pd.to_numeric(df["high"], errors="coerce").values if "high" in df.columns else close
+        low = pd.to_numeric(df["low"], errors="coerce").values if "low" in df.columns else close
         date_str = df["date_str"].values
         limit_up_pct = limit_up_pct_for_ticker(ticker)
         limit_up_cap = limit_up_cap_pct_for_ticker(ticker)
@@ -143,6 +148,18 @@ def scan() -> tuple[list[dict], dict]:
             if ref_idx >= 0 and i - 1 >= 0:
                 pre_runup_pct = chained_return_pct(df, ref_idx, i - 1)
 
+            # range_pct: 涨停日盘中振幅 (high-low)/prev_close — 涨停结构的新维度.
+            # 现有 strength 分量全是「涨停前」状态 (position/squeeze/low_vol/volume 描述封板前),
+            # range 描述「封板过程本身」: 一字板 range≈0 (锁死买不到) vs 振荡板 range 大 (盘中博弈).
+            # 预期倒 U — 太干净=锁死(exec 口径修正幸存者偏差), 太乱=盘中崩, 中间甜区最优.
+            range_pct = None
+            if i >= 1:
+                prev_c = close[i - 1]
+                hi, lo = high[i], low[i]
+                if (math.isfinite(prev_c) and math.isfinite(hi) and math.isfinite(lo)
+                        and prev_c > 0 and hi >= lo):
+                    range_pct = round((hi - lo) / prev_c, 4)
+
             unbuyable = is_limit_up_unbuyable_next_day(df, i, ticker)
 
             # T+1 open -> T+10 close
@@ -168,6 +185,7 @@ def scan() -> tuple[list[dict], dict]:
                 "volume_score": volume_score,
                 "volume_ratio": volume_ratio,
                 "pre_runup_pct": (round(pre_runup_pct, 4) if pre_runup_pct is not None else None),
+                "range_pct": range_pct,
                 "unbuyable_next_day": bool(unbuyable),
                 "t10_return": (round(ret, 5) if ret is not None else None),
             })
@@ -276,7 +294,7 @@ def _time_block_split(signals: list[dict]) -> tuple[list[dict], list[dict], str]
 # 相关用 Spearman (秩) 天然抗量纲.
 # Q6 复核: strength 现含 low_vol (替换 position). 把 low_vol 与 position 都列入 —
 # 验证 low_vol 是否与 pre_runup 正交 (双重计权是否解除), 及 strength 分量间有无新冗余.
-ORTHO_FEATURES = ["board_score", "position_score", "low_vol_score", "squeeze_score", "volume_score", "pre_runup_pct"]
+ORTHO_FEATURES = ["board_score", "position_score", "low_vol_score", "squeeze_score", "volume_score", "pre_runup_pct", "range_pct"]
 
 
 def _spearman(x: list[float], y: list[float]) -> float:
