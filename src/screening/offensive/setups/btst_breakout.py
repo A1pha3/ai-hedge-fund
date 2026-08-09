@@ -457,8 +457,10 @@ class BtstBreakoutSetup(Setup):
                 "limit_up_pct_threshold": limit_up_pct,
                 "range_low": range_low,
                 "range_based_stop_pct": round(range_based_stop_pct, 4),
-                # 5 个 strength 分量导出 (2026-08-08): 研究/运行时同一函数,
-                # 供 dogfood 观测 + 因子审计器基于真实 detect-hit 复核.
+                # 分量导出契约 (2026-08-09, geometry-of-alpha): 5 个 strength 分量 +
+                # energy_bonus 全部归一到 [0,1]. 归一化是点积可比性的前提 — 审计器在
+                # 同一测度下对分量取内积/相关, 未归一的量纲会让点积失真. 未来新增分量
+                # 必须同样归一到 [0,1] 才允许进 metadata 与 trigger_strength.
                 "weekday_score": weekday_score,
                 "board_score": board_score,
                 "position_score": position_score,

@@ -45,6 +45,7 @@ from scripts.backtest_paper_loop import _load_all_prices  # noqa: E402
 from src.screening.offensive.execution_adjuster import (  # noqa: E402
     is_limit_up_unbuyable_next_day,
 )
+from src.screening.offensive.price_returns import chained_return_pct  # noqa: E402
 from src.screening.offensive.setups.btst_breakout import (  # noqa: E402
     _board_quality_score,
     _compute_limit_up_streak,
@@ -125,6 +126,11 @@ def scan() -> tuple[list[dict], dict]:
                         volume_ratio = round(float(today_vol) / avg, 4)
             weekday_score = 1.0 if pd.Timestamp(date_str[i]).weekday() >= 2 else 0.0
             board_score = _board_quality_score(ticker)
+            # pre_runup_pct: 涨停前 5 日涨幅 (条件4 池过滤同口径), 供冗余问责 —
+            # position(新鲜突破) 与它大概率同源, 相关矩阵回答「是否双重计权同一方向」.
+            pre_runup_pct = None
+            if ref_idx >= 0 and i - 1 >= 0:
+                pre_runup_pct = chained_return_pct(df, ref_idx, i - 1)
 
             unbuyable = is_limit_up_unbuyable_next_day(df, i, ticker)
 
@@ -149,6 +155,7 @@ def scan() -> tuple[list[dict], dict]:
                 "squeeze_score": squeeze_score,
                 "volume_score": volume_score,
                 "volume_ratio": volume_ratio,
+                "pre_runup_pct": (round(pre_runup_pct, 4) if pre_runup_pct is not None else None),
                 "unbuyable_next_day": bool(unbuyable),
                 "t10_return": (round(ret, 5) if ret is not None else None),
             })
@@ -194,12 +201,15 @@ def _ordered_keys(feature: str, keys) -> list[str]:
     return sorted(keys, key=lambda k: float(k))
 
 
-def _group(signals: list[dict], feature: str, *, executable_only: bool) -> dict[str, dict]:
-    """按特征分桶统计 (executable_only=双账本的执行口径)."""
+def _group(signals: list[dict], feature: str, *, measure=None) -> dict[str, dict]:
+    """按特征分桶统计. measure 是一等公民的测度谓词 (见 MEASURES):
+    同一份 scan, 同一个分桶聚合, 只是换一个测度 — 挖掘/监控/正交/尾部全是自由组合.
+    measure=None 等价 raw (全样本)."""
+    pred = measure if measure is not None else MEASURES["raw"]
     buckets: dict[str, list[float]] = defaultdict(list)
     counts: dict[str, int] = defaultdict(int)
     for s in signals:
-        if executable_only and s.get("unbuyable_next_day"):
+        if not pred(s):
             continue
         key = _bucket_key(feature, s.get(feature))
         if key is None:
@@ -208,6 +218,29 @@ def _group(signals: list[dict], feature: str, *, executable_only: bool) -> dict[
         if s["t10_return"] is not None:
             buckets[key].append(s["t10_return"])
     return {k: _agg_returns(buckets.get(k, []), counts[k]) for k in _ordered_keys(feature, counts)}
+
+
+def _exec(s: dict) -> bool:
+    """execution-adjusted 测度基座: 剔除次日续涨停买不到样本 (幸存者偏差护栏)."""
+    return not s["unbuyable_next_day"]
+
+
+def _make_tail_predicate(signals: list[dict], q: float = 0.10):
+    """尾部测度: 在组合最差日子 (t10_return 最差 q 分位) 上的条件测度.
+    geometry-of-alpha: 全样本相关是会撒谎的统计量; 危机时刻相关性才真."""
+    rets = sorted(s["t10_return"] for s in signals if s["t10_return"] is not None)
+    if not rets:
+        return lambda s: False
+    cut = rets[int(len(rets) * q)]
+    return lambda s: s["t10_return"] is not None and s["t10_return"] <= cut
+
+
+# 测度注册表: 唯一状态. 每个测度是一个谓词 s->bool, 作用于同一批信号.
+# raw/exec 是基座; 时间块/尾部在 audit 时按当前 signals 动态绑定 (见 audit_feature).
+MEASURES = {
+    "raw": lambda s: True,
+    "exec": _exec,
+}
 
 
 def _time_block_split(signals: list[dict]) -> tuple[list[dict], list[dict], str]:
@@ -219,6 +252,62 @@ def _time_block_split(signals: list[dict]) -> tuple[list[dict], list[dict], str]
     first = [s for s in signals if s["date"] < mid]
     second = [s for s in signals if s["date"] >= mid]
     return first, second, mid
+
+
+# 参与正交性/冗余问责的分量 (归一 [0,1] 的打分分量 + pre_runup 池过滤器).
+# volume_score 与 volume_ratio 同源, 只取离散 score 避免平凡自相关; pre_runup 连续,
+# 相关用 Spearman (秩) 天然抗量纲.
+ORTHO_FEATURES = ["board_score", "position_score", "squeeze_score", "volume_score", "pre_runup_pct"]
+
+
+def _spearman(x: list[float], y: list[float]) -> float:
+    s1, s2 = pd.Series(x), pd.Series(y)
+    if len(s1) < 10 or s1.nunique() < 2 or s2.nunique() < 2:
+        return float("nan")
+    return float(s1.rank().corr(s2.rank()))
+
+
+def correlation_report(signals: list[dict]) -> dict:
+    """分量两两 Spearman 相关矩阵 + 有效维度 (geometry-of-alpha 正交性问责).
+
+    回答: 我们以为的 N 个分散赌注, 实际是几个独立方向? 有效维度 = 相关矩阵
+    谱集中度 (participation ratio): (Σλ)² / Σλ². N 个正交分量 → eff_dim=N;
+    完全共线 → eff_dim=1. eff_dim 远低于分量数 = 复印件集合 (同一赌注多份).
+    用 executable 测度, 与判定口径一致. pre_runup 是池过滤器, 纳入以问责
+    position(新鲜突破) 是否与「防追高」双重计权同一方向.
+    """
+    import numpy as np
+
+    exe = [s for s in signals if MEASURES["exec"](s) and all(s.get(f) is not None for f in ORTHO_FEATURES)]
+    n = len(exe)
+    feats = {f: [s[f] for s in exe] for f in ORTHO_FEATURES}
+
+    matrix: dict[str, dict[str, float]] = {}
+    for a in ORTHO_FEATURES:
+        matrix[a] = {b: (1.0 if a == b else round(_spearman(feats[a], feats[b]), 4)) for b in ORTHO_FEATURES}
+
+    # 有效维度 (participation ratio), NaN 置 0 后求特征值
+    M = np.array([[matrix[a][b] for b in ORTHO_FEATURES] for a in ORTHO_FEATURES], dtype=float)
+    M = np.nan_to_num(M, nan=0.0)
+    np.fill_diagonal(M, 1.0)
+    eig = np.linalg.eigvalsh(M)
+    eig = eig[eig > 1e-9]
+    eff_dim = float((eig.sum() ** 2) / (eig ** 2).sum()) if len(eig) else 0.0
+
+    # 最强冗余对 (非对角 |ρ| 最大)
+    pairs = [(a, b, matrix[a][b]) for i, a in enumerate(ORTHO_FEATURES) for b in ORTHO_FEATURES[i + 1:]]
+    pairs = [p for p in pairs if not math.isnan(p[2])]
+    pairs.sort(key=lambda p: -abs(p[2]))
+
+    return {
+        "n_executable": n,
+        "features": ORTHO_FEATURES,
+        "spearman_matrix": matrix,
+        "effective_dimension": round(eff_dim, 2),
+        "n_components": len(ORTHO_FEATURES),
+        "top_redundant_pairs": [{"a": a, "b": b, "rho": r} for a, b, r in pairs[:3]],
+        "note": "eff_dim << n_components → 复印件集合; position↔pre_runup 高 ρ → 防追高被双重计权, 该简化而非叠加",
+    }
 
 
 def _verdict(exe_groups: dict[str, dict]) -> dict:
@@ -242,14 +331,20 @@ def _verdict(exe_groups: dict[str, dict]) -> dict:
 
 
 def audit_feature(signals: list[dict], feature: str) -> dict:
-    """对单个特征出完整审计: 双账本 + 时间块切片 + 判定."""
-    raw = _group(signals, feature, executable_only=False)
-    exe = _group(signals, feature, executable_only=True)
+    """对单个特征出完整审计: 双账本 + 时间块 + 尾部测度 + 判定.
+    所有切片共用同一 scan 同一聚合, 只是换测度."""
+    raw = _group(signals, feature, measure=MEASURES["raw"])
+    exe = _group(signals, feature, measure=MEASURES["exec"])
 
-    # 跨窗同向 (executable 口径): 前后半各自分桶
-    first, second, mid = _time_block_split([s for s in signals if not s["unbuyable_next_day"]])
-    half1 = _group(first, feature, executable_only=False)
-    half2 = _group(second, feature, executable_only=False) if second else {}
+    # 跨窗同向 (executable 测度): 前后半各自分桶
+    first, second, mid = _time_block_split([s for s in signals if MEASURES["exec"](s)])
+    half1 = _group(first, feature)
+    half2 = _group(second, feature) if second else {}
+
+    # 尾部测度 (geometry-of-alpha 第3门): 组合最差日子上的条件区分度.
+    # 一个因子在太平日子有区分度不算数, 危机时仍区分才配叫真方向.
+    tail_pred = _make_tail_predicate(signals)
+    tail = _group(signals, feature, measure=lambda s: _exec(s) and tail_pred(s))
 
     return {
         "feature": feature,
@@ -260,6 +355,10 @@ def audit_feature(signals: list[dict], feature: str) -> dict:
             "split_date": mid,
             "first_half": half1,
             "second_half": half2,
+        },
+        "tail_window": {
+            "note": "尾部测度: 组合最差 10% 日子上的区分度. 全样本区分度会撒谎, 危机切片才真.",
+            "by_bucket": tail,
         },
         "verdict": _verdict(exe),
     }
@@ -306,6 +405,21 @@ def main() -> None:
         out = REPORT_DIR / f"factor_audit_{feat}.json"
         out.write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
         _print(feat, rep)
+        print(f"  → {out}")
+
+    # 正交性/冗余问责 (geometry-of-alpha): 分量相关矩阵 + 有效维度. 仅全量运行.
+    if only is None:
+        corr = correlation_report(signals)
+        corr["generated_at"] = stamp
+        corr["universe"] = meta
+        out = REPORT_DIR / "factor_audit_orthogonality.json"
+        out.write_text(json.dumps(corr, ensure_ascii=False, indent=2), encoding="utf-8")
+        print("\n" + "=" * 78)
+        print("正交性问责: 分量相关矩阵 (Spearman, executable 测度)")
+        print("=" * 78)
+        print(f"  有效维度: {corr['effective_dimension']} / {corr['n_components']} 分量")
+        for p in corr["top_redundant_pairs"]:
+            print(f"  冗余对: {p['a']} ↔ {p['b']}  ρ={p['rho']:+.3f}")
         print(f"  → {out}")
 
 
