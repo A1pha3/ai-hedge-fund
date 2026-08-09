@@ -86,8 +86,15 @@ def _resolve_industry_day_pct(
 def backtest_paper_loop(
     start_date: str = "20260101",
     end_date: str = "20260706",
+    block_regimes: tuple[str, ...] = (),
+    only_setups: tuple[str, ...] | None = None,
 ) -> dict:
-    """回测 paper trading 闭环 (快速版)."""
+    """回测 paper trading 闭环 (快速版).
+
+    block_regimes: 这些 regime 日不开新仓 (仍 close_matured + 跑 drawdown 熔断).
+        默认空 = 不 gate (现状). 传 ("crisis","risk_off") = regime-gate 诊断.
+    only_setups: 只跑这些 setup (默认全部). 传 ("btst_breakout",) = 隔离 oversold 拖累.
+    """
     from src.screening.offensive.kelly import compute_kelly_size
     from src.screening.offensive.known_distributions import get_known_distribution
     from src.screening.offensive.paper_tracker import PaperTracker
@@ -115,6 +122,8 @@ def backtest_paper_loop(
         ("btst_breakout", BtstBreakoutSetup(), 10, get_known_distribution("btst_breakout", 10)),
         ("oversold_bounce", OversoldBounceSetup(), 5, get_known_distribution("oversold_bounce", 5)),
     ]
+    if only_setups:
+        setups = [s for s in setups if s[0] in only_setups]
 
     # 临时 journal
     tmp_dir = Path("data/paper_trading_backtest")
@@ -131,11 +140,18 @@ def backtest_paper_loop(
         regime = regimes.get(trade_date, "normal")
 
         # 1. close_matured (平到期仓 + 回填 P&L → 驱动 drawdown)
-        tracker.close_matured(trade_date, use_data_fetcher=fetcher, price_loader=None)
+        # 传入真实 price_loader 激活 _execution_adjusted_return 的诚实口径
+        # (T+1 开盘入场 + slippage → T+N 收盘), 与 live OOS 面板/exec-adjusted 同源.
+        # 传 None 会退化为信号日 close→T+N close (无滑点), 在封死板上高估成交.
+        tracker.close_matured(trade_date, use_data_fetcher=fetcher, price_loader=lambda t, as_of: prices_by.get(t))
 
         # 2. drawdown 熔断
         dd_action = tracker.drawdown_action()
         if dd_action == "liquidate":
+            continue
+
+        # regime gate: 坏 regime 不开新仓 (仍平到期仓 + 维护 drawdown)
+        if block_regimes and regime in block_regimes:
             continue
 
         # 3. 扫描新信号
