@@ -1,7 +1,7 @@
 # BTST Regime Admission 前向配对 Proxy Trial 设计（Revision 2）
 
 > - 修订日期：2026-08-10
-> - 状态：架构与关键语义已获 owner 认可；本文待书面终审
+> - 状态：Revision 2 已获 owner 书面终审通过；尚未实施或启动 Trial
 > - 执行模式：仅 `DAILY_BAR_PROXY`
 > - 上位规范：`docs/superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md`
 > - 安全边界：只产生 `execution_authority="NONE"` 的前向反事实证据；不激活策略或资本授权，不签发 `ExecutionPermit`，不连接 broker
@@ -190,7 +190,7 @@ shadow adapter：
 - entry unknown/no-fill 释放 reserve、保留现金；exit unknown 保留 mandate，不用 stale close 或未来价补造；
 - 只依赖 Evidence Store observation、CapitalTruth 和纯 resolver；broker module 在静态依赖图上不可达。
 
-每个 proxy capital event 必须同时标记 `mode=DAILY_BAR_PROXY` 与 `source_artifact_kind=SHADOW_DECISION`，且只允许进入该 Trial/arm 的隔离 portfolio；它是 mode-pure counterfactual capital truth，不是真实账户资本事实。
+每个由 Trial 决策派生的 reserve、trade、fee 与 execution correction 必须同时标记 `mode=DAILY_BAR_PROXY` 与 `source_artifact_kind=SHADOW_DECISION`；close mark/valuation 则如实绑定产生它的 `SnapshotEvidence`，不能把市场估值伪称为决策产物。所有事实只允许进入该 Trial/arm 的隔离 portfolio；它们是 mode-pure counterfactual capital truth，不是真实账户资本事实。
 
 这不是第二套执行引擎：两种 adapter 必须通过 differential/property tests 证明，对归一化后等价的 quantity、limit、bar、费用、reserve 和资本前态产生相同经济 resolution。
 
@@ -271,7 +271,7 @@ promotion eligibility 直接调用上位规范冻结的逻辑与：
 
 ### 9.1 语义与因果
 
-- `NORMAL` 且资本状态相同：两臂决策逐字节相同；
+- `NORMAL` 且资本状态相同：两臂的经济决策投影（排序、数量、价格、reserve）逐字节相同；arm、portfolio 与 policy provenance 自然不同；
 - `RISK_OFF/CRISIS/UNKNOWN`：Champion 按 ungated 政策继续，Challenger blocked；
 - 无 canonical observation：共同 operational no-run，不回填 normal；
 - regime 不能影响排序、strength 或 sizing；
