@@ -39,13 +39,19 @@ from datetime import date, datetime, timedelta
 from typing import Callable, Protocol
 
 from src.screening.offensive.v3.contracts import ExecutionMode, Sha256
+from src.screening.offensive.v3.contracts.capital import CapitalRiskSnapshot
 from src.screening.offensive.v3.contracts.decision import ShadowDecision
 from src.screening.offensive.v3.contracts.evidence import (
     EvidenceRecord,
     SignalEvidence,
 )
 from src.screening.offensive.v3.contracts.regime import RegimeObservation
-from src.screening.offensive.v3.contracts.trial import TrialArm
+from src.screening.offensive.v3.contracts.trial import (
+    BaselineShadowPolicyBinding,
+    ShadowPolicySourceKind,
+    TargetShadowPolicyBinding,
+    TrialArm,
+)
 from src.screening.offensive.v3.evidence.regime import (
     ActiveRegimeObservation,
 )
@@ -55,11 +61,18 @@ from src.screening.offensive.v3.evidence.session_spine import (
 )
 from src.screening.offensive.v3.governance.regime_trial import (
     RegimeTrialBundle,
+    ValidatedRegimeTrialBundle,
     validate_regime_trial_bundle,
 )
+from src.screening.offensive.v3.kernel.admission import BTST_FAMILY
 from src.screening.offensive.v3.kernel.models import (
+    CandidateEvidenceBinding,
+    DeadlineContract,
     NoTradeDecision,
+    RawCandidate,
+    ShadowCapitalCheckpoint,
     ShadowKernelInput,
+    ShadowSharedInput,
 )
 from src.screening.offensive.v3.orchestration.trial_store import (
     ArmDecision,
@@ -465,30 +478,14 @@ class ForwardPairedTrialRunner:
         regime_hash: str,
         trusted_at: datetime,
     ) -> object:
-        from src.screening.offensive.v3.kernel.models import (
-            ShadowSharedInput,
-        )
-
-        trial = validated.trial_manifest
-        sap = validated.sap_manifest
-        return ShadowSharedInput(
+        return freeze_shared_input(
             portfolio_id=self._portfolio_id,
-            signal_session=session,
-            decision_cycle_id=cycle_id,
-            trial_manifest_hash=trial.artifact_hash(),
-            sap_manifest_hash=sap.artifact_hash(),
-            trial_arm=TrialArm.CHAMPION,  # overwritten per arm below
-            mode=ExecutionMode.DAILY_BAR_PROXY,
-            trusted_evidence_cutoff=trusted_at,
-            evidence_set_merkle_root=regime_hash,
-            regime_observation=regime,
             trial_id=self._trial_id,
-            research_program_id=trial.research_program_id,
-            economic_lineage_id=trial.economic_lineage_id,
-            stage_id="stage-1",
-            stage_manifest_hash="1" * 64,
-            trust_bundle_hash=trial.trust_bundle_hash,
-            registry_epoch=trial.registry_epoch,
+            validated=validated,
+            session=session,
+            cycle_id=cycle_id,
+            regime=regime,
+            regime_hash=regime_hash,
             trusted_at=trusted_at,
         )
 
@@ -501,109 +498,12 @@ class ForwardPairedTrialRunner:
         records: tuple[EvidenceRecord[SignalEvidence], ...],
         capital_snapshot,
     ) -> tuple[ArmDecision, ArmDecision]:
-        from src.screening.offensive.v3.contracts.trial import (
-            BaselineShadowPolicyBinding,
-            ShadowPolicySourceKind,
-            TargetShadowPolicyBinding,
-        )
-        from src.screening.offensive.v3.kernel.admission import BTST_FAMILY
-        from src.screening.offensive.v3.kernel.models import (
-            CandidateEvidenceBinding,
-            DeadlineContract,
-            RawCandidate,
-            ShadowCapitalCheckpoint,
-            ShadowKernelInput,
-        )
-
-        trial = validated.trial_manifest
-        capital_checkpoint = ShadowCapitalCheckpoint(
-            capital_snapshot_hash=capital_snapshot.content_hash(),
+        champion_input, challenger_input = build_arm_kernel_inputs(
+            validated=validated,
+            shared_input=shared_input,  # type: ignore[arg-type]
+            trusted_at=trusted_at,
+            records=records,
             capital_snapshot=capital_snapshot,
-        )
-        # Forward-decision deadline contract: the trusted time sits inside the
-        # enrollment window, one open-auction cycle ahead of the T0 close.
-        deadlines = DeadlineContract(
-            close_finalized_at=trusted_at - timedelta(hours=18, minutes=30),
-            seal_creation_deadline=trusted_at,
-            permit_issue_deadline=trusted_at + timedelta(minutes=20),
-            permit_expires_at=trusted_at + timedelta(hours=18, minutes=20),
-            gateway_send_deadline=trusted_at + timedelta(hours=18, minutes=20),
-            broker_auction_cutoff=trusted_at + timedelta(hours=18, minutes=30),
-        )
-        # Candidates from the producer's SELECTED records; every binding is
-        # frozen from the record, never synthesized.
-        raw_candidates: list[RawCandidate] = []
-        evidence_bindings: list[CandidateEvidenceBinding] = []
-        prices: list[tuple[str, int]] = []
-        for record in records:
-            envelope = record.evidence
-            candidate_id = envelope.evidence_id
-            raw_candidates.append(
-                RawCandidate(
-                    candidate_id=candidate_id,
-                    producer_namespace=envelope.subject_producer,
-                    family_id=BTST_FAMILY,
-                    economic_lineage_id=trial.economic_lineage_id,
-                    research_program_id=trial.research_program_id,
-                    stage_id="stage-1",
-                    security_id=_candidate_security_id(envelope),
-                    direction="LONG",
-                    unscaled_target_gross_cents=max(
-                        int(capital_snapshot.as_observed_nav_cents // 4),
-                        100_000,
-                    ),
-                    behavior_fingerprint=envelope.behavior_fingerprint,
-                    execution_version=envelope.execution_version,
-                    cost_version=envelope.cost_version,
-                    evidence_ids=(),
-                )
-            )
-            evidence_bindings.append(
-                CandidateEvidenceBinding(
-                    candidate_id=candidate_id,
-                    evidence_id=envelope.evidence_id,
-                    evidence_artifact_hash=record.artifact_hash(),
-                    evidence_payload_hash=envelope.payload_content_hash,
-                )
-            )
-            prices.append((candidate_id, _candidate_price_micros(envelope)))
-        champion_binding = BaselineShadowPolicyBinding(
-            source_kind=ShadowPolicySourceKind.BASELINE_POLICY_ACTIVATION,
-            baseline_policy_activation_hash=trial.baseline_policy_activation_hash,
-            policy_snapshot_hash=validated.baseline_policy.content_hash(),
-            policy_fingerprint=validated.baseline_policy.policy_fingerprint,
-        )
-        challenger_binding = TargetShadowPolicyBinding(
-            source_kind=ShadowPolicySourceKind.TARGET_POLICY_REGISTRATION,
-            target_policy_registration_hash=trial.target_policy_snapshot_registration_hash,
-            policy_snapshot_hash=validated.target_policy.content_hash(),
-            policy_fingerprint=validated.target_policy.policy_fingerprint,
-        )
-        champion_input = ShadowKernelInput(
-            shared=_with_arm(shared_input, TrialArm.CHAMPION),
-            policy_snapshot=validated.baseline_policy,
-            shadow_policy_binding=champion_binding,
-            capital_checkpoint=capital_checkpoint,
-            deadlines=deadlines,
-            candidate_evidence_bindings=tuple(evidence_bindings),
-            raw_candidates=tuple(raw_candidates),
-            price_micros_by_candidate=tuple(prices),
-            industry_by_candidate=tuple(
-                (candidate_id, "unknown") for candidate_id, _ in prices
-            ),
-        )
-        challenger_input = ShadowKernelInput(
-            shared=_with_arm(shared_input, TrialArm.CHALLENGER),
-            policy_snapshot=validated.target_policy,
-            shadow_policy_binding=challenger_binding,
-            capital_checkpoint=capital_checkpoint,
-            deadlines=deadlines,
-            candidate_evidence_bindings=tuple(evidence_bindings),
-            raw_candidates=tuple(raw_candidates),
-            price_micros_by_candidate=tuple(prices),
-            industry_by_candidate=tuple(
-                (candidate_id, "unknown") for candidate_id, _ in prices
-            ),
         )
         champion = self._kernel.decide_shadow(champion_input)
         challenger = self._kernel.decide_shadow(challenger_input)
@@ -622,42 +522,16 @@ class ForwardPairedTrialRunner:
         trusted_at: datetime,
         capital_checkpoint_hash: str,
     ) -> tuple[TrialArmDecisionRecord, TrialArmDecisionRecord]:
-        shared_hash = shared_input.content_hash()  # type: ignore[attr-defined]
-        return (
-            TrialArmDecisionRecord(
-                trial_id=trial_id,
-                signal_session=session,
-                decision_cycle_id=cycle_id,
-                arm=TrialArm.CHAMPION,
-                shared_input_hash=shared_hash,
-                arm_policy_fingerprint=(
-                    champion.shadow_policy_binding.policy_fingerprint
-                    if isinstance(champion, ShadowDecision)
-                    else None
-                ),
-                arm_capital_checkpoint_hash=capital_checkpoint_hash,
-                regime_observation_hash=regime_hash,
-                decision=champion,
-                created_at=trusted_at,
-                artifact_hash=champion.content_hash(),
-            ),
-            TrialArmDecisionRecord(
-                trial_id=trial_id,
-                signal_session=session,
-                decision_cycle_id=cycle_id,
-                arm=TrialArm.CHALLENGER,
-                shared_input_hash=shared_hash,
-                arm_policy_fingerprint=(
-                    challenger.shadow_policy_binding.policy_fingerprint
-                    if isinstance(challenger, ShadowDecision)
-                    else None
-                ),
-                arm_capital_checkpoint_hash=capital_checkpoint_hash,
-                regime_observation_hash=regime_hash,
-                decision=challenger,
-                created_at=trusted_at,
-                artifact_hash=challenger.content_hash(),
-            ),
+        return build_pair_records(
+            trial_id=trial_id,
+            session=session,
+            cycle_id=cycle_id,
+            shared_input=shared_input,  # type: ignore[arg-type]
+            regime_hash=regime_hash,
+            champion=champion,
+            challenger=challenger,
+            trusted_at=trusted_at,
+            capital_checkpoint_hash=capital_checkpoint_hash,
         )
 
     def _finish_reserve(self, pair_key: tuple[str, str, str]) -> None:
@@ -738,11 +612,219 @@ def _candidate_price_micros(envelope: SignalEvidence) -> int:
     return int(float(entry) * 1_000_000)
 
 
+def freeze_shared_input(
+    *,
+    portfolio_id: str,
+    trial_id: str,
+    validated: ValidatedRegimeTrialBundle,
+    session: date,
+    cycle_id: str,
+    regime: RegimeObservation,
+    regime_hash: str,
+    trusted_at: datetime,
+) -> ShadowSharedInput:
+    """One frozen shared input, identical for both arms (official + replay).
+
+    The single construction is shared by the forward runner and the Task 12
+    replay engine so a current-cost replay reproduces the official decision
+    bytes exactly.
+    """
+
+    trial = validated.trial_manifest
+    sap = validated.sap_manifest
+    return ShadowSharedInput(
+        portfolio_id=portfolio_id,
+        signal_session=session,
+        decision_cycle_id=cycle_id,
+        trial_manifest_hash=trial.artifact_hash(),
+        sap_manifest_hash=sap.artifact_hash(),
+        trial_arm=TrialArm.CHAMPION,  # overwritten per arm below
+        mode=ExecutionMode.DAILY_BAR_PROXY,
+        trusted_evidence_cutoff=trusted_at,
+        evidence_set_merkle_root=regime_hash,
+        regime_observation=regime,
+        trial_id=trial_id,
+        research_program_id=trial.research_program_id,
+        economic_lineage_id=trial.economic_lineage_id,
+        stage_id="stage-1",
+        stage_manifest_hash="1" * 64,
+        trust_bundle_hash=trial.trust_bundle_hash,
+        registry_epoch=trial.registry_epoch,
+        trusted_at=trusted_at,
+    )
+
+
+def build_arm_kernel_inputs(
+    *,
+    validated: ValidatedRegimeTrialBundle,
+    shared_input: ShadowSharedInput,
+    trusted_at: datetime,
+    records: tuple[EvidenceRecord[SignalEvidence], ...],
+    capital_snapshot: CapitalRiskSnapshot,
+) -> tuple[ShadowKernelInput, ShadowKernelInput]:
+    """Both arm kernel inputs over one shared freeze and one capital truth.
+
+    Candidates are built exclusively from the producer's SELECTED records;
+    every binding is frozen from the record, never synthesized. Shared with
+    the replay engine so current-cost decisions reproduce byte-for-byte.
+    """
+
+    trial = validated.trial_manifest
+    capital_checkpoint = ShadowCapitalCheckpoint(
+        capital_snapshot_hash=capital_snapshot.content_hash(),
+        capital_snapshot=capital_snapshot,
+    )
+    # Forward-decision deadline contract: the trusted time sits inside the
+    # enrollment window, one open-auction cycle ahead of the T0 close.
+    deadlines = DeadlineContract(
+        close_finalized_at=trusted_at - timedelta(hours=18, minutes=30),
+        seal_creation_deadline=trusted_at,
+        permit_issue_deadline=trusted_at + timedelta(minutes=20),
+        permit_expires_at=trusted_at + timedelta(hours=18, minutes=20),
+        gateway_send_deadline=trusted_at + timedelta(hours=18, minutes=20),
+        broker_auction_cutoff=trusted_at + timedelta(hours=18, minutes=30),
+    )
+    raw_candidates: list[RawCandidate] = []
+    evidence_bindings: list[CandidateEvidenceBinding] = []
+    prices: list[tuple[str, int]] = []
+    for record in records:
+        envelope = record.evidence
+        candidate_id = envelope.evidence_id
+        raw_candidates.append(
+            RawCandidate(
+                candidate_id=candidate_id,
+                producer_namespace=envelope.subject_producer,
+                family_id=BTST_FAMILY,
+                economic_lineage_id=trial.economic_lineage_id,
+                research_program_id=trial.research_program_id,
+                stage_id="stage-1",
+                security_id=_candidate_security_id(envelope),
+                direction="LONG",
+                unscaled_target_gross_cents=max(
+                    int(capital_snapshot.as_observed_nav_cents // 4),
+                    100_000,
+                ),
+                behavior_fingerprint=envelope.behavior_fingerprint,
+                execution_version=envelope.execution_version,
+                cost_version=envelope.cost_version,
+                evidence_ids=(),
+            )
+        )
+        evidence_bindings.append(
+            CandidateEvidenceBinding(
+                candidate_id=candidate_id,
+                evidence_id=envelope.evidence_id,
+                evidence_artifact_hash=record.artifact_hash(),
+                evidence_payload_hash=envelope.payload_content_hash,
+            )
+        )
+        prices.append((candidate_id, _candidate_price_micros(envelope)))
+    champion_binding = BaselineShadowPolicyBinding(
+        source_kind=ShadowPolicySourceKind.BASELINE_POLICY_ACTIVATION,
+        baseline_policy_activation_hash=trial.baseline_policy_activation_hash,
+        policy_snapshot_hash=validated.baseline_policy.content_hash(),
+        policy_fingerprint=validated.baseline_policy.policy_fingerprint,
+    )
+    challenger_binding = TargetShadowPolicyBinding(
+        source_kind=ShadowPolicySourceKind.TARGET_POLICY_REGISTRATION,
+        target_policy_registration_hash=trial.target_policy_snapshot_registration_hash,
+        policy_snapshot_hash=validated.target_policy.content_hash(),
+        policy_fingerprint=validated.target_policy.policy_fingerprint,
+    )
+    champion_input = ShadowKernelInput(
+        shared=_with_arm(shared_input, TrialArm.CHAMPION),
+        policy_snapshot=validated.baseline_policy,
+        shadow_policy_binding=champion_binding,
+        capital_checkpoint=capital_checkpoint,
+        deadlines=deadlines,
+        candidate_evidence_bindings=tuple(evidence_bindings),
+        raw_candidates=tuple(raw_candidates),
+        price_micros_by_candidate=tuple(prices),
+        industry_by_candidate=tuple(
+            (candidate_id, "unknown") for candidate_id, _ in prices
+        ),
+    )
+    challenger_input = ShadowKernelInput(
+        shared=_with_arm(shared_input, TrialArm.CHALLENGER),
+        policy_snapshot=validated.target_policy,
+        shadow_policy_binding=challenger_binding,
+        capital_checkpoint=capital_checkpoint,
+        deadlines=deadlines,
+        candidate_evidence_bindings=tuple(evidence_bindings),
+        raw_candidates=tuple(raw_candidates),
+        price_micros_by_candidate=tuple(prices),
+        industry_by_candidate=tuple(
+            (candidate_id, "unknown") for candidate_id, _ in prices
+        ),
+    )
+    return champion_input, challenger_input
+
+
+def build_pair_records(
+    *,
+    trial_id: str,
+    session: date,
+    cycle_id: str,
+    shared_input: ShadowSharedInput,
+    regime_hash: str,
+    champion: ArmDecision,
+    challenger: ArmDecision,
+    trusted_at: datetime,
+    capital_checkpoint_hash: str,
+) -> tuple[TrialArmDecisionRecord, TrialArmDecisionRecord]:
+    """The two immutable arm records of one committed pair (official + replay).
+
+    ``created_at`` freezes the same trusted instant both paths consume so a
+    current-cost replay reproduces the official rows byte-for-byte.
+    """
+
+    shared_hash = shared_input.content_hash()
+    return (
+        TrialArmDecisionRecord(
+            trial_id=trial_id,
+            signal_session=session,
+            decision_cycle_id=cycle_id,
+            arm=TrialArm.CHAMPION,
+            shared_input_hash=shared_hash,
+            arm_policy_fingerprint=(
+                champion.shadow_policy_binding.policy_fingerprint
+                if isinstance(champion, ShadowDecision)
+                else None
+            ),
+            arm_capital_checkpoint_hash=capital_checkpoint_hash,
+            regime_observation_hash=regime_hash,
+            decision=champion,
+            created_at=trusted_at,
+            artifact_hash=champion.content_hash(),
+        ),
+        TrialArmDecisionRecord(
+            trial_id=trial_id,
+            signal_session=session,
+            decision_cycle_id=cycle_id,
+            arm=TrialArm.CHALLENGER,
+            shared_input_hash=shared_hash,
+            arm_policy_fingerprint=(
+                challenger.shadow_policy_binding.policy_fingerprint
+                if isinstance(challenger, ShadowDecision)
+                else None
+            ),
+            arm_capital_checkpoint_hash=capital_checkpoint_hash,
+            regime_observation_hash=regime_hash,
+            decision=challenger,
+            created_at=trusted_at,
+            artifact_hash=challenger.content_hash(),
+        ),
+    )
+
+
 __all__ = [
     "ForwardPairedTrialRunner",
     "PairedSignalReceipt",
     "PairedTrialRunnerError",
     "REGIME_EVIDENCE_ID",
     "SignalSessionRequest",
+    "build_arm_kernel_inputs",
+    "build_pair_records",
     "classify_pair_session",
+    "freeze_shared_input",
 ]

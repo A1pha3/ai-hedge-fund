@@ -520,3 +520,47 @@ def test_restore_rejects_tampered_backup_bytes(
             tmp_path / "restored" / "champion.sqlite3",
             arm="CHAMPION",
         )
+
+
+def test_restore_overwrites_existing_path_and_reconverges(
+    arm_repositories, archive, tmp_path
+) -> None:
+    """Task 12: crash-rerun restore is idempotent over the ledger path.
+
+    A replay run after a mid-run crash restores the genesis arm to the same
+    lane path that already holds a ledger (possibly carrying committed replay
+    state). Restore must re-seal that path from the verified backup bytes so
+    the rerun starts from the same genesis, and the restored store must
+    reproduce the sealed normalized hash.
+    """
+
+    champion, challenger = arm_repositories
+    champion_source = TrialArmGenesisSource(
+        capital_repository=champion, exit_lane=None, proxy_state_reader=None
+    )
+    challenger_source = TrialArmGenesisSource(
+        capital_repository=challenger, exit_lane=None, proxy_state_reader=None
+    )
+    manifest = archive.seal("trial-1", champion_source, challenger_source)
+    from src.screening.offensive.v3.orchestration.genesis import (
+        restore_genesis_arm,
+    )
+
+    target = tmp_path / "lane" / "champion.sqlite3"
+    # First restore leaves a live store at the target path.
+    first = restore_genesis_arm(
+        manifest, tmp_path / "archive", target, arm="CHAMPION"
+    )
+    first_normalized = TrialArmGenesisSource(
+        capital_repository=first, exit_lane=None, proxy_state_reader=None
+    ).normalized_state()
+    # A crash-rerun restores the same arm over the existing path.
+    second = restore_genesis_arm(
+        manifest, tmp_path / "archive", target, arm="CHAMPION"
+    )
+    second_normalized = TrialArmGenesisSource(
+        capital_repository=second, exit_lane=None, proxy_state_reader=None
+    ).normalized_state()
+    # The re-sealed ledger converges to the same genesis hash.
+    assert second_normalized == first_normalized
+    assert second_normalized.content_hash() == manifest.normalized_genesis_hash

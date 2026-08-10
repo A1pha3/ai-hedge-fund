@@ -277,6 +277,77 @@ def test_advance_exit_session_closes_position(world) -> None:
     world.capital[arm].assert_conservation()
 
 
+def test_runout_session_after_entry_reconciles_without_duplicate_entry(world) -> None:
+    """Task 12: one committed pair, many trading sessions.
+
+    The replay engine drives every session of the fixed ladder through the
+    same lifecycle; after the entry session, a later run-out session must
+    reconcile the still-open position without settling the entry again
+    (``target_entry_session`` guards the settle) and without refreshing the
+    exit mandate (``_essentials_unchanged`` keeps the frozen due date).
+    """
+
+    arm = TrialArm.CHAMPION
+    from src.screening.offensive.v3.execution.shadow_proxy import (
+        ShadowArmExecutionContext,
+    )
+
+    # Full entry session: reserve at T0, advance the entry session.
+    world.clock._moment = COMMAND_AT  # noqa: SLF001
+    contexts = {
+        arm: ShadowArmExecutionContext(
+            trial_id=TRIAL_ID,
+            arm=arm,
+            portfolio_id=PORTFOLIO,
+            decision_store=world.store,
+            capital_repository=world.capital[arm],
+            writer_lease=world.lease,
+        )
+        for arm in (TrialArm.CHAMPION, TrialArm.CHALLENGER)
+    }
+    for arm in (TrialArm.CHAMPION, TrialArm.CHALLENGER):
+        world.adapters[arm].reserve_committed_pair(world.pair_key, {arm: contexts[arm]})
+    world.clock._moment = _session_close(ENTRY_SESSION)  # noqa: SLF001
+    world.lifecycle.advance_session(
+        _entry_session_input(world), world._states_to_contexts()
+    )
+    held = world.position_quantity(arm)
+    assert held > 0
+    # Derive the exit mandate once (its due date is frozen by the lane).
+    (mandate,) = world.lifecycle.derive_exits(arm, TRADING_SESSIONS)
+    assert mandate.due_session == EXIT_DUE_SESSION
+
+    # One run-out session between entry and exit due (08-07): no entry settle
+    # (the decision targets 08-06), no mandate refresh, position untouched.
+    runout = date(2026, 8, 7)
+    world.clock._moment = _session_close(runout)  # noqa: SLF001
+    receipt = world.lifecycle.advance_session(
+        ShadowSessionInput(
+            session=runout,
+            trading_sessions=TRADING_SESSIONS,
+            bars={_SECURITY: _exit_bar(runout)},
+            marks={_SECURITY: _MARK_PRICE_MICROS},
+            snapshot_evidence=_snapshot_record(
+                f"snap-{runout.isoformat()}", _session_close(runout)
+            ),
+            scenario=_cost_scenario(30),
+            command_at=COMMAND_AT,
+            send_deadline=SEND_DEADLINE,
+            as_of=_session_close(runout),
+        ),
+        world._states_to_contexts(),
+    )
+    assert receipt.arms[arm].exits == ()
+    assert world.position_quantity(arm) == held
+    # Re-deriving exits on a later session keeps one mandate with the same
+    # frozen due date and quantity (no revision churn on unchanged essentials).
+    refreshed = world.lifecycle.derive_exits(arm, TRADING_SESSIONS)
+    assert len(refreshed) == 1
+    assert refreshed[0].due_session == EXIT_DUE_SESSION
+    assert refreshed[0].tradable_quantity == held
+    world.capital[arm].assert_conservation()
+
+
 # =============================================================================
 # Step 2: corporate action (split) preserves the exit obligation
 # =============================================================================
