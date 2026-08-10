@@ -462,8 +462,8 @@
               "raw_target_fraction": {
                 "anyOf": [
                   {
-                    "exclusiveMinimum": 0,
-                    "maximum": 1,
+                    "exclusiveMinimum": 0.0,
+                    "maximum": 1.0,
                     "type": "number"
                   },
                   {
@@ -869,7 +869,7 @@
               "cash_amount": {
                 "anyOf": [
                   {
-                    "exclusiveMinimum": 0,
+                    "exclusiveMinimum": 0.0,
                     "type": "number"
                   },
                   {
@@ -909,7 +909,7 @@
               "cash_amount": {
                 "anyOf": [
                   {
-                    "exclusiveMinimum": 0,
+                    "exclusiveMinimum": 0.0,
                     "type": "number"
                   },
                   {
@@ -963,7 +963,7 @@
               "cost_basis_amount": {
                 "anyOf": [
                   {
-                    "exclusiveMinimum": 0,
+                    "exclusiveMinimum": 0.0,
                     "type": "number"
                   },
                   {
@@ -1110,7 +1110,7 @@
               "mark_price": {
                 "anyOf": [
                   {
-                    "exclusiveMinimum": 0,
+                    "exclusiveMinimum": 0.0,
                     "type": "number"
                   },
                   {
@@ -1904,6 +1904,65 @@
         {
           "name": "PORTFOLIO_LOG_GROWTH",
           "value": "PORTFOLIO_LOG_GROWTH"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.regime.RegimeAdmissionMode": {
+      "members": [
+        {
+          "name": "IGNORE",
+          "value": "IGNORE"
+        },
+        {
+          "name": "NORMAL_ONLY",
+          "value": "NORMAL_ONLY"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.regime.RegimeObservationReason": {
+      "members": [
+        {
+          "name": "CLASSIFIED",
+          "value": "CLASSIFIED"
+        },
+        {
+          "name": "MISSING_REQUIRED_INPUT",
+          "value": "MISSING_REQUIRED_INPUT"
+        },
+        {
+          "name": "STALE_REQUIRED_INPUT",
+          "value": "STALE_REQUIRED_INPUT"
+        },
+        {
+          "name": "UNRECOGNIZED_RAW_STATE",
+          "value": "UNRECOGNIZED_RAW_STATE"
+        },
+        {
+          "name": "INSUFFICIENT_INPUT",
+          "value": "INSUFFICIENT_INPUT"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.regime.RegimeState": {
+      "members": [
+        {
+          "name": "NORMAL",
+          "value": "NORMAL"
+        },
+        {
+          "name": "RISK_OFF",
+          "value": "RISK_OFF"
+        },
+        {
+          "name": "CRISIS",
+          "value": "CRISIS"
+        },
+        {
+          "name": "UNKNOWN",
+          "value": "UNKNOWN"
         }
       ],
       "value_type": "builtins.str"

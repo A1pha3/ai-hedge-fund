@@ -16,9 +16,10 @@ from ..contracts.base import (
     content_hash,
 )
 from ..contracts.governance import PolicyActivation
+from ..contracts.regime import RegimeAdmissionMode
 from ..contracts.trust import VerifiedIssuer
 
-SUPPORTED_POLICY_SCHEMA_MAJOR = 1
+SUPPORTED_POLICY_SCHEMA_MAJOR = 2
 
 VersionStr = Annotated[
     str,
@@ -127,17 +128,32 @@ class AdvPolicy(CanonicalModel):
 
 
 class ProducerPolicy(CanonicalModel):
-    """Explicit producer and sizing switches; no environment fallback exists."""
+    """Explicit producer and sizing switches; no environment fallback exists.
+
+    ``btst_regime_admission_mode`` is the only pre-registered behavioural delta
+    admitted between paired-trial arms. It is an admission gate, not a producer
+    switch, so ``any_enabled()`` deliberately ignores it.
+    """
 
     btst_enabled: bool
     oversold_bounce_enabled: bool
+    btst_regime_admission_mode: RegimeAdmissionMode
     regime_sizing_enabled: bool
     streak_sizing_enabled: bool
     trigger_strength_sizing_enabled: bool
     composite_sizing_enabled: bool
 
     def any_enabled(self) -> bool:
-        return any(self.model_dump(mode="python").values())
+        return any(
+            (
+                self.btst_enabled,
+                self.oversold_bounce_enabled,
+                self.regime_sizing_enabled,
+                self.streak_sizing_enabled,
+                self.trigger_strength_sizing_enabled,
+                self.composite_sizing_enabled,
+            )
+        )
 
 
 class ExecutionPolicy(CanonicalModel):

@@ -529,7 +529,8 @@ def test_behavior_fingerprint_excludes_operational_fencing_epochs(
 @pytest.mark.parametrize(
     ("field_path", "value"),
     [
-        (("schema_major",), 2),
+        (("schema_major",), 1),
+        (("schema_major",), 3),
         (("policy_version",), ""),
         (("versions", "cost_version"), "  "),
         (("versions", "calendar_version"), "not a version"),
@@ -554,7 +555,7 @@ def test_loader_rejects_unknown_major_and_invalid_versions(
 def test_loader_rejects_duplicate_keys(tmp_path: Path) -> None:
     policy_api = _policy_api()
     raw = INITIAL_POLICY_PATH.read_text(encoding="utf-8")
-    duplicate = raw.replace('"schema_major":1', '"schema_major":1,"schema_major":1', 1)
+    duplicate = raw.replace('"schema_major":2', '"schema_major":2,"schema_major":2', 1)
     path = tmp_path / "policy.json"
     path.write_text(duplicate, encoding="utf-8")
 

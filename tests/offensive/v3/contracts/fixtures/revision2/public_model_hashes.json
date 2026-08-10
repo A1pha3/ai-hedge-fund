@@ -5656,49 +5656,49 @@
     "model_module": "src.screening.offensive.v3.contracts.governance",
     "model_name": "BrokerEnablementManifest",
     "payload": {
-      "manifest_id": "broker_enablement_manifest-1",
-      "portfolio_id": "portfolio-1",
-      "broker_account_id": "account-1",
-      "issued_at": "2026-07-19T08:00:00Z",
-      "expires_at": "2026-07-19T09:00:00Z",
-      "one_shot": true,
       "approval_attestations": [
         {
-          "approver_id": "alice",
-          "key_id": "alice-key",
           "approval_artifact_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "approved_manifest_preimage_hash": "9e90723c9039dcb65ab0a055fca1c4245fe8177a704aa6efa21d3bcb2eaa6728",
           "approval_capability": "governance.manifest.approve.v1",
           "approval_scope": "BROKER_ENABLEMENT_MANIFEST",
           "approved_at": "2026-07-19T07:58:00Z",
+          "approved_manifest_preimage_hash": "9e90723c9039dcb65ab0a055fca1c4245fe8177a704aa6efa21d3bcb2eaa6728",
+          "approver_id": "alice",
+          "key_id": "alice-key",
           "schema_major": 2
         },
         {
-          "approver_id": "bob",
-          "key_id": "bob-key",
           "approval_artifact_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-          "approved_manifest_preimage_hash": "9e90723c9039dcb65ab0a055fca1c4245fe8177a704aa6efa21d3bcb2eaa6728",
           "approval_capability": "governance.manifest.approve.v1",
           "approval_scope": "BROKER_ENABLEMENT_MANIFEST",
           "approved_at": "2026-07-19T07:59:00Z",
+          "approved_manifest_preimage_hash": "9e90723c9039dcb65ab0a055fca1c4245fe8177a704aa6efa21d3bcb2eaa6728",
+          "approver_id": "bob",
+          "key_id": "bob-key",
           "schema_major": 2
         }
       ],
-      "issuer_id": "governance",
-      "issuer_capability": "governance.broker.enablement.v1",
-      "schema_major": 2,
-      "broker_account_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "broker_environment_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "base_currency": "CNY",
-      "currency_definition_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "trusted_clock_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "authenticated_raw_envelope_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "pagination_cursor_retention_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "client_order_idempotency_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "auction_tif_cutoff_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "exit_rate_limit_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "authenticated_raw_envelope_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "base_currency": "CNY",
+      "broker_account_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "broker_account_id": "account-1",
+      "broker_environment_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "client_order_idempotency_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "credential_session_network_fencing_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "profile_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "currency_definition_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "exit_rate_limit_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expires_at": "2026-07-19T09:00:00Z",
+      "issued_at": "2026-07-19T08:00:00Z",
+      "issuer_capability": "governance.broker.enablement.v1",
+      "issuer_id": "governance",
+      "manifest_id": "broker_enablement_manifest-1",
+      "one_shot": true,
+      "pagination_cursor_retention_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "portfolio_id": "portfolio-1",
+      "profile_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "schema_major": 2,
+      "trusted_clock_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
   },
   "src.screening.offensive.v3.contracts.governance.DisasterRecoveryManifest": {
@@ -6240,6 +6240,49 @@
       "trusted_issuer_registry_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
   },
+  "src.screening.offensive.v3.contracts.regime.RegimeObservation": {
+    "canonical_payload_sha256": "f85b59c2a6baa69d6178b87f4df7f9fd661b135f7094de3147a3c7d4b4c0f730",
+    "content_hash": "f85b59c2a6baa69d6178b87f4df7f9fd661b135f7094de3147a3c7d4b4c0f730",
+    "json_payload_sha256": "f85b59c2a6baa69d6178b87f4df7f9fd661b135f7094de3147a3c7d4b4c0f730",
+    "model_module": "src.screening.offensive.v3.contracts.regime",
+    "model_name": "RegimeObservation",
+    "payload": {
+      "behavior_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "classifier_semver": "1.0.0",
+      "effective_at": "2026-08-11T15:00:00Z",
+      "input_schema_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "observed_at": "2026-08-11T16:00:00Z",
+      "provider_published_at": "2026-08-11T15:30:00Z",
+      "raw_state": "NORMAL",
+      "reason": "CLASSIFIED",
+      "signal_session": "2026-08-11",
+      "source_revisions": [
+        {
+          "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "evidence_id": "regime-evidence-1",
+          "revision": 1
+        },
+        {
+          "artifact_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "evidence_id": "regime-evidence-2",
+          "revision": 3
+        }
+      ],
+      "state": "NORMAL"
+    }
+  },
+  "src.screening.offensive.v3.contracts.regime.RegimeSourceRevision": {
+    "canonical_payload_sha256": "0033b2cf6357d23198ae522e45e5312be525b082117152ebe096a9cd5343e213",
+    "content_hash": "0033b2cf6357d23198ae522e45e5312be525b082117152ebe096a9cd5343e213",
+    "json_payload_sha256": "0033b2cf6357d23198ae522e45e5312be525b082117152ebe096a9cd5343e213",
+    "model_module": "src.screening.offensive.v3.contracts.regime",
+    "model_name": "RegimeSourceRevision",
+    "payload": {
+      "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence_id": "regime-evidence-1",
+      "revision": 1
+    }
+  },
   "src.screening.offensive.v3.contracts.trust.Capability": {
     "canonical_payload_sha256": "2c0b9f93c57f14fbfb32ba367bbe7d5aa0662697d71d5f6be1105cc17e5d376b",
     "content_hash": "2c0b9f93c57f14fbfb32ba367bbe7d5aa0662697d71d5f6be1105cc17e5d376b",
@@ -6415,9 +6458,9 @@
     }
   },
   "src.screening.offensive.v3.policy.models.PolicySnapshot": {
-    "canonical_payload_sha256": "47bd095bcfaed7166c941cf5641f72252dc4e0ffb3026718a3d3b02bc5860abc",
-    "content_hash": "47bd095bcfaed7166c941cf5641f72252dc4e0ffb3026718a3d3b02bc5860abc",
-    "json_payload_sha256": "47bd095bcfaed7166c941cf5641f72252dc4e0ffb3026718a3d3b02bc5860abc",
+    "canonical_payload_sha256": "3a2e5eb7bd1de7eb1670d412a5c8889b607e105a05a56f5ff2110397b6c04ff4",
+    "content_hash": "3a2e5eb7bd1de7eb1670d412a5c8889b607e105a05a56f5ff2110397b6c04ff4",
+    "json_payload_sha256": "3a2e5eb7bd1de7eb1670d412a5c8889b607e105a05a56f5ff2110397b6c04ff4",
     "model_module": "src.screening.offensive.v3.policy.models",
     "model_name": "PolicySnapshot",
     "payload": {
@@ -6471,6 +6514,7 @@
       "policy_version": "policy-v2",
       "producers": {
         "btst_enabled": false,
+        "btst_regime_admission_mode": "IGNORE",
         "composite_sizing_enabled": false,
         "oversold_bounce_enabled": false,
         "regime_sizing_enabled": false,
@@ -6485,7 +6529,7 @@
       },
       "risk_epoch": 1,
       "runtime_mode": "off",
-      "schema_major": 1,
+      "schema_major": 2,
       "versions": {
         "board_rule_version": "ashare-board-prefix-v1",
         "calendar_version": "sse-szse-official-sessions.v1",
@@ -6511,13 +6555,14 @@
     }
   },
   "src.screening.offensive.v3.policy.models.ProducerPolicy": {
-    "canonical_payload_sha256": "d17b6e5eacc1d471671d742b0813ba801bc45f40303abaeb5be2ebef1cacd759",
-    "content_hash": "d17b6e5eacc1d471671d742b0813ba801bc45f40303abaeb5be2ebef1cacd759",
-    "json_payload_sha256": "d17b6e5eacc1d471671d742b0813ba801bc45f40303abaeb5be2ebef1cacd759",
+    "canonical_payload_sha256": "704176137dc20711169abb8ac2593579ab2b63181cdd7fc9c97a40a203944a6f",
+    "content_hash": "704176137dc20711169abb8ac2593579ab2b63181cdd7fc9c97a40a203944a6f",
+    "json_payload_sha256": "704176137dc20711169abb8ac2593579ab2b63181cdd7fc9c97a40a203944a6f",
     "model_module": "src.screening.offensive.v3.policy.models",
     "model_name": "ProducerPolicy",
     "payload": {
       "btst_enabled": false,
+      "btst_regime_admission_mode": "IGNORE",
       "composite_sizing_enabled": false,
       "oversold_bounce_enabled": false,
       "regime_sizing_enabled": false,
@@ -6539,9 +6584,9 @@
     }
   },
   "src.screening.offensive.v3.policy.models.VerifiedPolicyActivation": {
-    "canonical_payload_sha256": "807c4387ada4f4529b06ff1828b89c0547b866a0f03d749c32eb1892e856286c",
-    "content_hash": "807c4387ada4f4529b06ff1828b89c0547b866a0f03d749c32eb1892e856286c",
-    "json_payload_sha256": "807c4387ada4f4529b06ff1828b89c0547b866a0f03d749c32eb1892e856286c",
+    "canonical_payload_sha256": "ab25ccdd2f4546168a494b2cdd71ff78d15823271166da9e5cbe738d8cabc410",
+    "content_hash": "ab25ccdd2f4546168a494b2cdd71ff78d15823271166da9e5cbe738d8cabc410",
+    "json_payload_sha256": "ab25ccdd2f4546168a494b2cdd71ff78d15823271166da9e5cbe738d8cabc410",
     "model_module": "src.screening.offensive.v3.policy.models",
     "model_name": "VerifiedPolicyActivation",
     "payload": {
@@ -6614,6 +6659,7 @@
         "policy_version": "policy-v2",
         "producers": {
           "btst_enabled": false,
+          "btst_regime_admission_mode": "IGNORE",
           "composite_sizing_enabled": false,
           "oversold_bounce_enabled": false,
           "regime_sizing_enabled": false,
@@ -6628,7 +6674,7 @@
         },
         "risk_epoch": 1,
         "runtime_mode": "off",
-        "schema_major": 1,
+        "schema_major": 2,
         "versions": {
           "board_rule_version": "ashare-board-prefix-v1",
           "calendar_version": "sse-szse-official-sessions.v1",

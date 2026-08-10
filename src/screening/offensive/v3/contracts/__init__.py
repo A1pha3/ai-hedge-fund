@@ -161,6 +161,15 @@ from .risk import (
     RiskSnapshotFreshness,
     StageLossLatchState,
 )
+from .regime import (
+    PositiveExactInt,
+    RegimeAdmissionMode,
+    RegimeObservation,
+    RegimeObservationReason,
+    RegimeSourceRevision,
+    RegimeState,
+    normalize_regime_state,
+)
 from .trust import (
     ArtifactKind,
     Capability,
@@ -283,6 +292,12 @@ __all__ = [
     "SealReserveLineBinding",
     "QuantityUnits",
     "RationalQuantity",
+    "PositiveExactInt",
+    "RegimeAdmissionMode",
+    "RegimeObservation",
+    "RegimeObservationReason",
+    "RegimeSourceRevision",
+    "RegimeState",
     "SchemaVersion",
     "SUPPORTED_SCHEMA_MAJOR",
     "SessionCheckpoint",
@@ -324,6 +339,7 @@ __all__ = [
     "canonical_decimal_string",
     "content_hash",
     "domain_hash",
+    "normalize_regime_state",
     "validate_order_transition",
     "validate_plan_transition",
 ]
