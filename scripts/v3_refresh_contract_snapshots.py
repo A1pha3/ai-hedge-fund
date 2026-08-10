@@ -152,6 +152,18 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
         "behavior_fingerprint": "c" * 64,
         "input_schema_hash": "d" * 64,
     },
+    "src.screening.offensive.v3.contracts.trial.BaselineShadowPolicyBinding": {
+        "source_kind": "BASELINE_POLICY_ACTIVATION",
+        "baseline_policy_activation_hash": "a" * 64,
+        "policy_snapshot_hash": "b" * 64,
+        "policy_fingerprint": "c" * 64,
+    },
+    "src.screening.offensive.v3.contracts.trial.TargetShadowPolicyBinding": {
+        "source_kind": "TARGET_POLICY_REGISTRATION",
+        "target_policy_registration_hash": "d" * 64,
+        "policy_snapshot_hash": "e" * 64,
+        "policy_fingerprint": "f" * 64,
+    },
 }
 
 # Partial updates applied on top of a contract's checked-in exemplar when only a
