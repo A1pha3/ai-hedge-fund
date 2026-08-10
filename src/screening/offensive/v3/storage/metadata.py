@@ -18,7 +18,7 @@ from src.screening.offensive.v3.contracts import content_hash
 SCHEMA_MAJOR: Final[int] = 2
 """The Revision 2 contract schema major persisted into snapshots."""
 
-LEDGER_SCHEMA_VERSION: Final[int] = 5
+LEDGER_SCHEMA_VERSION: Final[int] = 6
 """The capital ledger storage schema revision managed by migrations.
 
 Revision 2 (Plan 02 Task 3) adds the unit/NAV/lifecycle surface:
@@ -38,6 +38,10 @@ risk-snapshot fact tables: ``stage_loss_budget_activations``,
 Revision 5 (Plan 02 Task 6) adds the append-only reopened exit
 obligation facts (``exit_obligation_reopens``) consumed by Plan 04's
 ExitMandate projection when a bust/correction makes a lot reappear.
+
+Revision 6 (Plan 08 Task 7) adds the causal source-binding column
+``reserves.source_binding_json`` (economic events already persist the
+binding inside their canonical payload JSON).
 """
 
 INITIAL_MIGRATION_REVISION: Final[str] = "0001"
@@ -55,7 +59,10 @@ RISK_SNAPSHOT_MIGRATION_REVISION: Final[str] = "0004"
 EXECUTION_REVISION_MIGRATION_REVISION: Final[str] = "0005"
 """Alembic revision identifier of the Task 6 reopen-obligation migration."""
 
-CURRENT_MIGRATION_REVISION: Final[str] = EXECUTION_REVISION_MIGRATION_REVISION
+CAPITAL_SOURCE_BINDING_MIGRATION_REVISION: Final[str] = "0006"
+"""Alembic revision identifier of the Plan 08 Task 7 source-binding migration."""
+
+CURRENT_MIGRATION_REVISION: Final[str] = CAPITAL_SOURCE_BINDING_MIGRATION_REVISION
 """Alembic revision identifier of the newest ledger migration."""
 
 UNACTIVATED_POLICY_ACTIVATION_HASH: Final[str] = "0" * 64

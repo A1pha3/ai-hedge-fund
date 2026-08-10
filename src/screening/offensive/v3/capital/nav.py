@@ -24,6 +24,7 @@ from typing import Annotated
 
 from pydantic import Field, model_validator
 
+from src.screening.offensive.v3.capital.provenance import CapitalSourceBinding
 from src.screening.offensive.v3.contracts import (
     CanonicalModel,
     UtcInstant,
@@ -68,6 +69,9 @@ class ValuationRequest(CanonicalModel):
     as_of: UtcInstant
     expected_stream_version: NonNegativeInt
     marks: tuple[ValuationMarkInput, ...]
+    # Plan 08 Task 7: valuation facts bind the SnapshotEvidence that produced
+    # them; the official shadow adapter always carries it.
+    source_binding: CapitalSourceBinding | None = None
 
     @model_validator(mode="after")
     def validate_times(self) -> "ValuationRequest":
@@ -107,6 +111,8 @@ class RestatementRequest(CanonicalModel):
     as_of: UtcInstant
     expected_stream_version: NonNegativeInt
     marks: Annotated[tuple[ValuationMarkInput, ...], Field(min_length=1)]
+    # Plan 08 Task 7: restatements bind the SnapshotEvidence they restate.
+    source_binding: CapitalSourceBinding | None = None
 
     @model_validator(mode="after")
     def validate_times(self) -> "RestatementRequest":

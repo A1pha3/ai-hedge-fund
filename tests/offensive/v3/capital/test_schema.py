@@ -335,6 +335,21 @@ def test_initialize_creates_exact_table_set(repository: CapitalRepository) -> No
     assert {row.name for row in rows} == EXPECTED_TABLES
 
 
+def test_reserve_source_binding_column_is_nullable_text(
+    repository: CapitalRepository,
+) -> None:
+    """Plan 08 Task 7: the causal binding column exists and stays optional."""
+    with repository.engine.connect() as conn:
+        columns = conn.execute(
+            sa.text("PRAGMA table_info(reserves)")
+        ).all()
+    binding = next(
+        column for column in columns if column.name == "source_binding_json"
+    )
+    assert "TEXT" in binding.type.upper()
+    assert binding.notnull == 0
+
+
 def test_journal_mode_is_wal_for_new_connections(
     repository: CapitalRepository,
 ) -> None:
@@ -365,7 +380,7 @@ def test_schema_version_is_exact_and_persisted(
     repository: CapitalRepository,
 ) -> None:
     assert metadata.SCHEMA_MAJOR == 2
-    assert metadata.LEDGER_SCHEMA_VERSION == 5
+    assert metadata.LEDGER_SCHEMA_VERSION == 6
     assert repository.schema_version() == metadata.LEDGER_SCHEMA_VERSION
     with repository.engine.connect() as conn:
         stored = conn.execute(
@@ -535,10 +550,13 @@ def test_alembic_layout_chains_the_ledger_revisions() -> None:
     config.set_main_option("script_location", str(migrations))
     script = ScriptDirectory.from_config(config)
     revisions = list(script.walk_revisions())
-    assert len(revisions) == 5
+    assert len(revisions) == 6
     assert script.get_current_head() == metadata.CURRENT_MIGRATION_REVISION
     bases = {revision.revision: revision.down_revision for revision in revisions}
     assert bases[metadata.CURRENT_MIGRATION_REVISION] == (
+        metadata.EXECUTION_REVISION_MIGRATION_REVISION
+    )
+    assert bases[metadata.EXECUTION_REVISION_MIGRATION_REVISION] == (
         metadata.RISK_SNAPSHOT_MIGRATION_REVISION
     )
     assert bases[metadata.RISK_SNAPSHOT_MIGRATION_REVISION] == (
