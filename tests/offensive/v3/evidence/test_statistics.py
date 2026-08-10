@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from math import exp, log
 
 import pytest
@@ -311,3 +311,58 @@ def test_predictable_adaptive_rejects_bad_inputs() -> None:
             evaluated_at=NOW,
             evidence_cutoff=CUTOFF,
         )
+
+
+def test_adaptive_sign_is_champion_minus_challenger() -> None:
+    """Plan Task 13: the adaptive evaluator's sign is locked.
+
+    ``evaluate_predictable_adaptive`` measures Champion minus Challenger
+    on its own adaptive fold; the frozen paired evaluator measures the
+    opposite (Challenger minus Champion). Neither may be "fixed" by
+    swapping argument names — a regression would flip the promotion gate
+    on every trial.
+    """
+
+    champion = (0.003,) * 10
+    challenger = (0.001,) * 10
+    evaluation = evaluate_predictable_adaptive(
+        champion_daily_returns=champion,
+        challenger_daily_returns=challenger,
+        minimum_economic_effect=0.0,
+        evaluated_at=NOW,
+        evidence_cutoff=CUTOFF,
+    )
+    # Champion beats challenger by 0.002/day; the adaptive paired
+    # difference is positive. The frozen paired evaluator with the same
+    # two series must be negative (Challenger minus Champion).
+    assert evaluation.paired_difference_mean == pytest.approx(0.002)
+    from src.screening.offensive.v3.evidence.paired_statistics import (
+        PairedNavPoint,
+        paired_daily_log_growth,
+    )
+
+    points = tuple(
+        PairedNavPoint(
+            session=session,
+            champion_nav_numerator=1_003,
+            champion_nav_denominator=1_000,
+            challenger_nav_numerator=1_001,
+            challenger_nav_denominator=1_000,
+        )
+        for session in (
+            date(2026, 8, 3),  # Mon
+            date(2026, 8, 4),
+            date(2026, 8, 5),
+            date(2026, 8, 6),
+            date(2026, 8, 7),
+            date(2026, 8, 10),  # Mon (weekend skipped)
+            date(2026, 8, 11),
+            date(2026, 8, 12),
+            date(2026, 8, 13),
+            date(2026, 8, 14),
+        )
+    )
+    frozen_delta = paired_daily_log_growth(points)
+    # log(1001/1000) - log(1003/1000) = log(1001/1003), the exact rational
+    # delta of Challenger minus Champion.
+    assert frozen_delta[0] == pytest.approx(log(1001 / 1003))

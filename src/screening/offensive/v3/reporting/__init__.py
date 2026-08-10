@@ -26,15 +26,28 @@ from src.screening.offensive.v3.reporting.service import (
     ShadowDecisionReader,
 )
 from src.screening.offensive.v3.reporting.shadow_store import InMemoryShadowStore
+from src.screening.offensive.v3.reporting.trial_projection import (
+    AssessmentProjectionError,
+    EligibilityGates,
+    HEADLINE_INACTIVE_CANDIDATE,
+    HEADLINE_NOT_ELIGIBLE,
+    TrialAssessmentProjection,
+    rebuild_trial_assessment,
+    render_trial_assessment,
+)
 
 __all__ = [
     "AccountCapitalView",
+    "AssessmentProjectionError",
     "CapitalReaderPort",
     "DailyOperatorProjection",
     "EXECUTABLE_ENTRY_STATUSES",
+    "EligibilityGates",
     "FILL_PROVENANCE_BROKER",
     "FILL_PROVENANCE_MANUAL",
     "FILL_PROVENANCE_PROXY",
+    "HEADLINE_INACTIVE_CANDIDATE",
+    "HEADLINE_NOT_ELIGIBLE",
     "InMemoryShadowStore",
     "PendingExitView",
     "PerformanceView",
@@ -42,6 +55,9 @@ __all__ = [
     "ReportingService",
     "ShadowDecisionReader",
     "ShadowDecisionSummary",
+    "TrialAssessmentProjection",
+    "rebuild_trial_assessment",
     "render_json",
     "render_text",
+    "render_trial_assessment",
 ]
