@@ -301,7 +301,7 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
         "artifact_kind": "shadow_decision",
         "artifact_namespace": "growth-kernel.shadow.v2",
         "available_at": "2026-07-29T08:00:00Z",
-        "cost_assumption_version": "cn-a-share.v1",
+        "cost_assumption_version": "cn-a-share-30bps-tax.v2",
         "counterfactual_key": {
             "counterfactual_cycle_id": "auto-shadow-daily-v1",
             "portfolio_id": "portfolio-v3",
@@ -309,14 +309,14 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
         },
         "counterfactual_lines": [
             {
-                "cost_assumption_version": "cn-a-share.v1",
+                "cost_assumption_version": "cn-a-share-30bps-tax.v2",
                 "economic_lineage_id": "auto-lineage",
                 "estimated_cash_reserve_cents": 105050,
                 "estimated_fee_cents": 50,
                 "evidence_artifact_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
                 "evidence_id": "shadow-evidence-1",
                 "evidence_payload_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-                "execution_assumption_version": "t1-open-t10-open.v1",
+                "execution_assumption_version": "t1-open-t10-open-slippage.v2",
                 "exit_session_ordinal": 10,
                 "family_id": "auto-family",
                 "limit_price_cents": 1050,
@@ -337,14 +337,14 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
                 "target_exit_session": "2026-08-08"
             },
             {
-                "cost_assumption_version": "cn-a-share.v1",
+                "cost_assumption_version": "cn-a-share-30bps-tax.v2",
                 "economic_lineage_id": "auto-lineage",
                 "estimated_cash_reserve_cents": 160075,
                 "estimated_fee_cents": 75,
                 "evidence_artifact_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
                 "evidence_id": "shadow-evidence-2",
                 "evidence_payload_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-                "execution_assumption_version": "t1-open-t10-open.v1",
+                "execution_assumption_version": "t1-open-t10-open-slippage.v2",
                 "exit_session_ordinal": 10,
                 "family_id": "auto-family",
                 "limit_price_cents": 800,
@@ -368,7 +368,7 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
         "created_at": "2026-07-29T08:00:00Z",
         "economic_lineage_id": "auto-lineage",
         "evidence_set_merkle_root": "2222222222222222222222222222222222222222222222222222222222222222",
-        "execution_assumption_version": "t1-open-t10-open.v1",
+        "execution_assumption_version": "t1-open-t10-open-slippage.v2",
         "execution_authority": "NONE",
         "family_id": "auto-family",
         "issuer_binding": {
@@ -443,6 +443,8 @@ EXEMPLAR_PATCHES: dict[str, dict[str, Any]] = {
         },
     },
     "src.screening.offensive.v3.contracts.decision.ShadowOrderLine": {
+        "cost_assumption_version": "cn-a-share-30bps-tax.v2",
+        "execution_assumption_version": "t1-open-t10-open-slippage.v2",
         "target_exit_session": "2026-08-08"
     },
 }

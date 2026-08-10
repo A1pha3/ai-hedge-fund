@@ -60,6 +60,7 @@ from src.screening.offensive.v3.execution.proxy import (
     ProxyExecutionContext,
     ProxyExecutionResult,
 )
+from src.screening.offensive.v3.execution.proxy_core import ProxyCostScenario
 from tests.offensive.v3.contracts.checkpoint2_helpers import (
     AUTHORIZATION_ID,
     AUTHORIZATION_VERSION,
@@ -184,8 +185,8 @@ def _proxy_plan(api, *, suffix: str = "1", economic_lineage_id: str = "btst-line
         strategy_semver="3.0.0",
         behavior_fingerprint=HASH_A,
         policy_epoch=4,
-        execution_version="t1-open-t10-open.v1",
-        cost_version="cn-a-share.v1",
+        execution_version="t1-open-t10-open-slippage.v2",
+        cost_version="cn-a-share-30bps-tax.v2",
         effective_at=CLOSE_FINALIZED,
         provider_published_at=CLOSE_FINALIZED,
         observed_at=CLOSE_FINALIZED,
@@ -572,8 +573,20 @@ def _execute(
         seal=seal,
         permit=permit,
         bars=bars,
-        fee_policy=POLICY_V1,
+        scenario=_legacy_scenario(),
         context=_context(repository, command_at=command_at),
+    )
+
+
+def _legacy_scenario() -> ProxyCostScenario:
+    # The permit-path adapter keeps the pre-Trial economics (open-vs-limit
+    # fill, no slippage) under an explicit 0-bps cost scenario, so the
+    # legacy assertions on exact prices and fees stay pinned.
+    return ProxyCostScenario(
+        scenario_id="legacy-no-slip",
+        entry_slippage_bps=0,
+        exit_slippage_bps=0,
+        fee_policy=POLICY_V1,
     )
 
 
@@ -1382,9 +1395,9 @@ def test_zero_quantity_line_survives_restart(
 
 
 _PROXY_CRASH_PHASES = (
-    "proxy.after_fill",
-    "proxy.after_fee",
-    "proxy.after_release",
+    "core.after_fill",
+    "core.after_fee",
+    "core.after_release",
     "proxy.after_record",
 )
 

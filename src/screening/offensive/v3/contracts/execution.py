@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Annotated, ClassVar, Literal, Self
-
 from pydantic import Field, field_validator, model_validator
 
 from ._execution_relations import (
@@ -178,6 +178,44 @@ class PermitLineMechanicalBinding(CanonicalModel):
             for reason, field in _LOCAL_CAP_PRIORITY
             if getattr(self, field) == minimum
         )
+
+
+@dataclass(frozen=True)
+class MechanicalQuantityResolution:
+    """The authority-neutral shrink of one sealed line to its T+1 quantity.
+
+    Pure function of the sealed quantity, the lot size, and the frozen
+    mechanical caps: the gateway's permit validator and the shadow
+    adapter's T+1 entry both call this same resolver, so they can never
+    disagree on a shrink. The resolver cannot issue a permit.
+    """
+
+    permitted_quantity_units: int
+    reason_code: PermitReasonCode
+
+
+def resolve_mechanical_quantity(
+    sealed_quantity_units: int,
+    lot_size_units: int,
+    binding: PermitLineMechanicalBinding,
+) -> MechanicalQuantityResolution:
+    """Shrink one sealed line to its lot-floored executable quantity.
+
+    The raw binding cap is the minimum of the sealed quantity and the five
+    frozen caps; the executable quantity floors that raw cap to a whole lot
+    (a sub-lot cap leaves zero). The reason follows the frozen cap priority:
+    ``UNCHANGED`` when no cap binds, otherwise the first cap in priority
+    order that sits at the raw minimum. A cap above the sealed quantity
+    never increases it.
+    """
+
+    raw_cap = binding.limiting_cap(sealed_quantity_units)
+    lot_floored = (raw_cap // lot_size_units) * lot_size_units
+    reason = binding.limiting_reason(sealed_quantity_units)
+    return MechanicalQuantityResolution(
+        permitted_quantity_units=lot_floored,
+        reason_code=reason,
+    )
 
 
 class AuthorizationIssuerRevalidation(CanonicalModel):
@@ -729,14 +767,16 @@ def _validate_permit_lines(permit: ExecutionPermit) -> None:
             raise ValueError("permit line quantity must remain an exact whole lot")
         if permit.disposition is PermitDisposition.ALLOW or mechanical_cancel:
             assert mechanical is not None
-            raw_cap = mechanical.limiting_cap(sealed.sealed_quantity_units)
-            lot_floored_cap = (raw_cap // sealed.lot_size_units) * sealed.lot_size_units
-            if line.permitted_quantity_units != lot_floored_cap:
+            resolution = resolve_mechanical_quantity(
+                sealed.sealed_quantity_units,
+                sealed.lot_size_units,
+                mechanical,
+            )
+            if line.permitted_quantity_units != resolution.permitted_quantity_units:
                 raise ValueError(
                     "ALLOW quantity must equal the lot-floor of its limiting cap"
                 )
-            required_reason = mechanical.limiting_reason(sealed.sealed_quantity_units)
-            if line.reason_code is not required_reason:
+            if line.reason_code is not resolution.reason_code:
                 raise ValueError(
                     "mechanical permit reason must follow frozen cap priority"
                 )
@@ -2625,6 +2665,7 @@ __all__ = [
     "ExecutionRevisionHistory",
     "ExecutionRevisionKind",
     "ExecutionSide",
+    "MechanicalQuantityResolution",
     "ORDER_STATE_TRANSITIONS",
     "OutboxState",
     "OrderState",
@@ -2639,6 +2680,7 @@ __all__ = [
     "ReservationLineAllocation",
     "ReservationState",
     "SendClaimExpectedVersions",
+    "resolve_mechanical_quantity",
     "validate_order_transition",
     "validate_plan_transition",
 ]

@@ -129,6 +129,7 @@ from .execution import (
     ExecutionRevisionHistory,
     ExecutionRevisionKind,
     ExecutionSide,
+    MechanicalQuantityResolution,
     OutboxState,
     OrderState,
     PermitCancellationBinding,
@@ -141,6 +142,7 @@ from .execution import (
     ReservationLineAllocation,
     ReservationState,
     SendClaimExpectedVersions,
+    resolve_mechanical_quantity,
     validate_order_transition,
     validate_plan_transition,
 )
@@ -260,6 +262,7 @@ __all__ = [
     "EntryReserveRiskComponent",
     "ExposureScope",
     "Fraction",
+    "MechanicalQuantityResolution",
     "IssuerKind",
     "GatewayExpectedVersions",
     "GatewayIssuerBinding",
@@ -362,6 +365,7 @@ __all__ = [
     "content_hash",
     "domain_hash",
     "normalize_regime_state",
+    "resolve_mechanical_quantity",
     "validate_order_transition",
     "validate_plan_transition",
 ]

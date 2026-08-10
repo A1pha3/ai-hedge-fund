@@ -481,3 +481,71 @@ def test_revision_history_rejects_gaps_identity_or_terminal_rewrite() -> None:
                 active_revision=active_revision,
                 schema_major=2,
             )
+
+
+# =============================================================================
+# Shared mechanical shrink resolver (Task 8)
+# =============================================================================
+
+
+def _mechanical_binding(e, *, order_line_id="line-1", **caps):
+    all_caps = {
+        "availability_cap_units": 300,
+        "price_cap_units": 300,
+        "capacity_cap_units": 300,
+        "cash_cap_units": 300,
+        "capital_risk_cap_units": 300,
+    }
+    all_caps.update(caps)
+    return e.PermitLineMechanicalBinding(
+        order_line_id=e.NonEmptyStr(order_line_id),
+        predicate_policy_version="t1-open-t10-open-slippage.v2",
+        preopen_fact_snapshot_id="preopen-facts-1",
+        preopen_fact_snapshot_hash="a" * 64,
+        preopen_fact_as_of=NOW,
+        **all_caps,
+    )
+
+
+def test_mechanical_resolver_is_exported_and_pure() -> None:
+    e = _execution()
+    assert e.MechanicalQuantityResolution.__name__ == "MechanicalQuantityResolution"
+    binding = _mechanical_binding(e)
+    resolution = e.resolve_mechanical_quantity(300, 100, binding)
+    assert isinstance(resolution, e.MechanicalQuantityResolution)
+    assert resolution.permitted_quantity_units == 300
+    assert resolution.reason_code is e.PermitReasonCode.UNCHANGED
+
+
+def test_mechanical_resolver_never_increases_sealed_quantity() -> None:
+    e = _execution()
+    # A cap above the sealed quantity must clamp to the sealed value.
+    binding = _mechanical_binding(e, availability_cap_units=500)
+    resolution = e.resolve_mechanical_quantity(300, 100, binding)
+    assert resolution.permitted_quantity_units == 300
+    assert resolution.reason_code is e.PermitReasonCode.UNCHANGED
+
+
+def test_mechanical_resolver_applies_lot_floor_to_every_cap() -> None:
+    e = _execution()
+    # 250 units is 2.5 lots; the floor must produce 200, and the reason
+    # follows the binding's cap priority, not the floored quantity.
+    binding = _mechanical_binding(e, capacity_cap_units=250)
+    resolution = e.resolve_mechanical_quantity(300, 100, binding)
+    assert resolution.permitted_quantity_units == 200
+    assert resolution.reason_code is e.PermitReasonCode.CAPACITY_REDUCTION
+    # A sub-lot cap floors to zero.
+    binding = _mechanical_binding(e, cash_cap_units=50)
+    resolution = e.resolve_mechanical_quantity(300, 100, binding)
+    assert resolution.permitted_quantity_units == 0
+    assert resolution.reason_code is e.PermitReasonCode.CASH_REDUCTION
+
+
+def test_mechanical_resolver_reason_follows_cap_priority_on_ties() -> None:
+    e = _execution()
+    # Availability and price both cap at 200; priority (availability first)
+    # owns the reason label.
+    binding = _mechanical_binding(e, availability_cap_units=200, price_cap_units=200)
+    resolution = e.resolve_mechanical_quantity(300, 100, binding)
+    assert resolution.permitted_quantity_units == 200
+    assert resolution.reason_code is e.PermitReasonCode.AVAILABILITY_REDUCTION

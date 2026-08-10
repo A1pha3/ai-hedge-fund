@@ -27,42 +27,40 @@ from typing import Any, Callable, Final, Mapping
 
 import sqlalchemy as sa
 
-from src.screening.offensive.v3.capital.fees import (
-    FeePolicy,
-    FeeRevisionKind,
-)
 from src.screening.offensive.v3.capital.fills import (
-    FeeRevisionRequest,
+    FeeRevisionReceipt,
     FillAttribution,
     FillRevisionReceipt,
-    FillRevisionRequest,
 )
 from src.screening.offensive.v3.capital.repository import CapitalRepository
-from src.screening.offensive.v3.capital.reserves import (
-    CapitalReserveState,
-    ReserveReleaseReason,
-    ReserveReleaseRequest,
-)
-from src.screening.offensive.v3.capital.rounding import fill_gross_cents
 from src.screening.offensive.v3.contracts import (
     ExecutionMode,
     ExecutionSide,
 )
 from src.screening.offensive.v3.execution.lifecycle import (
+    REASON_PERMIT_QUANTITY_ZERO,
     DailyBar,
     ExecutionError,
     OpenExecutionResolution,
     OpenExecutionVerdict,
-    REASON_PERMIT_QUANTITY_ZERO,
     resolve_open_execution,
+)
+from src.screening.offensive.v3.execution.proxy_core import (
+    NormalizedProxyOpenIntent,
+    ProxyCostScenario,
+    adverse_fill_price_cents,
+    settle_proxy_open,
 )
 
 # Fixed execution-policy + cost versions baked into the proxy mode. The
 # slippage semantics live inside the execution_version (open-vs-limit fill
 # price), so no separate slippage field exists: the worst-case price is the
-# only upper bound the reserve needs.
-PROXY_EXECUTION_POLICY_VERSION: Final[str] = "t1-open-t10-open.v1"
-PROXY_COST_VERSION: Final[str] = "cn-a-share.v1"
+# only upper bound the reserve needs. ``v1`` remains a named compatibility/
+# research constant; the active proxy gates on the v2 official Trial version.
+PROXY_EXECUTION_POLICY_VERSION: Final[str] = "t1-open-t10-open-slippage.v2"
+PROXY_COST_VERSION: Final[str] = "cn-a-share-30bps-tax.v2"
+LEGACY_PROXY_EXECUTION_POLICY_VERSION: Final[str] = "t1-open-t10-open.v1"
+LEGACY_PROXY_COST_VERSION: Final[str] = "cn-a-share.v1"
 
 
 _SCHEMA_DDL = (
@@ -111,7 +109,7 @@ class ProxyLineResult:
     reason: str
     fill_price_cents: int | None
     fill_receipt: FillRevisionReceipt | None
-    fee_receipt: Any | None
+    fee_receipt: FeeRevisionReceipt | None
     released_reserve_cents: int
 
 
@@ -195,17 +193,17 @@ class DailyBarProxy:
         seal,
         permit,
         bars: Mapping[str, DailyBar],
-        fee_policy: FeePolicy,
+        scenario: ProxyCostScenario,
         context: ProxyExecutionContext,
     ) -> ProxyExecutionResult:
         """Resolve every ALLOW permit line against its daily bar.
 
         Pre-checks (mode + execution version) run before any capital write,
         so a mismatched permit leaves the ledger untouched. Each line is
-        resolved, recorded, and - when filled - settled into the capital
-        kernel inside the proxy's own immediate transaction so a crash at
-        any fault phase leaves the prior state intact and the pass
-        replayable.
+        normalized into a :class:`NormalizedProxyOpenIntent`, settled through
+        the shared :func:`settle_proxy_open` core, and - when filled -
+        recorded durably. The core owns the fill/fee/release economics; the
+        proxy owns permit validation and the durable execution records.
         """
 
         self._require_proxy_mode(permit)
@@ -240,7 +238,7 @@ class DailyBarProxy:
                 permit_line=permit_line,
                 proposal_line=proposal_line,
                 bars=bars,
-                fee_policy=fee_policy,
+                scenario=scenario,
                 context=context,
                 reserve_binding=reserve_by_line.get(permit_line.order_line_id),
                 send_deadline=send_deadline,
@@ -308,52 +306,113 @@ class DailyBarProxy:
         permit_line,
         proposal_line,
         bars: Mapping[str, DailyBar],
-        fee_policy: FeePolicy,
+        scenario: ProxyCostScenario,
         context: ProxyExecutionContext,
         reserve_binding,
         send_deadline: datetime,
     ) -> ProxyLineResult:
-        # A permit line the gateway zeroed carries no executable quantity, so
-        # it is already determined unexecutable: the daily bar is irrelevant
-        # and it must never reach the fill table (a zero-quantity fill is not a
-        # valid capital fact). Release its reserve and record NO_FILL.
+        # Normalize the permit/proposal line into the authority-neutral intent
+        # the shared core consumes, settle it through the core, then gate the
+        # durable record on a consistent replay. The core owns fill/fee/
+        # release economics; the proxy owns permit validation + durable records.
+        bar = self._usable_bar_for(proposal_line, bars)
         if int(permit_line.permitted_quantity_units) == 0:
+            # A permit line the gateway zeroed carries no executable quantity,
+            # so it is already determined unexecutable: the daily bar is
+            # irrelevant and it must never reach the fill table. The core
+            # settles the same resolution, so the replay check sees the same
+            # artifact the durable record stores.
             resolution = OpenExecutionResolution(
                 OpenExecutionVerdict.NO_FILL, None, REASON_PERMIT_QUANTITY_ZERO
             )
         else:
-            side = ExecutionSide.ENTRY
-            limit_price_cents = int(permit_line.limit_price_cents)
-            bar = self._usable_bar_for(proposal_line, bars)
             resolution = resolve_open_execution(
-                side=side,
-                limit_price_cents=limit_price_cents,
+                side=ExecutionSide.ENTRY,
+                limit_price_cents=int(permit_line.limit_price_cents),
                 bar=bar,
                 command_at=context.command_at,
                 send_deadline=send_deadline,
             )
         # Reject a divergent replay before any capital write: once a line is
         # durably resolved, the proxy never re-judges it against a new bar.
-        self._require_consistent_replay(permit_id, permit_line, resolution)
-        if resolution.verdict is OpenExecutionVerdict.FILLED:
-            return self._settle_filled_line(
-                permit_line=permit_line,
-                proposal_line=proposal_line,
-                resolution=resolution,
-                fee_policy=fee_policy,
-                context=context,
-                reserve_binding=reserve_binding,
-            )
-        return self._settle_unfilled_line(
+        self._require_consistent_replay(permit_id, permit_line, resolution, scenario)
+        intent = self._intent_for_line(
             permit_line=permit_line,
-            resolution=resolution,
-            context=context,
+            proposal_line=proposal_line,
             reserve_binding=reserve_binding,
+            context=context,
+        )
+        settlement = settle_proxy_open(
+            intent,
+            bar=bar,
+            repository=context.repository,
+            scenario=scenario,
+            command_at=context.command_at,
+            send_deadline=send_deadline,
+            _fault_hook=self._fault,
+        )
+        self._fault("proxy.after_settle")
+        return ProxyLineResult(
+            order_line_id=permit_line.order_line_id,
+            client_order_id=permit_line.client_order_id,
+            verdict=settlement.verdict,
+            reason=settlement.reason,
+            fill_price_cents=settlement.fill_price_cents,
+            fill_receipt=settlement.fill_receipt,
+            fee_receipt=settlement.fee_receipt,
+            released_reserve_cents=settlement.released_reserve_cents,
+        )
+
+    def _intent_for_line(
+        self,
+        *,
+        permit_line,
+        proposal_line,
+        reserve_binding,
+        context: ProxyExecutionContext,
+    ) -> NormalizedProxyOpenIntent:
+        return NormalizedProxyOpenIntent(
+            side=ExecutionSide.ENTRY,
+            security_id=permit_line.security_id,
+            limit_price_cents=int(permit_line.limit_price_cents),
+            quantity_units=int(permit_line.permitted_quantity_units),
+            lot_size_units=int(proposal_line.lot_size_units),
+            execution_id=self._execution_id(permit_line),
+            order_id=permit_line.client_order_id or permit_line.order_line_id,
+            reserve_source_id=(
+                reserve_binding.reservation_allocation_id
+                if reserve_binding is not None
+                else None
+            ),
+            reserve_remaining_cents=int(permit_line.remaining_reserve_cents),
+            position_lineage_id=proposal_line.economic_lineage_id,
+            economic_lot_id=self._economic_lot_id(permit_line, proposal_line),
+            attribution=self._line_attribution(proposal_line),
+            source_authority=context.source_authority,
+            source_binding=None,
+            recorded_at=self._clock(),
         )
 
     def _require_consistent_replay(
-        self, permit_id: str, permit_line, resolution: OpenExecutionResolution
+        self,
+        permit_id: str,
+        permit_line,
+        resolution: OpenExecutionResolution,
+        scenario: ProxyCostScenario,
     ) -> None:
+        # The durable artifact folds the scenario into the resolution: the
+        # stored fill price is the post-slippage price, so a replay compares
+        # against the resolution degraded under the same scenario. A replay
+        # under a different cost scenario is a conflict, not a silent
+        # re-settlement.
+        expected_price = resolution.fill_price_cents
+        if expected_price is not None:
+            expected_price = adverse_fill_price_cents(
+                int(expected_price),
+                side=ExecutionSide.ENTRY,
+                limit_cents=int(permit_line.limit_price_cents),
+                bps=scenario.entry_slippage_bps,
+            )
         with self._engine.connect() as conn:
             existing = conn.execute(
                 sa.text(
@@ -370,11 +429,11 @@ class DailyBarProxy:
             or str(existing.reason) != resolution.reason
             or (
                 (existing.fill_price_cents is None)
-                != (resolution.fill_price_cents is None)
+                != (expected_price is None)
             )
             or (
                 existing.fill_price_cents is not None
-                and int(existing.fill_price_cents) != resolution.fill_price_cents
+                and int(existing.fill_price_cents) != expected_price
             )
         ):
             raise ExecutionError(
@@ -393,186 +452,6 @@ class DailyBarProxy:
             # it cannot prove this order's opening auction.
             return None
         return bar
-
-    def _settle_filled_line(
-        self,
-        *,
-        permit_line,
-        proposal_line,
-        resolution: OpenExecutionResolution,
-        fee_policy: FeePolicy,
-        context: ProxyExecutionContext,
-        reserve_binding,
-    ) -> ProxyLineResult:
-        quantity = int(permit_line.permitted_quantity_units)
-        price_micros = resolution.fill_price_cents * 10_000
-        gross_cents = fill_gross_cents(price_micros, quantity)
-        attribution = self._line_attribution(proposal_line)
-        reserve_source_id = (
-            reserve_binding.reservation_allocation_id
-            if reserve_binding is not None
-            else None
-        )
-        fill_request = FillRevisionRequest(
-            execution_id=self._execution_id(permit_line),
-            revision=1,
-            order_id=permit_line.client_order_id,
-            side=ExecutionSide.ENTRY,
-            security_id=permit_line.security_id,
-            price_micros=price_micros,
-            quantity=quantity,
-            position_lineage_id=proposal_line.economic_lineage_id,
-            economic_lot_id=self._economic_lot_id(permit_line, proposal_line),
-            attribution=attribution,
-            reserve_source_id=reserve_source_id,
-            source_authority=context.source_authority,
-            effective_at=context.command_at,
-            as_of=self._clock(),
-            expected_stream_version=context.repository.stream_version(),
-        )
-        fill_receipt, _ = context.repository.record_fill_revision(fill_request)
-        self._fault("proxy.after_fill")
-        fee_receipt = self._charge_fee(
-            fill_execution_id=fill_request.execution_id,
-            gross_cents=gross_cents,
-            quantity=quantity,
-            fee_policy=fee_policy,
-            context=context,
-        )
-        released_reserve_cents = self._released_surplus(
-            fill_receipt=fill_receipt,
-            gross_cents=gross_cents,
-        )
-        return ProxyLineResult(
-            order_line_id=permit_line.order_line_id,
-            client_order_id=permit_line.client_order_id,
-            verdict=resolution.verdict,
-            reason=resolution.reason,
-            fill_price_cents=resolution.fill_price_cents,
-            fill_receipt=fill_receipt,
-            fee_receipt=fee_receipt,
-            released_reserve_cents=released_reserve_cents,
-        )
-
-    def _settle_unfilled_line(
-        self,
-        *,
-        permit_line,
-        resolution: OpenExecutionResolution,
-        context: ProxyExecutionContext,
-        reserve_binding,
-    ) -> ProxyLineResult:
-        released_reserve_cents = self._release_remaining_reserve(
-            permit_line=permit_line,
-            reserve_binding=reserve_binding,
-            context=context,
-        )
-        return ProxyLineResult(
-            order_line_id=permit_line.order_line_id,
-            client_order_id=permit_line.client_order_id,
-            verdict=resolution.verdict,
-            reason=resolution.reason,
-            fill_price_cents=None,
-            fill_receipt=None,
-            fee_receipt=None,
-            released_reserve_cents=released_reserve_cents,
-        )
-
-    def _charge_fee(
-        self,
-        *,
-        fill_execution_id: str,
-        gross_cents: int,  # noqa: ARG002 - kept for parity with the manual service
-        quantity: int,  # noqa: ARG002 - kept for parity with the manual service
-        fee_policy: FeePolicy,
-        context: ProxyExecutionContext,
-    ):
-        # The capital kernel is the source of truth for the charge: it books
-        # the canonical fee event under the injected policy, so the proxy
-        # does not recompute or second-guess the total here.
-        fee_request = FeeRevisionRequest(
-            fill_execution_id=fill_execution_id,
-            revision=1,
-            revision_kind=FeeRevisionKind.INITIAL,
-            fee_policy=fee_policy,
-            source_authority=context.source_authority,
-            effective_at=context.command_at,
-            as_of=self._clock(),
-            expected_stream_version=context.repository.stream_version(),
-        )
-        receipt, _ = context.repository.record_fee_revision(fee_request)
-        self._fault("proxy.after_fee")
-        return receipt
-
-    def _released_surplus(
-        self,
-        *,
-        fill_receipt: FillRevisionReceipt,
-        gross_cents: int,
-    ) -> int:
-        """The worst-case reserve surplus the fill did not spend.
-
-        The capital kernel consumes the live reserve in full when it books
-        the fill, then spends only the real gross; the surplus is the
-        consumed reserve minus the real gross, read off the receipt so it
-        tracks the permit-time shrink rather than the sealed amount.
-        """
-
-        consumed = fill_receipt.reserve_consumed_cents
-        if consumed is None:
-            return 0
-        return int(consumed) - gross_cents
-
-    def _release_remaining_reserve(
-        self,
-        *,
-        permit_line,
-        reserve_binding,
-        context: ProxyExecutionContext,
-    ) -> int:
-        """Release an unfilled line's remaining reserve back to cash.
-
-        Reports the permit line's remaining reserve - the amount the kernel
-        actually holds LIVE for this line. A permit-time shrink already
-        released the sealed surplus to available cash at issue time, so the
-        kernel holds only ``remaining_reserve_cents``; reporting the sealed
-        total would overstate the release. That value is a frozen permit
-        artifact, so it is stable across replays and a crash between the
-        capital release and the durable record still converges. The capital
-        release itself is idempotent - a reserve already walked to RELEASED by
-        a prior attempt is left untouched.
-        """
-
-        if reserve_binding is None:
-            return 0
-        reported = int(permit_line.remaining_reserve_cents)
-        source_id = reserve_binding.reservation_allocation_id
-        if self._reserve_is_live(source_id, context):
-            context.repository.release_reserve(
-                ReserveReleaseRequest(
-                    source_id=source_id,
-                    reason=ReserveReleaseReason.ORDER_REJECTED,
-                    expected_stream_version=context.repository.stream_version(),
-                    as_of=self._clock(),
-                )
-            )
-            self._fault("proxy.after_release")
-        return reported
-
-    def _reserve_is_live(
-        self, source_id: str, context: ProxyExecutionContext
-    ) -> bool:
-        engine = context.repository._engine  # noqa: SLF001
-        with engine.connect() as conn:
-            row = conn.execute(
-                sa.text(
-                    "SELECT state FROM reserves WHERE source_id = :src"
-                ),
-                {"src": source_id},
-            ).first()
-        if row is None:
-            return False
-        return str(row.state) == CapitalReserveState.LIVE.value
 
     # -- provenance helpers ------------------------------------------------
 

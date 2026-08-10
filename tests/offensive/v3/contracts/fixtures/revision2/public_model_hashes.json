@@ -1719,18 +1719,18 @@
     "artifact_hash": {
       "domain": "ai-hedge-fund.v3.decision.shadow-decision.v2",
       "schema_major": 3,
-      "sha256": "798ed696b63640dcdfdb1149e87b22f119a990455a29f5f12b5dfcbd58e822a0"
+      "sha256": "5aab361743b455592aed78d0378be7c723f7962e01c2504938680da9e1a7c446"
     },
-    "canonical_payload_sha256": "4cb90445dfe8069159195b5f0cfe6d6c0439059e2294990d11b2144bee70629f",
-    "content_hash": "4cb90445dfe8069159195b5f0cfe6d6c0439059e2294990d11b2144bee70629f",
-    "json_payload_sha256": "4cb90445dfe8069159195b5f0cfe6d6c0439059e2294990d11b2144bee70629f",
+    "canonical_payload_sha256": "07e355206ffe89ab3833a00022a2cb3f04d79464bc2d58dee89609a638564dee",
+    "content_hash": "07e355206ffe89ab3833a00022a2cb3f04d79464bc2d58dee89609a638564dee",
+    "json_payload_sha256": "07e355206ffe89ab3833a00022a2cb3f04d79464bc2d58dee89609a638564dee",
     "model_module": "src.screening.offensive.v3.contracts.decision",
     "model_name": "ShadowDecision",
     "payload": {
       "artifact_kind": "shadow_decision",
       "artifact_namespace": "growth-kernel.shadow.v2",
       "available_at": "2026-07-29T08:00:00Z",
-      "cost_assumption_version": "cn-a-share.v1",
+      "cost_assumption_version": "cn-a-share-30bps-tax.v2",
       "counterfactual_key": {
         "counterfactual_cycle_id": "auto-shadow-daily-v1",
         "portfolio_id": "portfolio-v3",
@@ -1738,14 +1738,14 @@
       },
       "counterfactual_lines": [
         {
-          "cost_assumption_version": "cn-a-share.v1",
+          "cost_assumption_version": "cn-a-share-30bps-tax.v2",
           "economic_lineage_id": "auto-lineage",
           "estimated_cash_reserve_cents": 105050,
           "estimated_fee_cents": 50,
           "evidence_artifact_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
           "evidence_id": "shadow-evidence-1",
           "evidence_payload_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-          "execution_assumption_version": "t1-open-t10-open.v1",
+          "execution_assumption_version": "t1-open-t10-open-slippage.v2",
           "exit_session_ordinal": 10,
           "family_id": "auto-family",
           "limit_price_cents": 1050,
@@ -1766,14 +1766,14 @@
           "worst_case_price_cents": 1050
         },
         {
-          "cost_assumption_version": "cn-a-share.v1",
+          "cost_assumption_version": "cn-a-share-30bps-tax.v2",
           "economic_lineage_id": "auto-lineage",
           "estimated_cash_reserve_cents": 160075,
           "estimated_fee_cents": 75,
           "evidence_artifact_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
           "evidence_id": "shadow-evidence-2",
           "evidence_payload_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-          "execution_assumption_version": "t1-open-t10-open.v1",
+          "execution_assumption_version": "t1-open-t10-open-slippage.v2",
           "exit_session_ordinal": 10,
           "family_id": "auto-family",
           "limit_price_cents": 800,
@@ -1797,7 +1797,7 @@
       "created_at": "2026-07-29T08:00:00Z",
       "economic_lineage_id": "auto-lineage",
       "evidence_set_merkle_root": "2222222222222222222222222222222222222222222222222222222222222222",
-      "execution_assumption_version": "t1-open-t10-open.v1",
+      "execution_assumption_version": "t1-open-t10-open-slippage.v2",
       "execution_authority": "NONE",
       "family_id": "auto-family",
       "issuer_binding": {
@@ -1863,20 +1863,20 @@
     }
   },
   "src.screening.offensive.v3.contracts.decision.ShadowOrderLine": {
-    "canonical_payload_sha256": "ddf997c4aab84269341cd7e598b690a1792f394c95038715fe6d8bb95f142a10",
-    "content_hash": "ddf997c4aab84269341cd7e598b690a1792f394c95038715fe6d8bb95f142a10",
-    "json_payload_sha256": "ddf997c4aab84269341cd7e598b690a1792f394c95038715fe6d8bb95f142a10",
+    "canonical_payload_sha256": "b4acf788bd69743d3427b0c39c63256aef496a25044f4ba9b5ef65a3e74e30de",
+    "content_hash": "b4acf788bd69743d3427b0c39c63256aef496a25044f4ba9b5ef65a3e74e30de",
+    "json_payload_sha256": "b4acf788bd69743d3427b0c39c63256aef496a25044f4ba9b5ef65a3e74e30de",
     "model_module": "src.screening.offensive.v3.contracts.decision",
     "model_name": "ShadowOrderLine",
     "payload": {
-      "cost_assumption_version": "cn-a-share.v1",
+      "cost_assumption_version": "cn-a-share-30bps-tax.v2",
       "economic_lineage_id": "auto-lineage",
       "estimated_cash_reserve_cents": 105050,
       "estimated_fee_cents": 50,
       "evidence_artifact_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "evidence_id": "shadow-evidence-1",
       "evidence_payload_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-      "execution_assumption_version": "t1-open-t10-open.v1",
+      "execution_assumption_version": "t1-open-t10-open-slippage.v2",
       "exit_session_ordinal": 10,
       "family_id": "auto-family",
       "limit_price_cents": 1050,
