@@ -58,6 +58,7 @@ from test_daily_action_flow import (
     _grant,
     _make_flow,
     _policy_activation,
+    _policy_snapshot,
     _run,
     SIGNAL_DATE,
 )
@@ -181,7 +182,13 @@ def family_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _FamilyWorl
     )
     world = _BtstWorld(tmp_path)
     snapshot = dataclasses.replace(_verified_snapshot(), snapshot_id=SNAPSHOT_ID)
-    policy = _policy_activation()
+    # 真实 GrowthKernel 校验 policy_activation.policy_snapshot_hash ==
+    # policy_snapshot.content_hash() (decide.py:69); 先建快照, 再由它派生
+    # activation, 使 pair 内部一致 — 与 test_decide._kernel_input 同构。
+    policy_snapshot = _policy_snapshot()
+    policy = _policy_activation(
+        policy_snapshot_hash=policy_snapshot.content_hash()
+    )
     # admission 精确匹配契约 (kernel/admission.py:106-115): grant 的
     # behavior_fingerprint/execution_version/cost_version 须与 producer 信封一致
     # — producer 信封 execution_version 恒 "btst.funnel.v1"
@@ -200,6 +207,7 @@ def family_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _FamilyWorl
         kernel=kernel,
         persister=persister,
         policy=policy,
+        policy_snapshot=policy_snapshot,
         envelope=envelope,
     )
     return _FamilyWorld(

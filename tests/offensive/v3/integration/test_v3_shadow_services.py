@@ -58,6 +58,9 @@ from src.screening.offensive.v3.orchestration.shadow_trust import (  # noqa: E40
     derive_deadline_contract,
     synthesize_shadow_authority,
 )
+from src.screening.offensive.v3.policy.loader import (  # noqa: E402
+    load_policy_snapshot,
+)
 from src.screening.offensive.v3.policy.models import RuntimeMode  # noqa: E402
 from src.screening.offensive.setups.btst_breakout import (  # noqa: E402
     BtstBreakoutSetup,
@@ -124,15 +127,36 @@ def _seed_genesis_capital(capital_path: Path) -> None:
 
 
 def _policy_json(runtime_mode: str) -> str:
+    """policy-v1 模板 → SHADOW 变体: runtime_mode + 非零资本 caps。
+
+    checked-in policy-v1.json 是 off 候选 (caps 全 0, ``test_off_policy_cannot_hide_nonzero_executable_risk``
+    锁定 off+caps>0 被拒)。SHADOW 编排需要真实 caps>0 的快照, 故在模板上
+    override runtime_mode/caps/btst_enabled — 与 Task 5 起"真实 PolicySnapshot
+    经 kernel 校验 (content_hash)"的接线一致 (否则 policy caps=0 → 恒
+    CAPACITY_EXHAUSTED, 端到端 shadow 决策无法产出)。
+    """
     template = json.loads(_POLICY_TEMPLATE.read_text(encoding="utf-8"))
     template["runtime_mode"] = runtime_mode
+    template["producers"]["btst_enabled"] = True
+    template["capital"]["exploration_aggregate_gross_cap"] = 0.02
+    template["capital"]["portfolio_gross_cap"] = 0.02
+    template["capital"]["single_name_gross_cap"] = 0.01
+    template["capital"]["industry_gross_cap"] = 0.02
+    template["capital"]["daily_entry_gross_cap"] = 0.02
+    template["capital"]["stage_loss_budget_cap"] = 0.02
     return json.dumps(template, ensure_ascii=False)
+
+
+def _write_policy_json(tmp_path: Path, *, runtime_mode: str) -> Path:
+    """写 policy JSON (真实 loader 加载路径, Task 5 起 flow 校验真实 content_hash)。"""
+    policy = tmp_path / "policy.json"
+    policy.write_text(_policy_json(runtime_mode), encoding="utf-8")
+    return policy
 
 
 def _write_toml_config(tmp_path: Path, *, runtime_mode: str, capital_ledger: Path) -> Path:
     """写 services.toml + policy JSON (run_v3_shadow_daily_action 入口用)。"""
-    policy = tmp_path / "policy.json"
-    policy.write_text(_policy_json(runtime_mode), encoding="utf-8")
+    policy = _write_policy_json(tmp_path, runtime_mode=runtime_mode)
     shadow = tmp_path / "v3_shadow"
     config = tmp_path / "services.toml"
     config.write_text(
@@ -188,10 +212,17 @@ def test_flow_end_to_end_produces_shadow_decision(tmp_path, monkeypatch):
     ctx = build_shadow_trust_context(
         reference_time=CLOCK_AT, specs=(SHADOW_BTST_SPEC,)
     )
+    # 真实 GrowthKernel 校验 policy_activation.policy_snapshot_hash ==
+    # policy_snapshot.content_hash() (Task 5); 从真实 policy JSON 加载快照,
+    # 由它派生 authority 的 activation hash, 使 pair 内部一致。
+    policy = load_policy_snapshot(
+        _write_policy_json(tmp_path, runtime_mode="shadow")
+    )
     authority = synthesize_shadow_authority(
         portfolio_id=PORTFOLIO,
         trust_bundle_hash=ctx.active_bundle_hash,
         reference_time=CLOCK_AT,
+        policy_snapshot=policy,
     )
     deadlines = derive_deadline_contract(close_finalized_at=T_CLOSE)
 
@@ -212,6 +243,7 @@ def test_flow_end_to_end_produces_shadow_decision(tmp_path, monkeypatch):
         trusted_evidence_cutoff=T_CLOSE,
         v2_plans_reader=None,
         snapshot_loader=_loader,
+        policy_snapshot=policy,
     )
     result = flow.run(
         signal_date=SIGNAL_DATE,
@@ -251,10 +283,14 @@ def test_flow_end_to_end_no_capital_baseline_degrades_gracefully(tmp_path, monke
     ctx = build_shadow_trust_context(
         reference_time=CLOCK_AT, specs=(SHADOW_BTST_SPEC,)
     )
+    policy = load_policy_snapshot(
+        _write_policy_json(tmp_path, runtime_mode="shadow")
+    )
     authority = synthesize_shadow_authority(
         portfolio_id=PORTFOLIO,
         trust_bundle_hash=ctx.active_bundle_hash,
         reference_time=CLOCK_AT,
+        policy_snapshot=policy,
     )
     deadlines = derive_deadline_contract(close_finalized_at=T_CLOSE)
 
@@ -272,6 +308,7 @@ def test_flow_end_to_end_no_capital_baseline_degrades_gracefully(tmp_path, monke
         trusted_evidence_cutoff=T_CLOSE,
         v2_plans_reader=None,
         snapshot_loader=_loader,
+        policy_snapshot=policy,
     )
     result = flow.run(
         signal_date=SIGNAL_DATE,

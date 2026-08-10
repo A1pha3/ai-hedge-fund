@@ -37,6 +37,7 @@ shadow 管线 "skipped" + "not_shadow_mode"。
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -106,11 +107,11 @@ BEHAVIOR = "b" * 64
 # --------------------------------------------------------------------------
 
 
-def _policy_activation() -> PolicyActivation:
+def _policy_activation(policy_snapshot_hash: str = HASH) -> PolicyActivation:
     return PolicyActivation(
         portfolio_id=PORTFOLIO,
         mode=ExecutionMode.DAILY_BAR_PROXY,
-        policy_snapshot_hash=HASH,
+        policy_snapshot_hash=policy_snapshot_hash,
         predecessor_policy_activation_hash="0" * 64,
         trust_bundle_hash=HASH,
         registry_epoch=1,
@@ -122,6 +123,96 @@ def _policy_activation() -> PolicyActivation:
         issuer_id="governance.service",
         issuer_capability="governance.policy.activation.v1",
         schema_major=2,
+    )
+
+
+def _policy_snapshot():
+    """最小合法 schema-major-2 PolicySnapshot (fake-kernel 测试不校验 hash)。
+
+    content_hash() 经 ``_revalidate_policy_snapshot`` 全量重验 (policy/models.py),
+    故字段集必须是真实快照的完整集合 — 与 test_decide._policy_snapshot 同构。
+    """
+    from src.screening.offensive.v3.policy.models import PolicySnapshot
+
+    return PolicySnapshot.model_validate_json(
+        json.dumps(
+            {
+                "schema_major": 2,
+                "policy_id": "growth-kernel-v3",
+                "policy_version": "policy-v2",
+                "policy_epoch": 1,
+                "authority_epoch": 1,
+                "risk_epoch": 1,
+                "runtime_mode": "shadow",
+                "capital": {
+                    "governed_tiers": [2, 5, 10],
+                    "exploration_aggregate_gross_cap": "0.02",
+                    "portfolio_gross_cap": "0.02",
+                    "single_name_gross_cap": "0.01",
+                    "industry_gross_cap": "0.02",
+                    "daily_entry_gross_cap": "0.02",
+                    "stage_loss_budget_cap": "0.02",
+                },
+                "risk": {
+                    "drawdown_scale_start": "0.10",
+                    "drawdown_halt": "0.15",
+                    "halt_is_latched": True,
+                    "inherited_risk_counts_on_restart": True,
+                },
+                "adv": {
+                    "lookback_sessions": 20,
+                    "max_participation_rate": "0.05",
+                    "missing_data_behavior": "fail_closed",
+                },
+                "producers": {
+                    "btst_enabled": True,
+                    "oversold_bounce_enabled": False,
+                    "btst_regime_admission_mode": "IGNORE",
+                    "regime_sizing_enabled": False,
+                    "streak_sizing_enabled": False,
+                    "trigger_strength_sizing_enabled": False,
+                    "composite_sizing_enabled": False,
+                },
+                "execution": {
+                    "entry_session_ordinal": 1,
+                    "exit_session_ordinal": 10,
+                    "order_type": "opening_auction_limit",
+                    "time_in_force": "opening_auction",
+                    "seal_deadline_after_t0_close_minutes": 240,
+                    "permit_deadline_before_auction_minutes": 20,
+                    "gateway_send_deadline_before_auction_minutes": 10,
+                    "broker_auction_submission_cutoff_cn": "09:20:00",
+                    "worst_case_cost_multiplier": "2",
+                },
+                "versions": {
+                    "execution_contract_version": "t0-close-t1-open-t10-open.v1",
+                    "cost_version": "cn-a-share-costs.v1",
+                    "board_rule_version": "ashare-board-prefix-v1",
+                    "calendar_version": "sse-szse-official-sessions.v1",
+                    "lot_rule_version": "cn-board-lot.v1",
+                    "price_boundary_version": "sse-szse-price-limits.v1",
+                    "setup_version": "daily-action-setups-v1",
+                    "exit_policy_version": "t10-open.v1",
+                    "governance_version": "growth-kernel-governance.v2",
+                },
+                "evidence_gates": {
+                    "min_mature_outcomes": 150,
+                    "min_decision_days": 60,
+                    "min_effective_sample_size": "60",
+                    "min_distinct_tickers": 80,
+                    "min_forward_months": 12,
+                    "adverse_window_required": True,
+                    "chronological_fold_gate_required": True,
+                    "capacity_stress_required": True,
+                    "tail_risk_gate_required": True,
+                    "fresh_evidence_per_tier_required": True,
+                    "slippage_stress_multiple": "2",
+                    "minimum_economic_effect": "0.001",
+                    "incremental_minimum_economic_effect": "0.001",
+                },
+            }
+        ),
+        strict=True,
     )
 
 
@@ -598,6 +689,7 @@ def _make_flow(
     mode: RuntimeMode = RuntimeMode.SHADOW,
     portfolio_id: str = PORTFOLIO,
     policy=None,
+    policy_snapshot=None,
     envelope=None,
     deadlines=None,
     cutoff: datetime = CUTOFF,
@@ -617,6 +709,7 @@ def _make_flow(
         shadow_persister=persister or _FakePersister(order=order),
         mode_provider=lambda: mode,
         policy_activation=policy,
+        policy_snapshot=policy_snapshot or _policy_snapshot(),
         envelope=envelope or _envelope(policy),
         portfolio_id=portfolio_id,
         deadlines=deadlines or _deadlines(),
@@ -744,11 +837,15 @@ def test_stale_capital_is_no_trade_form(tmp_path: Path) -> None:
     kernel = _RecordingKernel(GrowthKernel(_config()))
     producer = _FakeProducer(records=())  # 空候选; stale 检查先于 admission
     persister = _FakePersister()
+    snapshot = _policy_snapshot()
+    policy = _policy_activation(policy_snapshot_hash=snapshot.content_hash())
     flow = _make_flow(
         capital_reader=capital_reader,
         kernel=kernel,
         producer=producer,
         persister=persister,
+        policy=policy,
+        policy_snapshot=snapshot,
     )
 
     result = _run(flow, tmp_path)
@@ -772,7 +869,17 @@ def test_no_signal_never_constructs_empty_shadow_decision(tmp_path: Path) -> Non
     kernel = _RecordingKernel(GrowthKernel(_config()))
     producer = _FakeProducer(records=())  # scan 无候选
     persister = _FakePersister()
-    flow = _make_flow(kernel=kernel, producer=producer, persister=persister)
+    # 真实 kernel 校验 activation↔snapshot hash 绑定 (decide.py:69): 构造一致的
+    # 快照 + 派生 activation, 使 no_signal 是候选为空的真实判定而非绑定失败。
+    snapshot = _policy_snapshot()
+    policy = _policy_activation(policy_snapshot_hash=snapshot.content_hash())
+    flow = _make_flow(
+        kernel=kernel,
+        producer=producer,
+        persister=persister,
+        policy=policy,
+        policy_snapshot=snapshot,
+    )
 
     result = _run(flow, tmp_path)
 

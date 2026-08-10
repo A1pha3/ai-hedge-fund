@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 
 import pytest
 
@@ -53,13 +54,15 @@ def _config(**overrides) -> SizingConfig:
 
 
 def _kernel_input(**overrides) -> KernelInput:
-    policy = _policy_activation()
+    snapshot = _policy_snapshot()
+    policy = _policy_activation(policy_snapshot_hash=snapshot.content_hash())
     values = {
         "portfolio_id": "paper-v3",
         "signal_session": NOW.date(),
         "decision_cycle_id": "cycle-1",
         "mode": policy.mode,
         "policy_activation": policy,
+        "policy_snapshot": snapshot,
         "envelope": _envelope(policy),
         "capital": _snapshot(
             as_of=NOW,
@@ -78,6 +81,97 @@ def _kernel_input(**overrides) -> KernelInput:
     }
     values.update(overrides)
     return KernelInput(**values)
+
+
+def _policy_snapshot():
+    """A minimal PolicySnapshot whose content_hash matches the activation.
+
+    The activation's ``policy_snapshot_hash`` must equal the snapshot's
+    ``content_hash``; the builder derives the activation from the snapshot so
+    the pair is internally consistent.
+    """
+    from src.screening.offensive.v3.policy.models import PolicySnapshot
+
+    return PolicySnapshot.model_validate_json(
+        json.dumps(
+            {
+                "schema_major": 2,
+                "policy_id": "growth-kernel-v3",
+                "policy_version": "policy-v2",
+                "policy_epoch": 1,
+                "authority_epoch": 1,
+                "risk_epoch": 1,
+                "runtime_mode": "shadow",
+                "capital": {
+                    "governed_tiers": [2, 5, 10],
+                    "exploration_aggregate_gross_cap": "0.02",
+                    "portfolio_gross_cap": "0.02",
+                    "single_name_gross_cap": "0.01",
+                    "industry_gross_cap": "0.02",
+                    "daily_entry_gross_cap": "0.02",
+                    "stage_loss_budget_cap": "0.02",
+                },
+                "risk": {
+                    "drawdown_scale_start": "0.10",
+                    "drawdown_halt": "0.15",
+                    "halt_is_latched": True,
+                    "inherited_risk_counts_on_restart": True,
+                },
+                "adv": {
+                    "lookback_sessions": 20,
+                    "max_participation_rate": "0.05",
+                    "missing_data_behavior": "fail_closed",
+                },
+                "producers": {
+                    "btst_enabled": True,
+                    "oversold_bounce_enabled": False,
+                    "btst_regime_admission_mode": "IGNORE",
+                    "regime_sizing_enabled": False,
+                    "streak_sizing_enabled": False,
+                    "trigger_strength_sizing_enabled": False,
+                    "composite_sizing_enabled": False,
+                },
+                "execution": {
+                    "entry_session_ordinal": 1,
+                    "exit_session_ordinal": 10,
+                    "order_type": "opening_auction_limit",
+                    "time_in_force": "opening_auction",
+                    "seal_deadline_after_t0_close_minutes": 240,
+                    "permit_deadline_before_auction_minutes": 20,
+                    "gateway_send_deadline_before_auction_minutes": 10,
+                    "broker_auction_submission_cutoff_cn": "09:20:00",
+                    "worst_case_cost_multiplier": "2",
+                },
+                "versions": {
+                    "execution_contract_version": "t0-close-t1-open-t10-open.v1",
+                    "cost_version": "cn-a-share-costs.v1",
+                    "board_rule_version": "ashare-board-prefix-v1",
+                    "calendar_version": "sse-szse-official-sessions.v1",
+                    "lot_rule_version": "cn-board-lot.v1",
+                    "price_boundary_version": "sse-szse-price-limits.v1",
+                    "setup_version": "daily-action-setups-v1",
+                    "exit_policy_version": "t10-open.v1",
+                    "governance_version": "growth-kernel-governance.v2",
+                },
+                "evidence_gates": {
+                    "min_mature_outcomes": 150,
+                    "min_decision_days": 60,
+                    "min_effective_sample_size": "60",
+                    "min_distinct_tickers": 80,
+                    "min_forward_months": 12,
+                    "adverse_window_required": True,
+                    "chronological_fold_gate_required": True,
+                    "capacity_stress_required": True,
+                    "tail_risk_gate_required": True,
+                    "fresh_evidence_per_tier_required": True,
+                    "slippage_stress_multiple": "2",
+                    "minimum_economic_effect": "0.001",
+                    "incremental_minimum_economic_effect": "0.001",
+                },
+            }
+        ),
+        strict=True,
+    )
 
 
 def test_deadline_order_is_validated_fail_closed() -> None:
@@ -255,7 +349,7 @@ def test_producer_claim_is_clamped_to_grant_lineage_cap() -> None:
     # 9_000_000 producer claim must still size <= 200_000.
     from decimal import Decimal
 
-    from test_admission import _envelope, _policy_activation
+    from test_admission import _envelope
 
     nav = 10_000_000
     capital = _snapshot(
@@ -265,7 +359,8 @@ def test_producer_claim_is_clamped_to_grant_lineage_cap() -> None:
         lifetime_high_water_mark_cents=nav,
         active_epoch_high_water_mark_cents=nav,
     )
-    policy = _policy_activation()
+    snapshot = _policy_snapshot()
+    policy = _policy_activation(policy_snapshot_hash=snapshot.content_hash())
     loose_envelope = _envelope(policy, portfolio_gross_cap=Decimal("0.10"))
     greedy = _candidate(unscaled_target_gross_cents=9_000_000)
     big_config = _config(
@@ -279,6 +374,7 @@ def test_producer_claim_is_clamped_to_grant_lineage_cap() -> None:
             raw_candidates=(greedy,),
             capital=capital,
             policy_activation=policy,
+            policy_snapshot=snapshot,
             envelope=loose_envelope,
         ),
         trusted_at=NOW,
@@ -352,16 +448,17 @@ def test_decide_passes_existing_gross_exposure_to_sizing(monkeypatch) -> None:
     # snapshot's total_gross_exposure_cents into size_portfolio so inherited
     # exposure tightens the new-entry cap. Guards the wiring, which a pure
     # sizing unit test cannot: the whole defect was decide() never passing it.
-    import src.screening.offensive.v3.kernel.decide as decide_mod
+    # The sizing call now lives in the shared core module.
+    import src.screening.offensive.v3.kernel.core as core_mod
 
     captured: dict[str, int] = {}
-    real_size_portfolio = decide_mod.size_portfolio
+    real_size_portfolio = core_mod.size_portfolio
 
     def _spy(**kwargs):
         captured["existing"] = kwargs.get("existing_portfolio_gross_cents")
         return real_size_portfolio(**kwargs)
 
-    monkeypatch.setattr(decide_mod, "size_portfolio", _spy)
+    monkeypatch.setattr(core_mod, "size_portfolio", _spy)
     capital = _snapshot(
         as_of=NOW,
         valid_until=NOW + timedelta(hours=18),

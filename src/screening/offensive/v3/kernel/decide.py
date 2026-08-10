@@ -9,24 +9,24 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from src.screening.offensive.v3.contracts.decision import ShadowDecision
 from src.screening.offensive.v3.kernel.admission import admit_candidates
+from src.screening.offensive.v3.kernel.core import (
+    CoreNoTrade,
+    DecisionConstraints,
+    decide_core,
+)
 from src.screening.offensive.v3.kernel.models import (
     BlockReason,
     KernelInput,
     NoTradeDecision,
     PortfolioDecision,
     RawCandidate,
+    ShadowKernelInput,
 )
-from src.screening.offensive.v3.kernel.risk import (
-    apply_portfolio_risk_once,
-    evaluate_portfolio_risk,
-)
-from src.screening.offensive.v3.kernel.sizing import (
-    SizingConfig,
-    decision_lines,
-    rank_candidates,
-    size_portfolio,
-)
+from src.screening.offensive.v3.kernel.risk import evaluate_portfolio_risk
+from src.screening.offensive.v3.kernel.shadow import decide_shadow
+from src.screening.offensive.v3.kernel.sizing import SizingConfig
 
 
 class KernelError(RuntimeError):
@@ -49,7 +49,13 @@ class GrowthKernel:
         *,
         trusted_at: datetime,
     ) -> PortfolioDecision | NoTradeDecision:
-        """One complete decision proposal or a typed no-trade decision."""
+        """One complete decision proposal or a typed no-trade decision.
+
+        The executable admission maps the policy activation + envelope +
+        grants into ``DecisionConstraints``; the shared pure ``decide_core``
+        then runs risk-once, rank, capacity, lot and reserve exactly like the
+        shadow path — one decision core, two authority boundaries.
+        """
 
         def no_trade(reason: BlockReason, detail: str = "") -> NoTradeDecision:
             return NoTradeDecision(
@@ -60,18 +66,23 @@ class GrowthKernel:
                 detail=detail,
             )
 
-        deadlines = kernel_input.deadlines
-        if not deadlines.ordering_valid():
+        policy = kernel_input.policy_snapshot
+        if policy.content_hash() != kernel_input.policy_activation.policy_snapshot_hash:
+            return no_trade(
+                BlockReason.POLICY_ENVELOPE_MISMATCH,
+                "policy snapshot does not match the activation binding",
+            )
+        # The deadline order contract is validated fail-closed before
+        # anything else (the shared core re-checks it as its own gate).
+        if not kernel_input.deadlines.ordering_valid():
             raise KernelError(
                 "deadline_order_invalid",
                 "deadline contract violates the frozen time-point order",
             )
-        if trusted_at > deadlines.seal_creation_deadline:
-            return no_trade(
-                BlockReason.DEADLINE_MISSED,
-                "trusted time passed the seal creation deadline",
-            )
-        # Complete portfolio risk, fail closed, applied exactly once below.
+        # Complete portfolio risk, fail closed. The risk gate runs BEFORE
+        # admission — a stale or halted capital truth is reported regardless
+        # of candidates — and the shared core applies the multiplier exactly
+        # once after admission.
         risk = evaluate_portfolio_risk(
             capital=kernel_input.capital, trusted_at=trusted_at
         )
@@ -95,8 +106,8 @@ class GrowthKernel:
                 BlockReason.NO_SIGNAL,
                 f"no executable admitted candidates (shadow={shadow})",
             )
-        # One risk application: the same multiplier scales every unscaled
-        # lineage target and the portfolio ceiling before sizing.
+        # One risk application happens inside the shared core; here we only
+        # map the frozen authority into integer constraints.
         #
         # spec line 759 (E-1): the unscaled lineage target is the grant's
         # lineage_gross_cap * NAV, and the producer's self-reported
@@ -120,48 +131,33 @@ class GrowthKernel:
                 unscaled_by_lineage.get(lineage, 0),
                 bounded_target,
             )
-        adjusted = apply_portfolio_risk_once(
-            unscaled_lineage_targets=unscaled_by_lineage,
-            unscaled_portfolio_gross_cap_cents=_portfolio_cap_cents(
-                kernel_input
-            ),
-            risk_decision=risk,
-        )
-        ranked = rank_candidates(tuple(admitted))
-        sized = size_portfolio(
-            ranked_candidates=ranked,
-            adjusted_target_gross_by_lineage={
-                lineage: gross
-                for lineage, gross in adjusted.adjusted_lineage_gross_cents
-            },
-            price_micros_by_candidate=dict(
-                kernel_input.price_micros_by_candidate
-            ),
-            industry_by_candidate=dict(
-                kernel_input.industry_by_candidate
-            ),
-            available_cash_cents=kernel_input.capital.available_cash_cents,
-            config=self._config,
-            adjusted_portfolio_gross_cap_cents=(
-                adjusted.adjusted_portfolio_gross_cap_cents
-            ),
-            # spec line 499: inherited gross exposure counts toward the
-            # portfolio cap, so new entries only consume the headroom.
-            existing_portfolio_gross_cents=(
-                kernel_input.capital.total_gross_exposure_cents
-            ),
-        )
-        lines = decision_lines(sized)
-        total_reserved = sum(
-            line.worst_case_reserve_cents
-            for line in lines
-            if line.status == "ENTRY_PLANNED"
-        )
-        if not any(line.status == "ENTRY_PLANNED" for line in lines):
-            return no_trade(
-                BlockReason.CAPACITY_EXHAUSTED,
-                "no candidate survived capacity and lot sizing",
+        # The policy's capital caps are an additional ceiling: the envelope
+        # caps never lift a tighter policy cap, and vice versa — the tighter
+        # of the two bounds the executable path.
+        policy_portfolio_cap = int(nav * policy.capital.portfolio_gross_cap)
+        policy_lineage_cap = int(nav * policy.capital.portfolio_gross_cap)
+        for lineage in unscaled_by_lineage:
+            unscaled_by_lineage[lineage] = min(
+                unscaled_by_lineage[lineage], policy_lineage_cap
             )
+        envelope_portfolio_cap = int(nav * kernel_input.envelope.portfolio_gross_cap)
+        portfolio_cap = min(policy_portfolio_cap, envelope_portfolio_cap)
+        result = decide_core(
+            candidates=tuple(admitted),
+            constraints=DecisionConstraints(
+                lineage_gross_cap_cents=unscaled_by_lineage,
+                sizing_config=self._config,
+                portfolio_gross_cap_cents=portfolio_cap,
+                policy_epoch=policy.policy_epoch,
+            ),
+            capital=kernel_input.capital,
+            prices=dict(kernel_input.price_micros_by_candidate),
+            industries=dict(kernel_input.industry_by_candidate),
+            deadlines=kernel_input.deadlines,
+            trusted_at=trusted_at,
+        )
+        if isinstance(result, CoreNoTrade):
+            return no_trade(result.reason)
         capital = kernel_input.capital
         return PortfolioDecision(
             portfolio_id=kernel_input.portfolio_id,
@@ -174,12 +170,25 @@ class GrowthKernel:
             risk_epoch=capital.risk_epoch,
             capital_snapshot_hash=capital.content_hash(),
             capital_version=capital.capital_version,
-            lines=lines,
-            portfolio_gross_cap_cents=(
-                adjusted.adjusted_portfolio_gross_cap_cents
-            ),
-            total_reserved_worst_case_cents=total_reserved,
+            lines=result.lines,
+            portfolio_gross_cap_cents=result.portfolio_gross_cap_cents,
+            total_reserved_worst_case_cents=result.total_reserved_worst_case_cents,
         )
+
+    def decide_shadow(
+        self,
+        shadow_input: ShadowKernelInput,
+    ) -> ShadowDecision | NoTradeDecision:
+        """One arm decision through the shared decision core.
+
+        No ``trusted_at`` argument: the frozen trusted time lives inside
+        ``ShadowSharedInput``, so both arm calls consume exactly one
+        observation. The shadow admission never manufactures a grant; it maps
+        the Trial-bound ``PolicySnapshot`` into the same ``DecisionConstraints``
+        and the same ``decide_core`` as the executable path.
+        """
+
+        return decide_shadow(shadow_input, config=self._config)
 
 
 def _portfolio_cap_cents(kernel_input: KernelInput) -> int:

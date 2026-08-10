@@ -305,6 +305,7 @@ class DailyActionFlow:
         shadow_persister: ShadowPersisterPort,
         mode_provider: Callable[[], RuntimeMode],
         policy_activation: Any,
+        policy_snapshot: Any,
         envelope: Any,
         portfolio_id: str,
         deadlines: Any,
@@ -331,6 +332,9 @@ class DailyActionFlow:
             mode_provider: 每次 ``run`` 最先读取的 runtime_mode 投影。
             policy_activation: 传给 kernel 的 ``PolicyActivation`` (来自
                 policy snapshot)。
+            policy_snapshot: 传给 kernel 的显式 ``PolicySnapshot`` (Step 5:
+                可执行路径验证 ``policy_activation.policy_snapshot_hash ==
+                policy_snapshot.content_hash()`` 后才映射 constraints)。
             envelope: 传给 kernel 的 ``CapitalAuthorizationEnvelope``。
             portfolio_id: 本 flow 治理的 portfolio。
             deadlines: 传给 kernel 的 ``DeadlineContract`` (kernel input)。
@@ -353,6 +357,7 @@ class DailyActionFlow:
         self._shadow_persister = shadow_persister
         self._mode_provider = mode_provider
         self._policy_activation = policy_activation
+        self._policy_snapshot = policy_snapshot
         self._envelope = envelope
         self._portfolio_id = portfolio_id
         self._deadlines = deadlines
@@ -664,6 +669,7 @@ class DailyActionFlow:
             decision_cycle_id=decision_cycle_id,
             mode=self._policy_activation.mode,
             policy_activation=self._policy_activation,
+            policy_snapshot=self._policy_snapshot,
             envelope=self._envelope,
             capital=capital,
             deadlines=self._deadlines,

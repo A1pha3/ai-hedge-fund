@@ -74,6 +74,7 @@ from src.screening.offensive.v3.contracts.governance import (
     ProgramLossBudgetBinding,
     TrustBundle,
 )
+from src.screening.offensive.v3.policy.models import PolicySnapshot
 from src.screening.offensive.v3.kernel.admission import BTST_FAMILY
 from src.screening.offensive.v3.kernel.models import DeadlineContract
 from src.screening.offensive.v3.producers.btst import BTST_BEHAVIOR_BASELINE
@@ -380,10 +381,16 @@ def build_shadow_trust_context(
 
 @dataclass(frozen=True)
 class ShadowAuthority:
-    """synthesize_shadow_authority 的结果: 合成 PolicyActivation + Envelope。"""
+    """synthesize_shadow_authority 的结果: 合成 PolicyActivation + Envelope。
+
+    ``policy_snapshot`` 仅在调用方显式传入时存在 (Task 5 起 CLI 传入真实
+    加载的 snapshot, 使 activation 的 ``policy_snapshot_hash`` 指向真实
+    ``content_hash()``); 未传入时保持 ``None`` 占位, 兼容既有纯合成调用。
+    """
 
     policy_activation: PolicyActivation
     envelope: CapitalAuthorizationEnvelope
+    policy_snapshot: "PolicySnapshot | None" = None
 
 
 def _shadow_grant() -> LineageGrant:
@@ -434,6 +441,7 @@ def synthesize_shadow_authority(
     portfolio_id: str,
     trust_bundle_hash: str,
     reference_time: datetime,
+    policy_snapshot: "PolicySnapshot | None" = None,
 ) -> ShadowAuthority:
     """合成 shadow 观测用 PolicyActivation + CapitalAuthorizationEnvelope (确定性占位)。
 
@@ -448,11 +456,21 @@ def synthesize_shadow_authority(
         trust_bundle_hash: 当前 active trust bundle 的 artifact_hash (内部一致;
             来自 ``ShadowTrustContext.active_bundle_hash``)。
         reference_time: 合成 authority 的有效窗口中心 (CLI wall clock)。
+        policy_snapshot: 可选的真实 ``PolicySnapshot``; 传入时 activation 的
+            ``policy_snapshot_hash`` 取 ``policy_snapshot.content_hash()`` 而非
+            ``sha256(b"btst-shadow-policy-snapshot")`` 占位 (Task 5: 可执行路径
+            校验 ``policy_activation.policy_snapshot_hash ==
+            policy_snapshot.content_hash()`` 后才映射 constraints)。
 
     Returns:
-        ShadowAuthority (policy_activation + envelope, 互斥 hash 一致)。
+        ShadowAuthority (policy_activation + envelope, 互斥 hash 一致;
+        policy_snapshot 若传入则原样携带)。
     """
-    snapshot_hash = hashlib.sha256(b"btst-shadow-policy-snapshot").hexdigest()
+    snapshot_hash = (
+        policy_snapshot.content_hash()
+        if policy_snapshot is not None
+        else hashlib.sha256(b"btst-shadow-policy-snapshot").hexdigest()
+    )
     policy_activation = PolicyActivation(
         portfolio_id=portfolio_id,
         mode=ExecutionMode.DAILY_BAR_PROXY,
@@ -518,7 +536,9 @@ def synthesize_shadow_authority(
         schema_major=2,
     )
     return ShadowAuthority(
-        policy_activation=policy_activation, envelope=envelope
+        policy_activation=policy_activation,
+        envelope=envelope,
+        policy_snapshot=policy_snapshot,
     )
 
 
