@@ -572,6 +572,36 @@ def test_unknown_quantity_is_skipped_until_verified_reconcile(
     assert work.stable_client_order_id == "exit-client-lin-1:lot-1"
 
 
+def test_release_exit_lease_frees_claim_for_reclaim(tmp_path, clock) -> None:
+    scheduler = _make_scheduler(tmp_path, clock)
+    scheduler.derive_and_claim(
+        lots=(_lot(),),
+        context=_context(),
+        as_of_session=SIGNAL_SESSION,
+    )
+    (work,) = scheduler.claim_due_exit_work(as_of_session=DUE_SESSION)
+    # While leased, a second claim finds nothing.
+    assert scheduler.claim_due_exit_work(as_of_session=DUE_SESSION) == ()
+    # The scheduler releases its own lease; the obligation is reclaimable.
+    scheduler.release_exit_lease(lease_id=work.lease_id)
+    (reclaimed,) = scheduler.claim_due_exit_work(as_of_session=DUE_SESSION)
+    assert reclaimed.exit_mandate_id == work.exit_mandate_id
+    assert reclaimed.lease_id != work.lease_id
+
+
+def test_release_exit_lease_after_shutdown_fails_closed(tmp_path, clock) -> None:
+    scheduler = _make_scheduler(tmp_path, clock)
+    scheduler.derive_and_claim(
+        lots=(_lot(),),
+        context=_context(),
+        as_of_session=SIGNAL_SESSION,
+    )
+    (work,) = scheduler.claim_due_exit_work(as_of_session=DUE_SESSION)
+    scheduler.shutdown()
+    with pytest.raises(LifecycleSchedulerError, match="scheduler_shutdown"):
+        scheduler.release_exit_lease(lease_id=work.lease_id)
+
+
 # --------------------------------------------------------------------------
 # 约束 11: correction-driven lot reopen(引用 ExitLane 的 reopen 链)
 # --------------------------------------------------------------------------

@@ -79,13 +79,24 @@ from src.screening.offensive.v3.orchestration.trial_store import (
     WriterLeaseToken,
 )
 
-#: The four phases one operation may pass through, in lifecycle order. Each
-#: phase appends exactly one immutable fact keyed by (operation_id, phase).
+#: The four phases one entry operation may pass through, in lifecycle order.
+#: Each phase appends exactly one immutable fact keyed by (operation_id, phase).
 PHASE_RESERVE_COMMITTED: Final[str] = "RESERVE_COMMITTED"
 PHASE_MECHANICAL_RESOLVED: Final[str] = "MECHANICAL_RESOLVED"
 PHASE_CAPITAL_SETTLED: Final[str] = "CAPITAL_SETTLED"
 PHASE_RESERVE_RELEASED: Final[str] = "RESERVE_RELEASED"
 _TERMINAL_PHASES: Final[tuple[str, ...]] = (PHASE_CAPITAL_SETTLED, PHASE_RESERVE_RELEASED)
+
+#: The two terminal phases one exit operation may settle into. Exit durability
+#: is owned jointly by the durable exit lane (attempt ledger) and the capital
+#: kernel (fill idempotency by execution id); these phase facts exist only to
+#: latch a divergent exit replay before any new capital write.
+PHASE_EXIT_SETTLED: Final[str] = "EXIT_SETTLED"
+PHASE_EXIT_RELEASED: Final[str] = "EXIT_RELEASED"
+_EXIT_TERMINAL_PHASES: Final[tuple[str, ...]] = (
+    PHASE_EXIT_SETTLED,
+    PHASE_EXIT_RELEASED,
+)
 
 #: The shadow decision carries literal absence of execution authority; the
 #: adapter re-validates this defensively before any capital write.
@@ -179,6 +190,50 @@ class ShadowEntryResult:
     shadow_decision_id: str
     artifact_hash: str
     lines: tuple[ShadowEntryLineResult, ...]
+
+
+@dataclass(frozen=True)
+class ShadowExitSettlementInput:
+    """One gateway-free exit line to settle against a daily bar.
+
+    The lifecycle normalizes a claimed exit mandate into this plain shape
+    before handing it to the adapter, so the adapter never imports the
+    gateway exit-lane types. The source binding is the originating
+    ``ShadowDecision`` binding: an exit sell is decision-derived capital
+    truth, not a valuation mark.
+    """
+
+    trial_id: str
+    arm: TrialArm
+    cycle_id: str
+    attempt_id: str
+    client_order_id: str
+    mandate_hash: str
+    security_id: str
+    # The open-exit policy sells into the session open at any price; the
+    # limit bounds adverse slippage (a sell degrades toward, never past, it).
+    limit_price_cents: int
+    quantity_units: int
+    lot_size_units: int
+    position_lineage_id: str
+    economic_lot_id: str
+    attribution: FillAttribution
+    source_binding: CapitalSourceBinding
+
+
+@dataclass(frozen=True)
+class ShadowExitResult:
+    """The resolved outcome of settling one claimed exit mandate."""
+
+    arm: TrialArm
+    mandate_hash: str
+    security_id: str
+    verdict: OpenExecutionVerdict
+    reason: str
+    fill_price_cents: int | None
+    fill_receipt: FillRevisionReceipt | None
+    fee_receipt: FeeRevisionReceipt | None
+    sold_quantity: int
 
 
 _SCHEMA_DDL = (
@@ -583,6 +638,133 @@ class ShadowProxyAdapter:
         )
 
     # ===================================================================
+    # T+10 exit
+    # ===================================================================
+
+    def settle_exit_line(
+        self,
+        input: ShadowExitSettlementInput,
+        *,
+        repository: CapitalRepository,
+        bars: Mapping[str, DailyBar],
+        scenario: ProxyCostScenario,
+        command_at: datetime,
+        send_deadline: datetime,
+    ) -> ShadowExitResult:
+        """Settle one claimed exit mandate through the shared core.
+
+        The exit is a sell: it carries no reserve (``reserve_source_id`` is
+        ``None``), so a fill credits cash and consumes the position, and a
+        non-fill leaves both untouched. The verdict is resolved up front so a
+        divergent replay under the same stable exit identity raises a protocol
+        breach before any new capital write; the durable exit-lane attempt
+        ledger and the capital fill idempotency then make an exact replay
+        converge quietly.
+        """
+
+        arm = input.arm
+        operation_id = shadow_economic_id(
+            input.trial_id,
+            arm,
+            input.cycle_id,
+            input.economic_lot_id,
+            f"exit:{input.attempt_id}",
+        )
+        bar = bars.get(input.security_id)
+        quantity = int(input.quantity_units)
+        if quantity == 0:
+            verdict = OpenExecutionVerdict.NO_FILL
+            reason = REASON_PERMIT_QUANTITY_ZERO
+            fill_price_cents: int | None = None
+        else:
+            resolution = resolve_open_execution(
+                side=ExecutionSide.EXIT,
+                limit_price_cents=int(input.limit_price_cents),
+                bar=bar,
+                command_at=command_at,
+                send_deadline=send_deadline,
+            )
+            verdict = resolution.verdict
+            reason = resolution.reason
+            fill_price_cents = (
+                adverse_fill_price_cents(
+                    resolution.fill_price_cents,
+                    side=ExecutionSide.EXIT,
+                    limit_cents=int(input.limit_price_cents),
+                    bps=scenario.exit_slippage_bps,
+                )
+                if verdict is OpenExecutionVerdict.FILLED
+                else None
+            )
+        phase = (
+            PHASE_EXIT_SETTLED
+            if verdict is OpenExecutionVerdict.FILLED
+            else PHASE_EXIT_RELEASED
+        )
+        phase_hash = _payload_hash(
+            phase, verdict.value, reason, fill_price_cents, quantity
+        )
+        self._require_no_divergent_terminal(
+            operation_id, phase, phase_hash, _EXIT_TERMINAL_PHASES
+        )
+        already_settled = self._has_matching_fact(operation_id, phase, phase_hash)
+        intent = NormalizedProxyOpenIntent(
+            side=ExecutionSide.EXIT,
+            security_id=input.security_id,
+            limit_price_cents=int(input.limit_price_cents),
+            quantity_units=quantity,
+            lot_size_units=int(input.lot_size_units),
+            execution_id=shadow_economic_id(
+                input.trial_id,
+                arm,
+                input.cycle_id,
+                input.economic_lot_id,
+                f"exit-fill:{input.attempt_id}",
+            ),
+            order_id=shadow_economic_id(
+                input.trial_id,
+                arm,
+                input.cycle_id,
+                input.economic_lot_id,
+                f"exit-order:{input.attempt_id}",
+            ),
+            reserve_source_id=None,
+            reserve_remaining_cents=0,
+            position_lineage_id=input.position_lineage_id,
+            economic_lot_id=input.economic_lot_id,
+            attribution=input.attribution,
+            source_authority=_SOURCE_AUTHORITY,
+            source_binding=input.source_binding,
+            recorded_at=self._clock(),
+        )
+        settlement = settle_proxy_open(
+            intent,
+            bar=bar,
+            repository=repository,
+            scenario=scenario,
+            command_at=command_at,
+            send_deadline=send_deadline,
+        )
+        self._fault("shadow.after_exit_settle")
+        if not already_settled:
+            self._record_fact(operation_id, phase, phase_hash)
+        return ShadowExitResult(
+            arm=arm,
+            mandate_hash=input.mandate_hash,
+            security_id=input.security_id,
+            verdict=settlement.verdict,
+            reason=settlement.reason,
+            fill_price_cents=settlement.fill_price_cents,
+            fill_receipt=settlement.fill_receipt,
+            fee_receipt=settlement.fee_receipt,
+            sold_quantity=(
+                settlement.fill_receipt.quantity
+                if settlement.fill_receipt is not None
+                else 0
+            ),
+        )
+
+    # ===================================================================
     # admission + decision reads
     # ===================================================================
 
@@ -827,7 +1009,11 @@ class ShadowProxyAdapter:
         return row is not None and row.payload_hash == payload_hash
 
     def _require_no_divergent_terminal(
-        self, operation_id: str, phase: str, payload_hash: str
+        self,
+        operation_id: str,
+        phase: str,
+        payload_hash: str,
+        phases: tuple[str, ...] = _TERMINAL_PHASES,
     ) -> None:
         # If the same terminal phase exists with a different payload, or a
         # different terminal phase exists at all, the line already resolved
@@ -838,7 +1024,7 @@ class ShadowProxyAdapter:
                     "SELECT phase, payload_hash FROM shadow_proxy_phase_facts"
                     " WHERE operation_id = :oid AND phase IN :phases"
                 ).bindparams(sa.bindparam("phases", expanding=True)),
-                {"oid": operation_id, "phases": list(_TERMINAL_PHASES)},
+                {"oid": operation_id, "phases": list(phases)},
             ).fetchall()
         for row in rows:
             if row.phase != phase or row.payload_hash != payload_hash:
@@ -890,12 +1076,16 @@ class ShadowProxyAdapter:
 
 __all__ = [
     "PHASE_CAPITAL_SETTLED",
+    "PHASE_EXIT_RELEASED",
+    "PHASE_EXIT_SETTLED",
     "PHASE_MECHANICAL_RESOLVED",
     "PHASE_RESERVE_COMMITTED",
     "PHASE_RESERVE_RELEASED",
     "ShadowArmExecutionContext",
     "ShadowEntryLineResult",
     "ShadowEntryResult",
+    "ShadowExitResult",
+    "ShadowExitSettlementInput",
     "ShadowProxyAdapter",
     "ShadowProxyError",
     "ShadowReserveReceipt",

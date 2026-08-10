@@ -427,6 +427,39 @@ def test_claim_due_work_returns_one_lease_per_mandate(lane) -> None:
     )
 
 
+def test_release_lease_frees_mandate_for_another_worker(lane) -> None:
+    _derive(lane)
+    (work,) = lane.claim_due_exit_work(
+        as_of_session=DUE_SESSION, worker_id="worker-1"
+    )
+    # A second worker is still blocked while the lease is held.
+    assert (
+        lane.claim_due_exit_work(as_of_session=DUE_SESSION, worker_id="worker-2")
+        == ()
+    )
+    # The owning worker explicitly releases the lease.
+    lane.release_lease(work.lease_id, worker_id="worker-1")
+    # Releasing is idempotent: a second release is a quiet no-op.
+    lane.release_lease(work.lease_id, worker_id="worker-1")
+    # Now another worker may claim the same obligation.
+    (reclaimed,) = lane.claim_due_exit_work(
+        as_of_session=DUE_SESSION, worker_id="worker-2"
+    )
+    assert reclaimed.exit_mandate_id == work.exit_mandate_id
+    assert reclaimed.lease_id != work.lease_id
+
+
+def test_release_lease_rejects_unknown_and_wrong_owner(lane) -> None:
+    _derive(lane)
+    (work,) = lane.claim_due_exit_work(
+        as_of_session=DUE_SESSION, worker_id="worker-1"
+    )
+    with pytest.raises(ExitLaneError, match="exit_lease_unknown"):
+        lane.release_lease("lease:missing", worker_id="worker-1")
+    with pytest.raises(ExitLaneError, match="exit_lease_owner_mismatch"):
+        lane.release_lease(work.lease_id, worker_id="worker-imposter")
+
+
 def test_expired_lease_is_reclaimable_by_another_worker(
     tmp_path, clock
 ) -> None:
