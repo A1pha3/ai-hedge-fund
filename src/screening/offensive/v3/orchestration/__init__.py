@@ -11,6 +11,14 @@ from .genesis import (
     normalized_trial_arm_state,
     restore_genesis_arm,
 )
+from .paired_trial import (
+    ForwardPairedTrialRunner,
+    PairedSignalReceipt,
+    PairedTrialRunnerError,
+    REGIME_EVIDENCE_ID,
+    SignalSessionRequest,
+    classify_pair_session,
+)
 from .trial_store import (
     ArmDecision,
     PairCommitReceipt,
@@ -26,8 +34,13 @@ __all__ = [
     "AutoFlowResult",
     "DailyActionFlow",
     "DailyActionFlowResult",
+    "ForwardPairedTrialRunner",
     "NormalizedTrialArmState",
+    "PairedSignalReceipt",
+    "PairedTrialRunnerError",
     "PairCommitReceipt",
+    "REGIME_EVIDENCE_ID",
+    "SignalSessionRequest",
     "TrialArmDecisionRecord",
     "TrialArmDecisionStore",
     "TrialArmGenesisSource",
@@ -36,6 +49,7 @@ __all__ = [
     "TrialGenesisManifest",
     "TrialStoreError",
     "WriterLeaseToken",
+    "classify_pair_session",
     "normalized_trial_arm_state",
     "restore_genesis_arm",
 ]

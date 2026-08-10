@@ -210,11 +210,63 @@ class SessionSpine:
         status: SessionStatus,
         calendar_revision_hash: str | None,
     ) -> int:
+        """Append one status revision with exact-idempotent terminal semantics.
+
+        A non-cancel status is a terminal fact: retrying the identical status
+        is quiet (returns the existing revision, no new row); a conflicting
+        non-cancel status fails closed; ``SESSION_CANCELLED`` is itself
+        terminal and can never be superseded. Only a signed calendar revision
+        may supersede any terminal status with ``SESSION_CANCELLED`` (the
+        caller enforces that the revision exists).
+        """
+
         recorded_at = self._clock()
         with self._engine.begin() as conn:
             self._require_enrolled(
                 conn, research_program_id, signal_session
             )
+            latest = conn.execute(
+                sa.text(
+                    "SELECT status FROM session_status_revisions"
+                    " WHERE research_program_id = :program"
+                    " AND signal_session = :session"
+                    " ORDER BY revision DESC LIMIT 1"
+                ),
+                {
+                    "program": research_program_id,
+                    "session": signal_session.isoformat(),
+                },
+            ).first()
+            if latest is not None:
+                latest_status = SessionStatus(latest.status)
+                if latest_status is SessionStatus.SESSION_CANCELLED:
+                    raise SessionSpineError(
+                        "cancelled_terminal",
+                        "a cancelled session is terminal; no status may"
+                        " supersede it",
+                    )
+                if latest_status is status:
+                    # Identical status retry: quiet, no duplicate row.
+                    return int(
+                        conn.execute(
+                            sa.text(
+                                "SELECT MAX(revision) FROM"
+                                " session_status_revisions"
+                                " WHERE research_program_id = :program"
+                                " AND signal_session = :session"
+                            ),
+                            {
+                                "program": research_program_id,
+                                "session": signal_session.isoformat(),
+                            },
+                        ).scalar()
+                    )
+                if status is not SessionStatus.SESSION_CANCELLED:
+                    raise SessionSpineError(
+                        "status_terminal_conflict",
+                        "a non-cancel status is terminal; only a signed"
+                        " calendar revision may supersede it",
+                    )
             revision = self._next_revision(
                 conn, research_program_id, signal_session
             )
@@ -320,6 +372,30 @@ class SessionSpine:
                 },
             ).first()
         return row is not None
+
+    def enrolled_sessions(
+        self, research_program_id: str
+    ) -> tuple[SessionEnrollment, ...]:
+        """All enrolled expected sessions for one program, in calendar order."""
+
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT signal_session, assessment_date"
+                    " FROM expected_sessions"
+                    " WHERE research_program_id = :program"
+                    " ORDER BY signal_session"
+                ),
+                {"program": research_program_id},
+            ).fetchall()
+        return tuple(
+            SessionEnrollment(
+                research_program_id=research_program_id,
+                signal_session=date.fromisoformat(row[0]),
+                assessment_date=date.fromisoformat(row[1]),
+            )
+            for row in rows
+        )
 
 
 def _configure_connection(dbapi_connection: object, _record: object) -> None:

@@ -89,8 +89,12 @@ def test_status_revisions_append_and_latest_wins(spine: SessionSpine) -> None:
     assert spine.status(PROGRAM, day) is None
     spine.record_session_status(PROGRAM, day, SessionStatus.DATA_UNKNOWN)
     assert spine.status(PROGRAM, day) is SessionStatus.DATA_UNKNOWN
-    spine.record_session_status(PROGRAM, day, SessionStatus.RUN)
-    assert spine.status(PROGRAM, day) is SessionStatus.RUN
+    # A conflicting non-cancel status is now terminal (Task 11 hardening):
+    # the first status stands and the conflict fails closed.
+    with pytest.raises(SessionSpineError) as excinfo:
+        spine.record_session_status(PROGRAM, day, SessionStatus.RUN)
+    assert excinfo.value.code == "status_terminal_conflict"
+    assert spine.status(PROGRAM, day) is SessionStatus.DATA_UNKNOWN
 
 
 def test_status_requires_enrollment(spine: SessionSpine) -> None:
@@ -150,3 +154,50 @@ def test_finalized_missing_run_becomes_no_run(spine: SessionSpine) -> None:
     _enroll(spine, day)
     spine.mark_no_run(PROGRAM, day)
     assert spine.status(PROGRAM, day) is SessionStatus.NO_RUN
+
+
+def test_identical_status_retry_is_quiet_terminal(spine: SessionSpine) -> None:
+    """A non-cancel status is an exact-idempotent terminal fact: retrying the
+    same status is quiet, not a duplicate or an error."""
+    day = date(2026, 8, 3)
+    _enroll(spine, day)
+    spine.record_session_status(PROGRAM, day, SessionStatus.RUN)
+    spine.record_session_status(PROGRAM, day, SessionStatus.RUN)
+    spine.record_session_status(PROGRAM, day, SessionStatus.RUN)
+    assert spine.status(PROGRAM, day) is SessionStatus.RUN
+
+
+def test_conflicting_non_cancel_status_fails_closed(spine: SessionSpine) -> None:
+    """Once a non-cancel status is terminal, a conflicting non-cancel status
+    fails closed instead of silently superseding it."""
+    day = date(2026, 8, 3)
+    _enroll(spine, day)
+    spine.record_session_status(PROGRAM, day, SessionStatus.RUN)
+    with pytest.raises(SessionSpineError) as excinfo:
+        spine.record_session_status(PROGRAM, day, SessionStatus.NO_SIGNAL)
+    assert excinfo.value.code == "status_terminal_conflict"
+
+
+def test_signed_calendar_revision_supersedes_terminal_status(
+    spine: SessionSpine,
+) -> None:
+    """A signed calendar revision may supersede any terminal status with
+    SESSION_CANCELLED; cancellation is itself terminal."""
+    day = date(2026, 8, 3)
+    _enroll(spine, day)
+    spine.record_session_status(PROGRAM, day, SessionStatus.RUN)
+    revision = CalendarRevision(
+        calendar_revision_hash="e" * 64,
+        research_program_id=PROGRAM,
+        signal_session=day,
+        reason="exchange announced trading halt",
+        issued_at=NOW,
+    )
+    spine.record_session_status(
+        PROGRAM, day, SessionStatus.SESSION_CANCELLED, revision
+    )
+    assert spine.status(PROGRAM, day) is SessionStatus.SESSION_CANCELLED
+    # CANCELLED is terminal: neither another cancel nor a status retry moves it.
+    with pytest.raises(SessionSpineError) as excinfo:
+        spine.record_session_status(PROGRAM, day, SessionStatus.RUN)
+    assert excinfo.value.code == "cancelled_terminal"
