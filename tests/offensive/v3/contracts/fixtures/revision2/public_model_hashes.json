@@ -6283,6 +6283,32 @@
       "revision": 1
     }
   },
+  "src.screening.offensive.v3.contracts.trial.BaselineShadowPolicyBinding": {
+    "canonical_payload_sha256": "7891d52c1768dc1314a025b8d4de317cea642e2437e4a4f2b1f7cc71ee94873d",
+    "content_hash": "7891d52c1768dc1314a025b8d4de317cea642e2437e4a4f2b1f7cc71ee94873d",
+    "json_payload_sha256": "7891d52c1768dc1314a025b8d4de317cea642e2437e4a4f2b1f7cc71ee94873d",
+    "model_module": "src.screening.offensive.v3.contracts.trial",
+    "model_name": "BaselineShadowPolicyBinding",
+    "payload": {
+      "baseline_policy_activation_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "policy_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "policy_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "source_kind": "BASELINE_POLICY_ACTIVATION"
+    }
+  },
+  "src.screening.offensive.v3.contracts.trial.TargetShadowPolicyBinding": {
+    "canonical_payload_sha256": "a209fcc403897494484c239d57b4a62ec6e16f20a5036db541648a0a192fde2e",
+    "content_hash": "a209fcc403897494484c239d57b4a62ec6e16f20a5036db541648a0a192fde2e",
+    "json_payload_sha256": "a209fcc403897494484c239d57b4a62ec6e16f20a5036db541648a0a192fde2e",
+    "model_module": "src.screening.offensive.v3.contracts.trial",
+    "model_name": "TargetShadowPolicyBinding",
+    "payload": {
+      "policy_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "policy_snapshot_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "source_kind": "TARGET_POLICY_REGISTRATION",
+      "target_policy_registration_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  },
   "src.screening.offensive.v3.contracts.trust.Capability": {
     "canonical_payload_sha256": "2c0b9f93c57f14fbfb32ba367bbe7d5aa0662697d71d5f6be1105cc17e5d376b",
     "content_hash": "2c0b9f93c57f14fbfb32ba367bbe7d5aa0662697d71d5f6be1105cc17e5d376b",

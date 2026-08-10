@@ -2040,6 +2040,32 @@
       ],
       "value_type": "builtins.str"
     },
+    "src.screening.offensive.v3.contracts.trial.ShadowPolicySourceKind": {
+      "members": [
+        {
+          "name": "BASELINE_POLICY_ACTIVATION",
+          "value": "BASELINE_POLICY_ACTIVATION"
+        },
+        {
+          "name": "TARGET_POLICY_REGISTRATION",
+          "value": "TARGET_POLICY_REGISTRATION"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
+    "src.screening.offensive.v3.contracts.trial.TrialArm": {
+      "members": [
+        {
+          "name": "CHAMPION",
+          "value": "CHAMPION"
+        },
+        {
+          "name": "CHALLENGER",
+          "value": "CHALLENGER"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
     "src.screening.offensive.v3.contracts.trust.ArtifactKind": {
       "members": [
         {

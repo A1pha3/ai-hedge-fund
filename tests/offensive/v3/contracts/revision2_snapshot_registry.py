@@ -75,6 +75,8 @@ PUBLIC_MODEL_CASES = (
     "src.screening.offensive.v3.contracts.execution.SendClaimExpectedVersions",
     "src.screening.offensive.v3.contracts.regime.RegimeObservation",
     "src.screening.offensive.v3.contracts.regime.RegimeSourceRevision",
+    "src.screening.offensive.v3.contracts.trial.BaselineShadowPolicyBinding",
+    "src.screening.offensive.v3.contracts.trial.TargetShadowPolicyBinding",
     "src.screening.offensive.v3.contracts.governance.ApprovalAttestationBinding",
     "src.screening.offensive.v3.contracts.governance.AuthorizationStatus",
     "src.screening.offensive.v3.contracts.governance.BrokerEnablementManifest",
@@ -158,6 +160,8 @@ PUBLIC_ENUMS = (
     "src.screening.offensive.v3.contracts.regime.RegimeAdmissionMode",
     "src.screening.offensive.v3.contracts.regime.RegimeObservationReason",
     "src.screening.offensive.v3.contracts.regime.RegimeState",
+    "src.screening.offensive.v3.contracts.trial.ShadowPolicySourceKind",
+    "src.screening.offensive.v3.contracts.trial.TrialArm",
 )
 
 PUBLIC_ALIASES = (
@@ -245,8 +249,8 @@ PROTECTED_PREIMAGE_CASES = (
 )
 
 
-assert len(PUBLIC_MODEL_CASES) == len(set(PUBLIC_MODEL_CASES)) == 101
-assert len(PUBLIC_ENUMS) == len(set(PUBLIC_ENUMS)) == 45
+assert len(PUBLIC_MODEL_CASES) == len(set(PUBLIC_MODEL_CASES)) == 103
+assert len(PUBLIC_ENUMS) == len(set(PUBLIC_ENUMS)) == 47
 assert len(PUBLIC_ALIASES) == len(set(PUBLIC_ALIASES)) == 11
 assert len(PUBLIC_PORTS) == len(set(PUBLIC_PORTS)) == 6
 assert len(ARTIFACT_HASH_CASES) == len(set(ARTIFACT_HASH_CASES)) == 30
