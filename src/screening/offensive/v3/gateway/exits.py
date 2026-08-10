@@ -246,6 +246,7 @@ class ExitLane:
         self._lease_ttl = lease_ttl
         self._dependencies = dependencies
         self._fault_hook = _fault_hook
+        self._database_path = database_path
         self._engine = sa.create_engine(
             f"sqlite:///{database_path}",
             connect_args={"check_same_thread": False},
