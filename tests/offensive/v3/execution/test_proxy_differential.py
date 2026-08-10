@@ -143,6 +143,19 @@ def _settle_core(
 
 def _normalized_snapshot(repository: CapitalRepository) -> dict:
     snapshot = repository.capital_risk_snapshot(RECORDED_AT)
+    # Cost basis lives on the positions table, not in the risk snapshot; read
+    # it directly so the differential comparison covers basis, not just
+    # quantity and cash.
+    import sqlalchemy as sa
+
+    with repository.engine.connect() as conn:  # noqa: SLF001
+        basis_rows = conn.execute(
+            sa.text(
+                "SELECT security_id, cost_basis_cents FROM positions"
+                " ORDER BY security_id"
+            )
+        ).fetchall()
+    basis = {str(row.security_id): int(row.cost_basis_cents) for row in basis_rows}
     return {
         "available_cash_cents": snapshot.available_cash_cents,
         "restricted_cash_cents": snapshot.restricted_cash_cents,
@@ -155,6 +168,7 @@ def _normalized_snapshot(repository: CapitalRepository) -> dict:
             )
             for position in snapshot.positions
         },
+        "cost_basis": basis,
         "as_observed_nav_cents": snapshot.as_observed_nav_cents,
         "total_gross_exposure_cents": snapshot.total_gross_exposure_cents,
     }
@@ -178,13 +192,9 @@ def test_adapter_and_core_match_for_current_cost(tmp_path) -> None:
     proxy_lines = _executed_lines(proxy, proxy_repo, seal, permit, bars, scenario)
     # The permit's two lines match the two sealed proposal lines; settle the
     # same economic intent directly through the core on the twin ledger.
+    # Reserves seed with no source binding, mirroring the adapter path
+    # (DailyBarProxy normalizes its permit lines with source_binding=None).
     sealed_lines = seal.proposal.order_lines
-    for line in sealed_lines:
-        _seed_reserve(
-            core_repo,
-            source_id=f"reserve-{line.order_line_id}",
-            gross_cents=line.worst_case_cash_reserve_cents,
-        )
     core_fills = 0
     for permit_line in permit.permit_lines:
         sealed_line = next(
@@ -214,6 +224,7 @@ def test_adapter_and_core_match_for_current_cost(tmp_path) -> None:
             core_repo,
             source_id=f"reserve-{permit_line.order_line_id}",
             gross_cents=permit_line.remaining_reserve_cents,
+            binding=None,
         )
         result = _settle_core(
             core_repo,
@@ -275,6 +286,7 @@ def test_adapter_and_core_match_for_double_slippage(tmp_path) -> None:
             core_repo,
             source_id=f"reserve-{permit_line.order_line_id}",
             gross_cents=permit_line.remaining_reserve_cents,
+            binding=None,
         )
         result = _settle_core(
             core_repo,
@@ -348,6 +360,7 @@ def test_crash_between_core_writes_converges_to_direct_core(
             core_repo,
             source_id=f"reserve-{permit_line.order_line_id}",
             gross_cents=permit_line.remaining_reserve_cents,
+            binding=None,
         )
         _settle_core(core_repo, intent, bar=bars[sealed_line.security_id], scenario=scenario)
 
@@ -459,6 +472,7 @@ def test_settlement_order_does_not_change_core_result(tmp_path) -> None:
                 repo,
                 source_id=f"reserve-{permit_line.order_line_id}",
                 gross_cents=permit_line.remaining_reserve_cents,
+                binding=None,
             )
 
     for permit_line, sealed_line, intent in intents:

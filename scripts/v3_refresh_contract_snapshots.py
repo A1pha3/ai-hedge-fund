@@ -427,6 +427,10 @@ EXEMPLAR_PATCHES: dict[str, dict[str, Any]] = {
             "trigger_strength_sizing_enabled": False,
             "composite_sizing_enabled": False,
         },
+        "versions": {
+            "execution_contract_version": "t0-close-t1-open-t10-open-slippage.v2",
+            "cost_version": "cn-a-share-costs-30bps-tax.v2",
+        },
     },
     "src.screening.offensive.v3.policy.models.VerifiedPolicyActivation": {
         "policy_snapshot": {
@@ -439,6 +443,10 @@ EXEMPLAR_PATCHES: dict[str, dict[str, Any]] = {
                 "streak_sizing_enabled": False,
                 "trigger_strength_sizing_enabled": False,
                 "composite_sizing_enabled": False,
+            },
+            "versions": {
+                "execution_contract_version": "t0-close-t1-open-t10-open-slippage.v2",
+                "cost_version": "cn-a-share-costs-30bps-tax.v2",
             },
         },
     },

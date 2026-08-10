@@ -6644,9 +6644,9 @@
     }
   },
   "src.screening.offensive.v3.policy.models.PolicySnapshot": {
-    "canonical_payload_sha256": "3a2e5eb7bd1de7eb1670d412a5c8889b607e105a05a56f5ff2110397b6c04ff4",
-    "content_hash": "3a2e5eb7bd1de7eb1670d412a5c8889b607e105a05a56f5ff2110397b6c04ff4",
-    "json_payload_sha256": "3a2e5eb7bd1de7eb1670d412a5c8889b607e105a05a56f5ff2110397b6c04ff4",
+    "canonical_payload_sha256": "9131e1668e387396894ee6fd8dd2d40561562016f9279bd69756ea6a18ece04b",
+    "content_hash": "9131e1668e387396894ee6fd8dd2d40561562016f9279bd69756ea6a18ece04b",
+    "json_payload_sha256": "9131e1668e387396894ee6fd8dd2d40561562016f9279bd69756ea6a18ece04b",
     "model_module": "src.screening.offensive.v3.policy.models",
     "model_name": "PolicySnapshot",
     "payload": {
@@ -6719,8 +6719,8 @@
       "versions": {
         "board_rule_version": "ashare-board-prefix-v1",
         "calendar_version": "sse-szse-official-sessions.v1",
-        "cost_version": "cn-a-share-costs.v1",
-        "execution_contract_version": "t0-close-t1-open-t10-open.v1",
+        "cost_version": "cn-a-share-costs-30bps-tax.v2",
+        "execution_contract_version": "t0-close-t1-open-t10-open-slippage.v2",
         "exit_policy_version": "t10-open.v1",
         "governance_version": "growth-kernel-governance.v2",
         "lot_rule_version": "cn-board-lot.v1",
@@ -6770,9 +6770,9 @@
     }
   },
   "src.screening.offensive.v3.policy.models.VerifiedPolicyActivation": {
-    "canonical_payload_sha256": "ab25ccdd2f4546168a494b2cdd71ff78d15823271166da9e5cbe738d8cabc410",
-    "content_hash": "ab25ccdd2f4546168a494b2cdd71ff78d15823271166da9e5cbe738d8cabc410",
-    "json_payload_sha256": "ab25ccdd2f4546168a494b2cdd71ff78d15823271166da9e5cbe738d8cabc410",
+    "canonical_payload_sha256": "3751013335d4a9d00a6e3fd1cfab46fd9024ed5a52397dd9b580f78a9a22b3c8",
+    "content_hash": "3751013335d4a9d00a6e3fd1cfab46fd9024ed5a52397dd9b580f78a9a22b3c8",
+    "json_payload_sha256": "3751013335d4a9d00a6e3fd1cfab46fd9024ed5a52397dd9b580f78a9a22b3c8",
     "model_module": "src.screening.offensive.v3.policy.models",
     "model_name": "VerifiedPolicyActivation",
     "payload": {
@@ -6864,8 +6864,8 @@
         "versions": {
           "board_rule_version": "ashare-board-prefix-v1",
           "calendar_version": "sse-szse-official-sessions.v1",
-          "cost_version": "cn-a-share-costs.v1",
-          "execution_contract_version": "t0-close-t1-open-t10-open.v1",
+          "cost_version": "cn-a-share-costs-30bps-tax.v2",
+          "execution_contract_version": "t0-close-t1-open-t10-open-slippage.v2",
           "exit_policy_version": "t10-open.v1",
           "governance_version": "growth-kernel-governance.v2",
           "lot_rule_version": "cn-board-lot.v1",

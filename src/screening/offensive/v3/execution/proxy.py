@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Final, Mapping
+from typing import Callable, Final, Mapping
 
 import sqlalchemy as sa
 
@@ -351,7 +351,6 @@ class DailyBarProxy:
             send_deadline=send_deadline,
             _fault_hook=self._fault,
         )
-        self._fault("proxy.after_settle")
         return ProxyLineResult(
             order_line_id=permit_line.order_line_id,
             client_order_id=permit_line.client_order_id,
