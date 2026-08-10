@@ -326,3 +326,14 @@ Revision 2 删除原设计中的：
 本设计不把 `+44.9%` 转化为部署批准，也不预判 gate 胜出。它只建立一个能被未来事实否证的前向测量系统：Champion 保持真实 ungated 语义，Challenger 使用 fail-closed `NORMAL_ONLY`，两臂共享外生事实并在各自守恒资本路径中演进。
 
 在完整时间窗、增长、尾部、容量、覆盖与完整性门全部通过前，regime gate 保持 shadow。即使全部通过，也只产生 `DAILY_BAR_PROXY` 同模式的 inactive candidate；`BROKER_CONFIRMED` 必须使用新的、不复用的真实前向 Trial。
+
+## 12. 实现完成声明 (Task 1–14, 2026-08-10)
+
+全部 14 个任务已实现并通过 v3 全套回归。Task 14 收尾交付：
+
+- **Shadow CLI 入口** (`src/cli/v3_regime_trial.py` + `scripts/v3_regime_trial.py`)：四个子命令 `validate` / `decide-session` / `advance-session` / `assess`。根目录守卫拒绝 path-traversal / symlink / 缺失根；CLI 不识别任何 policy/regime/cap/mode/cutoff override flag、不读环境开关、不 auto-create/auto-seal Trial。`validate` 只读、`assess` 只把可删除报告写入显式 `--output`。`decide-session` / `advance-session` 加载验证 sealed trial 后 fail-closed —— 前向决策所需的 BTST producer Ed25519 trust chain 与 PIT capital baseline 由 privileged worker (Plan 06+) 注入，standalone CLI 无法在不过 `shadow_trust` 边界的前提下合成（与 `_GracefulCapitalReader` 同一哲学）。
+- **对抗性 fault campaign** (`tests/offensive/v3/orchestration/test_regime_trial_fault_campaign.py`)：orchestration 级别的 adversarial 输入层 —— 一臂 ladder 中段崩溃后重放两臂均 finalize、跌停/停牌日保留持仓与 mandate 下一交易日补卖（不超卖）、长期一字板至 run-out 仍持有完整 ITT 行与可 claim 的 exit 义务、writer-lease takeover 阻断 entry 写但 exit 存活、divergent pair 重 commit 永久 latch。与 Task 9/10 组件级崩溃套件互补。
+- **import 边界守卫** (`tests/offensive/v3/orchestration/test_regime_trial_import_boundary.py`)：trial path（runner/replay/proxy/lifecycle/CLI）的 AST 扫描，永不 import broker / outbox / `shadow_trust` / `CapitalAuthorizationEnvelope` / `ExecutionPermit` / authority 写面 / 激活方法 / legacy court-backtest；`gateway.exits`（authority-free exit obligation store）是唯一允许的 gateway 子模块。
+- **权威文档**：本节 + migration (`docs/superpowers/migrations/2026-08-10-policy-v2-shadow-decision-v3.md`) + runbook (`docs/runbooks/v3-btst-regime-forward-trial.md`) + `AGENTS.md`。
+
+最终静态证明：trial path 没有任何真实发单路径。经济算法全部下沉到共享 `settle_proxy_open` core 与 capital kernel；shadow adapter 与授权 proxy 共用同一经济学。`runtime_mode "off"` + 全 0 caps + `execution_authority "NONE"` 三重 fail-closed 基线，无 broker 连接、无 authority flip、无真实资本激活。
