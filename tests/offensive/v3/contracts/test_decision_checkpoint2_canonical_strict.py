@@ -123,7 +123,7 @@ INTEGER_FIELDS_BY_FIXTURE = {
         "estimated_fee_cents",
         "estimated_cash_reserve_cents",
     ),
-    "shadow": ("schema_major", "policy_epoch"),
+    "shadow": ("policy_epoch",),
     "permit_line": (
         "sealed_quantity_units",
         "permitted_quantity_units",

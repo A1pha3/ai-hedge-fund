@@ -33,11 +33,16 @@ from .evidence import (
     ProviderPublicationState,
 )
 from .risk import StageLossLatchState
+from .trial import ShadowPolicyBinding
 from .trust import ArtifactKind
 
 
 PositiveExactInt = Annotated[ExactInteger, Field(ge=1)]
 NonNegativeExactInt = Annotated[ExactInteger, Field(ge=0)]
+
+#: Schema majors a shadow issuer capability may claim. The shadow artifact
+#: itself is schema major 3 while every executable Revision 2 artifact remains 2.
+ShadowCapabilitySchemaMajor = Annotated[ExactInteger, Field(ge=2, le=3)]
 PositiveQuantity = Annotated[QuantityUnits, Field(gt=0)]
 PositiveCents = Annotated[MoneyCents, Field(gt=0)]
 NonNegativeCents = Annotated[MoneyCents, Field(ge=0)]
@@ -168,7 +173,7 @@ class ShadowIssuerBinding(CanonicalModel):
     capability_artifact_kind: ArtifactKind
     capability_namespace: NonEmptyStr
     capability_mode: ExecutionMode
-    capability_schema_major: SchemaVersion
+    capability_schema_major: ShadowCapabilitySchemaMajor
     capability_version: NonEmptyStr
     capability_scope: NonEmptyStr
     verification_result: Literal["VALID"]
@@ -1023,6 +1028,7 @@ class ShadowOrderLine(CanonicalModel):
     estimated_cash_reserve_cents: PositiveCents
     cost_assumption_version: NonEmptyStr
     execution_assumption_version: NonEmptyStr
+    target_exit_session: date
 
     @field_validator("exit_session_ordinal", mode="before")
     @classmethod
@@ -1047,13 +1053,20 @@ class ShadowOrderLine(CanonicalModel):
 
 
 class ShadowDecision(CanonicalModel):
-    """Complete counterfactual output with literal absence of execution authority."""
+    """Complete counterfactual output with literal absence of execution authority.
 
-    HASH_DOMAIN: ClassVar[str] = "ai-hedge-fund.v3.decision.shadow-decision.v1"
+    Schema major 3 carries a discriminated ``ShadowPolicyBinding`` instead of an
+    activation hash: the Champion binds the trial's baseline policy activation,
+    the Challenger binds the target policy registration. Both are provenance,
+    never activation tokens. Historical schema-major-2 bytes remain readable
+    only through ``contracts.compatibility.LegacyShadowDecisionV2``.
+    """
+
+    HASH_DOMAIN: ClassVar[str] = "ai-hedge-fund.v3.decision.shadow-decision.v2"
 
     artifact_kind: Literal[ArtifactKind.SHADOW_DECISION]
-    artifact_namespace: Literal["growth-kernel.shadow.v1"]
-    schema_major: SchemaVersion
+    artifact_namespace: Literal["growth-kernel.shadow.v2"]
+    schema_major: Literal[3]
     shadow_decision_id: NonEmptyStr
     counterfactual_key: CounterfactualDecisionKey
     portfolio_id: NonEmptyStr
@@ -1065,7 +1078,7 @@ class ShadowDecision(CanonicalModel):
     economic_lineage_id: NonEmptyStr
     stage_id: NonEmptyStr
     trial_id: NonEmptyStr
-    policy_activation_hash: Sha256
+    shadow_policy_binding: ShadowPolicyBinding
     policy_epoch: PositiveExactInt
     evidence_set_merkle_root: Sha256
     shadow_stage_binding: ShadowStageBinding

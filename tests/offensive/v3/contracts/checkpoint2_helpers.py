@@ -42,8 +42,8 @@ APPROVED_SERIALIZATION_DIGESTS = {
         "6e7652cbd93395f244e70177a1cb8192b3105effd8cb5847deebd872ac933a8d",
     ),
     "shadow": (
-        "b184967439c18291684fd8d745bcf0028e987d9754de97da64fc28b59ea37036",
-        "c483bc0a4b00069c212384ab4d4dad4584d7ebb1d8a00fbd2551b9ea1f69a307",
+        "4cb90445dfe8069159195b5f0cfe6d6c0439059e2294990d11b2144bee70629f",
+        "798ed696b63640dcdfdb1149e87b22f119a990455a29f5f12b5dfcbd58e822a0",
     ),
     "permit": (
         "81b4c813527ec6de0ab3b488723f0707010d16f7507f731e0ce084813e450170",
@@ -71,6 +71,8 @@ CHECKPOINT2_NAMES = (
     "CounterfactualDecisionKey",
     "ShadowOrderLine",
     "ShadowDecision",
+    "BaselineShadowPolicyBinding",
+    "ShadowPolicySourceKind",
     "PermitDisposition",
     "PermitReasonCode",
     "PermitNonceState",
@@ -629,10 +631,10 @@ def _shadow_issuer(api):
         issuer_id="growth-kernel.shadow.service",
         key_id="shadow-key-1",
         capability_artifact_kind=api.ArtifactKind.SHADOW_DECISION,
-        capability_namespace="growth-kernel.shadow.v1",
+        capability_namespace="growth-kernel.shadow.v2",
         capability_mode=api.ExecutionMode.BROKER_CONFIRMED,
-        capability_schema_major=2,
-        capability_version="growth-kernel-shadow.v1",
+        capability_schema_major=3,
+        capability_version="growth-kernel-shadow.v2",
         capability_scope=f"portfolio:{PORTFOLIO_ID}",
         verification_result="VALID",
         verified_at=CLOSE_FINALIZED,
@@ -682,14 +684,15 @@ def _shadow_line(api, *, suffix="1", security_id="600000.SH"):
         estimated_cash_reserve_cents=price * quantity + fee,
         cost_assumption_version="cn-a-share.v1",
         execution_assumption_version="t1-open-t10-open.v1",
+        target_exit_session=date(2026, 8, 8),
     )
 
 
 def _shadow_payload(api, **overrides):
     values = {
         "artifact_kind": api.ArtifactKind.SHADOW_DECISION,
-        "artifact_namespace": "growth-kernel.shadow.v1",
-        "schema_major": 2,
+        "artifact_namespace": "growth-kernel.shadow.v2",
+        "schema_major": 3,
         "shadow_decision_id": "shadow-decision-1",
         "counterfactual_key": api.CounterfactualDecisionKey(
             portfolio_id=PORTFOLIO_ID,
@@ -705,7 +708,12 @@ def _shadow_payload(api, **overrides):
         "economic_lineage_id": "auto-lineage",
         "stage_id": "auto-shadow-stage",
         "trial_id": "auto-shadow-trial",
-        "policy_activation_hash": HASH_A,
+        "shadow_policy_binding": api.BaselineShadowPolicyBinding(
+            source_kind=api.ShadowPolicySourceKind.BASELINE_POLICY_ACTIVATION,
+            baseline_policy_activation_hash=HASH_A,
+            policy_snapshot_hash=HASH_B,
+            policy_fingerprint=EVIDENCE_ROOT,
+        ),
         "policy_epoch": 4,
         "evidence_set_merkle_root": EVIDENCE_ROOT,
         "shadow_stage_binding": _shadow_stage_binding(api),

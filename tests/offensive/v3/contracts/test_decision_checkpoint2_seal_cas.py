@@ -107,8 +107,8 @@ def test_seal_shadow_and_permit_use_distinct_type_namespace_and_hash_domain() ->
         shadow.HASH_DOMAIN,
     ) == (
         api.ArtifactKind.SHADOW_DECISION,
-        "growth-kernel.shadow.v1",
-        "ai-hedge-fund.v3.decision.shadow-decision.v1",
+        "growth-kernel.shadow.v2",
+        "ai-hedge-fund.v3.decision.shadow-decision.v2",
     )
     assert (
         permit.artifact_kind,

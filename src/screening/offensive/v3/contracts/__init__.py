@@ -170,6 +170,19 @@ from .regime import (
     RegimeState,
     normalize_regime_state,
 )
+from .trial import (
+    BaselineShadowPolicyBinding,
+    ShadowPolicyBinding,
+    ShadowPolicySourceKind,
+    TargetShadowPolicyBinding,
+    TrialArm,
+)
+from .compatibility import (
+    LegacyShadowDecisionV2,
+    LegacyShadowOrderLine,
+    ShadowCompatibilityError,
+    read_shadow_decision_json,
+)
 from .trust import (
     ArtifactKind,
     Capability,
@@ -298,6 +311,15 @@ __all__ = [
     "RegimeObservationReason",
     "RegimeSourceRevision",
     "RegimeState",
+    "BaselineShadowPolicyBinding",
+    "ShadowPolicyBinding",
+    "ShadowPolicySourceKind",
+    "TargetShadowPolicyBinding",
+    "TrialArm",
+    "LegacyShadowDecisionV2",
+    "LegacyShadowOrderLine",
+    "ShadowCompatibilityError",
+    "read_shadow_decision_json",
     "SchemaVersion",
     "SUPPORTED_SCHEMA_MAJOR",
     "SessionCheckpoint",
