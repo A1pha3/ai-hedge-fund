@@ -8,19 +8,26 @@ binding rejects the trial before enrolment.
 
 from __future__ import annotations
 
+import hashlib
 import json
+from base64 import b64encode
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from src.screening.offensive.v3 import trust as v3trust
 from src.screening.offensive.v3.contracts.base import ExecutionMode
 from src.screening.offensive.v3.contracts.governance import (
     PolicyActivation,
     PrimaryMetric,
+    StageManifest,
     StatisticalAnalysisPlan,
     TrialManifest,
+    TrustBundle,
 )
 from src.screening.offensive.v3.contracts.regime import RegimeAdmissionMode
 from src.screening.offensive.v3.governance.regime_trial import (
@@ -30,6 +37,11 @@ from src.screening.offensive.v3.governance.regime_trial import (
     target_policy_registration_hash,
     validate_regime_trial_bundle,
     ValidatedRegimeTrialBundle,
+)
+from src.screening.offensive.v3.governance.repository import (
+    GovernanceRepository,
+    GovernanceStoreError,
+    RegimeTrialSealRequest,
 )
 from src.screening.offensive.v3.policy.models import PolicySnapshot, RuntimeMode
 
@@ -399,3 +411,267 @@ def test_sap_must_bind_trial_manifest() -> None:
     tampered = bundle.model_copy(update={"sap_manifest": bundle.sap_manifest.model_copy(update={"trial_manifest_hash": "0" * 64})})
     with pytest.raises(RegimeTrialGovernanceError, match="sap|trial_manifest"):
         validate_regime_trial_bundle(tampered, trusted_at=ENROLLMENT_START)
+
+
+# --------------------------------------------------------------------------- #
+# DB seal / reader (signed-envelope verification through a real trust chain)
+# --------------------------------------------------------------------------- #
+
+
+def _stage_manifest(trial: TrialManifest, sap: StatisticalAnalysisPlan) -> StageManifest:
+    return StageManifest(
+        stage_id="stage-regime-001",
+        trial_manifest_hash=trial.artifact_hash(),
+        statistical_analysis_plan_hash=sap.artifact_hash(),
+        research_program_id=trial.research_program_id,
+        economic_lineage_id=trial.economic_lineage_id,
+        primary_metric=trial.primary_metric,
+        baseline_portfolio_policy_fingerprint=trial.baseline_portfolio_policy_fingerprint,
+        target_portfolio_policy_fingerprint=trial.target_portfolio_policy_fingerprint,
+        execution_version=trial.execution_version,
+        cost_version=trial.cost_version,
+        governance_policy_version="growth-kernel-governance.v2",
+        execution_mode=trial.execution_mode,
+        stage_sample_reservation_id="stage-sample-001",
+        alpha_sample_consumption_id="alpha-001",
+        alpha_or_evalue_budget_consumption_id="budget-001",
+        attempt_ledger_checkpoint_hash=HASH,
+        stage_loss_budget_id="stage-loss-001",
+        stage_loss_version=1,
+        enrollment_start=trial.enrollment_start,
+        followup_finality_date=trial.followup_finality_date,
+        fixed_assessment_date=trial.fixed_assessment_date,
+        maximum_loss_budget_cents=1_000_000,
+        promotion_boolean_expression="lcb > mee",
+        issued_at=NOW,
+        issuer_id="governance.service",
+        issuer_capability="governance.stage.manifest.v1",
+        schema_major=2,
+    )
+
+
+def _governance_trust():
+    """Build a real governance issuer trust chain and a signing callback."""
+
+    issuer_key = Ed25519PrivateKey.generate()
+    issuer_public = issuer_key.public_key().public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
+
+    def capability(artifact, namespace, version):
+        return v3trust.Capability(
+            artifact=artifact,
+            namespace=namespace,
+            mode=ExecutionMode.DAILY_BAR_PROXY,
+            schema_major=2,
+            capability_version=version,
+            scope="portfolio:paper-v3",
+            valid_from=NOW - timedelta(days=1),
+            valid_until=NOW + timedelta(days=120),
+            revoked_at=None,
+        )
+
+    caps = {
+        "trial": capability(
+            v3trust.ArtifactKind.TRIAL_MANIFEST,
+            "governance.trial.manifest",
+            "governance.trial.manifest.v1",
+        ),
+        "sap": capability(
+            v3trust.ArtifactKind.STATISTICAL_ANALYSIS_PLAN,
+            "governance.sap.manifest",
+            "governance.sap.v1",
+        ),
+        "activation": capability(
+            v3trust.ArtifactKind.POLICY_ACTIVATION,
+            "governance.policy.activation",
+            "governance.policy.activation.v1",
+        ),
+        "stage": capability(
+            v3trust.ArtifactKind.STAGE_MANIFEST,
+            "governance.stage.manifest",
+            "governance.stage.manifest.v1",
+        ),
+    }
+    issuer = v3trust.TrustedIssuer(
+        issuer_id="governance.service",
+        key_id="gov-key-1",
+        issuer_kind=v3trust.IssuerKind.GOVERNANCE,
+        public_key=b64encode(issuer_public).decode("ascii"),
+        valid_from=NOW - timedelta(days=1),
+        valid_until=NOW + timedelta(days=120),
+        revoked_at=None,
+        capabilities=tuple(caps.values()),
+    )
+    registry = v3trust.TrustedRegistry(issuers=(issuer,))
+    root_key = Ed25519PrivateKey.generate()
+    root_public = root_key.public_key().public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
+    anchor = v3trust.RootTrustAnchor(
+        root_hash=hashlib.sha256(root_public).hexdigest(),
+        root_key_id="root-1",
+        public_key=b64encode(root_public).decode("ascii"),
+        valid_from=NOW - timedelta(days=1),
+        valid_until=NOW + timedelta(days=120),
+        revoked_at=None,
+    )
+    bundle = TrustBundle(
+        registry_epoch=1,
+        predecessor_bundle_hash=ZERO64,
+        root_hash=anchor.root_hash,
+        root_key_id=anchor.root_key_id,
+        trusted_issuer_registry_hash=registry.content_hash(),
+        issued_at=NOW - timedelta(minutes=10),
+        expires_at=NOW + timedelta(days=120),
+        revoked_at=None,
+        issuer_id="offline-governance-root",
+        issuer_capability="root.trust.bundle.v1",
+        schema_major=2,
+    )
+    signed_bundle = v3trust.SignedTrustBundle(
+        bundle=bundle,
+        registry=registry,
+        signature=b64encode(root_key.sign(v3trust.trust_bundle_signature_preimage(bundle, registry))).decode("ascii"),
+    )
+    trust_verifier = v3trust.TrustBundleVerifier((anchor,))
+    verifier = v3trust.CapabilityVerifier(trust_verifier, (signed_bundle,))
+    current_head = v3trust.CurrentTrustHeadWitness(
+        active_trust_bundle_hash=bundle.artifact_hash(),
+        registry_epoch=1,
+        head_version=1,
+        store_version=1,
+        observed_at=NOW,
+    )
+
+    def sign(payload: bytes, cap):
+        payload_hash = hashlib.sha256(payload).hexdigest()
+        protected = v3trust.canonical_json_bytes(
+            {
+                "artifact": cap.artifact,
+                "capability_scope": cap.scope,
+                "capability_version": cap.capability_version,
+                "issuer_id": issuer.issuer_id,
+                "key_id": issuer.key_id,
+                "mode": cap.mode,
+                "namespace": cap.namespace,
+                "payload": b64encode(payload).decode("ascii"),
+                "payload_hash": payload_hash,
+                "schema_major": cap.schema_major,
+            }
+        )
+        return v3trust.SignedEnvelope(
+            issuer_id=issuer.issuer_id,
+            key_id=issuer.key_id,
+            schema_major=cap.schema_major,
+            artifact=cap.artifact,
+            namespace=cap.namespace,
+            mode=cap.mode,
+            capability_version=cap.capability_version,
+            capability_scope=cap.scope,
+            payload_hash=payload_hash,
+            payload=payload,
+            signature=b64encode(issuer_key.sign(protected)).decode("ascii"),
+        )
+
+    return sign, verifier, current_head, caps
+
+
+def _seal_request() -> tuple:
+    sign, verifier, current_head, caps = _governance_trust()
+    bundle = _bundle()
+    trial = bundle.trial_manifest
+    sap = bundle.sap_manifest
+    activation = bundle.baseline_policy_activation
+    request = RegimeTrialSealRequest(
+        stage_id="stage-regime-001",
+        signed_trial_envelope=sign(trial.canonical_bytes(), caps["trial"]),
+        trial_manifest=trial,
+        trial_capability=caps["trial"],
+        signed_sap_envelope=sign(sap.canonical_bytes(), caps["sap"]),
+        sap_manifest=sap,
+        sap_capability=caps["sap"],
+        signed_baseline_activation_envelope=sign(activation.canonical_bytes(), caps["activation"]),
+        baseline_policy_activation=activation,
+        baseline_activation_capability=caps["activation"],
+        baseline_policy=bundle.baseline_policy,
+        target_policy=bundle.target_policy,
+        expected_signal_cutoff=NOW + timedelta(days=1),
+    )
+    return request, sign, verifier, current_head, caps, bundle
+
+
+@pytest.fixture()
+def repository(tmp_path: Path) -> GovernanceRepository:
+    return GovernanceRepository(
+        database_path=str(tmp_path / "regime-governance.sqlite3"),
+        clock=lambda: NOW,
+    )
+
+
+def test_seal_regime_trial_round_trips_through_the_reader(repository) -> None:
+    request, _sign, verifier, current_head, _caps, bundle = _seal_request()
+    receipt = repository.seal_regime_trial(request, verifier=verifier, current_head=current_head, trusted_at=ENROLLMENT_START)
+    assert receipt.trial_id == bundle.trial_manifest.trial_id
+    assert repository.sealed_trial(receipt.trial_id)["role"] == "paired"
+    assert repository.attempt_reserved(bundle.trial_manifest.attempt_budget_reservation_id)
+    read = repository.regime_trial_bundle(receipt.trial_id)
+    assert read == bundle
+
+
+def test_seal_regime_trial_rejects_loose_payload_binding(repository) -> None:
+    request, _sign, verifier, current_head, _caps, bundle = _seal_request()
+    wrong_payload = bundle.target_policy.canonical_bytes()
+    request.signed_trial_envelope = request.signed_trial_envelope.model_copy(
+        update={
+            "payload": wrong_payload,
+            "payload_hash": hashlib.sha256(wrong_payload).hexdigest(),
+        }
+    )
+    with pytest.raises(GovernanceStoreError, match="payload_binding"):
+        repository.seal_regime_trial(request, verifier=verifier, current_head=current_head, trusted_at=ENROLLMENT_START)
+
+
+def test_seal_regime_trial_rejects_bad_signature(repository) -> None:
+    request, _sign, verifier, current_head, _caps, _bundle = _seal_request()
+    request.signed_sap_envelope = request.signed_sap_envelope.model_copy(update={"signature": b64encode(b"x" * 64).decode("ascii")})
+    with pytest.raises(GovernanceStoreError, match="verification_failed"):
+        repository.seal_regime_trial(request, verifier=verifier, current_head=current_head, trusted_at=ENROLLMENT_START)
+
+
+def test_duplicate_seal_conflicts_atomically(repository) -> None:
+    request, _sign, verifier, current_head, _caps, _bundle = _seal_request()
+    repository.seal_regime_trial(request, verifier=verifier, current_head=current_head, trusted_at=ENROLLMENT_START)
+    with pytest.raises(GovernanceStoreError, match="seal_conflict"):
+        repository.seal_regime_trial(request, verifier=verifier, current_head=current_head, trusted_at=ENROLLMENT_START)
+
+
+def test_seal_stage_binds_to_a_sealed_trial(repository) -> None:
+    request, sign, verifier, current_head, caps, bundle = _seal_request()
+    repository.seal_regime_trial(request, verifier=verifier, current_head=current_head, trusted_at=ENROLLMENT_START)
+    stage = _stage_manifest(bundle.trial_manifest, bundle.sap_manifest)
+    stage_id = repository.seal_stage(
+        sign(stage.canonical_bytes(), caps["stage"]),
+        stage,
+        caps["stage"],
+        verifier=verifier,
+        current_head=current_head,
+        trusted_at=ENROLLMENT_START,
+    )
+    assert stage_id == stage.stage_id
+
+
+def test_seal_stage_rejects_unsealed_trial(repository) -> None:
+    sign, verifier, current_head, caps = _governance_trust()
+    bundle = _bundle()
+    stage = _stage_manifest(bundle.trial_manifest, bundle.sap_manifest)
+    with pytest.raises(GovernanceStoreError, match="stage_trial_unknown|seal_conflict"):
+        repository.seal_stage(
+            sign(stage.canonical_bytes(), caps["stage"]),
+            stage,
+            caps["stage"],
+            verifier=verifier,
+            current_head=current_head,
+            trusted_at=ENROLLMENT_START,
+        )
+
+
+def test_regime_trial_reader_rejects_unknown_trial(repository) -> None:
+    with pytest.raises(GovernanceStoreError, match="regime_trial_unknown"):
+        repository.regime_trial_bundle("no-such-trial")
