@@ -1060,3 +1060,29 @@ def test_fund_flow_metrics_unavailable_snapshot_is_clean_unavailable(tmp_path: P
     assert evidence["observation_status"] == ObservationStatus.UNAVAILABLE.value
     assert evidence["requested_count"] == 0
     assert evidence["consumption_failed_count"] == 0
+
+
+def test_fund_flow_metrics_legacy_hit_evidence_is_partial_with_missing(tmp_path: Path) -> None:
+    """回归守卫: fund_flow 重写后 legacy-fallback + per-ticker note 路径的 evidence 正确性.
+
+    场景: optional 无数据 (UNAVAILABLE) + legacy 命中 000001 / 缺失 000002.
+    期望: requested=2, observed=1 (仅 000001), consumption_failed=1 (000002) → PARTIAL.
+    守卫重写没有破坏 legacy SUCCESS note, 也没污染零活动 UNAVAILABLE.
+    """
+    fund_flow_dir = tmp_path / "fund_flow_cache"
+    fund_flow_dir.mkdir()
+    pd.DataFrame(
+        [{"date": "20260708", "ticker": "000001", "main_net_pct": 2.5, "main_net_inflow": 1000.0}]
+    ).to_csv(fund_flow_dir / "000001.csv", index=False)
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache",
+        fund_flow_cache_dir=fund_flow_dir,
+    )
+    rows = store.load_fund_flow_metrics("20260708", ["000001", "000002"])
+    assert set(rows) == {"000001"}  # 仅 000001 命中 legacy
+    summary = store.build_quality_summary("20260708", [], {})
+    ev = summary["scoring_features"]["daily_fund_flow_metrics"]
+    assert ev["requested_count"] == 2
+    assert ev["observed_count"] == 1
+    assert ev["consumption_failed_count"] == 1
+    assert ev["observation_status"] == ObservationStatus.PARTIAL.value
