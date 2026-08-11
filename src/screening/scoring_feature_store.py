@@ -624,13 +624,24 @@ class ScoringFeatureStore:
             # Empty result is legal for industry_pe (always_legal semantics).
             self._quality.note_usable("industry_pe_medians", "000000")
             return result
+        # No snapshot file for this trade date: always_legal empty observation.
+        # (成功检查了缓存位置, 该日无行业 PE 快照 = 合法空, 归 SUCCESS 而非 FAILED.)
+        self._quality.note_observed("industry_pe_medians", "000000")
+        self._quality.note_usable("industry_pe_medians", "000000")
         return {}
 
     def load_dragon_tiger_bonus_map(self, tickers: list[str], trade_date: str) -> dict[str, float]:
         wanted = {_ticker6(ticker) for ticker in tickers}
         self._quality.note_requested("dragon_tiger_bonus", list(wanted))
         path = self.lhb_cache_dir / f"{_compact_date(trade_date)}.csv"
-        if not path.exists() or not wanted:
+        if not path.exists():
+            # 无该日龙虎榜快照: legal_when_observed 合法空观察
+            # (成功检查了 lhb 缓存, 该日无龙虎榜数据 = 合法空, 归 SUCCESS 而非 FAILED.)
+            for ticker in wanted:
+                self._quality.note_observed("dragon_tiger_bonus", ticker)
+                self._quality.note_usable("dragon_tiger_bonus", ticker)
+            return {}
+        if not wanted:
             return {}
         try:
             frame = pd.read_csv(path, dtype={"ts_code": str, "代码": str})
@@ -658,10 +669,14 @@ class ScoringFeatureStore:
         return result
 
     def load_intraday_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, Any]]:
-        self._quality.note_requested("intraday_short_trade_metrics", tickers)
         observation = self._optional_store.load_intraday_metrics(trade_date, tickers)
         rows = dict(observation.values)
+        # UNAVAILABLE = 该日无日内快照 (数据不可用, 非错误): 零活动干净 UNAVAILABLE,
+        # 不污染 requested/consumption_failed (否则 assess 报 "unavailable requires zero activity").
+        if observation.status is ObservationStatus.UNAVAILABLE:
+            return rows
         wanted = {_ticker6(ticker) for ticker in tickers}
+        self._quality.note_requested("intraday_short_trade_metrics", tickers)
         for ticker in wanted:
             if observation.status is ObservationStatus.SUCCESS:
                 self._quality.note_observation_status(
@@ -694,12 +709,29 @@ class ScoringFeatureStore:
         return rows
 
     def load_fund_flow_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, Any]]:
-        self._quality.note_requested("daily_fund_flow_metrics", tickers)
         observation = self._optional_store.load_fund_flow_metrics(trade_date, tickers)
         rows = dict(observation.values)
         wanted = {_ticker6(ticker) for ticker in tickers}
+        # Legacy fallback fills tickers the optional snapshot missed (only side-effect
+        # is malformed-file accounting). Probe BEFORE noting so a total absence of data
+        # (optional UNAVAILABLE + no legacy) is a clean zero-activity UNAVAILABLE rather
+        # than a polluted UNAVAILABLE that trips "unavailable requires zero activity".
+        missing = sorted(wanted - set(rows))
+        legacy_rows = self._load_legacy_fund_flow_metrics(trade_date, missing)
+        rows.update(legacy_rows)
+        if not rows:
+            return rows
+        self._quality.note_requested("daily_fund_flow_metrics", tickers)
         for ticker in wanted:
-            if observation.status is ObservationStatus.SUCCESS:
+            if ticker in legacy_rows:
+                self._quality.note_observation_status(
+                    "daily_fund_flow_metrics", ticker, ObservationStatus.SUCCESS
+                )
+                self._quality.note_observed("daily_fund_flow_metrics", ticker)
+                self._quality.note_usable("daily_fund_flow_metrics", ticker)
+                self._quality.note_loaded("daily_fund_flow_metrics", ticker, source="fund_flow_cache")
+                self._quality.note_nonempty("daily_fund_flow_metrics", ticker)
+            elif observation.status is ObservationStatus.SUCCESS:
                 self._quality.note_observation_status(
                     "daily_fund_flow_metrics", ticker, ObservationStatus.SUCCESS
                 )
@@ -711,6 +743,8 @@ class ScoringFeatureStore:
                         ticker,
                         observation.source_fingerprint,
                     )
+                self._quality.note_loaded("daily_fund_flow_metrics", ticker, source="snapshot")
+                self._quality.note_nonempty("daily_fund_flow_metrics", ticker)
             else:
                 self._quality.note_observation_status(
                     "daily_fund_flow_metrics", ticker, observation.status
@@ -720,29 +754,10 @@ class ScoringFeatureStore:
                     ticker,
                     f"optional_snapshot_{observation.status.value}",
                 )
-        if observation.status is ObservationStatus.SUCCESS:
+        if observation.status is ObservationStatus.SUCCESS or legacy_rows:
             self._quality.note_as_of_max("daily_fund_flow_metrics", trade_date)
         elif observation.status is ObservationStatus.FAILED:
             self._quality.note_malformed("daily_fund_flow_metrics")
-        for ticker in rows:
-            self._quality.note_loaded("daily_fund_flow_metrics", ticker, source="snapshot")
-            self._quality.note_nonempty("daily_fund_flow_metrics", ticker)
-        missing = sorted(wanted - set(rows))
-        legacy_rows = self._load_legacy_fund_flow_metrics(trade_date, missing)
-        for ticker in legacy_rows:
-            self._quality.note_observation_status(
-                "daily_fund_flow_metrics", ticker, ObservationStatus.SUCCESS
-            )
-            self._quality.note_observed("daily_fund_flow_metrics", ticker)
-            self._quality.note_usable("daily_fund_flow_metrics", ticker)
-            self._quality.clear_consumption_failure(
-                "daily_fund_flow_metrics", ticker
-            )
-            self._quality.note_loaded("daily_fund_flow_metrics", ticker, source="fund_flow_cache")
-            self._quality.note_nonempty("daily_fund_flow_metrics", ticker)
-        if legacy_rows:
-            self._quality.note_as_of_max("daily_fund_flow_metrics", trade_date)
-        rows.update(legacy_rows)
         return rows
 
     def build_quality_summary(

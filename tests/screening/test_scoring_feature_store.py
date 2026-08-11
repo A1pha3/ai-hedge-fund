@@ -1001,3 +1001,62 @@ def test_legal_empty_overrides_stale_fallback(tmp_path: Path) -> None:
     assert statuses["000001"] is ObservationStatus.SUCCESS
     assert "000001" not in store._quality.stale.get("event_inputs", set())
     assert "000001" in store._quality.observed["event_inputs"]
+
+
+def test_industry_pe_medians_missing_snapshot_is_legal_observation(tmp_path: Path) -> None:
+    """empty_semantics=always_legal: 该日无行业 PE 快照文件是合法空观察, 必须归 SUCCESS 而非 FAILED.
+
+    旧实现: 快照 .json/.csv 均缺失时直接 ``return {}`` 但从未 note_observed → 分类器
+    (observed==0 and usable==0) 标 FAILED, 却无 explicit_failure → assess_auto_quality
+    报 ``optional_evidence_schema_invalid`` ("failed requires an explicit failure").
+    """
+    store = ScoringFeatureStore(base_dir=tmp_path / "feature_cache")
+    # 该日无 industry_pe_medians_20260708.{json,csv} → 合法空观察
+    assert store.load_industry_pe_medians("20260708") == {}
+    summary = store.build_quality_summary("20260708", [], {})
+    evidence = summary["scoring_features"]["industry_pe_medians"]
+    assert evidence["observation_status"] == ObservationStatus.SUCCESS.value
+
+
+def test_dragon_tiger_bonus_missing_snapshot_is_legal_observation(tmp_path: Path) -> None:
+    """empty_semantics=legal_when_observed: 该日无龙虎榜快照是合法空观察, 必须归 SUCCESS 而非 FAILED."""
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache",
+        lhb_cache_dir=tmp_path / "lhb_cache",
+    )
+    assert store.load_dragon_tiger_bonus_map(["000001", "000002"], "20260708") == {}
+    summary = store.build_quality_summary("20260708", [], {})
+    evidence = summary["scoring_features"]["dragon_tiger_bonus"]
+    assert evidence["observation_status"] == ObservationStatus.SUCCESS.value
+
+
+def test_intraday_metrics_unavailable_snapshot_is_clean_unavailable(tmp_path: Path) -> None:
+    """legal_when_observed: 该日无日内快照 (OptionalFeatureStore 返回 UNAVAILABLE) = 数据不可用, 非错误.
+
+    必须是零活动的干净 UNAVAILABLE. 旧实现: UNAVAILABLE 时仍 note_requested +
+    note_consumption_failure → UNAVAILABLE 状态带活动 → assess_auto_quality 报
+    ``optional_evidence_schema_invalid`` ("unavailable requires zero activity").
+    """
+    store = ScoringFeatureStore(base_dir=tmp_path / "feature_cache")
+    # 该日无日内数据文件 → _optional_store 返回 UNAVAILABLE observation
+    assert store.load_intraday_metrics("20260708", ["000001", "000002"]) == {}
+    summary = store.build_quality_summary("20260708", [], {})
+    evidence = summary["scoring_features"]["intraday_short_trade_metrics"]
+    assert evidence["observation_status"] == ObservationStatus.UNAVAILABLE.value
+    # 零活动: requested/consumption_failed 必须为 0 (UNAVAILABLE 要求零活动)
+    assert evidence["requested_count"] == 0
+    assert evidence["consumption_failed_count"] == 0
+
+
+def test_fund_flow_metrics_unavailable_snapshot_is_clean_unavailable(tmp_path: Path) -> None:
+    """legal_when_observed: 该日无资金流快照 = 干净 UNAVAILABLE (零活动), 与 intraday 同源修复."""
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache",
+        fund_flow_cache_dir=tmp_path / "fund_flow_cache",
+    )
+    assert store.load_fund_flow_metrics("20260708", ["000001", "000002"]) == {}
+    summary = store.build_quality_summary("20260708", [], {})
+    evidence = summary["scoring_features"]["daily_fund_flow_metrics"]
+    assert evidence["observation_status"] == ObservationStatus.UNAVAILABLE.value
+    assert evidence["requested_count"] == 0
+    assert evidence["consumption_failed_count"] == 0
