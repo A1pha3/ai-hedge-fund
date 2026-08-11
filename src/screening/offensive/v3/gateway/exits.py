@@ -246,6 +246,7 @@ class ExitLane:
         self._lease_ttl = lease_ttl
         self._dependencies = dependencies
         self._fault_hook = _fault_hook
+        self._database_path = database_path
         self._engine = sa.create_engine(
             f"sqlite:///{database_path}",
             connect_args={"check_same_thread": False},
@@ -777,6 +778,48 @@ class ExitLane:
             conn, str(row.mandate_hash)
         )
         return int(row.executable_quantity) - outstanding - filled
+
+    def release_lease(
+        self, lease_id: str, *, worker_id: str
+    ) -> None:
+        """Explicitly release one lease back to the pool.
+
+        A worker releases its claim once an attempt outcome (FILLED or
+        CANCELLED) is durable so the lane can re-lease any remaining
+        obligation. Releasing a lease the caller does not own, or one that
+        does not exist, fails closed; releasing an already-released lease is
+        idempotent. Released leases never mutate the mandate or its attempt
+        ledger - they only free the claim so a later session may re-lease.
+        """
+
+        now_iso = self._clock().isoformat()
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                sa.text("SELECT * FROM exit_leases WHERE lease_id = :lease"),
+                {"lease": lease_id},
+            ).first()
+            if row is None:
+                raise ExitLaneError(
+                    "exit_lease_unknown", "no exit lease for id", lease_id=lease_id
+                )
+            if str(row.worker_id) != worker_id:
+                raise ExitLaneError(
+                    "exit_lease_owner_mismatch",
+                    "a lease may only be released by its owning worker",
+                    lease_id=lease_id,
+                    owner=str(row.worker_id),
+                    worker_id=worker_id,
+                )
+            if row.released_at is not None:
+                return  # idempotent: the lease is already released
+            conn.execute(
+                sa.text(
+                    "UPDATE exit_leases SET released_at = :now"
+                    " WHERE lease_id = :lease AND released_at IS NULL"
+                ),
+                {"now": now_iso, "lease": lease_id},
+            )
+            self._fault("release.after_release")
 
     # -- exit attempts -----------------------------------------------------------
 

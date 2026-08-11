@@ -129,6 +129,7 @@ from .execution import (
     ExecutionRevisionHistory,
     ExecutionRevisionKind,
     ExecutionSide,
+    MechanicalQuantityResolution,
     OutboxState,
     OrderState,
     PermitCancellationBinding,
@@ -141,6 +142,7 @@ from .execution import (
     ReservationLineAllocation,
     ReservationState,
     SendClaimExpectedVersions,
+    resolve_mechanical_quantity,
     validate_order_transition,
     validate_plan_transition,
 )
@@ -160,6 +162,28 @@ from .risk import (
     RiskSnapshotCompleteness,
     RiskSnapshotFreshness,
     StageLossLatchState,
+)
+from .regime import (
+    PositiveExactInt,
+    RegimeAdmissionMode,
+    RegimeObservation,
+    RegimeObservationReason,
+    RegimeSourceRevision,
+    RegimeState,
+    normalize_regime_state,
+)
+from .trial import (
+    BaselineShadowPolicyBinding,
+    ShadowPolicyBinding,
+    ShadowPolicySourceKind,
+    TargetShadowPolicyBinding,
+    TrialArm,
+)
+from .compatibility import (
+    LegacyShadowDecisionV2,
+    LegacyShadowOrderLine,
+    ShadowCompatibilityError,
+    read_shadow_decision_json,
 )
 from .trust import (
     ArtifactKind,
@@ -238,6 +262,7 @@ __all__ = [
     "EntryReserveRiskComponent",
     "ExposureScope",
     "Fraction",
+    "MechanicalQuantityResolution",
     "IssuerKind",
     "GatewayExpectedVersions",
     "GatewayIssuerBinding",
@@ -283,6 +308,21 @@ __all__ = [
     "SealReserveLineBinding",
     "QuantityUnits",
     "RationalQuantity",
+    "PositiveExactInt",
+    "RegimeAdmissionMode",
+    "RegimeObservation",
+    "RegimeObservationReason",
+    "RegimeSourceRevision",
+    "RegimeState",
+    "BaselineShadowPolicyBinding",
+    "ShadowPolicyBinding",
+    "ShadowPolicySourceKind",
+    "TargetShadowPolicyBinding",
+    "TrialArm",
+    "LegacyShadowDecisionV2",
+    "LegacyShadowOrderLine",
+    "ShadowCompatibilityError",
+    "read_shadow_decision_json",
     "SchemaVersion",
     "SUPPORTED_SCHEMA_MAJOR",
     "SessionCheckpoint",
@@ -324,6 +364,8 @@ __all__ = [
     "canonical_decimal_string",
     "content_hash",
     "domain_hash",
+    "normalize_regime_state",
+    "resolve_mechanical_quantity",
     "validate_order_transition",
     "validate_plan_transition",
 ]

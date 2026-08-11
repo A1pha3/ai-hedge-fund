@@ -73,6 +73,12 @@ PUBLIC_MODEL_CASES = (
     "src.screening.offensive.v3.contracts.execution.PermitLineMechanicalBinding",
     "src.screening.offensive.v3.contracts.execution.ReservationLineAllocation",
     "src.screening.offensive.v3.contracts.execution.SendClaimExpectedVersions",
+    "src.screening.offensive.v3.contracts.regime.RegimeObservation",
+    "src.screening.offensive.v3.contracts.regime.RegimeSourceRevision",
+    "src.screening.offensive.v3.contracts.compatibility.LegacyShadowDecisionV2",
+    "src.screening.offensive.v3.contracts.compatibility.LegacyShadowOrderLine",
+    "src.screening.offensive.v3.contracts.trial.BaselineShadowPolicyBinding",
+    "src.screening.offensive.v3.contracts.trial.TargetShadowPolicyBinding",
     "src.screening.offensive.v3.contracts.governance.ApprovalAttestationBinding",
     "src.screening.offensive.v3.contracts.governance.AuthorizationStatus",
     "src.screening.offensive.v3.contracts.governance.BrokerEnablementManifest",
@@ -153,6 +159,11 @@ PUBLIC_ENUMS = (
     "src.screening.offensive.v3.policy.models.CapitalTier",
     "src.screening.offensive.v3.policy.models.MissingAdvBehavior",
     "src.screening.offensive.v3.policy.models.RuntimeMode",
+    "src.screening.offensive.v3.contracts.regime.RegimeAdmissionMode",
+    "src.screening.offensive.v3.contracts.regime.RegimeObservationReason",
+    "src.screening.offensive.v3.contracts.regime.RegimeState",
+    "src.screening.offensive.v3.contracts.trial.ShadowPolicySourceKind",
+    "src.screening.offensive.v3.contracts.trial.TrialArm",
 )
 
 PUBLIC_ALIASES = (
@@ -182,6 +193,7 @@ ARTIFACT_HASH_CASES = (
     "src.screening.offensive.v3.contracts.authorization.CapitalAuthorizationEnvelope",
     "src.screening.offensive.v3.contracts.capital.CapitalRiskSnapshot",
     "src.screening.offensive.v3.contracts.capital.ExitMandate",
+    "src.screening.offensive.v3.contracts.compatibility.LegacyShadowDecisionV2",
     "src.screening.offensive.v3.contracts.decision.AuthorizationIssuanceBinding",
     "src.screening.offensive.v3.contracts.decision.GatewayExpectedVersions",
     "src.screening.offensive.v3.contracts.decision.PortfolioDecision",
@@ -240,9 +252,9 @@ PROTECTED_PREIMAGE_CASES = (
 )
 
 
-assert len(PUBLIC_MODEL_CASES) == len(set(PUBLIC_MODEL_CASES)) == 99
-assert len(PUBLIC_ENUMS) == len(set(PUBLIC_ENUMS)) == 42
+assert len(PUBLIC_MODEL_CASES) == len(set(PUBLIC_MODEL_CASES)) == 105
+assert len(PUBLIC_ENUMS) == len(set(PUBLIC_ENUMS)) == 47
 assert len(PUBLIC_ALIASES) == len(set(PUBLIC_ALIASES)) == 11
 assert len(PUBLIC_PORTS) == len(set(PUBLIC_PORTS)) == 6
-assert len(ARTIFACT_HASH_CASES) == len(set(ARTIFACT_HASH_CASES)) == 30
+assert len(ARTIFACT_HASH_CASES) == len(set(ARTIFACT_HASH_CASES)) == 31
 assert len(EVIDENCE_RECORD_SPECIALIZATIONS) == 4

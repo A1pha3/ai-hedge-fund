@@ -771,6 +771,158 @@
       "security_id": "600000.SH"
     }
   },
+  "src.screening.offensive.v3.contracts.compatibility.LegacyShadowDecisionV2": {
+    "artifact_hash": {
+      "domain": "ai-hedge-fund.v3.decision.shadow-decision.v1",
+      "schema_major": 2,
+      "sha256": "c483bc0a4b00069c212384ab4d4dad4584d7ebb1d8a00fbd2551b9ea1f69a307"
+    },
+    "canonical_payload_sha256": "b184967439c18291684fd8d745bcf0028e987d9754de97da64fc28b59ea37036",
+    "content_hash": "b184967439c18291684fd8d745bcf0028e987d9754de97da64fc28b59ea37036",
+    "json_payload_sha256": "b184967439c18291684fd8d745bcf0028e987d9754de97da64fc28b59ea37036",
+    "model_module": "src.screening.offensive.v3.contracts.compatibility",
+    "model_name": "LegacyShadowDecisionV2",
+    "payload": {
+      "artifact_kind": "shadow_decision",
+      "artifact_namespace": "growth-kernel.shadow.v1",
+      "available_at": "2026-07-29T08:00:00Z",
+      "cost_assumption_version": "cn-a-share.v1",
+      "counterfactual_key": {
+        "counterfactual_cycle_id": "auto-shadow-daily-v1",
+        "portfolio_id": "portfolio-v3",
+        "signal_session": "2026-07-29"
+      },
+      "counterfactual_lines": [
+        {
+          "cost_assumption_version": "cn-a-share.v1",
+          "economic_lineage_id": "auto-lineage",
+          "estimated_cash_reserve_cents": 105050,
+          "estimated_fee_cents": 50,
+          "evidence_artifact_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "evidence_id": "shadow-evidence-1",
+          "evidence_payload_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "execution_assumption_version": "t1-open-t10-open.v1",
+          "exit_session_ordinal": 10,
+          "family_id": "auto-family",
+          "limit_price_cents": 1050,
+          "lot_rule_version": "cn-a-share-lot.v1",
+          "lot_size_units": 100,
+          "order_type": "LIMIT",
+          "price_boundary_version": "cn-price-limit.v1",
+          "producer_namespace": "auto.shadow",
+          "research_program_id": "auto-program",
+          "security_id": "600000.SH",
+          "shadow_line_id": "shadow-line-1",
+          "stage_id": "auto-shadow-stage",
+          "stage_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "target_quantity_units": 100,
+          "time_in_force": "OPEN_AUCTION",
+          "trial_id": "auto-shadow-trial",
+          "worst_case_price_cents": 1050
+        },
+        {
+          "cost_assumption_version": "cn-a-share.v1",
+          "economic_lineage_id": "auto-lineage",
+          "estimated_cash_reserve_cents": 160075,
+          "estimated_fee_cents": 75,
+          "evidence_artifact_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "evidence_id": "shadow-evidence-2",
+          "evidence_payload_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "execution_assumption_version": "t1-open-t10-open.v1",
+          "exit_session_ordinal": 10,
+          "family_id": "auto-family",
+          "limit_price_cents": 800,
+          "lot_rule_version": "cn-a-share-lot.v1",
+          "lot_size_units": 100,
+          "order_type": "LIMIT",
+          "price_boundary_version": "cn-price-limit.v1",
+          "producer_namespace": "auto.shadow",
+          "research_program_id": "auto-program",
+          "security_id": "600001.SH",
+          "shadow_line_id": "shadow-line-2",
+          "stage_id": "auto-shadow-stage",
+          "stage_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "target_quantity_units": 200,
+          "time_in_force": "OPEN_AUCTION",
+          "trial_id": "auto-shadow-trial",
+          "worst_case_price_cents": 800
+        }
+      ],
+      "created_at": "2026-07-29T08:00:00Z",
+      "economic_lineage_id": "auto-lineage",
+      "evidence_set_merkle_root": "2222222222222222222222222222222222222222222222222222222222222222",
+      "execution_assumption_version": "t1-open-t10-open.v1",
+      "execution_authority": "NONE",
+      "family_id": "auto-family",
+      "issuer_binding": {
+        "capability_artifact_kind": "shadow_decision",
+        "capability_mode": "broker_confirmed",
+        "capability_namespace": "growth-kernel.shadow.v1",
+        "capability_schema_major": 2,
+        "capability_scope": "portfolio:portfolio-v3",
+        "capability_version": "growth-kernel-shadow.v1",
+        "issuer_id": "growth-kernel.shadow.service",
+        "key_id": "shadow-key-1",
+        "registry_epoch": 7,
+        "trust_bundle_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "valid_until": "2026-07-29T08:04:00Z",
+        "verification_result": "VALID",
+        "verified_at": "2026-07-29T07:59:00Z"
+      },
+      "mode": "broker_confirmed",
+      "policy_activation_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "policy_epoch": 4,
+      "portfolio_id": "portfolio-v3",
+      "producer_namespace": "auto.shadow",
+      "research_program_id": "auto-program",
+      "schema_major": 2,
+      "shadow_decision_id": "shadow-decision-1",
+      "shadow_stage_binding": {
+        "economic_lineage_id": "auto-lineage",
+        "research_program_id": "auto-program",
+        "stage_id": "auto-shadow-stage",
+        "stage_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "trial_id": "auto-shadow-trial"
+      },
+      "stage_id": "auto-shadow-stage",
+      "target_entry_session": "2026-07-30",
+      "trial_id": "auto-shadow-trial"
+    }
+  },
+  "src.screening.offensive.v3.contracts.compatibility.LegacyShadowOrderLine": {
+    "canonical_payload_sha256": "331390a6eba80b66aaa449dd42b4b134eac25710a153aefd5216b5ae1bbed23b",
+    "content_hash": "331390a6eba80b66aaa449dd42b4b134eac25710a153aefd5216b5ae1bbed23b",
+    "json_payload_sha256": "331390a6eba80b66aaa449dd42b4b134eac25710a153aefd5216b5ae1bbed23b",
+    "model_module": "src.screening.offensive.v3.contracts.compatibility",
+    "model_name": "LegacyShadowOrderLine",
+    "payload": {
+      "cost_assumption_version": "cn-a-share.v1",
+      "economic_lineage_id": "auto-lineage",
+      "estimated_cash_reserve_cents": 105050,
+      "estimated_fee_cents": 50,
+      "evidence_artifact_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "evidence_id": "shadow-evidence-1",
+      "evidence_payload_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "execution_assumption_version": "t1-open-t10-open.v1",
+      "exit_session_ordinal": 10,
+      "family_id": "auto-family",
+      "limit_price_cents": 1050,
+      "lot_rule_version": "cn-a-share-lot.v1",
+      "lot_size_units": 100,
+      "order_type": "LIMIT",
+      "price_boundary_version": "cn-price-limit.v1",
+      "producer_namespace": "auto.shadow",
+      "research_program_id": "auto-program",
+      "security_id": "600000.SH",
+      "shadow_line_id": "shadow-line-1",
+      "stage_id": "auto-shadow-stage",
+      "stage_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "target_quantity_units": 100,
+      "time_in_force": "OPEN_AUCTION",
+      "trial_id": "auto-shadow-trial",
+      "worst_case_price_cents": 1050
+    }
+  },
   "src.screening.offensive.v3.contracts.decision.AuthorizationIssuanceBinding": {
     "artifact_hash": {
       "domain": "ai-hedge-fund.v3.decision.authorization-issuance-binding.v1",
@@ -1565,20 +1717,20 @@
   },
   "src.screening.offensive.v3.contracts.decision.ShadowDecision": {
     "artifact_hash": {
-      "domain": "ai-hedge-fund.v3.decision.shadow-decision.v1",
-      "schema_major": 2,
-      "sha256": "c483bc0a4b00069c212384ab4d4dad4584d7ebb1d8a00fbd2551b9ea1f69a307"
+      "domain": "ai-hedge-fund.v3.decision.shadow-decision.v2",
+      "schema_major": 3,
+      "sha256": "5aab361743b455592aed78d0378be7c723f7962e01c2504938680da9e1a7c446"
     },
-    "canonical_payload_sha256": "b184967439c18291684fd8d745bcf0028e987d9754de97da64fc28b59ea37036",
-    "content_hash": "b184967439c18291684fd8d745bcf0028e987d9754de97da64fc28b59ea37036",
-    "json_payload_sha256": "b184967439c18291684fd8d745bcf0028e987d9754de97da64fc28b59ea37036",
+    "canonical_payload_sha256": "07e355206ffe89ab3833a00022a2cb3f04d79464bc2d58dee89609a638564dee",
+    "content_hash": "07e355206ffe89ab3833a00022a2cb3f04d79464bc2d58dee89609a638564dee",
+    "json_payload_sha256": "07e355206ffe89ab3833a00022a2cb3f04d79464bc2d58dee89609a638564dee",
     "model_module": "src.screening.offensive.v3.contracts.decision",
     "model_name": "ShadowDecision",
     "payload": {
       "artifact_kind": "shadow_decision",
-      "artifact_namespace": "growth-kernel.shadow.v1",
+      "artifact_namespace": "growth-kernel.shadow.v2",
       "available_at": "2026-07-29T08:00:00Z",
-      "cost_assumption_version": "cn-a-share.v1",
+      "cost_assumption_version": "cn-a-share-30bps-tax.v2",
       "counterfactual_key": {
         "counterfactual_cycle_id": "auto-shadow-daily-v1",
         "portfolio_id": "portfolio-v3",
@@ -1586,14 +1738,14 @@
       },
       "counterfactual_lines": [
         {
-          "cost_assumption_version": "cn-a-share.v1",
+          "cost_assumption_version": "cn-a-share-30bps-tax.v2",
           "economic_lineage_id": "auto-lineage",
           "estimated_cash_reserve_cents": 105050,
           "estimated_fee_cents": 50,
           "evidence_artifact_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
           "evidence_id": "shadow-evidence-1",
           "evidence_payload_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-          "execution_assumption_version": "t1-open-t10-open.v1",
+          "execution_assumption_version": "t1-open-t10-open-slippage.v2",
           "exit_session_ordinal": 10,
           "family_id": "auto-family",
           "limit_price_cents": 1050,
@@ -1607,20 +1759,21 @@
           "shadow_line_id": "shadow-line-1",
           "stage_id": "auto-shadow-stage",
           "stage_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "target_exit_session": "2026-08-08",
           "target_quantity_units": 100,
           "time_in_force": "OPEN_AUCTION",
           "trial_id": "auto-shadow-trial",
           "worst_case_price_cents": 1050
         },
         {
-          "cost_assumption_version": "cn-a-share.v1",
+          "cost_assumption_version": "cn-a-share-30bps-tax.v2",
           "economic_lineage_id": "auto-lineage",
           "estimated_cash_reserve_cents": 160075,
           "estimated_fee_cents": 75,
           "evidence_artifact_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
           "evidence_id": "shadow-evidence-2",
           "evidence_payload_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-          "execution_assumption_version": "t1-open-t10-open.v1",
+          "execution_assumption_version": "t1-open-t10-open-slippage.v2",
           "exit_session_ordinal": 10,
           "family_id": "auto-family",
           "limit_price_cents": 800,
@@ -1634,6 +1787,7 @@
           "shadow_line_id": "shadow-line-2",
           "stage_id": "auto-shadow-stage",
           "stage_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "target_exit_session": "2026-08-08",
           "target_quantity_units": 200,
           "time_in_force": "OPEN_AUCTION",
           "trial_id": "auto-shadow-trial",
@@ -1643,16 +1797,16 @@
       "created_at": "2026-07-29T08:00:00Z",
       "economic_lineage_id": "auto-lineage",
       "evidence_set_merkle_root": "2222222222222222222222222222222222222222222222222222222222222222",
-      "execution_assumption_version": "t1-open-t10-open.v1",
+      "execution_assumption_version": "t1-open-t10-open-slippage.v2",
       "execution_authority": "NONE",
       "family_id": "auto-family",
       "issuer_binding": {
         "capability_artifact_kind": "shadow_decision",
         "capability_mode": "broker_confirmed",
-        "capability_namespace": "growth-kernel.shadow.v1",
-        "capability_schema_major": 2,
+        "capability_namespace": "growth-kernel.shadow.v2",
+        "capability_schema_major": 3,
         "capability_scope": "portfolio:portfolio-v3",
-        "capability_version": "growth-kernel-shadow.v1",
+        "capability_version": "growth-kernel-shadow.v2",
         "issuer_id": "growth-kernel.shadow.service",
         "key_id": "shadow-key-1",
         "registry_epoch": 7,
@@ -1662,13 +1816,18 @@
         "verified_at": "2026-07-29T07:59:00Z"
       },
       "mode": "broker_confirmed",
-      "policy_activation_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "policy_epoch": 4,
       "portfolio_id": "portfolio-v3",
       "producer_namespace": "auto.shadow",
       "research_program_id": "auto-program",
-      "schema_major": 2,
+      "schema_major": 3,
       "shadow_decision_id": "shadow-decision-1",
+      "shadow_policy_binding": {
+        "baseline_policy_activation_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+        "policy_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "source_kind": "BASELINE_POLICY_ACTIVATION"
+      },
       "shadow_stage_binding": {
         "economic_lineage_id": "auto-lineage",
         "research_program_id": "auto-program",
@@ -1704,20 +1863,20 @@
     }
   },
   "src.screening.offensive.v3.contracts.decision.ShadowOrderLine": {
-    "canonical_payload_sha256": "331390a6eba80b66aaa449dd42b4b134eac25710a153aefd5216b5ae1bbed23b",
-    "content_hash": "331390a6eba80b66aaa449dd42b4b134eac25710a153aefd5216b5ae1bbed23b",
-    "json_payload_sha256": "331390a6eba80b66aaa449dd42b4b134eac25710a153aefd5216b5ae1bbed23b",
+    "canonical_payload_sha256": "b4acf788bd69743d3427b0c39c63256aef496a25044f4ba9b5ef65a3e74e30de",
+    "content_hash": "b4acf788bd69743d3427b0c39c63256aef496a25044f4ba9b5ef65a3e74e30de",
+    "json_payload_sha256": "b4acf788bd69743d3427b0c39c63256aef496a25044f4ba9b5ef65a3e74e30de",
     "model_module": "src.screening.offensive.v3.contracts.decision",
     "model_name": "ShadowOrderLine",
     "payload": {
-      "cost_assumption_version": "cn-a-share.v1",
+      "cost_assumption_version": "cn-a-share-30bps-tax.v2",
       "economic_lineage_id": "auto-lineage",
       "estimated_cash_reserve_cents": 105050,
       "estimated_fee_cents": 50,
       "evidence_artifact_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "evidence_id": "shadow-evidence-1",
       "evidence_payload_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-      "execution_assumption_version": "t1-open-t10-open.v1",
+      "execution_assumption_version": "t1-open-t10-open-slippage.v2",
       "exit_session_ordinal": 10,
       "family_id": "auto-family",
       "limit_price_cents": 1050,
@@ -1731,6 +1890,7 @@
       "shadow_line_id": "shadow-line-1",
       "stage_id": "auto-shadow-stage",
       "stage_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "target_exit_session": "2026-08-08",
       "target_quantity_units": 100,
       "time_in_force": "OPEN_AUCTION",
       "trial_id": "auto-shadow-trial",
@@ -5656,49 +5816,49 @@
     "model_module": "src.screening.offensive.v3.contracts.governance",
     "model_name": "BrokerEnablementManifest",
     "payload": {
-      "manifest_id": "broker_enablement_manifest-1",
-      "portfolio_id": "portfolio-1",
-      "broker_account_id": "account-1",
-      "issued_at": "2026-07-19T08:00:00Z",
-      "expires_at": "2026-07-19T09:00:00Z",
-      "one_shot": true,
       "approval_attestations": [
         {
-          "approver_id": "alice",
-          "key_id": "alice-key",
           "approval_artifact_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "approved_manifest_preimage_hash": "9e90723c9039dcb65ab0a055fca1c4245fe8177a704aa6efa21d3bcb2eaa6728",
           "approval_capability": "governance.manifest.approve.v1",
           "approval_scope": "BROKER_ENABLEMENT_MANIFEST",
           "approved_at": "2026-07-19T07:58:00Z",
+          "approved_manifest_preimage_hash": "9e90723c9039dcb65ab0a055fca1c4245fe8177a704aa6efa21d3bcb2eaa6728",
+          "approver_id": "alice",
+          "key_id": "alice-key",
           "schema_major": 2
         },
         {
-          "approver_id": "bob",
-          "key_id": "bob-key",
           "approval_artifact_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-          "approved_manifest_preimage_hash": "9e90723c9039dcb65ab0a055fca1c4245fe8177a704aa6efa21d3bcb2eaa6728",
           "approval_capability": "governance.manifest.approve.v1",
           "approval_scope": "BROKER_ENABLEMENT_MANIFEST",
           "approved_at": "2026-07-19T07:59:00Z",
+          "approved_manifest_preimage_hash": "9e90723c9039dcb65ab0a055fca1c4245fe8177a704aa6efa21d3bcb2eaa6728",
+          "approver_id": "bob",
+          "key_id": "bob-key",
           "schema_major": 2
         }
       ],
-      "issuer_id": "governance",
-      "issuer_capability": "governance.broker.enablement.v1",
-      "schema_major": 2,
-      "broker_account_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "broker_environment_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "base_currency": "CNY",
-      "currency_definition_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "trusted_clock_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "authenticated_raw_envelope_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "pagination_cursor_retention_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "client_order_idempotency_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "auction_tif_cutoff_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "exit_rate_limit_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "authenticated_raw_envelope_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "base_currency": "CNY",
+      "broker_account_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "broker_account_id": "account-1",
+      "broker_environment_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "client_order_idempotency_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "credential_session_network_fencing_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "profile_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "currency_definition_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "exit_rate_limit_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expires_at": "2026-07-19T09:00:00Z",
+      "issued_at": "2026-07-19T08:00:00Z",
+      "issuer_capability": "governance.broker.enablement.v1",
+      "issuer_id": "governance",
+      "manifest_id": "broker_enablement_manifest-1",
+      "one_shot": true,
+      "pagination_cursor_retention_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "portfolio_id": "portfolio-1",
+      "profile_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "schema_major": 2,
+      "trusted_clock_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
   },
   "src.screening.offensive.v3.contracts.governance.DisasterRecoveryManifest": {
@@ -6240,6 +6400,75 @@
       "trusted_issuer_registry_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
   },
+  "src.screening.offensive.v3.contracts.regime.RegimeObservation": {
+    "canonical_payload_sha256": "f85b59c2a6baa69d6178b87f4df7f9fd661b135f7094de3147a3c7d4b4c0f730",
+    "content_hash": "f85b59c2a6baa69d6178b87f4df7f9fd661b135f7094de3147a3c7d4b4c0f730",
+    "json_payload_sha256": "f85b59c2a6baa69d6178b87f4df7f9fd661b135f7094de3147a3c7d4b4c0f730",
+    "model_module": "src.screening.offensive.v3.contracts.regime",
+    "model_name": "RegimeObservation",
+    "payload": {
+      "behavior_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "classifier_semver": "1.0.0",
+      "effective_at": "2026-08-11T15:00:00Z",
+      "input_schema_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "observed_at": "2026-08-11T16:00:00Z",
+      "provider_published_at": "2026-08-11T15:30:00Z",
+      "raw_state": "NORMAL",
+      "reason": "CLASSIFIED",
+      "signal_session": "2026-08-11",
+      "source_revisions": [
+        {
+          "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "evidence_id": "regime-evidence-1",
+          "revision": 1
+        },
+        {
+          "artifact_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "evidence_id": "regime-evidence-2",
+          "revision": 3
+        }
+      ],
+      "state": "NORMAL"
+    }
+  },
+  "src.screening.offensive.v3.contracts.regime.RegimeSourceRevision": {
+    "canonical_payload_sha256": "0033b2cf6357d23198ae522e45e5312be525b082117152ebe096a9cd5343e213",
+    "content_hash": "0033b2cf6357d23198ae522e45e5312be525b082117152ebe096a9cd5343e213",
+    "json_payload_sha256": "0033b2cf6357d23198ae522e45e5312be525b082117152ebe096a9cd5343e213",
+    "model_module": "src.screening.offensive.v3.contracts.regime",
+    "model_name": "RegimeSourceRevision",
+    "payload": {
+      "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence_id": "regime-evidence-1",
+      "revision": 1
+    }
+  },
+  "src.screening.offensive.v3.contracts.trial.BaselineShadowPolicyBinding": {
+    "canonical_payload_sha256": "7891d52c1768dc1314a025b8d4de317cea642e2437e4a4f2b1f7cc71ee94873d",
+    "content_hash": "7891d52c1768dc1314a025b8d4de317cea642e2437e4a4f2b1f7cc71ee94873d",
+    "json_payload_sha256": "7891d52c1768dc1314a025b8d4de317cea642e2437e4a4f2b1f7cc71ee94873d",
+    "model_module": "src.screening.offensive.v3.contracts.trial",
+    "model_name": "BaselineShadowPolicyBinding",
+    "payload": {
+      "baseline_policy_activation_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "policy_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "policy_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "source_kind": "BASELINE_POLICY_ACTIVATION"
+    }
+  },
+  "src.screening.offensive.v3.contracts.trial.TargetShadowPolicyBinding": {
+    "canonical_payload_sha256": "a209fcc403897494484c239d57b4a62ec6e16f20a5036db541648a0a192fde2e",
+    "content_hash": "a209fcc403897494484c239d57b4a62ec6e16f20a5036db541648a0a192fde2e",
+    "json_payload_sha256": "a209fcc403897494484c239d57b4a62ec6e16f20a5036db541648a0a192fde2e",
+    "model_module": "src.screening.offensive.v3.contracts.trial",
+    "model_name": "TargetShadowPolicyBinding",
+    "payload": {
+      "policy_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "policy_snapshot_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "source_kind": "TARGET_POLICY_REGISTRATION",
+      "target_policy_registration_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  },
   "src.screening.offensive.v3.contracts.trust.Capability": {
     "canonical_payload_sha256": "2c0b9f93c57f14fbfb32ba367bbe7d5aa0662697d71d5f6be1105cc17e5d376b",
     "content_hash": "2c0b9f93c57f14fbfb32ba367bbe7d5aa0662697d71d5f6be1105cc17e5d376b",
@@ -6415,9 +6644,9 @@
     }
   },
   "src.screening.offensive.v3.policy.models.PolicySnapshot": {
-    "canonical_payload_sha256": "47bd095bcfaed7166c941cf5641f72252dc4e0ffb3026718a3d3b02bc5860abc",
-    "content_hash": "47bd095bcfaed7166c941cf5641f72252dc4e0ffb3026718a3d3b02bc5860abc",
-    "json_payload_sha256": "47bd095bcfaed7166c941cf5641f72252dc4e0ffb3026718a3d3b02bc5860abc",
+    "canonical_payload_sha256": "9131e1668e387396894ee6fd8dd2d40561562016f9279bd69756ea6a18ece04b",
+    "content_hash": "9131e1668e387396894ee6fd8dd2d40561562016f9279bd69756ea6a18ece04b",
+    "json_payload_sha256": "9131e1668e387396894ee6fd8dd2d40561562016f9279bd69756ea6a18ece04b",
     "model_module": "src.screening.offensive.v3.policy.models",
     "model_name": "PolicySnapshot",
     "payload": {
@@ -6471,6 +6700,7 @@
       "policy_version": "policy-v2",
       "producers": {
         "btst_enabled": false,
+        "btst_regime_admission_mode": "IGNORE",
         "composite_sizing_enabled": false,
         "oversold_bounce_enabled": false,
         "regime_sizing_enabled": false,
@@ -6485,12 +6715,12 @@
       },
       "risk_epoch": 1,
       "runtime_mode": "off",
-      "schema_major": 1,
+      "schema_major": 2,
       "versions": {
         "board_rule_version": "ashare-board-prefix-v1",
         "calendar_version": "sse-szse-official-sessions.v1",
-        "cost_version": "cn-a-share-costs.v1",
-        "execution_contract_version": "t0-close-t1-open-t10-open.v1",
+        "cost_version": "cn-a-share-costs-30bps-tax.v2",
+        "execution_contract_version": "t0-close-t1-open-t10-open-slippage.v2",
         "exit_policy_version": "t10-open.v1",
         "governance_version": "growth-kernel-governance.v2",
         "lot_rule_version": "cn-board-lot.v1",
@@ -6511,13 +6741,14 @@
     }
   },
   "src.screening.offensive.v3.policy.models.ProducerPolicy": {
-    "canonical_payload_sha256": "d17b6e5eacc1d471671d742b0813ba801bc45f40303abaeb5be2ebef1cacd759",
-    "content_hash": "d17b6e5eacc1d471671d742b0813ba801bc45f40303abaeb5be2ebef1cacd759",
-    "json_payload_sha256": "d17b6e5eacc1d471671d742b0813ba801bc45f40303abaeb5be2ebef1cacd759",
+    "canonical_payload_sha256": "704176137dc20711169abb8ac2593579ab2b63181cdd7fc9c97a40a203944a6f",
+    "content_hash": "704176137dc20711169abb8ac2593579ab2b63181cdd7fc9c97a40a203944a6f",
+    "json_payload_sha256": "704176137dc20711169abb8ac2593579ab2b63181cdd7fc9c97a40a203944a6f",
     "model_module": "src.screening.offensive.v3.policy.models",
     "model_name": "ProducerPolicy",
     "payload": {
       "btst_enabled": false,
+      "btst_regime_admission_mode": "IGNORE",
       "composite_sizing_enabled": false,
       "oversold_bounce_enabled": false,
       "regime_sizing_enabled": false,
@@ -6539,9 +6770,9 @@
     }
   },
   "src.screening.offensive.v3.policy.models.VerifiedPolicyActivation": {
-    "canonical_payload_sha256": "807c4387ada4f4529b06ff1828b89c0547b866a0f03d749c32eb1892e856286c",
-    "content_hash": "807c4387ada4f4529b06ff1828b89c0547b866a0f03d749c32eb1892e856286c",
-    "json_payload_sha256": "807c4387ada4f4529b06ff1828b89c0547b866a0f03d749c32eb1892e856286c",
+    "canonical_payload_sha256": "3751013335d4a9d00a6e3fd1cfab46fd9024ed5a52397dd9b580f78a9a22b3c8",
+    "content_hash": "3751013335d4a9d00a6e3fd1cfab46fd9024ed5a52397dd9b580f78a9a22b3c8",
+    "json_payload_sha256": "3751013335d4a9d00a6e3fd1cfab46fd9024ed5a52397dd9b580f78a9a22b3c8",
     "model_module": "src.screening.offensive.v3.policy.models",
     "model_name": "VerifiedPolicyActivation",
     "payload": {
@@ -6614,6 +6845,7 @@
         "policy_version": "policy-v2",
         "producers": {
           "btst_enabled": false,
+          "btst_regime_admission_mode": "IGNORE",
           "composite_sizing_enabled": false,
           "oversold_bounce_enabled": false,
           "regime_sizing_enabled": false,
@@ -6628,12 +6860,12 @@
         },
         "risk_epoch": 1,
         "runtime_mode": "off",
-        "schema_major": 1,
+        "schema_major": 2,
         "versions": {
           "board_rule_version": "ashare-board-prefix-v1",
           "calendar_version": "sse-szse-official-sessions.v1",
-          "cost_version": "cn-a-share-costs.v1",
-          "execution_contract_version": "t0-close-t1-open-t10-open.v1",
+          "cost_version": "cn-a-share-costs-30bps-tax.v2",
+          "execution_contract_version": "t0-close-t1-open-t10-open-slippage.v2",
           "exit_policy_version": "t10-open.v1",
           "governance_version": "growth-kernel-governance.v2",
           "lot_rule_version": "cn-board-lot.v1",

@@ -59,6 +59,7 @@ import sqlalchemy as sa
 from pydantic import Field, model_validator
 
 from src.screening.offensive.v3.capital.fees import FeeRevisionKind
+from src.screening.offensive.v3.capital.provenance import CapitalSourceBinding
 from src.screening.offensive.v3.capital.rounding import round_half_even_div
 from src.screening.offensive.v3.contracts import (
     CanonicalModel,
@@ -160,6 +161,9 @@ class ExecutionRevisionRequest(CanonicalModel):
     effective_at: UtcInstant
     as_of: UtcInstant
     expected_stream_version: NonNegativeInt
+    # Plan 08 Task 7: optional causal binding; the official shadow adapter
+    # requires it on every decision-derived correction.
+    source_binding: CapitalSourceBinding | None = None
 
     @model_validator(mode="after")
     def validate_revision_shape(self) -> "ExecutionRevisionRequest":

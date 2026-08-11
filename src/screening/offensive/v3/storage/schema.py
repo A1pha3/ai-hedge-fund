@@ -215,6 +215,9 @@ def build_metadata() -> sa.MetaData:
         sa.Column("covered_live_order_id", sa.Text, nullable=True),
         sa.Column("reserved_entry_gross_cents", sa.BigInteger, nullable=False),
         sa.Column("state", sa.Text, nullable=False),
+        # Plan 08 Task 7: canonical JSON of the causal CapitalSourceBinding;
+        # NULL for legacy/non-Trial reserves.
+        sa.Column("source_binding_json", sa.Text, nullable=True),
         sa.Column("created_at", sa.Text, nullable=False),
     )
 

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum, StrEnum
-import hashlib
-import json
 from math import gcd
 from typing import Annotated, Any, TypeAlias
 
@@ -16,11 +16,11 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    field_validator,
+    model_validator,
     Strict,
     StringConstraints,
     TypeAdapter,
-    field_validator,
-    model_validator,
 )
 
 
@@ -112,8 +112,6 @@ SchemaVersion: TypeAlias = Annotated[
     AfterValidator(_validate_schema_version),
 ]
 """The only Revision 2 schema major accepted by new domain contracts."""
-
-SchemaVersionAdapter = TypeAdapter(SchemaVersion)
 
 
 Sha256: TypeAlias = Annotated[
@@ -213,20 +211,31 @@ def content_hash(value: Any) -> str:
 
 
 def domain_hash(domain: str, schema_major: int, payload: Any) -> str:
-    """Hash a Revision 2 payload in one explicit domain-separated envelope."""
+    """Hash a Revision 2 payload in one explicit domain-separated envelope.
+
+    The envelope ``schema_major`` is the domain-hashing scheme version. Revision
+    2 artifacts seal under major 2; a ShadowDecision whose own artifact schema
+    major is 3 seals its envelope under major 3. This does not loosen the
+    ``SchemaVersion`` field type that every Revision 2 contract still enforces.
+    """
 
     if not isinstance(domain, str) or not domain or domain.strip() != domain:
         raise ValueError("domain must be nonempty and have no surrounding whitespace")
-    schema_version = SchemaVersionAdapter.validate_python(schema_major)
+    if type(schema_major) is not int or schema_major not in _DOMAIN_SCHEMA_MAJORS:
+        raise ValueError(f"unsupported domain schema major: {schema_major!r}; " f"expected one of {sorted(_DOMAIN_SCHEMA_MAJORS)}")
     return hashlib.sha256(
         canonical_json_bytes(
             {
                 "domain": domain,
-                "schema_major": schema_version,
+                "schema_major": schema_major,
                 "payload": payload,
             }
         )
     ).hexdigest()
+
+
+#: Domain-hash envelope schema majors admitted by this revision.
+_DOMAIN_SCHEMA_MAJORS: frozenset[int] = frozenset({2, 3})
 
 
 class CanonicalModel(BaseModel):

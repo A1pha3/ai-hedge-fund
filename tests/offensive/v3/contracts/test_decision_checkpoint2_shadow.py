@@ -76,7 +76,7 @@ def test_shadow_has_complete_counterfactual_provenance_and_independent_lines() -
         "economic_lineage_id",
         "stage_id",
         "trial_id",
-        "policy_activation_hash",
+        "shadow_policy_binding",
         "policy_epoch",
         "evidence_set_merkle_root",
         "shadow_stage_binding",
@@ -114,6 +114,7 @@ def test_shadow_has_complete_counterfactual_provenance_and_independent_lines() -
         "estimated_cash_reserve_cents",
         "cost_assumption_version",
         "execution_assumption_version",
+        "target_exit_session",
     }
     shadow = _shadow(api)
     assert shadow.execution_authority == "NONE"

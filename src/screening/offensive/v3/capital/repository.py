@@ -171,6 +171,7 @@ from src.screening.offensive.v3.capital.nav import (
     nav_ratio_lowest_terms,
     unit_price_lowest_terms,
 )
+from src.screening.offensive.v3.capital.provenance import CapitalSourceBinding
 from src.screening.offensive.v3.capital.reserves import (
     CONFIRMED_RELEASE_REASONS,
     CapitalReserveState,
@@ -339,6 +340,10 @@ class CapitalCommandPayload(CanonicalModel):
     # persisted with LATE_CORRECTION revision events; the projection and
     # the conservation replay both recompute from it.
     execution_revision: ExecutionRevisionFact | None = None
+    # Plan 08 Task 7: the causal artifact this capital fact derives from
+    # (a ShadowDecision or SnapshotEvidence); recorded with the event so
+    # replays can verify the derivation.
+    source_binding: CapitalSourceBinding | None = None
 
     @model_validator(mode="after")
     def validate_security_attribution(self) -> "CapitalCommandPayload":
@@ -3366,6 +3371,7 @@ def _fee_payload(
         effective_at=request.effective_at,
         source_authority=request.source_authority,
         legs=legs,
+        source_binding=request.source_binding,
     )
 
 
@@ -3711,80 +3717,7 @@ class CapitalRepository:
         """Create a LIVE entry reserve consuming available capital."""
 
         def operation(context: GatewayTransactionContext) -> CapitalRiskSnapshot:
-            conn = context._connection
-            self._stored_binding(context)
-            # New entry risk is blocked once the account is terminating,
-            # terminated, or insolvent (exits and reconciliation continue).
-            context.require_lifecycle(
-                frozenset({LifecycleState.ACTIVE})
-            )
-            reserves_table = context._table("reserves")
-            existing = conn.execute(
-                reserves_table.select().where(
-                    reserves_table.c.source_id == request.source_id
-                )
-            ).first()
-            if existing is not None:
-                identical = (
-                    existing.research_program_id == request.research_program_id
-                    and existing.economic_lineage_id
-                    == request.economic_lineage_id
-                    and existing.stage_id == request.stage_id
-                    and int(existing.reserved_entry_gross_cents)
-                    == request.reserved_entry_gross_cents
-                )
-                if identical:
-                    return context.read_capital_risk_snapshot(request.as_of)
-                raise CapitalConflict(
-                    "reserve_source_conflict",
-                    "reserve source identity already committed with different"
-                    " content",
-                    source_id=request.source_id,
-                )
-            projection_table = context._table("capital_projection")
-            projection = conn.execute(projection_table.select()).one()
-            available = int(projection.available_cash_cents)
-            if available < request.reserved_entry_gross_cents:
-                raise CapitalConflict(
-                    "insufficient_available_cash",
-                    "reserve exceeds available capital",
-                    available_cash_cents=available,
-                    requested_cents=request.reserved_entry_gross_cents,
-                )
-            now = utc_iso(request.as_of)
-            conn.execute(
-                projection_table.update()
-                .where(
-                    projection_table.c.portfolio_id == projection.portfolio_id
-                )
-                .values(
-                    available_cash_cents=(
-                        available - request.reserved_entry_gross_cents
-                    ),
-                    restricted_cash_cents=(
-                        int(projection.restricted_cash_cents)
-                        + request.reserved_entry_gross_cents
-                    ),
-                    capital_version=int(projection.capital_version) + 1,
-                    updated_at=now,
-                    updated_by_event_id=None,
-                )
-            )
-            conn.execute(
-                reserves_table.insert().values(
-                    reserve_id=f"rsv:{request.source_id}",
-                    source_id=request.source_id,
-                    research_program_id=request.research_program_id,
-                    economic_lineage_id=request.economic_lineage_id,
-                    stage_id=request.stage_id,
-                    covered_live_order_id=None,
-                    reserved_entry_gross_cents=(
-                        request.reserved_entry_gross_cents
-                    ),
-                    state=CapitalReserveState.LIVE.value,
-                    created_at=now,
-                )
-            )
+            self._reserve_entry_in_context(context, request)
             # Reserves are risk: latch and stage-loss state update in the
             # same transaction as the reserve fact.
             context.recompute_risk_and_stage_loss(
@@ -3793,6 +3726,183 @@ class CapitalRepository:
             return context.read_capital_risk_snapshot(request.as_of)
 
         return self._run_write_transaction(operation)
+
+    def reserve_entries_atomic(
+        self, requests: tuple[ReserveEntryRequest, ...]
+    ) -> CapitalRiskSnapshot:
+        """Create several LIVE entry reserves in ONE capital transaction.
+
+        All requests validate (identity, expected stream version, total
+        cash, lifecycle, source bindings) before any row is inserted; any
+        failure rolls back every line and the versions. Input order
+        canonicalizes by ``source_id`` so exact replays converge quietly
+        regardless of caller order. Risk/stage-loss recompute once after
+        the complete batch.
+        """
+
+        if not requests:
+            raise CapitalConflict(
+                "empty_reserve_batch",
+                "reserve_entries_atomic requires at least one line",
+            )
+        ordered = tuple(sorted(requests, key=lambda item: item.source_id))
+
+        def operation(context: GatewayTransactionContext) -> CapitalRiskSnapshot:
+            self._validate_reserve_batch(context, ordered)
+            for request in ordered:
+                self._reserve_entry_in_context(context, request)
+            context.recompute_risk_and_stage_loss(
+                ordered[-1].as_of,
+                f"reserve-batch:{','.join(item.source_id for item in ordered)}",
+            )
+            return context.read_capital_risk_snapshot(ordered[-1].as_of)
+
+        return self._run_write_transaction(operation)
+
+    def _validate_reserve_batch(
+        self,
+        context: GatewayTransactionContext,
+        ordered: tuple[ReserveEntryRequest, ...],
+    ) -> None:
+        conn = context._connection
+        self._stored_binding(context)
+        # New entry risk is blocked once the account is terminating,
+        # terminated, or insolvent (exits and reconciliation continue).
+        context.require_lifecycle(frozenset({LifecycleState.ACTIVE}))
+        projection_table = context._table("capital_projection")
+        projection = conn.execute(projection_table.select()).one()
+        available = int(projection.available_cash_cents)
+        requested = 0
+        reserves_table = context._table("reserves")
+        for request in ordered:
+            existing = conn.execute(
+                reserves_table.select().where(
+                    reserves_table.c.source_id == request.source_id
+                )
+            ).first()
+            if existing is not None:
+                identical = (
+                    existing.research_program_id
+                    == request.research_program_id
+                    and existing.economic_lineage_id
+                    == request.economic_lineage_id
+                    and existing.stage_id == request.stage_id
+                    and int(existing.reserved_entry_gross_cents)
+                    == request.reserved_entry_gross_cents
+                    and existing.source_binding_json
+                    == (
+                        request.source_binding.model_dump_json()
+                        if request.source_binding is not None
+                        else None
+                    )
+                )
+                if identical:
+                    # Quiet convergence: the line is already committed; its
+                    # cash already sits in the restricted projection.
+                    continue
+                raise CapitalConflict(
+                    "reserve_source_conflict",
+                    "reserve source identity already committed with different"
+                    " content",
+                    source_id=request.source_id,
+                )
+            requested += request.reserved_entry_gross_cents
+        if requested > available:
+            raise CapitalConflict(
+                "insufficient_available_cash",
+                "batch reserve exceeds available capital",
+                available_cash_cents=available,
+                requested_cents=requested,
+            )
+
+    def _reserve_entry_in_context(
+        self,
+        context: GatewayTransactionContext,
+        request: ReserveEntryRequest,
+    ) -> None:
+        conn = context._connection
+        self._stored_binding(context)
+        # New entry risk is blocked once the account is terminating,
+        # terminated, or insolvent (exits and reconciliation continue).
+        context.require_lifecycle(frozenset({LifecycleState.ACTIVE}))
+        reserves_table = context._table("reserves")
+        existing = conn.execute(
+            reserves_table.select().where(
+                reserves_table.c.source_id == request.source_id
+            )
+        ).first()
+        if existing is not None:
+            identical = (
+                existing.research_program_id == request.research_program_id
+                and existing.economic_lineage_id
+                == request.economic_lineage_id
+                and existing.stage_id == request.stage_id
+                and int(existing.reserved_entry_gross_cents)
+                == request.reserved_entry_gross_cents
+                and existing.source_binding_json
+                == (
+                    request.source_binding.model_dump_json()
+                    if request.source_binding is not None
+                    else None
+                )
+            )
+            if identical:
+                return
+            raise CapitalConflict(
+                "reserve_source_conflict",
+                "reserve source identity already committed with different"
+                " content",
+                source_id=request.source_id,
+            )
+        projection_table = context._table("capital_projection")
+        projection = conn.execute(projection_table.select()).one()
+        available = int(projection.available_cash_cents)
+        if available < request.reserved_entry_gross_cents:
+            raise CapitalConflict(
+                "insufficient_available_cash",
+                "reserve exceeds available capital",
+                available_cash_cents=available,
+                requested_cents=request.reserved_entry_gross_cents,
+            )
+        now = utc_iso(request.as_of)
+        conn.execute(
+            projection_table.update()
+            .where(
+                projection_table.c.portfolio_id == projection.portfolio_id
+            )
+            .values(
+                available_cash_cents=(
+                    available - request.reserved_entry_gross_cents
+                ),
+                restricted_cash_cents=(
+                    int(projection.restricted_cash_cents)
+                    + request.reserved_entry_gross_cents
+                ),
+                capital_version=int(projection.capital_version) + 1,
+                updated_at=now,
+                updated_by_event_id=None,
+            )
+        )
+        conn.execute(
+            reserves_table.insert().values(
+                reserve_id=f"rsv:{request.source_id}",
+                source_id=request.source_id,
+                research_program_id=request.research_program_id,
+                economic_lineage_id=request.economic_lineage_id,
+                stage_id=request.stage_id,
+                covered_live_order_id=None,
+                reserved_entry_gross_cents=(
+                    request.reserved_entry_gross_cents
+                ),
+                state=CapitalReserveState.LIVE.value,
+                source_binding_json=(
+                    request.source_binding.model_dump_json()
+                    if request.source_binding is not None
+                    else None
+                ),
+                created_at=now,
+            )
+        )
 
     def release_reserve(self, request: ReserveReleaseRequest) -> CapitalRiskSnapshot:
         """Walk one reserve through the cancel/release state machine.
@@ -3965,6 +4075,7 @@ class CapitalRepository:
                 effective_at=request.effective_at,
                 as_of=request.as_of,
                 expected_stream_version=request.expected_stream_version,
+                source_binding=request.source_binding,
             )
             return self._record_execution_bust_or_correction(revision_request)
         gross_cents = fill_gross_cents(request.price_micros, request.quantity)
@@ -4069,6 +4180,7 @@ class CapitalRepository:
                     if attribution is not None
                     else UNATTRIBUTED_STAGE
                 ),
+                source_binding=request.source_binding,
             )
             idempotency_key = fill_idempotency_key(
                 request.execution_id, request.revision
@@ -4915,6 +5027,7 @@ class CapitalRepository:
                 economic_lineage_id=original["economic_lineage_id"],
                 stage_id=original["stage_id"],
                 execution_revision=fact,
+                source_binding=request.source_binding,
             )
             payload_hash = payload.content_hash()
 
@@ -5464,6 +5577,7 @@ class CapitalRepository:
                         idempotency_key, fact
                     ),
                     execution_revision=fact,
+                    source_binding=request.source_binding,
                 )
                 expected_hash = payload.content_hash()
             else:
@@ -7355,6 +7469,7 @@ class CapitalRepository:
                 effective_at=request.effective_at,
                 source_authority=request.source_authority,
                 legs=legs,
+                source_binding=request.source_binding,
             )
             command = CapitalCommand(
                 idempotency_key=request.idempotency_key,
@@ -7519,6 +7634,7 @@ class CapitalRepository:
                 source_authority=request.source_authority,
                 correction_of_event_id=request.restates_event_id,
                 legs=legs,
+                source_binding=request.source_binding,
             )
             command = CapitalCommand(
                 idempotency_key=request.idempotency_key,

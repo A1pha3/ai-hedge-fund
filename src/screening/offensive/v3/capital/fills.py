@@ -22,6 +22,7 @@ from typing import Annotated
 from pydantic import Field, model_validator
 
 from src.screening.offensive.v3.capital.fees import FeePolicy, FeeRevisionKind
+from src.screening.offensive.v3.capital.provenance import CapitalSourceBinding
 from src.screening.offensive.v3.contracts import (
     CanonicalModel,
     ExecutionRevisionKind,
@@ -78,6 +79,9 @@ class FillRevisionRequest(CanonicalModel):
     effective_at: UtcInstant
     as_of: UtcInstant
     expected_stream_version: NonNegativeInt
+    # Plan 08 Task 7: optional causal binding; the official shadow adapter
+    # requires it on every decision-derived fill.
+    source_binding: CapitalSourceBinding | None = None
 
     @model_validator(mode="after")
     def validate_identity(self) -> "FillRevisionRequest":
@@ -167,6 +171,9 @@ class FeeRevisionRequest(CanonicalModel):
     effective_at: UtcInstant
     as_of: UtcInstant
     expected_stream_version: NonNegativeInt
+    # Plan 08 Task 7: optional causal binding; the official shadow adapter
+    # requires it on every decision-derived fee.
+    source_binding: CapitalSourceBinding | None = None
 
     @model_validator(mode="after")
     def validate_times(self) -> "FeeRevisionRequest":

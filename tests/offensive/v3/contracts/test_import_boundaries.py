@@ -57,6 +57,7 @@ CONTRACT_EXTERNAL_ROOTS = {
     "base64",
     "binascii",
     "collections",
+    "dataclasses",
     "datetime",
     "decimal",
     "enum",

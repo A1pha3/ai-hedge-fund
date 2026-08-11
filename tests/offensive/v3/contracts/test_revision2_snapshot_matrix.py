@@ -51,10 +51,13 @@ MODEL_MODULES = (
     "src.screening.offensive.v3.contracts.authorization",
     "src.screening.offensive.v3.contracts.base",
     "src.screening.offensive.v3.contracts.capital",
+    "src.screening.offensive.v3.contracts.compatibility",
     "src.screening.offensive.v3.contracts.decision",
     "src.screening.offensive.v3.contracts.evidence",
     "src.screening.offensive.v3.contracts.execution",
     "src.screening.offensive.v3.contracts.governance",
+    "src.screening.offensive.v3.contracts.regime",
+    "src.screening.offensive.v3.contracts.trial",
     "src.screening.offensive.v3.contracts.trust",
     "src.screening.offensive.v3.policy.models",
     "src.screening.offensive.v3.trust.registry",
@@ -81,11 +84,11 @@ def _defined_subclasses(base: type[Any], modules: tuple[str, ...]) -> set[str]:
 
 
 def test_static_inventory_cardinality_is_explicit() -> None:
-    assert len(PUBLIC_MODEL_CASES) == 99
-    assert len(PUBLIC_ENUMS) == 42
+    assert len(PUBLIC_MODEL_CASES) == 105
+    assert len(PUBLIC_ENUMS) == 47
     assert len(PUBLIC_ALIASES) == 11
     assert len(PUBLIC_PORTS) == 6
-    assert len(ARTIFACT_HASH_CASES) == 30
+    assert len(ARTIFACT_HASH_CASES) == 31
     assert len(EVIDENCE_RECORD_SPECIALIZATIONS) == 4
 
 

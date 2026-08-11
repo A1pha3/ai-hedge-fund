@@ -47,6 +47,10 @@ from src.screening.offensive.v3.contracts.decision import (
     ShadowOrderLine,
     ShadowStageBinding,
 )
+from src.screening.offensive.v3.contracts.trial import (
+    BaselineShadowPolicyBinding,
+    ShadowPolicySourceKind,
+)
 from src.screening.offensive.v3.reporting.service import ShadowDecisionReader
 from src.screening.offensive.v3.reporting.shadow_store import InMemoryShadowStore
 
@@ -109,15 +113,16 @@ def _make_shadow_decision(
         estimated_cash_reserve_cents=1050 * 100 + 315,
         cost_assumption_version="cn-a-share-costs.v1",
         execution_assumption_version="btst.funnel.v1",
+        target_exit_session=signal_session + timedelta(days=10),
     )
     issuer = ShadowIssuerBinding(
         issuer_id="growth-kernel.shadow.service",
         key_id="shadow-key-1",
         capability_artifact_kind=ArtifactKind.SHADOW_DECISION,
-        capability_namespace="growth-kernel.shadow.v1",
+        capability_namespace="growth-kernel.shadow.v2",
         capability_mode=ExecutionMode.DAILY_BAR_PROXY,
-        capability_schema_major=2,
-        capability_version="growth-kernel-shadow.v1",
+        capability_schema_major=3,
+        capability_version="growth-kernel-shadow.v2",
         capability_scope=f"portfolio:{portfolio_id}",
         verification_result="VALID",
         verified_at=created_at,
@@ -127,8 +132,8 @@ def _make_shadow_decision(
     )
     return ShadowDecision(
         artifact_kind=ArtifactKind.SHADOW_DECISION,
-        artifact_namespace="growth-kernel.shadow.v1",
-        schema_major=2,
+        artifact_namespace="growth-kernel.shadow.v2",
+        schema_major=3,
         shadow_decision_id=shadow_decision_id,
         counterfactual_key=CounterfactualDecisionKey(
             portfolio_id=portfolio_id,
@@ -144,7 +149,12 @@ def _make_shadow_decision(
         economic_lineage_id="eline-1",
         stage_id="stage-1",
         trial_id="trial-1",
-        policy_activation_hash=HASH,
+        shadow_policy_binding=BaselineShadowPolicyBinding(
+            source_kind=ShadowPolicySourceKind.BASELINE_POLICY_ACTIVATION,
+            baseline_policy_activation_hash=HASH,
+            policy_snapshot_hash=HASH,
+            policy_fingerprint=HASH,
+        ),
         policy_epoch=1,
         evidence_set_merkle_root=HASH,
         shadow_stage_binding=stage_binding,

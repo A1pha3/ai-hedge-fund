@@ -35,23 +35,26 @@ STAGE_ID = "stage-broker-2pct"
 DIFFERENT_LOGICAL_KEY = object()
 
 # Approved from the plain, tests-first payloads above.  These literals are not
-# derived from the production model under test.
+# derived from the production model under test.  Re-approved for the official
+# Trial execution/cost versions (t1-open-t10-open-slippage.v2 /
+# cn-a-share-30bps-tax.v2); the field-level diff vs the v1 approval touches
+# only those version strings and the artifact hashes they feed.
 APPROVED_SERIALIZATION_DIGESTS = {
     "seal": (
-        "dfc448302773b47645e410139ebaa75e6f147168ed74c50f5e639cf407fcd8d2",
-        "6e7652cbd93395f244e70177a1cb8192b3105effd8cb5847deebd872ac933a8d",
+        "4952edac2f11b57b14bd3c4890d30ba5584144ab27677740f4c7075dc0588ffb",
+        "f60ce29b40a8f2fd55e893b0d3b5959d151ef004195ffa067c783513c28f39e7",
     ),
     "shadow": (
-        "b184967439c18291684fd8d745bcf0028e987d9754de97da64fc28b59ea37036",
-        "c483bc0a4b00069c212384ab4d4dad4584d7ebb1d8a00fbd2551b9ea1f69a307",
+        "07e355206ffe89ab3833a00022a2cb3f04d79464bc2d58dee89609a638564dee",
+        "5aab361743b455592aed78d0378be7c723f7962e01c2504938680da9e1a7c446",
     ),
     "permit": (
-        "81b4c813527ec6de0ab3b488723f0707010d16f7507f731e0ce084813e450170",
-        "a771715d05cf2afcd9008399d6bf4eb7b266f2f9b404de18dc47e94abe6f5019",
+        "559cd93df4056284cde96eb0fbc5a3af3a5f3513eb6f39e26ee69a2818f7ce5c",
+        "b8ce5ea9897686b8a46cd097e890168b2b65793ba4a4a657dbf3d779dc80bac7",
     ),
     "receipt": (
-        "77300ae676130de664ce953ee22f7e002da24ff9f4d107ac993ed67e39c86c72",
-        "0df134750710aebd33e4a4f647080e81e30642b85e12493d2d968d38aca307dc",
+        "398ee67e3560b4dc79ef70b8c0507e93574df2ce4068b579dd97ee4dafd3f3ba",
+        "bc7f5d3317b758318f42d5b5d2176f8803bf7a36bb46d379f4840121577cd668",
     ),
 }
 
@@ -71,6 +74,8 @@ CHECKPOINT2_NAMES = (
     "CounterfactualDecisionKey",
     "ShadowOrderLine",
     "ShadowDecision",
+    "BaselineShadowPolicyBinding",
+    "ShadowPolicySourceKind",
     "PermitDisposition",
     "PermitReasonCode",
     "PermitNonceState",
@@ -156,8 +161,8 @@ def _plan(
         strategy_semver="3.0.0",
         behavior_fingerprint=HASH_A,
         policy_epoch=4,
-        execution_version="t1-open-t10-open.v1",
-        cost_version="cn-a-share.v1",
+        execution_version="t1-open-t10-open-slippage.v2",
+        cost_version="cn-a-share-30bps-tax.v2",
         effective_at=CLOSE_FINALIZED,
         provider_published_at=CLOSE_FINALIZED,
         observed_at=CLOSE_FINALIZED,
@@ -288,7 +293,7 @@ def _window_payload(api, **overrides):
         "cutoff_snapshot_version": 4,
         "cutoff_snapshot_session": TARGET_SESSION,
         "cutoff_snapshot_exchange_id": "SSE",
-        "execution_policy_version": "t1-open-t10-open.v1",
+        "execution_policy_version": "t1-open-t10-open-slippage.v2",
         "cutoff_policy_version": "sse-opening-auction.v1",
         "seal_clock_observation": _clock_observation(api),
         "t0_close_finalized_at": CLOSE_FINALIZED,
@@ -629,10 +634,10 @@ def _shadow_issuer(api):
         issuer_id="growth-kernel.shadow.service",
         key_id="shadow-key-1",
         capability_artifact_kind=api.ArtifactKind.SHADOW_DECISION,
-        capability_namespace="growth-kernel.shadow.v1",
+        capability_namespace="growth-kernel.shadow.v2",
         capability_mode=api.ExecutionMode.BROKER_CONFIRMED,
-        capability_schema_major=2,
-        capability_version="growth-kernel-shadow.v1",
+        capability_schema_major=3,
+        capability_version="growth-kernel-shadow.v2",
         capability_scope=f"portfolio:{PORTFOLIO_ID}",
         verification_result="VALID",
         verified_at=CLOSE_FINALIZED,
@@ -680,16 +685,17 @@ def _shadow_line(api, *, suffix="1", security_id="600000.SH"):
         exit_session_ordinal=10,
         estimated_fee_cents=fee,
         estimated_cash_reserve_cents=price * quantity + fee,
-        cost_assumption_version="cn-a-share.v1",
-        execution_assumption_version="t1-open-t10-open.v1",
+        cost_assumption_version="cn-a-share-30bps-tax.v2",
+        execution_assumption_version="t1-open-t10-open-slippage.v2",
+        target_exit_session=date(2026, 8, 8),
     )
 
 
 def _shadow_payload(api, **overrides):
     values = {
         "artifact_kind": api.ArtifactKind.SHADOW_DECISION,
-        "artifact_namespace": "growth-kernel.shadow.v1",
-        "schema_major": 2,
+        "artifact_namespace": "growth-kernel.shadow.v2",
+        "schema_major": 3,
         "shadow_decision_id": "shadow-decision-1",
         "counterfactual_key": api.CounterfactualDecisionKey(
             portfolio_id=PORTFOLIO_ID,
@@ -705,7 +711,12 @@ def _shadow_payload(api, **overrides):
         "economic_lineage_id": "auto-lineage",
         "stage_id": "auto-shadow-stage",
         "trial_id": "auto-shadow-trial",
-        "policy_activation_hash": HASH_A,
+        "shadow_policy_binding": api.BaselineShadowPolicyBinding(
+            source_kind=api.ShadowPolicySourceKind.BASELINE_POLICY_ACTIVATION,
+            baseline_policy_activation_hash=HASH_A,
+            policy_snapshot_hash=HASH_B,
+            policy_fingerprint=EVIDENCE_ROOT,
+        ),
         "policy_epoch": 4,
         "evidence_set_merkle_root": EVIDENCE_ROOT,
         "shadow_stage_binding": _shadow_stage_binding(api),
@@ -713,8 +724,8 @@ def _shadow_payload(api, **overrides):
             _shadow_line(api),
             _shadow_line(api, suffix="2", security_id="600001.SH"),
         ),
-        "cost_assumption_version": "cn-a-share.v1",
-        "execution_assumption_version": "t1-open-t10-open.v1",
+        "cost_assumption_version": "cn-a-share-30bps-tax.v2",
+        "execution_assumption_version": "t1-open-t10-open-slippage.v2",
         "created_at": SEAL_CREATED,
         "available_at": SEAL_CREATED,
         "execution_authority": "NONE",
@@ -1051,7 +1062,7 @@ def _mechanical_binding(
     caps.update(overrides)
     return api.PermitLineMechanicalBinding(
         order_line_id=sealed_line.order_line_id,
-        predicate_policy_version="t1-open-t10-open.v1",
+        predicate_policy_version="t1-open-t10-open-slippage.v2",
         preopen_fact_snapshot_id="preopen-facts-1",
         preopen_fact_snapshot_hash=HASH_A,
         preopen_fact_as_of=preopen_fact_as_of,

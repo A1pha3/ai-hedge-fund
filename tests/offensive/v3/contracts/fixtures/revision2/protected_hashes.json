@@ -1,6 +1,6 @@
 {
   "behavior_fingerprint": {
-    "fingerprint": "cc5aae605fadfdf623eddd38e709ff996c1f4da2e38bdfc595a45fe4117cc5e7",
+    "fingerprint": "eb97f5d77feadc2cc5c687d3d59c992b3ed56a62edaffc5fd87dacf3540136e9",
     "preimage": {
       "policy": {
         "adv": {
@@ -50,6 +50,7 @@
         "policy_epoch": 1,
         "producers": {
           "btst_enabled": false,
+          "btst_regime_admission_mode": "IGNORE",
           "composite_sizing_enabled": false,
           "oversold_bounce_enabled": false,
           "regime_sizing_enabled": false,
@@ -66,8 +67,8 @@
         "versions": {
           "board_rule_version": "ashare-board-prefix-v1",
           "calendar_version": "sse-szse-official-sessions.v1",
-          "cost_version": "cn-a-share-costs.v1",
-          "execution_contract_version": "t0-close-t1-open-t10-open.v1",
+          "cost_version": "cn-a-share-costs-30bps-tax.v2",
+          "execution_contract_version": "t0-close-t1-open-t10-open-slippage.v2",
           "exit_policy_version": "t10-open.v1",
           "governance_version": "growth-kernel-governance.v2",
           "lot_rule_version": "cn-board-lot.v1",
@@ -80,7 +81,7 @@
         "strategy_semver": "3.0.0"
       }
     },
-    "sha256": "cc5aae605fadfdf623eddd38e709ff996c1f4da2e38bdfc595a45fe4117cc5e7"
+    "sha256": "eb97f5d77feadc2cc5c687d3d59c992b3ed56a62edaffc5fd87dacf3540136e9"
   },
   "broker_enablement_approval_preimage": {
     "approval_preimage_hash": "9e90723c9039dcb65ab0a055fca1c4245fe8177a704aa6efa21d3bcb2eaa6728",
@@ -88,27 +89,27 @@
     "preimage": {
       "domain": "ai-hedge-fund.v3.governance.broker-enablement-manifest.approval-preimage.v1",
       "payload": {
-        "manifest_id": "broker_enablement_manifest-1",
-        "portfolio_id": "portfolio-1",
-        "broker_account_id": "account-1",
-        "issued_at": "2026-07-19T08:00:00Z",
-        "expires_at": "2026-07-19T09:00:00Z",
-        "one_shot": true,
-        "issuer_id": "governance",
-        "issuer_capability": "governance.broker.enablement.v1",
-        "schema_major": 2,
-        "broker_account_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "broker_environment_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "base_currency": "CNY",
-        "currency_definition_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "trusted_clock_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "authenticated_raw_envelope_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "pagination_cursor_retention_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "client_order_idempotency_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "auction_tif_cutoff_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "exit_rate_limit_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "authenticated_raw_envelope_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "base_currency": "CNY",
+        "broker_account_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "broker_account_id": "account-1",
+        "broker_environment_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "client_order_idempotency_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "credential_session_network_fencing_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "profile_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "currency_definition_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "exit_rate_limit_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "expires_at": "2026-07-19T09:00:00Z",
+        "issued_at": "2026-07-19T08:00:00Z",
+        "issuer_capability": "governance.broker.enablement.v1",
+        "issuer_id": "governance",
+        "manifest_id": "broker_enablement_manifest-1",
+        "one_shot": true,
+        "pagination_cursor_retention_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "portfolio_id": "portfolio-1",
+        "profile_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "schema_major": 2,
+        "trusted_clock_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       "schema_major": 2
     },
@@ -246,7 +247,7 @@
     "sha256": "eb7c310bd4078a44cae3766a650e66e28f6373fd72b196e02179d5720b5cef71"
   },
   "policy_fingerprint": {
-    "fingerprint": "47bd095bcfaed7166c941cf5641f72252dc4e0ffb3026718a3d3b02bc5860abc",
+    "fingerprint": "9131e1668e387396894ee6fd8dd2d40561562016f9279bd69756ea6a18ece04b",
     "preimage": {
       "adv": {
         "lookback_sessions": 20,
@@ -298,6 +299,7 @@
       "policy_version": "policy-v2",
       "producers": {
         "btst_enabled": false,
+        "btst_regime_admission_mode": "IGNORE",
         "composite_sizing_enabled": false,
         "oversold_bounce_enabled": false,
         "regime_sizing_enabled": false,
@@ -312,12 +314,12 @@
       },
       "risk_epoch": 1,
       "runtime_mode": "off",
-      "schema_major": 1,
+      "schema_major": 2,
       "versions": {
         "board_rule_version": "ashare-board-prefix-v1",
         "calendar_version": "sse-szse-official-sessions.v1",
-        "cost_version": "cn-a-share-costs.v1",
-        "execution_contract_version": "t0-close-t1-open-t10-open.v1",
+        "cost_version": "cn-a-share-costs-30bps-tax.v2",
+        "execution_contract_version": "t0-close-t1-open-t10-open-slippage.v2",
         "exit_policy_version": "t10-open.v1",
         "governance_version": "growth-kernel-governance.v2",
         "lot_rule_version": "cn-board-lot.v1",
@@ -325,7 +327,7 @@
         "setup_version": "daily-action-setups-v1"
       }
     },
-    "sha256": "47bd095bcfaed7166c941cf5641f72252dc4e0ffb3026718a3d3b02bc5860abc"
+    "sha256": "9131e1668e387396894ee6fd8dd2d40561562016f9279bd69756ea6a18ece04b"
   },
   "signed_envelope_signing_input": {
     "preimage": {

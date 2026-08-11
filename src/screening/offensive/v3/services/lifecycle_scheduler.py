@@ -424,6 +424,18 @@ class LifecycleScheduler:
         """
         return self._exit_lane.exit_state(position_lineage_id, economic_lot_id)
 
+    def release_exit_lease(self, *, lease_id: str) -> None:
+        """显式释放一个 exit work lease 回池(透传 lane 的 owner 语义)。
+
+        以本实例的 ``_worker_id`` 为释放主体; lane 守卫未知 lease /
+        owner 不匹配 fail-closed, 已释放 lease 幂等返回。释放 lease 从不
+        改变 mandate 或其 attempt ledger — 只归还 claim 让后续 session 可
+        重新 lease。shutdown 后调用 → code ``SCHEDULER_SHUTDOWN``。
+        """
+
+        self._require_active()
+        self._exit_lane.release_lease(lease_id, worker_id=self._worker_id)
+
     # -- 进程 lease -----------------------------------------------------------
 
     def write_process_lease(self, path: Path) -> None:

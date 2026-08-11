@@ -157,6 +157,10 @@ from src.screening.offensive.v3.contracts.decision import (
     ShadowOrderLine,
     ShadowStageBinding,
 )
+from src.screening.offensive.v3.contracts.trial import (
+    BaselineShadowPolicyBinding,
+    ShadowPolicySourceKind,
+)
 from src.screening.offensive.v3.contracts.evidence import (
     EvidenceRecord,
     SignalEvidence,
@@ -301,6 +305,7 @@ class DailyActionFlow:
         shadow_persister: ShadowPersisterPort,
         mode_provider: Callable[[], RuntimeMode],
         policy_activation: Any,
+        policy_snapshot: Any,
         envelope: Any,
         portfolio_id: str,
         deadlines: Any,
@@ -327,6 +332,9 @@ class DailyActionFlow:
             mode_provider: 每次 ``run`` 最先读取的 runtime_mode 投影。
             policy_activation: 传给 kernel 的 ``PolicyActivation`` (来自
                 policy snapshot)。
+            policy_snapshot: 传给 kernel 的显式 ``PolicySnapshot`` (Step 5:
+                可执行路径验证 ``policy_activation.policy_snapshot_hash ==
+                policy_snapshot.content_hash()`` 后才映射 constraints)。
             envelope: 传给 kernel 的 ``CapitalAuthorizationEnvelope``。
             portfolio_id: 本 flow 治理的 portfolio。
             deadlines: 传给 kernel 的 ``DeadlineContract`` (kernel input)。
@@ -349,6 +357,7 @@ class DailyActionFlow:
         self._shadow_persister = shadow_persister
         self._mode_provider = mode_provider
         self._policy_activation = policy_activation
+        self._policy_snapshot = policy_snapshot
         self._envelope = envelope
         self._portfolio_id = portfolio_id
         self._deadlines = deadlines
@@ -660,6 +669,7 @@ class DailyActionFlow:
             decision_cycle_id=decision_cycle_id,
             mode=self._policy_activation.mode,
             policy_activation=self._policy_activation,
+            policy_snapshot=self._policy_snapshot,
             envelope=self._envelope,
             capital=capital,
             deadlines=self._deadlines,
@@ -724,6 +734,8 @@ class DailyActionFlow:
                 decision_line=line,
                 grant=grant,
                 family_id=family_id,
+                target_exit_session=snapshot.signal_date
+                + timedelta(days=10),
             )
             for line in decision.lines
             if line.status == "ENTRY_PLANNED"
@@ -739,8 +751,8 @@ class DailyActionFlow:
         )
         return ShadowDecision(
             artifact_kind=ArtifactKind.SHADOW_DECISION,
-            artifact_namespace="growth-kernel.shadow.v1",
-            schema_major=2,
+            artifact_namespace="growth-kernel.shadow.v2",
+            schema_major=3,
             shadow_decision_id=shadow_decision_id,
             counterfactual_key=CounterfactualDecisionKey(
                 portfolio_id=self._portfolio_id,
@@ -757,7 +769,12 @@ class DailyActionFlow:
             economic_lineage_id=grant.economic_lineage_id,
             stage_id=grant.stage_id,
             trial_id=grant.trial_id,
-            policy_activation_hash=self._policy_activation.artifact_hash(),
+            shadow_policy_binding=BaselineShadowPolicyBinding(
+                source_kind=ShadowPolicySourceKind.BASELINE_POLICY_ACTIVATION,
+                baseline_policy_activation_hash=self._policy_activation.artifact_hash(),
+                policy_snapshot_hash=capital.policy_activation_hash,
+                policy_fingerprint=capital.policy_activation_hash,
+            ),
             policy_epoch=self._policy_activation.policy_epoch,
             evidence_set_merkle_root=capital.policy_activation_hash,
             shadow_stage_binding=binding,
@@ -776,6 +793,7 @@ class DailyActionFlow:
         decision_line: PortfolioDecisionLine,
         grant: Any,
         family_id: str,
+        target_exit_session: date,
     ) -> ShadowOrderLine:
         """一条 counterfactual 入口 line: 由 kernel sizing 输出派生 economics。
 
@@ -832,6 +850,7 @@ class DailyActionFlow:
             estimated_cash_reserve_cents=shadow_gross + fee,
             cost_assumption_version=grant.cost_version,
             execution_assumption_version=grant.execution_version,
+            target_exit_session=target_exit_session,
         )
 
     def _shadow_issuer_binding(self, trusted_at: datetime) -> ShadowIssuerBinding:
@@ -840,10 +859,10 @@ class DailyActionFlow:
             issuer_id="growth-kernel.shadow.service",
             key_id="shadow-key-1",
             capability_artifact_kind=ArtifactKind.SHADOW_DECISION,
-            capability_namespace="growth-kernel.shadow.v1",
+            capability_namespace="growth-kernel.shadow.v2",
             capability_mode=self._policy_activation.mode,
-            capability_schema_major=2,
-            capability_version="growth-kernel-shadow.v1",
+            capability_schema_major=3,
+            capability_version="growth-kernel-shadow.v2",
             capability_scope=f"portfolio:{self._portfolio_id}",
             verification_result="VALID",
             verified_at=trusted_at,

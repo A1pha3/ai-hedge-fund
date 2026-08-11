@@ -44,11 +44,11 @@ BEHAVIOR = "b" * 64
 PORTFOLIO = "paper-v3"
 
 
-def _policy_activation() -> PolicyActivation:
+def _policy_activation(policy_snapshot_hash=HASH, **overrides) -> PolicyActivation:
     return PolicyActivation(
         portfolio_id=PORTFOLIO,
         mode=ExecutionMode.DAILY_BAR_PROXY,
-        policy_snapshot_hash=HASH,
+        policy_snapshot_hash=policy_snapshot_hash,
         predecessor_policy_activation_hash="0" * 64,
         trust_bundle_hash=HASH,
         registry_epoch=1,
@@ -60,6 +60,7 @@ def _policy_activation() -> PolicyActivation:
         issuer_id="governance.service",
         issuer_capability="governance.policy.activation.v1",
         schema_major=2,
+        **overrides,
     )
 
 

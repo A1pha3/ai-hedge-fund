@@ -672,3 +672,29 @@ def test_btst_has_no_runtime_gate(world: _World) -> None:
     records = world.service.produce_and_publish(_snapshot())
     assert len(records) == 4
     assert len(world.signed_payloads) == 4
+
+
+def test_selected_envelopes_carry_runner_parseable_identity(
+    world: _World,
+) -> None:
+    """ForwardPairedTrialRunner 依赖的 SELECTED 信封身份契约。
+
+    evidence_id 形如 ``btst:<snapshot_id>:<ticker>:<setup>:SELECTED``, 其中
+    snapshot_id 自身是 ``sha256:<hex>`` (含冒号) — 所以 ticker 永远在
+    split 结果的倒数第三位, 不因 snapshot 前缀长度变化而漂移。runner 解析
+    ticker 用 ``split(":")[-3]``; 本测试锁定该解析输入, 防止生产者侧改
+    evidence_id 布局导致 runner 静默产出错误 security_id。
+    """
+    records = world.service.produce_and_publish(_snapshot())
+    selected = tuple(r for r in records if r.evidence.stage is SignalStage.SELECTED)
+    assert len(selected) == 2
+    for record in selected:
+        parts = record.evidence.evidence_id.split(":")
+        assert parts[0] == "btst"
+        assert parts[1] == "sha256"
+        assert len(parts[2]) == 64  # 快照指纹 hex
+        ticker = parts[-3]
+        assert ticker in TICKERS
+        assert parts[-1] == SignalStage.SELECTED.value
+        # 与 runner 解析一致: ticker 是倒数第三位
+        assert ticker == record.evidence.evidence_id.split(":")[-3]

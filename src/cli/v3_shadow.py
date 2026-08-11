@@ -338,6 +338,7 @@ def _compose_daily_action_services(
     trusted_evidence_cutoff,
     v2_plans_reader,
     snapshot_loader=None,
+    policy_snapshot=None,
 ):
     """构造 DailyActionFlow + ReportingService + 共享 InMemoryShadowStore。
 
@@ -345,6 +346,11 @@ def _compose_daily_action_services(
     (读面 ``active_shadow``), 使 flow 产出的 ShadowDecision 在同进程被 reporting
     读回投影。capital_reader 同时作 flow 的 capital_reader + lifecycle_reader
     (CapitalGatewayApi 满足两者; graceful reader 亦然)。
+
+    ``policy_snapshot`` (可选, Task 5): 真实加载的 ``PolicySnapshot``; 传入后
+    flow 的可执行路径校验 ``policy_activation.policy_snapshot_hash ==
+    policy_snapshot.content_hash()`` 才映射 constraints。CLI 由
+    ``run_v3_shadow_daily_action`` 从 config 加载并传入。
     """
     from src.screening.offensive.v3.evidence.blob_store import BlobStore
     from src.screening.offensive.v3.evidence.repository import EvidenceRepository
@@ -405,6 +411,7 @@ def _compose_daily_action_services(
         evidence_ids=(),
         v2_plans_reader=v2_plans_reader,
         program="daily-action",
+        policy_snapshot=policy_snapshot,
     )
     reporting = ReportingService(
         capital_reader=capital_reader,
@@ -509,6 +516,7 @@ def run_v3_shadow_daily_action(
             portfolio_id=config.portfolio_id,
             trust_bundle_hash=ctx.active_bundle_hash,
             reference_time=now,
+            policy_snapshot=policy,
         )
         close = _signal_session_close(signal_date)
         deadlines = derive_deadline_contract(close_finalized_at=close)
@@ -522,6 +530,7 @@ def run_v3_shadow_daily_action(
             deadlines=deadlines,
             trusted_evidence_cutoff=close,
             v2_plans_reader=v2_plans_reader,
+            policy_snapshot=policy,
         )
         flow.run(
             signal_date=signal_date,

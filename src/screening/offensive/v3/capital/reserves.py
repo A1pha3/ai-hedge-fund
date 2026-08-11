@@ -28,6 +28,7 @@ from typing import Annotated
 
 from pydantic import Field, model_validator
 
+from src.screening.offensive.v3.capital.provenance import CapitalSourceBinding
 from src.screening.offensive.v3.contracts import CanonicalModel, UtcInstant
 from src.screening.offensive.v3.contracts.evidence import NonEmptyStr
 
@@ -70,6 +71,9 @@ class ReserveEntryRequest(CanonicalModel):
     reserved_entry_gross_cents: PositiveCents
     expected_stream_version: NonNegativeInt
     as_of: UtcInstant
+    # Plan 08 Task 7: optional causal binding; the official shadow adapter
+    # requires it on every decision-derived reserve.
+    source_binding: CapitalSourceBinding | None = None
 
 
 class ReserveReleaseRequest(CanonicalModel):

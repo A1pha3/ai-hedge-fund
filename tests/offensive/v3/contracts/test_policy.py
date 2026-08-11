@@ -412,12 +412,12 @@ def test_initial_policy_binds_adv_execution_and_governance_versions() -> None:
     assert policy.execution.permit_deadline_before_auction_minutes == 20
     assert policy.execution.gateway_send_deadline_before_auction_minutes == 10
     assert policy.execution.broker_auction_submission_cutoff_cn == "09:20:00"
-    assert policy.versions.cost_version == "cn-a-share-costs.v1"
+    assert policy.versions.cost_version == "cn-a-share-costs-30bps-tax.v2"
     assert policy.versions.board_rule_version == "ashare-board-prefix-v1"
     assert policy.versions.calendar_version == "sse-szse-official-sessions.v1"
     assert policy.versions.lot_rule_version == "cn-board-lot.v1"
     assert policy.versions.setup_version == "daily-action-setups-v1"
-    assert policy.versions.execution_contract_version == "t0-close-t1-open-t10-open.v1"
+    assert policy.versions.execution_contract_version == "t0-close-t1-open-t10-open-slippage.v2"
     assert policy.versions.governance_version == "growth-kernel-governance.v1"
 
 
@@ -529,7 +529,8 @@ def test_behavior_fingerprint_excludes_operational_fencing_epochs(
 @pytest.mark.parametrize(
     ("field_path", "value"),
     [
-        (("schema_major",), 2),
+        (("schema_major",), 1),
+        (("schema_major",), 3),
         (("policy_version",), ""),
         (("versions", "cost_version"), "  "),
         (("versions", "calendar_version"), "not a version"),
@@ -554,7 +555,7 @@ def test_loader_rejects_unknown_major_and_invalid_versions(
 def test_loader_rejects_duplicate_keys(tmp_path: Path) -> None:
     policy_api = _policy_api()
     raw = INITIAL_POLICY_PATH.read_text(encoding="utf-8")
-    duplicate = raw.replace('"schema_major":1', '"schema_major":1,"schema_major":1', 1)
+    duplicate = raw.replace('"schema_major":2', '"schema_major":2,"schema_major":2', 1)
     path = tmp_path / "policy.json"
     path.write_text(duplicate, encoding="utf-8")
 
