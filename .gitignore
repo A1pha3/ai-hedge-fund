@@ -119,4 +119,5 @@ r.json
 r.md
 data/feature_cache/
 data/paper_trading/
+data/paper_trading_backtest/
 data/paper_trading_v2/
