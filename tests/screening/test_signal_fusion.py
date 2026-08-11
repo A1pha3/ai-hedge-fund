@@ -453,6 +453,51 @@ def test_compute_score_b_clamps_to_negative_one() -> None:
     assert score == -1.0
 
 
+def test_trend_strategy_deweighted_to_zero() -> None:
+    """trend 默认权重 = 0.0 (2026-08-11 降权, 全 universe 实验证无前向预测力).
+
+    全 universe 涨停候选日 (n=13762, exec 测度, 无选择偏差) 实测:
+    Spearman(trend_conf, T+10) = -0.0318, 五分位 WR 42-45% 不分离, 跨窗 H1=-0.111/H2=+0.007
+    不一致. long(+1) 子集内部 (n=11647) ρ=-0.0203 同样无 IC. trend 占原 0.40 最大权重
+    却无贡献 → 降权到 0 (零风险单调改善, 非翻转 — short 子集 53.6% WR 是真信号不能翻转,
+    long 内部弱且跨窗不一致翻转不稳健, 避 NS-4 盲翻转覆辙).
+    见 docs/superpowers/specs/2026-08-11-trend-strategy-deweight-design.md
+    """
+    from src.screening.models import DEFAULT_STRATEGY_WEIGHTS
+
+    # trend 降权到 0; 其他三策略权重之和仍归一到有效集
+    assert DEFAULT_STRATEGY_WEIGHTS["trend"] == 0.0
+    # 剩余三策略权重为正 (归一化后放大, 不为 0)
+    assert DEFAULT_STRATEGY_WEIGHTS["mean_reversion"] > 0.0
+    assert DEFAULT_STRATEGY_WEIGHTS["fundamental"] > 0.0
+    assert DEFAULT_STRATEGY_WEIGHTS["event_sentiment"] > 0.0
+
+
+def test_compute_score_b_trend_zero_normalizes_remaining() -> None:
+    """trend=0 时 score_b 计算正常, 剩余策略归一化放大, trend 信号被忽略.
+
+    验证 _normalize_active_weights 安全处理 trend=0 (与 weekday/streak 移出 strength 同构):
+    trend 即便给强信号也不贡献分数 (weight=0), fundamental/MR 归一化后决定 score.
+    """
+    from src.screening.signal_fusion import compute_score_b
+
+    signals = {
+        "trend": StrategySignal(direction=1, confidence=100.0, completeness=1.0),
+        "fundamental": StrategySignal(direction=1, confidence=80.0, completeness=1.0),
+        "mean_reversion": StrategySignal(direction=1, confidence=80.0, completeness=1.0),
+        "event_sentiment": StrategySignal(direction=1, confidence=80.0, completeness=1.0),
+    }
+    # trend=0, 其余均分
+    weights = {"trend": 0.0, "fundamental": 0.5, "mean_reversion": 0.3, "event_sentiment": 0.2}
+    score = compute_score_b(signals, weights, [])
+    # trend confidence=100 但 weight=0 → 不贡献; 其余归一化后正分
+    assert score > 0.0
+    # 对比: 若 trend 有权重, 分数应更高 (trend confidence 100 拉高)
+    weights_with_trend = {"trend": 0.4, "fundamental": 0.3, "mean_reversion": 0.2, "event_sentiment": 0.1}
+    score_with_trend = compute_score_b(signals, weights_with_trend, [])
+    assert score_with_trend > score
+
+
 def test_mean_reversion_not_reversed_by_default() -> None:
     """MR multiplier 保持 1.0 (正向, 不反转).
 
@@ -1111,10 +1156,10 @@ class TestNormalizeActiveWeights:
         }
         weights = {"trend": 0.0, "fundamental": 0.0}
         result = _normalize_active_weights(weights, signals)
-        # falls back to DEFAULT_STRATEGY_WEIGHTS (88ce357e: trend=0.40, fundamental=0.15)
-        # → 归一化 trend 0.40/0.55, fundamental 0.15/0.55
-        assert result["trend"] == pytest.approx(0.40 / 0.55)
-        assert result["fundamental"] == pytest.approx(0.15 / 0.55)
+        # falls back to DEFAULT_STRATEGY_WEIGHTS (2026-08-11: trend 降权到 0, fundamental=0.15),
+        # 仅对 active signals {trend, fundamental} 归一: trend 0.0/0.15=0.0, fundamental 0.15/0.15=1.0
+        assert result["trend"] == pytest.approx(0.0)
+        assert result["fundamental"] == pytest.approx(1.0)
 
     def test_all_signals_excluded_returns_empty(self):
         from src.screening.signal_fusion import _normalize_active_weights

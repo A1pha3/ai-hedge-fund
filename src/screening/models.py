@@ -95,7 +95,14 @@ class MarketState(BaseModel):
 
 
 DEFAULT_STRATEGY_WEIGHTS: dict[str, float] = {
-    "trend": 0.40,
+    # trend 降权到 0 (2026-08-11): 全 universe 涨停候选日实验 (n=13762, exec 测度, 无选择
+    # 偏差) 证 trend 无前向预测力 — Spearman(conf,T+10)=-0.0318, 五分位 WR 42-45% 不分离,
+    # 跨窗 H1=-0.111/H2=+0.007 不一致; long(+1) 子集内部 (n=11647) ρ=-0.0203 同样无 IC.
+    # 非翻转 (short 子集 53.6% WR 是真信号, long 弱且跨窗不稳, 避 NS-4 盲翻转覆辙) —
+    # 降权一个无 IC 因子是零风险单调改善, 让有 IC 的 fundamental/MR 归一化放大.
+    # 实验脚本 scripts/trend_gate_unbiased_experiment.py; 决策包
+    # docs/superpowers/specs/2026-08-11-trend-strategy-deweight-design.md
+    "trend": 0.0,
     "mean_reversion": 0.20,
     "fundamental": 0.15,
     "event_sentiment": 0.05,
