@@ -26,9 +26,8 @@ class TestStrategyWeights:
     def test_default_weights_from_authority(self) -> None:
         """默认权重从 DEFAULT_STRATEGY_WEIGHTS 派生 (2026-08-12 重构后不再 0.25 等分).
 
-        旧测试断言 0.25 等分 + sum=1, 但权威源在 trend/MR 降权后 sum=0.20 —
-        旧的"0.25 等分"是 stale 硬编码, 与 --auto 生产路径用两套冲突的默认权重.
-        现在默认值从权威源派生, sum 可以 < 1 (disabled 策略 weight=0).
+        旧测试断言 0.25 等分 + sum=1，但这会让 --auto 与重算路径拥有两套默认值。
+        当前默认值直接从权威源派生，权威源变化时两条路径同步。
         """
         from src.screening.models import DEFAULT_STRATEGY_WEIGHTS
 
@@ -55,8 +54,7 @@ class TestStrategyWeights:
     def test_reject_all_zero(self) -> None:
         """全 0 权重被拒 (无法归一化, 会污染排序).
 
-        2026-08-12: 校验从 sum==1 放宽为 sum>0 — 权威源在策略降权时 sum 可以 < 1
-        (当前 sum=0.20: trend/MR weight=0). 但全 0 仍然非法.
+        校验允许任意正的相对权重和，但全 0 仍然非法。
         """
         with pytest.raises(ValueError, match="权重之和必须 > 0"):
             StrategyWeights(trend=0.0, mean_reversion=0.0, fundamental=0.0, event_sentiment=0.0)

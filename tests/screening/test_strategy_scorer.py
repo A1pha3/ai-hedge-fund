@@ -1838,6 +1838,36 @@ def test_score_event_sentiment_strategy_from_inputs_uses_supplied_news() -> None
     assert "event_freshness" in signal.sub_factors
 
 
+def test_score_event_sentiment_strategy_from_inputs_excludes_news_after_decision_cutoff() -> None:
+    """A future article must not contribute to an earlier reconstructed decision."""
+    from src.screening.strategy_scorer_event_sentiment_helpers import (
+        score_event_sentiment_strategy_from_inputs,
+    )
+
+    future_news = CompanyNews(
+        ticker="000001",
+        title="公司重大回购并中标",
+        author="source",
+        source="source",
+        date="2026-08-11 10:00:00",
+        url="https://example.test/future-news",
+        sentiment="positive",
+        content="业绩大增，公司完成回购并中标",
+    )
+
+    signal = score_event_sentiment_strategy_from_inputs(
+        [future_news],
+        [],
+        "20260226",
+    )
+
+    assert signal.direction == 0
+    assert signal.confidence == 0.0
+    assert signal.completeness == 0.0
+    assert signal.sub_factors["news_sentiment"]["metrics"] == {}
+    assert signal.sub_factors["event_freshness"]["metrics"] == {}
+
+
 # ---------------------------------------------------------------------------
 # Provider-forbidden guard: score_batch runs with every public provider patched
 # to raise — proving Step 2 scoring is local-only.

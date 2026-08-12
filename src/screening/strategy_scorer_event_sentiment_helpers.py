@@ -242,8 +242,9 @@ def _days_old_between(trade_date_only, item_date_only) -> int:
     that keeps its time-of-day made ``timedelta(...).days`` floor a prior-day-morning
     article to 0 days (inflating freshness) and a post-decision same-day article to
     -1 → ``max(-1, 0) == 0`` (look-ahead: future info scored as freshest). Compare on
-    ``.date()`` only so the day boundary is unambiguous; the per-source news fetch
-    already filters articles whose calendar date is after ``end_date``.
+    ``.date()`` only so the day boundary is unambiguous. Both provider-loaded and
+    pure-input paths must enforce the decision cutoff before reaching this helper;
+    this defensive clamp is not permission to score a future row.
     """
     delta = (trade_date_only - item_date_only).days
     return delta if delta >= 0 else 0
@@ -446,7 +447,16 @@ def score_event_sentiment_strategy_from_inputs(
     trades: list[InsiderTrade],
     trade_date: str,
 ) -> StrategySignal:
-    return _build_event_sentiment_strategy_signal(news_items=news_items, trades=trades, trade_date=trade_date)
+    """Score supplied evidence using only news known by the decision date."""
+
+    decision_date = datetime.strptime(trade_date, "%Y%m%d").date()
+    eligible_news = [
+        item
+        for item in news_items
+        if (published_at := _safe_date(item.date)) is not None
+        and published_at.date() <= decision_date
+    ]
+    return _build_event_sentiment_strategy_signal(news_items=eligible_news, trades=trades, trade_date=trade_date)
 
 
 def _build_event_sentiment_strategy_signal(*, news_items: list[CompanyNews], trades: list[InsiderTrade], trade_date: str) -> StrategySignal:

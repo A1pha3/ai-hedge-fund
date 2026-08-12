@@ -37,7 +37,7 @@ MAX_STRATEGY_SCORE: float = 100.0
 WEIGHT_SUM_TOLERANCE: float = 1e-6
 
 #: 默认权重 — 从权威源 :data:`src.screening.models.DEFAULT_STRATEGY_WEIGHTS` 派生 (2026-08-12).
-#: 此前是独立的 0.25 等分硬编码, 与权威源 (trend/MR 降权后 sum=0.20) 不一致,
+#: 此前是独立的 0.25 等分硬编码, 与权威源不一致,
 #: 导致 --auto 生产路径与 web slider 重算用两套互相冲突的"默认"权重. 派生后
 #: 权威源改一处, 此处自动同步. sum 可以 < 1.0 (disabled 策略 weight=0 是合法的);
 #: StrategyWeights.__post_init__ 已放宽 sum 校验到 sum>0, 归一化在消费时进行.
@@ -66,8 +66,8 @@ class StrategyWeights:
 
     Examples:
         >>> w = StrategyWeights()  # 默认从 DEFAULT_STRATEGY_WEIGHTS 派生
-        >>> w.to_dict()  # 当前权威源: trend=0, MR=0, f=0.15, e=0.05
-        {'trend': 0.0, 'mean_reversion': 0.0, 'fundamental': 0.15, 'event_sentiment': 0.05}
+        >>> w.to_dict()  # 当前权威源: trend=.40, MR=.20, f=.15, e=.05
+        {'trend': 0.4, 'mean_reversion': 0.2, 'fundamental': 0.15, 'event_sentiment': 0.05}
     """
 
     # 默认值从 DEFAULT_WEIGHTS (= DEFAULT_STRATEGY_WEIGHTS) 派生 (2026-08-12).
@@ -89,8 +89,8 @@ class StrategyWeights:
                 raise ValueError(f"权重 {key} 不能为负数, 当前: {val}")
             if val > 1.0:
                 raise ValueError(f"权重 {key} 不能超过 1.0, 当前: {val}")
-        # 求和校验: 放宽为 sum>0 (2026-08-12). 权威源 DEFAULT_STRATEGY_WEIGHTS
-        # 在策略被降权到 0 时 sum 可以 < 1.0 (当前 sum=0.20: trend/MR disabled).
+        # 求和校验允许任意正的相对权重和；DEFAULT_STRATEGY_WEIGHTS 未来即使
+        # 禁用某个策略也无需凑成 1.0。
         # slider 语义是"指定相对权重", 接受任意正权和, 归一化在消费时 (_normalize_active_weights) 进行.
         # 全 0 仍然非法 (无法归一化, 会污染排序).
         total = self.trend + self.mean_reversion + self.fundamental + self.event_sentiment
@@ -191,7 +191,7 @@ def _compute_weighted_score_b(
         new_score_b = sum_s( weight_s * per_strategy_score[s] ) / (100 * sum_s(weight_s))
 
     权重归一化后计算 (2026-08-12): 此前要求 sum(weight)==1 才能保证输出范围正确,
-    但权威源 DEFAULT_STRATEGY_WEIGHTS 在策略降权时 sum<1 (当前 0.20). 现在显式
+    但权威源 DEFAULT_STRATEGY_WEIGHTS 是相对权重，sum 可能小于 1（当前 0.80）。现在显式
     归一化, 无论权重 sum 是多少, 输出范围都是 [-1, +1], 与生产路径 compute_score_b
     的 _normalize_active_weights 语义一致. 全 0 权重由 __post_init__ 拒绝.
 

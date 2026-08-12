@@ -453,26 +453,16 @@ def test_compute_score_b_clamps_to_negative_one() -> None:
     assert score == -1.0
 
 
-def test_trend_strategy_deweighted_to_zero() -> None:
-    """trend 默认权重 = 0.0 (2026-08-11 降权, 全 universe 实验证无前向预测力).
-
-    全 universe 涨停候选日 (n=13762, exec 测度, 无选择偏差) 实测:
-    Spearman(trend_conf, T+10) = -0.0318, 五分位 WR 42-45% 不分离, 跨窗 H1=-0.111/H2=+0.007
-    不一致. long(+1) 子集内部 (n=11647) ρ=-0.0203 同样无 IC. trend 占原 0.40 最大权重
-    却无贡献 → 降权到 0 (零风险单调改善, 非翻转 — short 子集 53.6% WR 是真信号不能翻转,
-    long 内部弱且跨窗不一致翻转不稳健, 避 NS-4 盲翻转覆辙).
-    见 docs/superpowers/specs/2026-08-11-trend-strategy-deweight-design.md
-    """
+def test_default_strategy_weights_preserve_production_baseline() -> None:
+    """Rejected research reconstructions cannot mutate production defaults."""
     from src.screening.models import DEFAULT_STRATEGY_WEIGHTS
 
-    # trend 降权到 0; 其他三策略权重之和仍归一到有效集
-    assert DEFAULT_STRATEGY_WEIGHTS["trend"] == 0.0
-    # 2026-08-12: mean_reversion 同步降权到 0 (三策略无偏审计 n=16470 证负贡献:
-    # signed Spearman(contrib,T+10)=-0.0819 跨窗同向, T+1 也倒挂; dir+1 WR 41.0% vs
-    # dir-1 51.8%). 剩余两策略权重为正 (归一化后放大)
-    assert DEFAULT_STRATEGY_WEIGHTS["mean_reversion"] == 0.0
-    assert DEFAULT_STRATEGY_WEIGHTS["fundamental"] > 0.0
-    assert DEFAULT_STRATEGY_WEIGHTS["event_sentiment"] > 0.0
+    assert DEFAULT_STRATEGY_WEIGHTS == {
+        "trend": 0.40,
+        "mean_reversion": 0.20,
+        "fundamental": 0.15,
+        "event_sentiment": 0.05,
+    }
 
 
 def test_compute_score_b_trend_zero_normalizes_remaining() -> None:
@@ -799,10 +789,8 @@ def test_fuse_signals_for_ticker_returns_fused_score_with_weights() -> None:
         market_state=MarketState(),
     )
     assert fused.score_b is not None
-    # 2026-08-12: trend/MR 双降权到 0 — 只有 trend 信号时 (权重 0) 无有效权重 →
-    # weights_used 为空, score 归 0 (降权语义: 无贡献因子的信号不再产生分数)
-    assert fused.weights_used == {}
-    assert fused.score_b == 0.0
+    assert fused.weights_used == {"trend": 1.0}
+    assert fused.score_b == pytest.approx(0.7)
 
 
 def test_fuse_signals_for_ticker_uses_market_state_weights() -> None:
@@ -1161,10 +1149,8 @@ class TestNormalizeActiveWeights:
         }
         weights = {"trend": 0.0, "fundamental": 0.0}
         result = _normalize_active_weights(weights, signals)
-        # falls back to DEFAULT_STRATEGY_WEIGHTS (2026-08-11: trend 降权到 0, fundamental=0.15),
-        # 仅对 active signals {trend, fundamental} 归一: trend 0.0/0.15=0.0, fundamental 0.15/0.15=1.0
-        assert result["trend"] == pytest.approx(0.0)
-        assert result["fundamental"] == pytest.approx(1.0)
+        assert result["trend"] == pytest.approx(0.40 / 0.55)
+        assert result["fundamental"] == pytest.approx(0.15 / 0.55)
 
     def test_all_signals_excluded_returns_empty(self):
         from src.screening.signal_fusion import _normalize_active_weights
