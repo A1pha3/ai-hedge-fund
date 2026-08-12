@@ -1210,8 +1210,17 @@ def test_extract_limit_up_tickers_excludes_beijing_exchange():
     assert "830879" not in tickers
 
 
-def test_refresh_daily_action_caches_injects_limit_up_tickers(tmp_path):
+def test_refresh_daily_action_caches_injects_limit_up_tickers(tmp_path, monkeypatch):
     """P0 修复核心: 涨停股 (不在候选池/缓存内) 应被注入 price_cache + fund_flow."""
+    from src.tools import tushare_api
+
+    # 注入前的 SW membership 过滤是本文件的 hermetic 约束: 测试票 000002/000003
+    # 不在真实 SW 成分里, 不 patch 会被生产函数 (真实 tushare 令牌) 全滤掉.
+    monkeypatch.setattr(
+        tushare_api,
+        "get_sw_industry_classification",
+        lambda: {"000001.SZ": "银行", "000002.SZ": "银行", "000003.SZ": "银行"},
+    )
     from src.screening.offensive.cache_refresh import refresh_daily_action_caches
 
     price_cache = tmp_path / "price_cache"
@@ -1354,6 +1363,117 @@ def test_refresh_daily_action_caches_limit_up_not_double_counted_when_in_cache(t
     # 000002 涨停但已在 existing cache, 不算新注入
     assert stats.limit_up_injected == 0
     assert stats.price_total == 2
+
+
+def test_refresh_daily_action_caches_drops_limit_up_without_sw_membership(
+    tmp_path, monkeypatch
+):
+    """P0 回归 (2026-08-11): 上市首日新股涨停注入会阻断 --auto readiness 发布.
+
+    8/11 故障: 301717/688828 上市首日涨停, 被涨停注入拉进冻结宇宙, 但当日
+    SW L1 as-of membership 尚不含它们 (纳入日 > 上市日) → readiness 捕获的
+    SW 映射无法精确覆盖宇宙 → 严格校验 fail-closed 整个发布
+    (``SW mapping must exactly cover frozen universe``)。stock_basic 快照当日
+    必含新股 (list_status=L), 且每次新股上市首日涨停都会复发, 不是瞬时故障。
+
+    修复语义: 注入前按 SW membership 过滤 injected 部分 — 无行业归属的新股
+    既不进冻结宇宙也不进 price cache (当日不参与候选), 使宇宙始终可被 SW
+    精确覆盖; 严格校验语义 (防伪造/防不完整) 保持不变。基础宇宙 (候选池/
+    缓存) 不过滤。数据源不可用 → fail-open 不过滤 (与退市过滤同款语义, 由
+    readiness 严格校验兜底)。
+    """
+    from datetime import date
+
+    from src.screening.offensive.cache_readiness import SuspensionEvidence
+    from src.screening.offensive.cache_refresh import refresh_daily_action_caches
+
+    price_cache = tmp_path / "price_cache"
+    price_cache.mkdir()
+    (price_cache / "000001.csv").write_text(
+        "date,close,open,high,low,pct_change,volume\n2026-07-06,9.8,9.7,9.9,9.6,1.1,1000\n",
+        encoding="utf-8",
+    )
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    (snapshot_dir / "candidate_pool_20260708.json").write_text(
+        json.dumps([{"ticker": "000001"}]),
+        encoding="utf-8",
+    )
+
+    # 8/11 场景: 000002 是上市首日涨停新股 (不在 SW 成分), 000003 是正常涨停股
+    daily_df = _daily_prices(
+        [
+            {"ts_code": "000001.SZ", "pct_chg": 2.0, "close": 10.2},
+            {"ts_code": "000002.SZ", "pct_chg": 20.0, "close": 20.0},
+            {"ts_code": "000003.SZ", "pct_chg": 10.0, "close": 30.0},
+        ]
+    )
+
+    from src.tools import tushare_api
+
+    monkeypatch.setattr(
+        tushare_api,
+        "get_sw_industry_classification",
+        lambda: {"000001.SZ": "银行", "000003.SZ": "银行"},
+    )
+
+    result = refresh_daily_action_caches(
+        "20260708",
+        price_cache_dir=price_cache,
+        fund_flow_cache_dir=tmp_path / "fund_flow_cache",
+        snapshot_dir=snapshot_dir,
+        daily_prices_df=daily_df,
+        backfill_price_history_fn=lambda *_args: _history_rows(),
+        fund_flow_fetch_fn=lambda *_a: pd.DataFrame(),
+        suspension_loader=lambda _trade_date: SuspensionEvidence.available(
+            date(2026, 7, 8), set()
+        ),
+        refresh_industry_index=False,
+        fund_flow_rate_limit_sec=0,
+    )
+
+    assert result.universe_tickers == ("000001", "000003")
+    assert result.stats.limit_up_injected == 1
+    assert (price_cache / "000003.csv").exists()
+    assert not (price_cache / "000002.csv").exists()
+
+
+def test_refresh_daily_action_caches_sw_unavailable_fails_open(tmp_path, monkeypatch):
+    """SW 数据源不可用 → 不过滤注入 (fail-open), 由 readiness 严格校验兜底."""
+    from src.screening.offensive.cache_refresh import refresh_daily_action_caches
+    from src.tools import tushare_api
+
+    monkeypatch.setattr(tushare_api, "get_sw_industry_classification", lambda: None)
+
+    price_cache = tmp_path / "price_cache"
+    price_cache.mkdir()
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    (snapshot_dir / "candidate_pool_20260708.json").write_text(
+        json.dumps([{"ticker": "000001"}]),
+        encoding="utf-8",
+    )
+    daily_df = _daily_prices(
+        [
+            {"ts_code": "000001.SZ", "pct_chg": 2.0, "close": 10.2},
+            {"ts_code": "000002.SZ", "pct_chg": 10.0, "close": 20.0},
+        ]
+    )
+
+    stats = refresh_daily_action_caches(
+        "20260708",
+        price_cache_dir=price_cache,
+        fund_flow_cache_dir=tmp_path / "fund_flow_cache",
+        snapshot_dir=snapshot_dir,
+        daily_prices_df=daily_df,
+        backfill_price_history_fn=lambda *_args: _history_rows(),
+        fund_flow_fetch_fn=lambda *_a: pd.DataFrame(),
+        refresh_industry_index=False,
+        fund_flow_rate_limit_sec=0,
+    )
+
+    assert stats.limit_up_injected == 1
+    assert (price_cache / "000002.csv").exists()
 
 
 # ── 幂等跳写 + 向量化日期 (2026-07-17 性能优化) ────────────────────────────

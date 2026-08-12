@@ -1233,7 +1233,33 @@ def refresh_daily_action_caches(
             daily_batch_fingerprint = None
             resolved_daily_prices = pd.DataFrame(columns=_DAILY_BATCH_COLUMNS)
     injected = sorted(set(limit_up_tickers) - set(base_tickers))
-    frozen_universe = tuple(sorted(set(base_tickers) | set(limit_up_tickers)))
+    if injected:
+        # P0 回归 (2026-08-11): 上市首日新股涨停注入会阻断 --auto readiness
+        # 发布。当日 stock_basic 必含新股 (list_status=L) 而 SW L1 as-of
+        # membership 尚不含它们 (纳入日 > 上市日) — 新股进冻结宇宙后 SW 映射
+        # 无法精确覆盖, 严格校验 fail-closed 整个发布 (``SW mapping must
+        # exactly cover frozen universe``)。修复: 注入前按 SW membership 过滤
+        # injected 部分, 使宇宙始终可被 SW 精确覆盖; 基础宇宙 (候选池/缓存)
+        # 不过滤。数据源不可用 → fail-open 不过滤 (与退市过滤同款语义, 由
+        # readiness 严格校验兜底)。
+        from src.tools.tushare_api import get_sw_industry_classification
+
+        try:
+            sw_membership = get_sw_industry_classification()
+        except Exception as exc:  # noqa: BLE001 - 过滤失败不得拖垮缓存刷新
+            logger.warning("[cache_refresh] 涨停注入 SW 过滤失败, 跳过过滤: %s", exc)
+            sw_membership = None
+        if sw_membership is not None:
+            sw_codes = {_code6(ticker) for ticker in sw_membership}
+            dropped = sorted(ticker for ticker in injected if ticker not in sw_codes)
+            if dropped:
+                logger.info(
+                    "[cache_refresh] 涨停注入剔除无 SW 行业归属 %d 只 (次新股/无成分): %s",
+                    len(dropped),
+                    ",".join(dropped),
+                )
+                injected = [ticker for ticker in injected if ticker in sw_codes]
+    frozen_universe = tuple(sorted(set(base_tickers) | set(injected)))
 
     # Capture every baseline once after the universe is frozen and before any
     # cache write. These detached frames are the only baseline evidence used by

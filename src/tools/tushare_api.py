@@ -1453,7 +1453,18 @@ def _capture_sw_industry_mapping_as_of(
     pro: object,
     signal_date: date,
 ) -> tuple[dict[str, str], str] | None:
-    """Fetch an uncached SW membership projection effective on ``signal_date``."""
+    """Build the SW membership projection effective on ``signal_date``.
+
+    Members are read through ``_cached_tushare_dataframe_call`` (the same
+    cached contract the non-capture path uses), not the uncached
+    ``_call_tushare_dataframe_api``. A transient failure of a live
+    ``index_member`` call therefore falls back to the persisted healthy frame
+    (ttl 7d) instead of silently dropping the whole industry — dropping it
+    made the mapping fail to exactly cover the frozen universe and the strict
+    readiness check fail-closed the entire --auto publication
+    (``shared_source_capture_failed: SW mapping must exactly cover frozen
+    universe``; observed 2026-08-11 21:33).
+    """
 
     source_version = "SW2021"
     index_df = _call_tushare_dataframe_api(
@@ -1475,10 +1486,19 @@ def _capture_sw_industry_mapping_as_of(
             return None
         if index:
             time.sleep(0.35)
-        member_df = _call_tushare_dataframe_api(
-            pro, "index_member", index_code=index_code
+        member_df = _cached_tushare_dataframe_call(
+            pro, "index_member", index_code=index_code, ttl=7 * 86400
         )
         if member_df is None or member_df.empty:
+            # NS-17/BH-017 family: a missing industry here makes the mapping
+            # fail to exactly cover the frozen universe and the strict
+            # readiness check fail-closes the whole --auto publication — it
+            # must be observable, not a silent skip (observed 2026-08-11).
+            logger.warning(
+                "[Tushare] readiness SW capture: 行业 %s(%s) 成员帧缺失 (实时失败且缓存无健康帧), 映射将缺该行业",
+                industry_name,
+                index_code,
+            )
             continue
         for _, member in member_df.iterrows():
             ticker = str(member.get("con_code") or "")

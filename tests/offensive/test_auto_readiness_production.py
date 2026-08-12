@@ -681,6 +681,13 @@ def test_cold_start_default_reference_capture_is_rooted_under_tmp(
                 }])
             raise AssertionError(api_name)
         tushare_api._call_tushare_dataframe_api = provider
+        # 生产 capture 路径经 _cached_tushare_dataframe_call 读取成员帧 — 缓存入口
+        # 同样返回 provider 数据, 否则会回退到真实磁盘缓存 (as-of 语义不同, 断言失真).
+        tushare_api._cached_tushare_dataframe_call = lambda _pro, api_name, **_kwargs: (
+            provider(_pro, api_name, **_kwargs)
+            if api_name in {"index_classify", "index_member"}
+            else tushare_api._cached_tushare_dataframe_call(_pro, api_name, **_kwargs)
+        )
 
         def compute(_trade_date, _top_n):
             assert tushare_api.get_all_stock_basic() is not None
