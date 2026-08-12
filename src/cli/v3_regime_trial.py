@@ -1,17 +1,19 @@
-"""Plan Task 14 Step 5: thin operator CLI for the BTST regime paired trial.
+"""Thin operator CLI for the BTST regime paired-trial primitives.
 
 Four subcommands over one on-disk Trial root:
 
 - ``validate``        — read-only: load the sealed governance bundle, the
   equal-genesis manifest, the session spine, and verify they are mutually
-  consistent. Strictly no writes.
-- ``decide-session``  — mutating: construct the :class:`ForwardPairedTrialRunner`
-  and decide one enrolled signal session (the side-effect boundary is the
-  atomic pair commit; a replay exact-validates the pair).
-- ``advance-session`` — mutating: drive one market session of both arms
-  through the replay engine / :class:`ShadowProxyLifecycle`.
-- ``assess``          — read-only except for the deletable report it writes
-  to the explicit ``--output`` path.
+  consistent. This is the only currently usable command; it strictly does
+  not write.
+- ``decide-session``  — reserved entrypoint that fails closed until the real
+  producer input and independent per-arm capital context are wired.
+- ``advance-session`` — reserved entrypoint that fails closed until the
+  exchange-calendar, cutoff, bar, mark, corporate-action, and lot-lifecycle
+  context is wired.
+- ``assess``          — reserved entrypoint that fails closed without real
+  replay, per-arm capital, and evidence-consumption inputs. It writes no
+  output while those inputs are unavailable.
 
 Security boundary (pinned by ``test_v3_regime_trial_cli`` +
 ``test_regime_trial_import_boundary``):
@@ -27,17 +29,12 @@ Security boundary (pinned by ``test_v3_regime_trial_cli`` +
   reaches broker, gateway authority/decisions, activation, outbox, or
   ``shadow_trust``.
 
-Execution boundary: ``validate`` and ``assess`` are self-contained over the
-sealed artifacts. ``decide-session`` and ``advance-session`` load and verify
-the sealed trial, then fail closed: the forward decision needs the BTST
-producer's Ed25519 trust chain and the PIT capital baseline that the
-privileged worker (Plan 06+) injects — the standalone CLI takes only
-``--root`` and ``--trial-id`` and cannot synthesize either without crossing
-the ``shadow_trust`` boundary the import guard forbids. The commands exist
-as the operator-facing entrypoints and document that boundary honestly
-rather than shipping trust-chain fabrication. The green Task 11 (runner),
-Task 12 (replay), and Task 13 (evaluator) suites prove the delegated
-execution they hand off to.
+Execution boundary: only ``validate`` is self-contained over the sealed
+artifacts. ``decide-session``, ``advance-session``, and ``assess`` first load
+and verify the sealed registration, then fail closed because their required
+operational inputs are not connected to this standalone CLI. The Task 11–13
+runner, replay, and evaluator primitives and tests do not make an official
+Trial executable or evaluable by themselves.
 """
 
 from __future__ import annotations
@@ -60,7 +57,8 @@ _LAYOUT_DIRS: tuple[str, ...] = ("archive", "blobs")
 
 class RegimeTrialCliError(RuntimeError):
     """Fail-closed rejection of a CLI operation (bad root, missing artifact,
-    unsealed trial, privileged context required). Never swallowed by ``main``."""
+    unsealed trial, or unavailable operational inputs). Never swallowed by
+    ``main``."""
 
     def __init__(self, code: str, message: str, **details: object) -> None:
         super().__init__(f"{code}: {message}")
@@ -300,67 +298,23 @@ def assess_trial(
     output: str | Path,
     clock: Callable[[], datetime] | None = None,
 ) -> int:
-    """Render the deletable assessment projection to the explicit --output path.
+    """Fail closed until the real assessment inputs are operationally wired.
 
-    Read-only except for the one report file. The projection references only
-    content-addressed artifact hashes; deleting it loses no truth. The
-    headline is NOT_ELIGIBLE when any gate cannot be proven green and at
-    most INACTIVE_PROMOTION_CANDIDATE when all pass.
+    A sealed Trial registration is insufficient to derive replay, per-arm
+    capital, and evidence-consumption hashes or their eligibility gates.
+    Placeholder hashes and all-false gates would be a fabricated assessment,
+    so this command creates no output while those inputs are unavailable.
     """
 
     sealed = _load_sealed_trial(root, trial_id, clock=clock)
-    report = _render_assessment(sealed)
-    out = Path(output)
-    if ".." in out.parts or out.is_symlink():
-        raise RegimeTrialCliError(
-            "output_path_unsafe",
-            "the assessment output path must be a real, non-traversal path",
-            output=str(output),
-        )
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(report, encoding="utf-8")
-    return 0
-
-
-def _render_assessment(sealed: _SealedTrial) -> str:
-    """Render the deletable assessment projection from the sealed artifacts.
-
-    A CLI-driven assessment with no replay/capital report hashes on hand is
-    NOT_ELIGIBLE by construction: every gate the projection cannot prove
-    green is false. The report is still a valid deletable projection — it
-    references only sealed hashes and computed gates.
-    """
-
-    from src.screening.offensive.v3.reporting import render_trial_assessment
-    from src.screening.offensive.v3.reporting.trial_projection import (
-        EligibilityGates,
-        TrialAssessmentProjection,
-    )
-
-    bundle = sealed.bundle
-    projection = TrialAssessmentProjection(
+    raise RegimeTrialCliError(
+        "assessment_inputs_unavailable",
+        "assess requires official current and stress replay outputs, independent"
+        " per-arm capital reports, and the evidence-consumption ledger; the"
+        " standalone CLI cannot derive those facts from the sealed registration",
         trial_id=sealed.trial_id,
-        research_program_id=bundle.trial_manifest.research_program_id,
-        economic_lineage_id=bundle.trial_manifest.economic_lineage_id,
-        trial_manifest_hash=bundle.trial_manifest.artifact_hash(),
-        sap_manifest_hash=bundle.sap_manifest.artifact_hash(),
-        stage_manifest_hash="0" * 64,
-        session_spine_hash="0" * 64,
-        genesis_manifest_hash=sealed.genesis_manifest.normalized_genesis_hash,
-        pair_decision_hashes=(),
-        current_replay_hash="0" * 64,
-        stress_replay_hash="0" * 64,
-        champion_capital_report_hash="0" * 64,
-        challenger_capital_report_hash="0" * 64,
-        consumption_ledger_hash="0" * 64,
-        mode="DAILY_BAR_PROXY",
-        eligibility=EligibilityGates(
-            **{field: False for field in EligibilityGates.model_fields}
-        ),
-        assessed_at=sealed.clock(),
-        evidence_cutoff=sealed.clock(),
+        output=str(output),
     )
-    return render_trial_assessment(projection)
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +345,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_validate.add_argument("--trial-id", required=True, dest="trial_id")
 
     p_decide = sub.add_parser(
-        "decide-session", help="decide one enrolled signal session"
+        "decide-session",
+        help="unavailable: requires wired producer and per-arm capital context",
     )
     p_decide.add_argument("--root", required=True)
     p_decide.add_argument("--trial-id", required=True, dest="trial_id")
@@ -400,7 +355,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     p_advance = sub.add_parser(
-        "advance-session", help="advance one market session of both arms"
+        "advance-session",
+        help="unavailable: requires wired market and lot-lifecycle context",
     )
     p_advance.add_argument("--root", required=True)
     p_advance.add_argument("--trial-id", required=True, dest="trial_id")
@@ -409,7 +365,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     p_assess = sub.add_parser(
-        "assess", help="render the deletable assessment projection"
+        "assess",
+        help="unavailable: requires replay, capital, and consumption inputs",
     )
     p_assess.add_argument("--root", required=True)
     p_assess.add_argument("--trial-id", required=True, dest="trial_id")

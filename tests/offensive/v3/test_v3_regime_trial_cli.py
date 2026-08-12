@@ -1,10 +1,11 @@
-"""Plan Task 14 Step 1: RED tests for the BTST regime paired-trial CLI.
+"""Capability-boundary tests for the BTST regime paired-trial CLI.
 
 The CLI (``src/cli/v3_regime_trial.py`` + ``scripts/v3_regime_trial.py``) is a
-thin operator-facing wrapper over the already-green paired runner
-(Task 11), replay engine (Task 12), and frozen evaluator (Task 13). Its own
-contract — the part this file pins — is the security boundary around an
-on-disk Trial root:
+thin operator-facing surface over paired-trial primitives. Only ``validate``
+is operationally usable today. ``decide-session``, ``advance-session``, and
+``assess`` require operational producer/capital, market/lifecycle, and
+replay/capital/consumption inputs, respectively, and therefore fail closed.
+This file pins the security boundary around an on-disk Trial root:
 
 - the root must resolve to a real directory; path-traversal roots and
   symlink roots are rejected before anything is loaded;
@@ -14,23 +15,24 @@ on-disk Trial root:
 - the CLI recognizes NO policy / regime / cap / mode override flags — those
   frozen values come only from the sealed artifacts, never from the command
   line or the environment;
-- ``assess`` writes its deletable report ONLY to the explicit ``--output``
-  path;
+- ``assess`` never fabricates a report from placeholder hashes or gates and
+  writes no output while its real inputs are unavailable;
 - each subcommand dispatches to exactly one library entrypoint and nothing
   else (no broker, no gateway authority, no activation surface — that
   import boundary is pinned separately in
   ``test_regime_trial_import_boundary``).
 
-The happy-path *execution* (real root → real runner → real commit) is
-already proven by the Task 11–13 suites; these tests prove the CLI's own
-guard and dispatch logic, so they need no fully-sealed Trial root.
+The Task 11–13 suites cover the isolated runner, replay, and evaluator
+primitives; they do not prove that this CLI can start, advance, or assess an
+official Trial. These tests cover the CLI's own guards and dispatch logic.
 """
 
 from __future__ import annotations
 
 import importlib
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -133,14 +135,12 @@ def test_validate_fails_closed_on_missing_spine(tmp_path: Path) -> None:
 
 
 # =============================================================================
-# assess: writes ONLY to the explicit --output path
+# assess: refuses to invent an assessment without operational inputs
 # =============================================================================
 
 
-def test_assess_writes_only_to_explicit_output(tmp_path: Path) -> None:
-    """Even when the trial cannot be fully loaded, ``assess`` must never
-    scatter writes — it fails closed rather than writing anywhere except the
-    explicit ``--output`` path."""
+def test_assess_rejects_unsealed_root_without_writing_output(tmp_path: Path) -> None:
+    """An unsealed Trial root rejects before creating any output."""
 
     mod = _cli()
     root = tmp_path / "no-trial"
@@ -150,9 +150,49 @@ def test_assess_writes_only_to_explicit_output(tmp_path: Path) -> None:
     with pytest.raises(mod.RegimeTrialCliError):
         mod.assess_trial(root=root, trial_id="trial-regime-001", output=output)
     after = {p for p in tmp_path.rglob("*")}
-    # No file was created anywhere under tmp_path (the output is written only
-    # on a fully successful assessment, never on the failure path).
+    # No file was created anywhere under tmp_path.
     assert after == before
+    assert not output.exists()
+
+
+def test_assess_rejects_unavailable_inputs_without_writing_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sealed registration alone cannot prove an assessment.
+
+    Replay, per-arm capital, and evidence-consumption inputs are operational
+    facts.  Until they are wired, ``assess`` must fail closed instead of
+    filling their hashes and eligibility gates with placeholders.
+    """
+
+    mod = _cli()
+    sealed = mod._SealedTrial(
+        root=tmp_path,
+        trial_id="trial-regime-001",
+        store=object(),
+        bundle=SimpleNamespace(
+            trial_manifest=SimpleNamespace(
+                research_program_id="program-regime-001",
+                economic_lineage_id="lineage-btst",
+                artifact_hash=lambda: "1" * 64,
+            ),
+            sap_manifest=SimpleNamespace(artifact_hash=lambda: "2" * 64),
+        ),
+        genesis_manifest=SimpleNamespace(normalized_genesis_hash="3" * 64),
+        spine=object(),
+        clock=lambda: datetime(2026, 8, 12, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(mod, "_load_sealed_trial", lambda *args, **kwargs: sealed)
+    output = tmp_path / "assessment.json"
+
+    with pytest.raises(mod.RegimeTrialCliError) as excinfo:
+        mod.assess_trial(
+            root=tmp_path,
+            trial_id="trial-regime-001",
+            output=output,
+        )
+
+    assert excinfo.value.code == "assessment_inputs_unavailable"
     assert not output.exists()
 
 
