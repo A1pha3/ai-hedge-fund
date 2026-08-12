@@ -57,9 +57,9 @@ python scripts/v3_regime_trial.py <command> --root PATH --trial-id ID
 
 | Command | Mutates? | What it does |
 |---|---|---|
-| `validate` | no | **Available.** Opens decision/spine SQLite with immutable read-only URIs (no repository constructors, migrations, journal changes, or sidecars), freezes the clock once, then verifies governance semantics, the complete registered/archive genesis binding and content roots, research-program enrollment, and current writer lease. |
-| `decide-session --signal-session YYYY-MM-DD` | no | **Unavailable.** Verifies the sealed Trial, then fails closed with `privileged_context_required` until real producer and independent per-arm capital inputs are wired. |
-| `advance-session --market-session YYYY-MM-DD` | no | **Unavailable.** Verifies the sealed Trial, then fails closed with `privileged_context_required` until calendar/cutoff, market, corporate-action, and lot-lifecycle inputs are wired. |
+| `validate` | no | **Unavailable.** Checks only root/layout/trial-id path shape without following symlinks, then fails closed with `validation_inputs_unavailable`. A complete proof still needs a signed Stage, immutable store-seal receipt, hash-bound complete SessionSpine, and cold immutable snapshot. |
+| `decide-session --signal-session YYYY-MM-DD` | no | **Unavailable.** Checks only path shape, then fails closed with `privileged_context_required` until real producer and independent per-arm capital inputs are wired. |
+| `advance-session --market-session YYYY-MM-DD` | no | **Unavailable.** Checks only path shape, then fails closed with `privileged_context_required` until calendar/cutoff, market, corporate-action, and lot-lifecycle inputs are wired. |
 | `assess --output PATH` | no | **Unavailable.** Fails closed with `assessment_inputs_unavailable`; it does not create or replace `--output`. |
 
 ### Security boundary
@@ -78,10 +78,9 @@ python scripts/v3_regime_trial.py <command> --root PATH --trial-id ID
 
 ### Operational-context boundary
 
-Only `validate` is self-contained over the sealed artefacts.
-`decide-session`, `advance-session`, and `assess` load and verify the sealed
-Trial, then **fail closed** because the standalone CLI cannot synthesize the
-missing operational facts. In particular, the CLI does not bind a real BTST
+None of the four commands is self-contained over the current root. They check
+only the fixed path layout with no-follow metadata reads, then **fail closed**
+without opening SQLite or Trial content. In particular, the CLI does not bind a real BTST
 producer payload to both policy arms, derive each arm's own PIT capital state,
 enforce a signed Stage and per-session evidence cutoff, resolve T+1/T+10 from
 the exchange calendar, or carry the originating lot through exit and company
@@ -107,13 +106,14 @@ properties:
 crash suites.) These tests do not supply the missing real producer, calendar,
 per-arm capital, Stage/cutoff, or originating-lot lifecycle context.
 
-All four commands share the same physically read-only loader. SQLite files
-are opened with `mode=ro&immutable=1`; validation never constructs the
-writer repositories because their initialization path performs schema/WAL
-setup. A missing or malformed table, invalid governance bundle, any field
-drift between the registered and archived genesis manifests, content-root
-failure, absent program enrollment, or missing/stale writer epoch fails
-closed without changing any Trial byte or creating a SQLite sidecar.
+All four commands share only a path-shape guard. It uses `lstat` to require
+real fixed-name files/directories and rejects root/layout symlinks plus path-like
+Trial ids; it never opens the SQLite files. The prior `mode=ro&immutable=1`
+approach was removed because SQLite immutable mode ignores committed WAL pages
+and therefore cannot witness current truth while a writer is active. A real
+validator must consume a governance-signed Stage, an immutable store-seal
+receipt, a hash-bound complete SessionSpine, and a cold immutable snapshot.
+Until that design exists, returning success would overstate the evidence.
 
 ## The assessment report
 
