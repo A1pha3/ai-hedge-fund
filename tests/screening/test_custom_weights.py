@@ -16,6 +16,7 @@ from src.screening.custom_weights import (
     StrategyWeights,
     WEIGHT_SUM_TOLERANCE,
 )
+from src.screening.models import StrategySignal
 
 # ---------------------------------------------------------------------------
 # StrategyWeights
@@ -188,11 +189,125 @@ class TestComputeWeightedScoreB:
         score = _compute_weighted_score_b(rec, w)
         assert score == pytest.approx(0.5)
 
-    def test_no_signals_falls_back_to_score_b(self) -> None:
+    def test_no_signals_matches_production_zero_score(self) -> None:
         rec = {"ticker": "000001", "score_b": 0.6}
         w = StrategyWeights()
         score = _compute_weighted_score_b(rec, w)
-        assert score == pytest.approx(0.6)
+        assert score == 0.0
+
+    @pytest.mark.parametrize(
+        ("raw_signals", "production_signals", "expected"),
+        [
+            (
+                {
+                    "trend": {
+                        "direction": 1,
+                        "confidence": 70.0,
+                        "completeness": 1.0,
+                    }
+                },
+                {
+                    "trend": StrategySignal(
+                        direction=1,
+                        confidence=70.0,
+                        completeness=1.0,
+                    )
+                },
+                0.70,
+            ),
+            (
+                {
+                    "fundamental": {
+                        "direction": 1,
+                        "confidence": 80.0,
+                        "completeness": 0.5,
+                    },
+                    "event_sentiment": {
+                        "direction": -1,
+                        "confidence": 100.0,
+                        "completeness": 0.0,
+                    },
+                },
+                {
+                    "fundamental": StrategySignal(
+                        direction=1,
+                        confidence=80.0,
+                        completeness=0.5,
+                    ),
+                    "event_sentiment": StrategySignal(
+                        direction=-1,
+                        confidence=100.0,
+                        completeness=0.0,
+                    ),
+                },
+                0.40,
+            ),
+            (
+                {
+                    "trend": {
+                        "direction": 1,
+                        "confidence": 70.0,
+                        "completeness": 0.0,
+                    }
+                },
+                {
+                    "trend": StrategySignal(
+                        direction=1,
+                        confidence=70.0,
+                        completeness=0.0,
+                    )
+                },
+                0.0,
+            ),
+        ],
+    )
+    def test_default_reweight_math_matches_production_fusion(
+        self,
+        raw_signals: dict,
+        production_signals: dict,
+        expected: float,
+    ) -> None:
+        """Default web reweighting must reproduce production's active-signal math."""
+        from src.screening.models import DEFAULT_STRATEGY_WEIGHTS
+        from src.screening.signal_fusion import compute_score_b
+
+        custom_score = _compute_weighted_score_b(
+            {"strategy_signals": raw_signals},
+            StrategyWeights(),
+        )
+        production_score = compute_score_b(
+            production_signals,
+            DEFAULT_STRATEGY_WEIGHTS,
+            [],
+        )
+
+        assert custom_score == pytest.approx(expected)
+        assert production_score == pytest.approx(expected)
+
+    def test_raw_reweight_fields_are_bounded_by_production_model_ranges(self) -> None:
+        """Malformed report fields must not outweigh a valid opposing signal."""
+        rec = {
+            "strategy_signals": {
+                "trend": {
+                    "direction": 1,
+                    "confidence": 200.0,
+                    "completeness": 2.0,
+                },
+                "fundamental": {
+                    "direction": -1,
+                    "confidence": 100.0,
+                    "completeness": 1.0,
+                },
+            }
+        }
+        weights = StrategyWeights(
+            trend=0.5,
+            mean_reversion=0.0,
+            fundamental=0.5,
+            event_sentiment=0.0,
+        )
+
+        assert _compute_weighted_score_b(rec, weights) == 0.0
 
     def test_mixed_signals(self) -> None:
         """Trend bullish 80, fundamental bearish 60 → net depends on weights."""

@@ -1,6 +1,7 @@
 import importlib
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from unittest.mock import patch
 
 import pandas as pd
@@ -1231,7 +1232,7 @@ def test_event_sentiment_ignores_stale_weak_single_keyword_news():
 
 
 def test_event_sentiment_keeps_fresh_multi_keyword_news_actionable():
-    news = [_news_item("profit growth beat upgrade", "2026-03-05", "record order growth and profit beat")]
+    news = [_news_item("profit growth beat upgrade", "2026-03-04", "record order growth and profit beat")]
 
     with patch("src.screening.strategy_scorer_event_sentiment_helpers.get_company_news", return_value=news), patch("src.screening.strategy_scorer_event_sentiment_helpers.get_insider_trades", return_value=[]):
         signal = score_event_sentiment_strategy("000001", "20260305")
@@ -1824,7 +1825,7 @@ def test_score_event_sentiment_strategy_from_inputs_uses_supplied_news() -> None
             title="公司回购股份并上调业绩预告",
             author="source",
             source="source",
-            date="2026-07-08 10:00:00",
+            date="2026-07-07 10:00:00",
             url="https://example.test/news",
             sentiment="positive",
             content="公司回购股份并上调业绩预告",
@@ -1866,6 +1867,138 @@ def test_score_event_sentiment_strategy_from_inputs_excludes_news_after_decision
     assert signal.completeness == 0.0
     assert signal.sub_factors["news_sentiment"]["metrics"] == {}
     assert signal.sub_factors["event_freshness"]["metrics"] == {}
+
+
+def test_score_event_sentiment_strategy_from_inputs_excludes_same_day_news_without_explicit_cutoff() -> None:
+    """A date-only historical decision must not guess that same-day news was available."""
+    from src.screening.strategy_scorer_event_sentiment_helpers import (
+        score_event_sentiment_strategy_from_inputs,
+    )
+
+    after_close_news = CompanyNews(
+        ticker="000001",
+        title="公司晚间重大回购",
+        author="source",
+        source="source",
+        date="2026-07-08 23:59:59",
+        url="https://example.test/after-close",
+        sentiment="positive",
+        content="公司晚间公告重大回购",
+    )
+
+    signal = score_event_sentiment_strategy_from_inputs(
+        [after_close_news],
+        [],
+        "20260708",
+    )
+
+    assert signal.direction == 0
+    assert signal.confidence == 0.0
+    assert signal.completeness == 0.0
+
+
+def test_score_event_sentiment_strategy_from_inputs_uses_timezone_aware_cutoff() -> None:
+    """An explicit cutoff admits only same-zone publications at or before it."""
+    from src.screening.strategy_scorer_event_sentiment_helpers import (
+        score_event_sentiment_strategy_from_inputs,
+    )
+
+    before_cutoff = CompanyNews(
+        ticker="000001",
+        title="午后重大回购",
+        author="source",
+        source="source",
+        date="2026-07-08 14:59:59",
+        url="https://example.test/before-cutoff",
+        sentiment="positive",
+        content="公司完成重大回购",
+    )
+    after_cutoff = before_cutoff.model_copy(
+        update={
+            "title": "收盘后重大利空",
+            "date": "2026-07-08 15:00:01",
+            "url": "https://example.test/after-cutoff",
+            "sentiment": "negative",
+            "content": "公司收盘后公告重大亏损",
+        }
+    )
+
+    signal = score_event_sentiment_strategy_from_inputs(
+        [after_cutoff, before_cutoff],
+        [],
+        "20260708",
+        decision_cutoff=datetime(
+            2026,
+            7,
+            8,
+            15,
+            0,
+            tzinfo=ZoneInfo("Asia/Shanghai"),
+        ),
+    )
+
+    assert signal.direction == 1
+    articles = signal.sub_factors["news_sentiment"]["metrics"]["articles"]
+    assert [article["title"] for article in articles] == ["午后重大回购"]
+
+
+def test_score_event_sentiment_strategy_from_inputs_converts_utc_cutoff_to_shanghai() -> None:
+    """The same instant expressed in UTC must preserve the A-share news boundary."""
+    from src.screening.strategy_scorer_event_sentiment_helpers import (
+        score_event_sentiment_strategy_from_inputs,
+    )
+
+    before_cutoff = CompanyNews(
+        ticker="000001",
+        title="午后重大回购",
+        author="source",
+        source="source",
+        date="2026-07-08 14:59:59",
+        url="https://example.test/before-cutoff-utc",
+        sentiment="positive",
+        content="公司完成重大回购",
+    )
+    after_cutoff = before_cutoff.model_copy(
+        update={
+            "title": "收盘后重大利空",
+            "date": "2026-07-08 15:00:01",
+            "url": "https://example.test/after-cutoff-utc",
+            "sentiment": "negative",
+        }
+    )
+
+    signal = score_event_sentiment_strategy_from_inputs(
+        [after_cutoff, before_cutoff],
+        [],
+        "20260708",
+        decision_cutoff=datetime(
+            2026,
+            7,
+            8,
+            7,
+            0,
+            tzinfo=ZoneInfo("UTC"),
+        ),
+    )
+
+    assert signal.direction == 1
+    articles = signal.sub_factors["news_sentiment"]["metrics"]["articles"]
+    assert [article["title"] for article in articles] == ["午后重大回购"]
+
+
+def test_score_event_sentiment_strategy_from_inputs_rejects_naive_explicit_cutoff() -> None:
+    """A cutoff without timezone semantics must fail closed instead of guessing."""
+    from src.screening.strategy_scorer_event_sentiment_helpers import (
+        score_event_sentiment_strategy_from_inputs,
+    )
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        score_event_sentiment_strategy_from_inputs(
+            [],
+            [],
+            "20260708",
+            decision_cutoff=datetime(2026, 7, 8, 15, 0),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1912,7 +2045,7 @@ class _LocalOnlyScoringStore:
                     title="公司回购股份并上调业绩预告",
                     author="source",
                     source="source",
-                    date="2026-07-08 10:00:00",
+                    date="2026-07-07 10:00:00",
                     url="https://example.test/news",
                     sentiment="positive",
                     content="公司回购股份并上调业绩预告",

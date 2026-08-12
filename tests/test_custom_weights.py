@@ -75,13 +75,13 @@ def _make_rec(
 # ===========================================================================
 
 
-def test_default_weights_sum_to_one() -> None:
-    """默认权重 sum=1.0, 全部 0.25。"""
+def test_default_weights_follow_production_authority() -> None:
+    """默认重算权重与生产唯一权重源一致。"""
     w = StrategyWeights()
-    assert w.trend == 0.25
-    assert w.mean_reversion == 0.25
-    assert w.fundamental == 0.25
-    assert w.event_sentiment == 0.25
+    assert w.trend == 0.40
+    assert w.mean_reversion == 0.20
+    assert w.fundamental == 0.15
+    assert w.event_sentiment == 0.05
     assert w.to_dict() == DEFAULT_WEIGHTS
 
 
@@ -103,12 +103,21 @@ def test_custom_weights_sum_to_one() -> None:
 # ===========================================================================
 
 
-def test_weights_not_summing_to_one_raises() -> None:
-    """sum=0.9 或 1.1 都被拒绝。"""
-    with pytest.raises(ValueError, match="权重之和必须为 1.0"):
-        StrategyWeights(trend=0.3, mean_reversion=0.3, fundamental=0.2, event_sentiment=0.1)  # sum=0.9
-    with pytest.raises(ValueError, match="权重之和必须为 1.0"):
-        StrategyWeights(trend=0.4, mean_reversion=0.3, fundamental=0.3, event_sentiment=0.1)  # sum=1.1
+def test_positive_relative_weights_do_not_need_to_sum_to_one() -> None:
+    """消费时统一归一化，因此任意正的有限相对权重和都合法。"""
+    assert StrategyWeights(
+        trend=0.3,
+        mean_reversion=0.3,
+        fundamental=0.2,
+        event_sentiment=0.1,
+    ).normalize().to_dict() == pytest.approx(
+        {
+            "trend": 1 / 3,
+            "mean_reversion": 1 / 3,
+            "fundamental": 2 / 9,
+            "event_sentiment": 1 / 9,
+        }
+    )
 
 
 # ===========================================================================
@@ -171,8 +180,8 @@ def test_reweight_recommendations_recomputes() -> None:
     assert a["custom_weights"] == w.to_dict()
 
 
-def test_reweight_with_balanced_weights_matches_average() -> None:
-    """等权 0.25/0.25/0.25/0.25 → score_b = 四策略分数均值。"""
+def test_reweight_with_default_weights_matches_production_weighting() -> None:
+    """默认重算使用生产 0.40/0.20/0.15/0.05 相对权重。"""
     recs = [
         _make_rec(
             "X",
@@ -188,8 +197,8 @@ def test_reweight_with_balanced_weights_matches_average() -> None:
     ]
     w = StrategyWeights()
     out = reweight_recommendations(recs, w)
-    # weighted = 0.25*100 + 0.25*80 + 0.25*60 + 0.25*40 = 70 → /100 = 0.70
-    assert abs(out[0]["score_b"] - 0.70) < 1e-9
+    # 默认权重和 0.80，归一后为 0.50/0.25/0.1875/0.0625。
+    assert abs(out[0]["score_b"] - 0.8375) < 1e-9
 
 
 # ===========================================================================
@@ -560,7 +569,7 @@ def test_cli_custom_weights_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
 
 def test_cli_custom_weights_invalid_weights_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """--custom-weights 权重和 != 1.0 时应返回 1 (校验失败)。"""
+    """--custom-weights 全零相对权重应在读报告前返回校验错误。"""
     monkeypatch.chdir(tmp_path)
     repo_root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
@@ -569,10 +578,10 @@ def test_cli_custom_weights_invalid_weights_returns_error(tmp_path: Path, monkey
             "-m",
             "src.main",
             "--custom-weights",
-            "--trend=0.5",
-            "--mean-reversion=0.5",
-            "--fundamental=0.5",
-            "--event-sentiment=0.5",  # sum=2.0
+            "--trend=0",
+            "--mean-reversion=0",
+            "--fundamental=0",
+            "--event-sentiment=0",
         ],
         cwd=str(repo_root),
         env={**os.environ, "PYTHONPATH": str(repo_root)},
@@ -689,21 +698,21 @@ def test_web_custom_weights_negative_weight_returns_422() -> None:
 # ===========================================================================
 
 
-def test_reweight_missing_signals_falls_back_to_original_score() -> None:
-    """rec 完全缺失 strategy_signals → 保留原 score_b。"""
+def test_reweight_missing_signals_fails_closed_to_zero() -> None:
+    """rec 缺失信号时不复用旧权重产生的 score_b。"""
     recs = [{"ticker": "X", "name": "x", "score_b": 0.42}]
     w = StrategyWeights()
     out = reweight_recommendations(recs, w)
-    assert out[0]["score_b"] == 0.42
+    assert out[0]["score_b"] == 0.0
     assert out[0]["original_score_b"] == 0.42
 
 
-def test_reweight_empty_signals_falls_back() -> None:
-    """strategy_signals 为空 dict → 保留原 score_b。"""
+def test_reweight_empty_signals_fails_closed_to_zero() -> None:
+    """空信号集与生产 compute_score_b 一样返回 0。"""
     recs = [{"ticker": "Y", "score_b": 0.1, "strategy_signals": {}}]
     w = StrategyWeights()
     out = reweight_recommendations(recs, w)
-    assert out[0]["score_b"] == 0.1
+    assert out[0]["score_b"] == 0.0
 
 
 # ===========================================================================

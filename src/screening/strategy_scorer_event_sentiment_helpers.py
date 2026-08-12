@@ -12,6 +12,7 @@ import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -37,6 +38,7 @@ from src.tools.api import (
 logger = logging.getLogger(__name__)
 
 _EVENT_DECAY_LAMBDA = float(os.environ.get("EVENT_DECAY_LAMBDA", "0.35"))
+_A_SHARE_NEWS_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 def _safe_date(date_str: str) -> datetime | None:
@@ -446,15 +448,35 @@ def score_event_sentiment_strategy_from_inputs(
     news_items: list[CompanyNews],
     trades: list[InsiderTrade],
     trade_date: str,
+    *,
+    decision_cutoff: datetime | None = None,
 ) -> StrategySignal:
-    """Score supplied evidence using only news known by the decision date."""
+    """Score news available by a decision boundary, never by current wall time.
+
+    Without an explicit cutoff, a date-only reconstruction admits only news from
+    prior calendar days.  A same-day timestamp is usable only when the caller
+    supplies a timezone-aware cutoff. Provider news timestamps are defined as
+    Asia/Shanghai local time; any aware cutoff is converted to that zone before
+    comparison.
+    """
 
     decision_date = datetime.strptime(trade_date, "%Y%m%d").date()
+    if decision_cutoff is not None:
+        if decision_cutoff.utcoffset() is None:
+            raise ValueError("decision_cutoff must be timezone-aware")
+        decision_cutoff = decision_cutoff.astimezone(_A_SHARE_NEWS_TIMEZONE)
+        if decision_cutoff.date() != decision_date:
+            raise ValueError("decision_cutoff date must match trade_date")
     eligible_news = [
         item
         for item in news_items
         if (published_at := _safe_date(item.date)) is not None
-        and published_at.date() <= decision_date
+        and (
+            published_at.date() < decision_date
+            if decision_cutoff is None
+            else published_at.replace(tzinfo=_A_SHARE_NEWS_TIMEZONE)
+            <= decision_cutoff
+        )
     ]
     return _build_event_sentiment_strategy_signal(news_items=eligible_news, trades=trades, trade_date=trade_date)
 

@@ -16,6 +16,11 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from src.screening.models import DEFAULT_STRATEGY_WEIGHTS
+from src.screening.weighted_signal_math import (
+    compute_weighted_signal_score,
+    normalize_active_weights,
+    SignalScoreInput,
+)
 from src.utils.numeric import safe_float as _safe_float
 
 # ---------------------------------------------------------------------------
@@ -56,7 +61,7 @@ DEFAULT_WEIGHTS: dict[str, float] = dict(DEFAULT_STRATEGY_WEIGHTS)
 
 @dataclass
 class StrategyWeights:
-    """四策略权重 — sum-to-1 校验。
+    """四策略非负相对权重；至少一个权重必须大于零。
 
     Fields:
         trend: 趋势策略权重
@@ -187,33 +192,53 @@ def _compute_weighted_score_b(
 
     公式::
 
-        per_strategy_score[s] = sign(direction_s) * confidence_s        # 范围 [-100, +100]
-        new_score_b = sum_s( weight_s * per_strategy_score[s] ) / (100 * sum_s(weight_s))
+        active = {s | completeness_s > 0}
+        normalized_weight[s] = weight[s] / sum_active(weight)
+        new_score_b = sum_active(
+            normalized_weight[s] * sign(direction_s)
+            * confidence_s / 100 * completeness_s
+        )
 
     权重归一化后计算 (2026-08-12): 此前要求 sum(weight)==1 才能保证输出范围正确,
     但权威源 DEFAULT_STRATEGY_WEIGHTS 是相对权重，sum 可能小于 1（当前 0.80）。现在显式
     归一化, 无论权重 sum 是多少, 输出范围都是 [-1, +1], 与生产路径 compute_score_b
     的 _normalize_active_weights 语义一致. 全 0 权重由 __post_init__ 拒绝.
 
-    当 rec 缺失 ``strategy_signals`` 或四策略分数全为 0 时, 返回原 ``score_b`` (容错)。
+    缺失或不可用的信号与生产融合路径相同，贡献为 0，不复用旧 ``score_b``。
     """
     if not isinstance(rec, Mapping):
         return 0.0
-    weights_dict = weights.to_dict()
-    total_weight = sum(weights_dict[strategy] for strategy in STRATEGY_KEYS)
-    if total_weight <= 0.0:
-        return _safe_float(rec.get("score_b"), 0.0)
-    has_any_signal = False
-    weighted_sum = 0.0
+    raw_signals = rec.get("strategy_signals")
+    if not isinstance(raw_signals, Mapping):
+        return 0.0
+    signal_inputs: dict[str, SignalScoreInput] = {}
     for strategy in STRATEGY_KEYS:
-        score = _extract_strategy_score(rec, strategy)
-        if score != 0.0:
-            has_any_signal = True
-        weighted_sum += weights_dict[strategy] * score
-    if not has_any_signal:
-        # 无任何信号 — 回退到原 score_b
-        return _safe_float(rec.get("score_b"), 0.0)
-    return max(-1.0, min(1.0, weighted_sum / (MAX_STRATEGY_SCORE * total_weight)))
+        raw_signal = raw_signals.get(strategy)
+        if not isinstance(raw_signal, Mapping):
+            continue
+        try:
+            direction_value = int(raw_signal.get("direction", 0))
+        except (TypeError, ValueError):
+            direction_value = 0
+        direction = 1.0 if direction_value > 0 else -1.0 if direction_value < 0 else 0.0
+        signal_inputs[strategy] = SignalScoreInput(
+            direction=direction,
+            confidence=min(
+                100.0,
+                max(0.0, _safe_float(raw_signal.get("confidence"), 0.0)),
+            ),
+            completeness=min(
+                1.0,
+                max(0.0, _safe_float(raw_signal.get("completeness"), 0.0)),
+            ),
+        )
+    normalized_weights = normalize_active_weights(
+        weights.to_dict(),
+        signal_inputs,
+        fallback_weights=DEFAULT_STRATEGY_WEIGHTS,
+    )
+    score = compute_weighted_signal_score(signal_inputs, normalized_weights)
+    return max(-1.0, min(1.0, score))
 
 
 def reweight_recommendations(
@@ -227,7 +252,7 @@ def reweight_recommendations(
     Args:
         recommendations: 推荐列表, 每条至少含 ``ticker`` / ``strategy_signals``
             (内含四策略 ``direction`` / ``confidence`` / ``completeness``)
-        weights: 用户指定的四策略权重 (必须 sum-to-1)
+        weights: 用户指定的四策略相对权重 (至少一个权重大于零)
         sort: 是否按新 score_b 降序排序 (默认 True)
 
     Returns:
