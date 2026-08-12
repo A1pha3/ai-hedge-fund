@@ -41,6 +41,10 @@ from src.screening.offensive.v3.contracts.evidence import (
 )
 from src.screening.offensive.v3.contracts.ports import ActiveEvidenceRecord
 from src.screening.offensive.v3.evidence.blob_store import BlobStore
+from src.screening.offensive.v3.evidence.referenced_payloads import (
+    ReferencedPayloadValidationError,
+    validate_referenced_payload,
+)
 
 GENESIS_DEPENDENCY_ROOT: Final[str] = "0" * 64
 
@@ -291,6 +295,20 @@ class EvidenceRepository:
             )
         return envelope
 
+    def _verify_referenced_payload(self, envelope: object) -> None:
+        try:
+            validate_referenced_payload(
+                issuer_namespace=self._issuer_namespace,
+                envelope=envelope,
+                read_payload=self._blobs.get,
+            )
+        except ReferencedPayloadValidationError as exc:
+            raise EvidenceStoreError(
+                exc.code,
+                "evidence envelope failed referenced-payload validation",
+                **exc.details,
+            ) from exc
+
     def _materialize(
         self,
         *,
@@ -371,6 +389,7 @@ class EvidenceRepository:
 
         trusted_at, _ = self._verify_signed(signed, payload)
         envelope = self._decode_envelope(signed, payload)
+        self._verify_referenced_payload(envelope)
         self._blobs.put_durable(payload)
         with self._engine.begin() as conn:
             existing = self._rows(conn, envelope.evidence_id, "evidence_records")
@@ -440,6 +459,7 @@ class EvidenceRepository:
 
         trusted_at, _ = self._verify_signed(signed, payload)
         envelope = self._decode_envelope(signed, payload)
+        self._verify_referenced_payload(envelope)
         self._blobs.put_durable(payload)
         with self._engine.begin() as conn:
             committed = self._rows(

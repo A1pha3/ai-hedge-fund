@@ -634,18 +634,23 @@ def test_oversold_bounce_disabled_produces_no_ob_signals(world: _World) -> None:
 def test_correction_revision_appends_without_rewriting(world: _World) -> None:
     records = world.service.produce_and_publish(_snapshot())
     evidence_id = records[0].evidence.evidence_id
+    original_candidate = world.service.candidate_payload(
+        records[0], expected_signal_session=SIGNAL_DATE
+    )
 
     # 同 evidence_id 的新 revision: 经裸 store prepare + activate (append-only)
     world.clock.advance(minutes=1)
-    prepare_time = world.clock.now_value
-    revised = world.signal_envelope(
-        evidence_id,
-        behavior_fingerprint="c" * 64,
-        payload_content_hash="d" * 64,
-        observed_at=prepare_time - timedelta(minutes=1),
-        available_at=prepare_time + timedelta(hours=1),
-        effective_at=prepare_time - timedelta(minutes=1),
-        provider_published_at=prepare_time - timedelta(minutes=1),
+    revised_candidate = original_candidate.model_copy(
+        update={"behavior_fingerprint": "c" * 64}
+    )
+    revised_candidate_hash = world.raw_repository.persist_payload(
+        revised_candidate.canonical_bytes()
+    )
+    revised = records[0].evidence.model_copy(
+        update={
+            "behavior_fingerprint": "c" * 64,
+            "payload_content_hash": revised_candidate_hash,
+        }
     )
     payload = revised.model_dump_json().encode("utf-8")
     world.raw_repository.prepare_revision(world.sign(payload), payload)

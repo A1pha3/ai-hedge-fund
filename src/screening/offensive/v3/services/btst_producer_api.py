@@ -142,6 +142,32 @@ class BtstProducerApi:
                 "record does not carry an exact SignalEvidence envelope",
             )
         try:
+            stored = self._repository.get(
+                envelope.evidence_id,
+                revision=record.revision,
+            )
+        except EvidenceStoreError as exc:
+            raise BtstCandidateEvidenceError(
+                "signal_record_untrusted",
+                "signal record is not committed in this evidence store",
+                evidence_id=envelope.evidence_id,
+                revision=record.revision,
+                reason=exc.code,
+            ) from exc
+        if (
+            type(stored.evidence) is not SignalEvidence
+            or stored.model_copy(
+                update={"active_revision": record.active_revision}
+            ).canonical_bytes()
+            != record.canonical_bytes()
+        ):
+            raise BtstCandidateEvidenceError(
+                "signal_record_untrusted",
+                "signal record does not exactly match its committed revision",
+                evidence_id=envelope.evidence_id,
+                revision=record.revision,
+            )
+        try:
             raw = self._repository.raw_payload(envelope.payload_content_hash)
         except BlobStoreError as exc:
             code = (

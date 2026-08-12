@@ -187,7 +187,8 @@ family_id 断裂 (flow 用 `BTST_FAMILY` 常量), S4 补上"解锁 admission 的
 (`synthesize_shadow_authority`)。
 
 - **确定性常量** (与 BTST producer 信封逐字一致, 写死不进 toml):
-  - `behavior_fingerprint = BTST_BEHAVIOR_BASELINE` = `sha256("btst-v1")`
+  - `behavior_fingerprint = BTST_BEHAVIOR_BASELINE` =
+    `sha256("btst-raw-candidate-payload-v1")`
   - `execution_version = "btst.funnel.v1"`
   - `cost_version = "cn-a-share-costs.v1"`
 - **不是授权**: flow `execution_authority` 恒 `none`, ShadowDecision `execution_authority`

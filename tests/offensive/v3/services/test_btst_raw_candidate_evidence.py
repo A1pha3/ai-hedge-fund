@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -12,6 +12,8 @@ from src.screening.offensive.daily_action_service import PlanCandidate
 from src.screening.offensive.setups.base import DetectionResult
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
 from src.screening.offensive.v3.contracts.base import SignalStage
+from src.screening.offensive.v3.contracts.evidence import EvidenceRecord, SignalEvidence
+from src.screening.offensive.v3.evidence.repository import EvidenceStoreError
 from src.screening.offensive.v3.producers import btst as btst_producer
 from tests.offensive.v3.services.test_btst_producer_api import (
     BTST_FINGERPRINT,
@@ -183,7 +185,7 @@ def test_reader_rejects_wrong_expected_session_and_candidate_identity(
     wrong_record = record.model_copy(update={"evidence": wrong_envelope})
     with pytest.raises(Exception) as wrong_identity:
         reader(wrong_record, expected_signal_session=SIGNAL_DATE)
-    assert getattr(wrong_identity.value, "code", None) == "candidate_identity_mismatch"
+    assert getattr(wrong_identity.value, "code", None) == "signal_record_untrusted"
 
 
 def test_publish_fault_leaves_only_a_safe_orphan_raw_blob(
@@ -214,3 +216,170 @@ def test_publish_fault_leaves_only_a_safe_orphan_raw_blob(
         )
         is None
     )
+
+
+def _signed_signal(world: _World, envelope: SignalEvidence):
+    payload = envelope.model_dump_json().encode("utf-8")
+    return world.sign(payload), payload
+
+
+def _envelope_for_candidate(world: _World, candidate, **updates) -> SignalEvidence:
+    session_time = datetime(2026, 8, 5, 15, tzinfo=timezone.utc)
+    values = {
+        "family_id": f"btst:{candidate.snapshot_id}",
+        "strategy_semver": candidate.strategy_semver,
+        "behavior_fingerprint": candidate.behavior_fingerprint,
+        "effective_at": session_time,
+        "provider_published_at": session_time,
+        "observed_at": session_time,
+        "available_at": datetime(2026, 8, 6, 15, tzinfo=timezone.utc),
+        "payload_content_hash": candidate.content_hash(),
+        "stage": candidate.signal_stage,
+    }
+    values.update(updates)
+    return world.signal_envelope(
+        f"{candidate.candidate_id}:{candidate.signal_stage.value}",
+        **values,
+    )
+
+
+def test_store_rejects_btst_signal_whose_referenced_payload_is_missing(
+    world: _World,
+) -> None:
+    envelope = world.signal_envelope(
+        "btst:missing:candidate",
+        payload_content_hash="a" * 64,
+    )
+    signed, payload = _signed_signal(world, envelope)
+
+    with pytest.raises(EvidenceStoreError) as rejected:
+        world.raw_repository.publish(signed, payload)
+
+    assert rejected.value.code == "referenced_payload_missing"
+    assert world.raw_repository.commit_sequence() == 0
+
+
+def test_store_rejects_btst_signal_whose_referenced_bytes_are_not_candidate(
+    world: _World,
+) -> None:
+    malformed_hash = world.raw_repository.persist_payload(b"not a candidate")
+    envelope = world.signal_envelope(
+        "btst:malformed:candidate",
+        payload_content_hash=malformed_hash,
+    )
+    signed, payload = _signed_signal(world, envelope)
+
+    with pytest.raises(EvidenceStoreError) as rejected:
+        world.raw_repository.publish(signed, payload)
+
+    assert rejected.value.code == "referenced_payload_invalid"
+    assert world.raw_repository.commit_sequence() == 0
+
+
+@pytest.mark.parametrize(
+    "envelope_updates",
+    (
+        {"evidence_id": "btst:wrong:identity:candidate"},
+        {"behavior_fingerprint": "d" * 64},
+        {"effective_at": datetime(2026, 8, 6, 8, tzinfo=timezone.utc)},
+    ),
+)
+def test_store_rejects_valid_candidate_bound_to_wrong_identity_session_or_version(
+    world: _World,
+    envelope_updates: dict[str, object],
+) -> None:
+    candidate = _build_payload(_candidate(), stage=SignalStage.CANDIDATE)
+    world.raw_repository.persist_payload(candidate.canonical_bytes())
+    envelope = _envelope_for_candidate(world, candidate).model_copy(
+        update=envelope_updates
+    )
+    signed, payload = _signed_signal(world, envelope)
+
+    with pytest.raises(EvidenceStoreError) as rejected:
+        world.raw_repository.publish(signed, payload)
+
+    assert rejected.value.code == "referenced_payload_binding_mismatch"
+    assert world.raw_repository.commit_sequence() == 0
+
+
+def test_prepare_revision_revalidates_btst_referenced_payload(world: _World) -> None:
+    published = world.service.produce_and_publish(_snapshot())[0]
+    before_sequence = world.raw_repository.commit_sequence()
+    revision = published.evidence.model_copy(
+        update={"payload_content_hash": "a" * 64}
+    )
+    signed, payload = _signed_signal(world, revision)
+
+    with pytest.raises(EvidenceStoreError) as rejected:
+        world.raw_repository.prepare_revision(signed, payload)
+
+    assert rejected.value.code == "referenced_payload_missing"
+    assert world.raw_repository.commit_sequence() == before_sequence
+
+
+def test_candidate_reader_rejects_uncommitted_self_consistent_record(
+    world: _World,
+) -> None:
+    candidate = _build_payload(_candidate(), stage=SignalStage.SELECTED)
+    candidate_hash = world.raw_repository.persist_payload(candidate.canonical_bytes())
+    session_time = datetime(2026, 8, 5, 15, tzinfo=timezone.utc)
+    envelope = world.signal_envelope(
+        f"{candidate.candidate_id}:selected",
+        family_id=f"btst:{candidate.snapshot_id}",
+        strategy_semver=candidate.strategy_semver,
+        behavior_fingerprint=candidate.behavior_fingerprint,
+        effective_at=session_time,
+        provider_published_at=session_time,
+        observed_at=session_time,
+        available_at=datetime(2026, 8, 6, 15, tzinfo=timezone.utc),
+        payload_content_hash=candidate_hash,
+        stage=SignalStage.SELECTED,
+    )
+    uncommitted = EvidenceRecord[SignalEvidence](
+        evidence=envelope,
+        ingested_at=world.clock.now_value,
+        commit_sequence=999,
+        revision=1,
+        supersedes_revision=None,
+        active_revision=1,
+    )
+
+    with pytest.raises(Exception) as rejected:
+        world.service.candidate_payload(
+            uncommitted,
+            expected_signal_session=SIGNAL_DATE,
+        )
+
+    assert getattr(rejected.value, "code", None) == "signal_record_untrusted"
+
+
+def test_candidate_reader_accepts_committed_historical_revision_after_correction(
+    world: _World,
+) -> None:
+    original = world.service.produce_and_publish(_snapshot())[0]
+    original_candidate = world.service.candidate_payload(
+        original,
+        expected_signal_session=SIGNAL_DATE,
+    )
+    revised_candidate = original_candidate.model_copy(
+        update={"behavior_fingerprint": "c" * 64}
+    )
+    revised_hash = world.raw_repository.persist_payload(
+        revised_candidate.canonical_bytes()
+    )
+    revised_envelope = original.evidence.model_copy(
+        update={
+            "behavior_fingerprint": "c" * 64,
+            "payload_content_hash": revised_hash,
+        }
+    )
+    signed, payload = _signed_signal(world, revised_envelope)
+    world.raw_repository.prepare_revision(signed, payload)
+    world.raw_repository.activate_revision(original.evidence.evidence_id, 2)
+
+    replayed = world.service.candidate_payload(
+        original,
+        expected_signal_session=SIGNAL_DATE,
+    )
+
+    assert replayed == original_candidate
