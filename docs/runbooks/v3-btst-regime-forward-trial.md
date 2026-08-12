@@ -57,7 +57,7 @@ python scripts/v3_regime_trial.py <command> --root PATH --trial-id ID
 
 | Command | Mutates? | What it does |
 |---|---|---|
-| `validate` | no | **Available.** Loads the sealed bundle, genesis manifest, and spine; verifies mutual consistency. Strictly read-only. |
+| `validate` | no | **Available.** Opens decision/spine SQLite with immutable read-only URIs (no repository constructors, migrations, journal changes, or sidecars), freezes the clock once, then verifies governance semantics, the complete registered/archive genesis binding and content roots, research-program enrollment, and current writer lease. |
 | `decide-session --signal-session YYYY-MM-DD` | no | **Unavailable.** Verifies the sealed Trial, then fails closed with `privileged_context_required` until real producer and independent per-arm capital inputs are wired. |
 | `advance-session --market-session YYYY-MM-DD` | no | **Unavailable.** Verifies the sealed Trial, then fails closed with `privileged_context_required` until calendar/cutoff, market, corporate-action, and lot-lifecycle inputs are wired. |
 | `assess --output PATH` | no | **Unavailable.** Fails closed with `assessment_inputs_unavailable`; it does not create or replace `--output`. |
@@ -106,6 +106,14 @@ properties:
 (Pinned by `test_regime_trial_fault_campaign` plus the Task 9/10 component
 crash suites.) These tests do not supply the missing real producer, calendar,
 per-arm capital, Stage/cutoff, or originating-lot lifecycle context.
+
+All four commands share the same physically read-only loader. SQLite files
+are opened with `mode=ro&immutable=1`; validation never constructs the
+writer repositories because their initialization path performs schema/WAL
+setup. A missing or malformed table, invalid governance bundle, any field
+drift between the registered and archived genesis manifests, content-root
+failure, absent program enrollment, or missing/stale writer epoch fails
+closed without changing any Trial byte or creating a SQLite sidecar.
 
 ## The assessment report
 

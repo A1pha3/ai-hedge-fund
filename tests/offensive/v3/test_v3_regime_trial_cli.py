@@ -30,6 +30,10 @@ official Trial. These tests cover the CLI's own guards and dispatch logic.
 from __future__ import annotations
 
 import importlib
+import hashlib
+import gc
+import json
+import sqlite3
 from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,6 +47,137 @@ def _cli():
     """Import the CLI module fresh (it is the RED target)."""
 
     return importlib.import_module(_CLI_MODULE)
+
+
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    """Exact regular-file snapshot, including any SQLite sidecars."""
+
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+class _CountingClock:
+    def __init__(self, value: datetime) -> None:
+        self.value = value
+        self.calls = 0
+
+    def __call__(self) -> datetime:
+        self.calls += 1
+        return self.value
+
+
+def _sealed_trial_root(
+    root: Path,
+    *,
+    invalid_bundle: bool = False,
+    archive_manifest_drift: bool = False,
+    enrolled_program: str | None = None,
+    live_writer: bool = True,
+) -> tuple[str, datetime]:
+    """Build one real, fully laid-out Trial root through production writers.
+
+    The CLI under test only consumes the resulting files.  The helper closes
+    every writer before returning, so any later byte or sidecar change belongs
+    to the read path under test.
+    """
+
+    from tests.offensive.v3.orchestration.test_trial_arm_store import (
+        _bundle,
+    )
+    from src.screening.offensive.v3.evidence.session_spine import (
+        SessionEnrollment,
+        SessionSpine,
+    )
+    from src.screening.offensive.v3.orchestration.genesis import (
+        TrialGenesisManifest,
+    )
+    from src.screening.offensive.v3.orchestration.trial_store import (
+        TrialArmDecisionStore,
+    )
+
+    root.mkdir()
+    (root / "archive").mkdir()
+    (root / "blobs").mkdir()
+    sqlite3.connect(root / "evidence.sqlite3").close()
+
+    bundle = _bundle()
+    if invalid_bundle:
+        bundle = bundle.model_copy(
+            update={
+                "sap_manifest": bundle.sap_manifest.model_copy(
+                    update={"trial_manifest_hash": "f" * 64}
+                )
+            }
+        )
+    trial = bundle.trial_manifest
+    trusted_at = trial.enrollment_start
+    trial_id = trial.trial_id
+
+    champion_bytes = b"sealed champion capital backup"
+    challenger_bytes = b"sealed challenger capital backup"
+    champion_root = hashlib.sha256(champion_bytes).hexdigest()
+    challenger_root = hashlib.sha256(challenger_bytes).hexdigest()
+    for content_root, payload in (
+        (champion_root, champion_bytes),
+        (challenger_root, challenger_bytes),
+    ):
+        destination = root / "archive" / trial_id / content_root
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "capital.sqlite3").write_bytes(payload)
+
+    manifest = TrialGenesisManifest(
+        trial_id=trial_id,
+        normalized_genesis_hash="a" * 64,
+        champion_normalized_hash="a" * 64,
+        challenger_normalized_hash="a" * 64,
+        champion_backup_root=champion_root,
+        challenger_backup_root=challenger_root,
+        trial_manifest_hash=trial.artifact_hash(),
+        sap_manifest_hash=bundle.sap_manifest.artifact_hash(),
+        sealed_at=trial.trial_manifest_sealed_at,
+        schema_major=2,
+    )
+    manifest_path = root / "archive" / trial_id / "genesis-manifest.json"
+    manifest_path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+
+    store = TrialArmDecisionStore(str(root / "decisions.sqlite3"))
+    store.register_trial(bundle, manifest)
+    if live_writer:
+        store.claim_writer()
+    del store
+
+    program = enrolled_program or trial.research_program_id
+    spine = SessionSpine(
+        database_path=str(root / "spine.sqlite3"),
+        clock=lambda: trial.trial_manifest_sealed_at,
+    )
+    spine.enroll_expected_sessions(
+        (
+            SessionEnrollment(
+                research_program_id=program,
+                signal_session=trusted_at.date(),
+                assessment_date=trusted_at.date(),
+            ),
+        )
+    )
+    spine._engine.dispose()  # noqa: SLF001 - close the test fixture's writer
+    del spine
+    gc.collect()
+    for database in (root / "decisions.sqlite3", root / "spine.sqlite3"):
+        with sqlite3.connect(database) as conn:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    if archive_manifest_drift:
+        archived = json.loads(manifest_path.read_text(encoding="utf-8"))
+        archived["sealed_at"] = trial.enrollment_start.isoformat()
+        manifest_path.write_text(
+            json.dumps(archived, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+    return trial_id, trusted_at
 
 
 # =============================================================================
@@ -134,6 +269,103 @@ def test_validate_fails_closed_on_missing_spine(tmp_path: Path) -> None:
         mod.validate_trial(root=root, trial_id="trial-regime-001")
 
 
+def test_validate_laid_out_invalid_database_does_not_migrate(
+    tmp_path: Path,
+) -> None:
+    """A complete path layout is not permission to initialize its databases."""
+
+    mod = _cli()
+    root = tmp_path / "invalid-root"
+    root.mkdir()
+    (root / "archive").mkdir()
+    (root / "blobs").mkdir()
+    for name in ("decisions.sqlite3", "spine.sqlite3", "evidence.sqlite3"):
+        (root / name).write_bytes(b"")
+    before = _tree_bytes(root)
+
+    with pytest.raises(mod.RegimeTrialCliError):
+        mod.validate_trial(root=root, trial_id="trial-regime-001")
+
+    assert _tree_bytes(root) == before
+
+
+def test_validate_real_sealed_root_is_byte_for_byte_read_only(
+    tmp_path: Path,
+) -> None:
+    """Validation must not migrate DBs, change journal mode, or add sidecars."""
+
+    mod = _cli()
+    root = tmp_path / "sealed-root"
+    trial_id, trusted_at = _sealed_trial_root(root)
+    clock = _CountingClock(trusted_at)
+    before = _tree_bytes(root)
+
+    assert mod.validate_trial(root=root, trial_id=trial_id, clock=clock) == 0
+
+    assert clock.calls == 1
+    assert _tree_bytes(root) == before
+
+
+def test_validate_rejects_semantically_invalid_governance_bundle(
+    tmp_path: Path,
+) -> None:
+    """A parseable bundle with a broken SAP binding is not a valid seal."""
+
+    mod = _cli()
+    root = tmp_path / "invalid-bundle"
+    trial_id, trusted_at = _sealed_trial_root(root, invalid_bundle=True)
+
+    with pytest.raises(mod.RegimeTrialCliError) as excinfo:
+        mod.validate_trial(root=root, trial_id=trial_id, clock=lambda: trusted_at)
+
+    assert excinfo.value.code == "governance_bundle_invalid"
+
+
+def test_validate_rejects_full_genesis_manifest_drift(tmp_path: Path) -> None:
+    """Equal normalized hashes cannot hide drift in another manifest field."""
+
+    mod = _cli()
+    root = tmp_path / "manifest-drift"
+    trial_id, trusted_at = _sealed_trial_root(
+        root, archive_manifest_drift=True
+    )
+
+    with pytest.raises(mod.RegimeTrialCliError) as excinfo:
+        mod.validate_trial(root=root, trial_id=trial_id, clock=lambda: trusted_at)
+
+    assert excinfo.value.code == "genesis_manifest_drift"
+
+
+def test_validate_rejects_spine_without_trial_program_enrollment(
+    tmp_path: Path,
+) -> None:
+    """A layout-only spine for another program cannot satisfy this Trial."""
+
+    mod = _cli()
+    root = tmp_path / "wrong-program"
+    trial_id, trusted_at = _sealed_trial_root(
+        root, enrolled_program="another-research-program"
+    )
+
+    with pytest.raises(mod.RegimeTrialCliError) as excinfo:
+        mod.validate_trial(root=root, trial_id=trial_id, clock=lambda: trusted_at)
+
+    assert excinfo.value.code == "spine_program_not_enrolled"
+
+
+def test_validate_rejects_missing_live_writer_lease(tmp_path: Path) -> None:
+    """A sealed layout without the current writer lease is not runnable."""
+
+    mod = _cli()
+    root = tmp_path / "no-live-writer"
+    trial_id, trusted_at = _sealed_trial_root(root, live_writer=False)
+
+    with pytest.raises(mod.RegimeTrialCliError) as excinfo:
+        mod.validate_trial(root=root, trial_id=trial_id, clock=lambda: trusted_at)
+
+    assert excinfo.value.code == "writer_lease_unavailable"
+
+
 # =============================================================================
 # assess: refuses to invent an assessment without operational inputs
 # =============================================================================
@@ -180,7 +412,7 @@ def test_assess_rejects_unavailable_inputs_without_writing_output(
         ),
         genesis_manifest=SimpleNamespace(normalized_genesis_hash="3" * 64),
         spine=object(),
-        clock=lambda: datetime(2026, 8, 12, tzinfo=timezone.utc),
+        trusted_at=datetime(2026, 8, 12, tzinfo=timezone.utc),
     )
     monkeypatch.setattr(mod, "_load_sealed_trial", lambda *args, **kwargs: sealed)
     output = tmp_path / "assessment.json"
@@ -194,6 +426,67 @@ def test_assess_rejects_unavailable_inputs_without_writing_output(
 
     assert excinfo.value.code == "assessment_inputs_unavailable"
     assert not output.exists()
+
+
+def test_assess_valid_sealed_root_is_byte_for_byte_read_only(
+    tmp_path: Path,
+) -> None:
+    """Failing closed must leave every Trial artifact and sidecar unchanged."""
+
+    mod = _cli()
+    root = tmp_path / "sealed-root"
+    trial_id, trusted_at = _sealed_trial_root(root)
+    output = tmp_path / "assessment.json"
+    before = _tree_bytes(root)
+
+    with pytest.raises(mod.RegimeTrialCliError) as excinfo:
+        mod.assess_trial(
+            root=root,
+            trial_id=trial_id,
+            output=output,
+            clock=lambda: trusted_at,
+        )
+
+    assert excinfo.value.code == "assessment_inputs_unavailable"
+    assert _tree_bytes(root) == before
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("command", "session_argument"),
+    [
+        ("decide", date(2026, 8, 6)),
+        ("advance", date(2026, 8, 7)),
+    ],
+)
+def test_unavailable_reserved_commands_are_byte_for_byte_read_only(
+    tmp_path: Path, command: str, session_argument: date
+) -> None:
+    """Reserved entrypoints may validate, but cannot mutate before rejecting."""
+
+    mod = _cli()
+    root = tmp_path / "sealed-root"
+    trial_id, trusted_at = _sealed_trial_root(root)
+    before = _tree_bytes(root)
+
+    with pytest.raises(mod.RegimeTrialCliError) as excinfo:
+        if command == "decide":
+            mod.decide_session(
+                root=root,
+                trial_id=trial_id,
+                signal_session=session_argument,
+                clock=lambda: trusted_at,
+            )
+        else:
+            mod.advance_market_session(
+                root=root,
+                trial_id=trial_id,
+                market_session=session_argument,
+                clock=lambda: trusted_at,
+            )
+
+    assert excinfo.value.code == "privileged_context_required"
+    assert _tree_bytes(root) == before
 
 
 # =============================================================================

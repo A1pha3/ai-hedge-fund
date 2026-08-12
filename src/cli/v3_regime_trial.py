@@ -40,6 +40,8 @@ Trial executable or evaluable by themselves.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -126,9 +128,7 @@ def _require_layout(root: Path) -> None:
 
 @dataclass(frozen=True)
 class _SealedTrial:
-    """The loaded handle the read-only commands share: the resolved root,
-    the trial id, the decision store, the sealed bundle, the genesis
-    manifest, the session spine, and the trusted clock."""
+    """The verified read-only handle shared by all four commands."""
 
     root: Path
     trial_id: str
@@ -136,74 +136,97 @@ class _SealedTrial:
     bundle: object
     genesis_manifest: object
     spine: object
-    clock: Callable[[], datetime]
+    trusted_at: datetime
+
+
+@dataclass(frozen=True)
+class _ReadOnlySqlite:
+    """A path marker proving the CLI did not construct a writer repository."""
+
+    database_path: Path
+
+
+def _connect_immutable(database_path: Path) -> sqlite3.Connection:
+    """Open a sealed SQLite artifact without journals, sidecars, or migrations."""
+
+    return sqlite3.connect(
+        f"{database_path.resolve().as_uri()}?mode=ro&immutable=1",
+        uri=True,
+    )
 
 
 def _load_sealed_trial(
     root: str | Path, trial_id: str, *, clock: Callable[[], datetime] | None
 ) -> _SealedTrial:
-    """Resolve, verify the layout, and load the sealed registration + spine.
+    """Resolve and verify the sealed registration without physical writes.
 
-    The fail-closed chokepoint shared by every command: a root missing any
-    layout artifact, a trial with no registration, or a trial whose genesis
-    manifest disagrees with the sealed archive rejects before any execution.
+    Both SQLite artifacts open as ``mode=ro&immutable=1``; repository
+    constructors are deliberately forbidden here because they initialize
+    schemas and WAL sidecars. One trusted time is frozen for governance and
+    writer checks. Governance semantics, complete genesis equality/bindings,
+    content roots, research-program enrollment, and the current writer lease
+    must all verify or every command fails closed.
     """
-
-    from src.screening.offensive.v3.evidence.session_spine import SessionSpine
-    from src.screening.offensive.v3.orchestration.genesis import (
-        TrialGenesisArchive,
-    )
-    from src.screening.offensive.v3.orchestration.trial_store import (
-        TrialArmDecisionStore,
-    )
 
     resolved = _resolve_trial_root(root)
     _require_layout(resolved)
     clk = clock if clock is not None else _wall_clock
-    store = TrialArmDecisionStore(database_path=str(resolved / "decisions.sqlite3"))
-    bundle, genesis_manifest = _read_registration(store, trial_id)
-    # The genesis archive must hold a manifest for this exact trial whose
-    # normalized hash agrees with the store's registration.
-    archive = TrialGenesisArchive(resolved / "archive")
+    trusted_at = clk()
+    decisions_path = resolved / "decisions.sqlite3"
+    spine_path = resolved / "spine.sqlite3"
     try:
-        archived = archive.manifest(trial_id)
-    except Exception as exc:  # trial_not_sealed / missing manifest
+        bundle, genesis_manifest = _read_registration(decisions_path, trial_id)
+        _validate_governance_bundle(bundle, trusted_at)
+        _validate_live_writer(decisions_path, trusted_at)
+        archived = _read_archive_manifest(resolved, trial_id)
+        _validate_genesis_binding(
+            root=resolved,
+            trial_id=trial_id,
+            bundle=bundle,
+            registered=genesis_manifest,
+            archived=archived,
+        )
+        _validate_spine(spine_path, bundle)
+    except RegimeTrialCliError:
+        raise
+    except Exception as exc:
         raise RegimeTrialCliError(
-            "genesis_not_sealed",
-            "the genesis archive holds no manifest for this trial",
+            "validation_evidence_unavailable",
+            "the sealed Trial artifacts could not be verified read-only",
             trial_id=trial_id,
             reason=str(exc),
         ) from exc
-    if archived.normalized_genesis_hash != genesis_manifest.normalized_genesis_hash:
-        raise RegimeTrialCliError(
-            "genesis_manifest_drift",
-            "the store genesis manifest disagrees with the sealed archive",
-            trial_id=trial_id,
-        )
-    spine = SessionSpine(database_path=str(resolved / "spine.sqlite3"), clock=clk)
     return _SealedTrial(
         root=resolved,
         trial_id=trial_id,
-        store=store,
+        store=_ReadOnlySqlite(decisions_path),
         bundle=bundle,
         genesis_manifest=genesis_manifest,
-        spine=spine,
-        clock=clk,
+        spine=_ReadOnlySqlite(spine_path),
+        trusted_at=trusted_at,
     )
 
 
-def _read_registration(store: object, trial_id: str) -> tuple[object, object]:
+def _read_registration(
+    database_path: Path, trial_id: str
+) -> tuple[object, object]:
     """Read the sealed (bundle, genesis_manifest) for one trial from the store."""
 
-    import sqlite3
-
-    conn = sqlite3.connect(str(store._database_path))  # noqa: SLF001
+    conn = _connect_immutable(database_path)
     try:
-        row = conn.execute(
-            "SELECT bundle_json, genesis_manifest_json FROM trial_registrations"
-            " WHERE trial_id = :trial_id",
-            {"trial_id": trial_id},
-        ).fetchone()
+        try:
+            row = conn.execute(
+                "SELECT bundle_json, genesis_manifest_json"
+                " FROM trial_registrations WHERE trial_id = :trial_id",
+                {"trial_id": trial_id},
+            ).fetchone()
+        except sqlite3.DatabaseError as exc:
+            raise RegimeTrialCliError(
+                "trial_registration_unreadable",
+                "the immutable decision store has no readable registration",
+                trial_id=trial_id,
+                reason=str(exc),
+            ) from exc
     finally:
         conn.close()
     if row is None:
@@ -220,9 +243,187 @@ def _read_registration(store: object, trial_id: str) -> tuple[object, object]:
     )
 
     return (
-        RegimeTrialBundle.model_validate_json(row[0]),
-        TrialGenesisManifest.model_validate_json(row[1]),
+        RegimeTrialBundle.model_validate_json(row[0], strict=True),
+        TrialGenesisManifest.model_validate_json(row[1], strict=True),
     )
+
+
+def _validate_governance_bundle(bundle: object, trusted_at: datetime) -> None:
+    from src.screening.offensive.v3.governance.regime_trial import (
+        validate_regime_trial_bundle,
+    )
+
+    try:
+        validate_regime_trial_bundle(bundle, trusted_at=trusted_at)
+    except Exception as exc:
+        raise RegimeTrialCliError(
+            "governance_bundle_invalid",
+            "the registered governance bundle failed semantic validation",
+            reason=str(exc),
+        ) from exc
+
+
+def _validate_live_writer(database_path: Path, _trusted_at: datetime) -> None:
+    conn = _connect_immutable(database_path)
+    try:
+        row = conn.execute(
+            "SELECT s.epoch, s.owner_id, l.epoch, l.expires_at"
+            " FROM trial_writer_state s"
+            " LEFT JOIN trial_writer_leases l ON l.writer_id = s.owner_id"
+            " WHERE s.id = 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or row[1] is None or row[2] is None:
+        raise RegimeTrialCliError(
+            "writer_lease_unavailable",
+            "the Trial has no current writer lease",
+        )
+    try:
+        datetime.fromisoformat(row[3])
+    except (TypeError, ValueError) as exc:
+        raise RegimeTrialCliError(
+            "writer_lease_unavailable",
+            "the current writer lease has an invalid expiry",
+        ) from exc
+    # The current writer contract treats presence of the current owner/epoch
+    # row as liveness; ``expires_at`` is validated structurally but is not a
+    # wall-clock TTL in ``TrialArmDecisionStore.require_writer``.
+    if int(row[0]) != int(row[2]):
+        raise RegimeTrialCliError(
+            "writer_lease_unavailable",
+            "the current writer lease epoch disagrees with writer state",
+        )
+
+
+def _read_archive_manifest(root: Path, trial_id: str) -> object:
+    from src.screening.offensive.v3.orchestration.genesis import (
+        TrialGenesisManifest,
+    )
+
+    manifest_path = root / "archive" / trial_id / "genesis-manifest.json"
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise RegimeTrialCliError(
+            "genesis_not_sealed",
+            "the genesis archive holds no real manifest for this trial",
+            trial_id=trial_id,
+        )
+    try:
+        return TrialGenesisManifest.model_validate_json(
+            manifest_path.read_text(encoding="utf-8"), strict=True
+        )
+    except Exception as exc:
+        raise RegimeTrialCliError(
+            "genesis_not_sealed",
+            "the genesis archive manifest is unreadable",
+            trial_id=trial_id,
+            reason=str(exc),
+        ) from exc
+
+
+def _validate_content_root(path: Path, expected: str, label: str) -> None:
+    if not path.is_file() or path.is_symlink():
+        raise RegimeTrialCliError(
+            "genesis_archive_incomplete",
+            f"the sealed {label} artifact is missing or symlinked",
+        )
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual != expected:
+        raise RegimeTrialCliError(
+            "genesis_content_root_mismatch",
+            f"the sealed {label} artifact no longer matches its content root",
+        )
+
+
+def _validate_genesis_binding(
+    *,
+    root: Path,
+    trial_id: str,
+    bundle: object,
+    registered: object,
+    archived: object,
+) -> None:
+    if archived != registered:
+        raise RegimeTrialCliError(
+            "genesis_manifest_drift",
+            "the registered and archived genesis manifests differ",
+            trial_id=trial_id,
+        )
+    trial = bundle.trial_manifest
+    sap = bundle.sap_manifest
+    if (
+        registered.trial_id != trial_id
+        or registered.normalized_genesis_hash
+        != registered.champion_normalized_hash
+        or registered.normalized_genesis_hash
+        != registered.challenger_normalized_hash
+        or registered.trial_manifest_hash != trial.artifact_hash()
+        or registered.sap_manifest_hash != sap.artifact_hash()
+    ):
+        raise RegimeTrialCliError(
+            "genesis_binding_invalid",
+            "the genesis manifest does not exactly bind this Trial and SAP",
+            trial_id=trial_id,
+        )
+    archive = root / "archive" / trial_id
+    _validate_content_root(
+        archive / registered.champion_backup_root / "capital.sqlite3",
+        registered.champion_backup_root,
+        "Champion capital backup",
+    )
+    _validate_content_root(
+        archive / registered.challenger_backup_root / "capital.sqlite3",
+        registered.challenger_backup_root,
+        "Challenger capital backup",
+    )
+    for field, filename, label in (
+        ("champion_exit_lane_root", "exit-lane-champion.sqlite3", "Champion exit lane"),
+        ("challenger_exit_lane_root", "exit-lane-challenger.sqlite3", "Challenger exit lane"),
+        ("champion_proxy_root", "proxy-champion.sqlite3", "Champion proxy state"),
+        ("challenger_proxy_root", "proxy-challenger.sqlite3", "Challenger proxy state"),
+    ):
+        expected = getattr(registered, field)
+        if expected is not None:
+            _validate_content_root(archive / filename, expected, label)
+
+
+def _validate_spine(database_path: Path, bundle: object) -> None:
+    trial = bundle.trial_manifest
+    conn = _connect_immutable(database_path)
+    try:
+        rows = conn.execute(
+            "SELECT signal_session, assessment_date FROM expected_sessions"
+            " WHERE research_program_id = :program ORDER BY signal_session",
+            {"program": trial.research_program_id},
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        raise RegimeTrialCliError(
+            "spine_program_not_enrolled",
+            "the SessionSpine has no enrollment for this research program",
+            research_program_id=trial.research_program_id,
+        )
+    start = trial.enrollment_start.date()
+    end = trial.enrollment_end.date()
+    fixed_assessment = trial.fixed_assessment_date.date()
+    for signal_text, assessment_text in rows:
+        try:
+            signal = date.fromisoformat(signal_text)
+            assessment = date.fromisoformat(assessment_text)
+        except (TypeError, ValueError) as exc:
+            raise RegimeTrialCliError(
+                "spine_binding_invalid",
+                "the SessionSpine contains a malformed enrollment",
+            ) from exc
+        if not (start <= signal < end) or not (
+            signal <= assessment <= fixed_assessment
+        ):
+            raise RegimeTrialCliError(
+                "spine_binding_invalid",
+                "the SessionSpine enrollment lies outside the sealed Trial dates",
+                signal_session=signal_text,
+            )
 
 
 def validate_trial(
@@ -241,13 +442,11 @@ def decide_session(
     signal_session: date,
     clock: Callable[[], datetime] | None = None,
 ) -> int:
-    """Decide one enrolled signal session via the forward paired runner.
+    """Fail closed until the forward runner's operational inputs are wired.
 
-    Loads and verifies the sealed trial, then delegates to the
-    :class:`ForwardPairedTrialRunner`. The forward decision needs the BTST
-    producer's Ed25519 trust chain and the PIT capital baseline; the
-    privileged worker (Plan 06+) injects both. Invoked without that context
-    the command fails closed rather than fabricating a trust chain.
+    The sealed Trial is verified read-only first. The standalone process has
+    no producer trust chain or independent per-arm PIT capital context, so it
+    rejects rather than claiming to delegate work it cannot perform.
     """
 
     sealed = _load_sealed_trial(root, trial_id, clock=clock)
@@ -269,14 +468,11 @@ def advance_market_session(
     market_session: date,
     clock: Callable[[], datetime] | None = None,
 ) -> int:
-    """Advance one market session of both arms through the replay lifecycle.
+    """Fail closed until the replay lifecycle inputs are wired.
 
-    Loads and verifies the sealed trial, then delegates to the Task 12
-    replay engine, which restores the equal-genesis arm ledgers and drives
-    the :class:`ShadowProxyLifecycle`. Constructing the full
-    ``TrialReplayInput`` (bars, marks, snapshot evidence, corporate actions)
-    is the operational replay driver's responsibility; the standalone CLI
-    fails closed rather than guessing market facts.
+    The sealed Trial is verified read-only first. Constructing the full
+    replay input (bars, marks, snapshot evidence, calendar and corporate
+    actions) is the future operational driver's responsibility.
     """
 
     sealed = _load_sealed_trial(root, trial_id, clock=clock)
