@@ -178,7 +178,12 @@ def test_trend_market_weights():
         state = detect_market_state("20260305")
     assert state.state_type == MarketStateType.TREND
     assert abs(sum(state.adjusted_weights.values()) - 1.0) < 1e-6
-    assert state.adjusted_weights["trend"] > state.adjusted_weights["mean_reversion"]
+    # 2026-08-12: trend/MR 双降权到 0 (无偏审计) — 原 "trend > MR" 断言改为权重归一到
+    # fundamental/event, 且两者均为正
+    assert state.adjusted_weights["trend"] == 0.0
+    assert state.adjusted_weights["mean_reversion"] == 0.0
+    assert state.adjusted_weights["fundamental"] > 0.0
+    assert state.adjusted_weights["event_sentiment"] > 0.0
 
 
 def test_low_volume_position_scale():
@@ -230,11 +235,20 @@ def test_weak_breadth_reduces_position_scale_and_trend_weight():
 
     assert state.breadth_ratio < 0.42
     assert state.position_scale == 0.75
-    # 弱势宽度: trend 降权 (基准 0.40/0.8=0.500 → 0.425), fundamental 升权
-    # (基准 0.15/0.8=0.1875 → 0.2625). 88ce357e 调权后 fundamental 不再反超 trend,
-    # 断言调整方向而非穿越 (0.425 / 0.2625 为 _normalize_weights round6 精确值).
-    assert state.adjusted_weights["trend"] == 0.425
-    assert state.adjusted_weights["fundamental"] == 0.2625
+    # 弱势宽度 (2026-08-12 trend/MR 双降权到 0): 原 "trend 降权 0.40→0.425" 断言随
+    # trend=0 作废. 现在权重只落在 fundamental/event 上: 弱势宽度 → fundamental 升权
+    # (基准 0.15/0.2=0.75 → +0.06/0.26 归一), event 降权. 断言调整方向:
+    # fundamental 相对 event 占比上升.
+    assert state.adjusted_weights["trend"] == 0.0
+    assert state.adjusted_weights["mean_reversion"] == 0.0
+    assert state.adjusted_weights["fundamental"] > 0.0
+    assert state.adjusted_weights["event_sentiment"] > 0.0
+    # 与宽松宽度对照 (test_trend_market_weights): 弱势宽度下 fundamental 升权
+    # (+0.06) 且 event 降权 (-0.04), 归一后 fundamental 占比 > 宽松宽度下的占比
+    # (0.75 → 0.21/0.26=0.8077; 宽松 = 0.15/0.20=0.75). 断言方向性结论:
+    # 弱势宽度归一化后 fundamental 相对占比 > 0.75 (基准占比).
+    fundamental_share_weak = state.adjusted_weights["fundamental"] / sum(state.adjusted_weights.values())
+    assert fundamental_share_weak > 0.75
 
 
 def test_safety_first_rule():

@@ -467,8 +467,10 @@ def test_trend_strategy_deweighted_to_zero() -> None:
 
     # trend 降权到 0; 其他三策略权重之和仍归一到有效集
     assert DEFAULT_STRATEGY_WEIGHTS["trend"] == 0.0
-    # 剩余三策略权重为正 (归一化后放大, 不为 0)
-    assert DEFAULT_STRATEGY_WEIGHTS["mean_reversion"] > 0.0
+    # 2026-08-12: mean_reversion 同步降权到 0 (三策略无偏审计 n=16470 证负贡献:
+    # signed Spearman(contrib,T+10)=-0.0819 跨窗同向, T+1 也倒挂; dir+1 WR 41.0% vs
+    # dir-1 51.8%). 剩余两策略权重为正 (归一化后放大)
+    assert DEFAULT_STRATEGY_WEIGHTS["mean_reversion"] == 0.0
     assert DEFAULT_STRATEGY_WEIGHTS["fundamental"] > 0.0
     assert DEFAULT_STRATEGY_WEIGHTS["event_sentiment"] > 0.0
 
@@ -796,8 +798,10 @@ def test_fuse_signals_for_ticker_returns_fused_score_with_weights() -> None:
         market_state=MarketState(),
     )
     assert fused.score_b is not None
-    assert len(fused.weights_used) > 0
-    assert "trend" in fused.weights_used
+    # 2026-08-12: trend/MR 双降权到 0 — 只有 trend 信号时 (权重 0) 无有效权重 →
+    # weights_used 为空, score 归 0 (降权语义: 无贡献因子的信号不再产生分数)
+    assert fused.weights_used == {}
+    assert fused.score_b == 0.0
 
 
 def test_fuse_signals_for_ticker_uses_market_state_weights() -> None:

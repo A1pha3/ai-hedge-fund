@@ -83,11 +83,13 @@ class MarketState(BaseModel):
     btst_kill_switch_metrics: dict[str, float] = Field(default_factory=dict)
     position_scale: float = Field(ge=0, le=1, default=1.0)
     adjusted_weights: dict[str, float] = Field(
+        # 与 DEFAULT_STRATEGY_WEIGHTS 对齐的默认快照 (2026-08-12: trend/MR 双降权后).
+        # 生产路径 (detect_market_state) 显式传 adjusted_weights, 此默认仅测试/退化兜底.
         default_factory=lambda: {
-            "trend": 0.30,
-            "mean_reversion": 0.20,
-            "fundamental": 0.30,
-            "event_sentiment": 0.20,
+            "trend": 0.0,
+            "mean_reversion": 0.0,
+            "fundamental": 0.15,
+            "event_sentiment": 0.05,
         }
     )
     # P2-9: 宏观环境标签 (可选 — fetch_macro_snapshot 失败时为 None)
@@ -103,7 +105,17 @@ DEFAULT_STRATEGY_WEIGHTS: dict[str, float] = {
     # 实验脚本 scripts/trend_gate_unbiased_experiment.py; 决策包
     # docs/superpowers/specs/2026-08-11-trend-strategy-deweight-design.md
     "trend": 0.0,
-    "mean_reversion": 0.20,
+    # mean_reversion 降权到 0 (2026-08-12): 三策略无偏审计 (n=16470, exec 测度, 无选择
+    # 偏差) 证 MR 是**负贡献** — signed(direction×conf) Spearman(contrib,T+10)=-0.0819
+    # 跨窗 H1=-0.108/H2=-0.071 同向, 五分位单调下降 (48.4%→36.8%); direction 维度
+    # dir+1 WR=41.0% vs dir-1 WR=51.8% (差 10.8pp); **T+1 也倒挂** (signed ρ=-0.0282,
+    # NS-4 翻转是 T+1 验证的) — 方向本身在涨停候选日宇宙上错误, 非 horizon 冲突.
+    # 非翻转 (NS-4 翻转版已在生产, 无新证据支持方向反转; 2026-06-25 曾因推荐池样本
+    # 把 multiplier 设 -1.0 后被全 universe 回测推翻, models.py 注释即此教训) —
+    # 降权负贡献因子与 trend 降权同构, 让有正证据的 fundamental/event 归一化放大.
+    # 实验脚本 scripts/strategy_unbiased_audit.py; 决策包
+    # docs/superpowers/specs/2026-08-12-strategy-unbiased-audit-deweights.md
+    "mean_reversion": 0.0,
     "fundamental": 0.15,
     "event_sentiment": 0.05,
 }

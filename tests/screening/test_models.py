@@ -94,11 +94,11 @@ class TestMarketState:
         assert state.state_type == MarketStateType.MIXED
         assert state.breadth_ratio == 0.5
         assert state.position_scale == 1.0
-        assert state.adjusted_weights["trend"] == 0.30
+        assert state.adjusted_weights["trend"] == 0.0
 
     def test_default_adjusted_weights(self) -> None:
         state = MarketState()
-        expected = {"trend": 0.30, "mean_reversion": 0.20, "fundamental": 0.30, "event_sentiment": 0.20}
+        expected = {"trend": 0.0, "mean_reversion": 0.0, "fundamental": 0.15, "event_sentiment": 0.05}
         assert state.adjusted_weights == expected
 
     def test_position_scale_validation(self) -> None:
@@ -258,9 +258,10 @@ class TestCandidateStock:
 class TestDefaultStrategyWeights:
     def test_sums_to_one(self) -> None:
         # 相对权重: 消费方 (signal_fusion/market_state) 使用前统一按 total 归一.
-        # 2026-08-11 trend 降权到 0 → sum=0.40 (MR 0.20 + fundamental 0.15 + event 0.05).
+        # 2026-08-11 trend 降权到 0 → sum=0.40; 2026-08-12 mean_reversion 降权到 0
+        # (三策略无偏审计证负贡献) → sum=0.20 (fundamental 0.15 + event 0.05).
         total = sum(DEFAULT_STRATEGY_WEIGHTS.values())
-        assert abs(total - 0.40) < 1e-9
+        assert abs(total - 0.20) < 1e-9
 
     def test_keys(self) -> None:
         assert set(DEFAULT_STRATEGY_WEIGHTS.keys()) == {"trend", "mean_reversion", "fundamental", "event_sentiment"}

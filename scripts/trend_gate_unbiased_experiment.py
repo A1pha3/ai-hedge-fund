@@ -39,6 +39,7 @@ from src.screening.offensive.setups.btst_breakout import (  # noqa: E402
     _board_quality_score,
     _compute_limit_up_streak,
     _compute_low_vol_score,
+    _compute_range_score,
     _compute_trend_vol_scores,
     _compute_volume_score,
 )
@@ -103,23 +104,8 @@ def scan() -> list[dict]:
             volume_score = _compute_volume_score(df, i)
             low_vol_score = _compute_low_vol_score(df, i)
             board_score = _board_quality_score(ticker)
-            # range 分量 (strength 第5分量)
-            range_score = 0.0
-            high = pd.to_numeric(df["high"], errors="coerce").values if "high" in df.columns else close
-            low = pd.to_numeric(df["low"], errors="coerce").values if "low" in df.columns else close
-            if i >= 1:
-                prev_c = close[i - 1]
-                if math.isfinite(prev_c) and prev_c > 0 and math.isfinite(high[i]) and math.isfinite(low[i]) and high[i] >= low[i]:
-                    range_pct = (high[i] - low[i]) / prev_c
-                    # range_score: 池内 A/B 验证过的倒U甜区映射 (近似生产)
-                    if range_pct < 0.04 or range_pct >= 0.14:
-                        range_score = 0.0
-                    elif 0.06 <= range_pct < 0.09:
-                        range_score = 1.0
-                    elif 0.04 <= range_pct < 0.06 or 0.09 <= range_pct < 0.11:
-                        range_score = 0.5
-                    else:  # [0.11, 0.14)
-                        range_score = 0.25
+            # range_score: 生产函数 (池内 A/B rank IC +37% 验证, 特征契约=生产同一函数)
+            range_score = _compute_range_score(df, i)
 
             # trigger_strength proxy: 5 分量等权 + energy_bonus (squeeze>=1 AND low_vol>=0.75)
             strength = 0.20 * (board_score + low_vol_score + squeeze_score + volume_score + range_score)
