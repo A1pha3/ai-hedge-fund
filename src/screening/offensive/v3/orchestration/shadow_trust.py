@@ -19,7 +19,8 @@ Plan 06+ privileged worker。
 与 BTST producer 信封逐字一致 (kernel/admission.py:106-111 硬校验): producer 在
 ``producers/auto.py:_signal_envelope`` 固定盖 ``execution_version="btst.funnel.v1"``、
 ``cost_version="cn-a-share-costs.v1"``, 行为指纹由 ``BtstProducerApi`` 注入
-(默认 ``BTST_BEHAVIOR_BASELINE`` = sha256("btst-v1"))。本模块用同一组确定性常量
+(默认 ``BTST_BEHAVIOR_BASELINE`` =
+sha256("btst-raw-candidate-payload-v1"))。本模块用同一组确定性常量
 构造 grant, 保证 ADMITTED。常量写死 + 注释指向 source, 不进 toml (非运维可调)。
 
 -------------------------------------------------------------------------------

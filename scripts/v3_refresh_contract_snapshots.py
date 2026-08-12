@@ -34,16 +34,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
-
 from src.screening.offensive.v3.contracts.base import CanonicalModel
-from src.screening.offensive.v3.contracts.decision import PlanEvidence
-from src.screening.offensive.v3.contracts.evidence import (
-    EvidenceRecord,
-    OutcomeEvidence,
-    SignalEvidence,
-    SnapshotEvidence,
-)
 from src.screening.offensive.v3.policy.models import (
     ProducerIdentity,
     PolicySnapshot,
@@ -57,7 +48,6 @@ from tests.offensive.v3.contracts.revision2_snapshot_exemplars import (
     port_snapshot,
     resolve_name,
     schema_snapshot,
-    sha256_json,
 )
 from tests.offensive.v3.contracts.revision2_snapshot_registry import (
     ARTIFACT_HASH_CASES,
@@ -114,6 +104,29 @@ BEHAVIOUR_FINGERPRINT_POLICY_KEYS = (
 # Existing contracts reuse their checked-in exemplar, optionally patched via
 # EXEMPLAR_PATCHES.
 EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
+    "src.screening.offensive.v3.contracts.btst_candidate.BtstRawCandidatePayload": {
+        "payload_kind": "btst_raw_candidate",
+        "schema_major": 1,
+        "candidate_id": "btst:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:600000:btst_breakout",
+        "producer_namespace": "btst",
+        "security_id": "600000.SH",
+        "signal_stage": "selected",
+        "signal_session": "2026-08-11",
+        "entry_price_micros": 5_000_000,
+        "setup": "btst_breakout",
+        "setup_version": "v2",
+        "target_weight_ppm": 90_000,
+        "trigger_strength_ppm": 900_000,
+        "priority": 1,
+        "industry_state": "KNOWN",
+        "industry": "software",
+        "snapshot_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "setup_consumed_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "strategy_semver": "0.2.0",
+        "behavior_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "execution_version": "btst.funnel.v1",
+        "cost_version": "cn-a-share-costs.v1",
+    },
     "src.screening.offensive.v3.policy.models.ProducerPolicy": {
         "btst_enabled": False,
         "oversold_bounce_enabled": False,

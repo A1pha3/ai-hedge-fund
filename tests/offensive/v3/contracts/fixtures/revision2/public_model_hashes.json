@@ -119,6 +119,36 @@
       "numerator": 2
     }
   },
+  "src.screening.offensive.v3.contracts.btst_candidate.BtstRawCandidatePayload": {
+    "canonical_payload_sha256": "6ce09f2d20e94cb5b2acd9d53f07dfd60fdb26f48bb779d367420c48cb9573dd",
+    "content_hash": "6ce09f2d20e94cb5b2acd9d53f07dfd60fdb26f48bb779d367420c48cb9573dd",
+    "json_payload_sha256": "6ce09f2d20e94cb5b2acd9d53f07dfd60fdb26f48bb779d367420c48cb9573dd",
+    "model_module": "src.screening.offensive.v3.contracts.btst_candidate",
+    "model_name": "BtstRawCandidatePayload",
+    "payload": {
+      "behavior_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "candidate_id": "btst:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:600000:btst_breakout",
+      "cost_version": "cn-a-share-costs.v1",
+      "entry_price_micros": 5000000,
+      "execution_version": "btst.funnel.v1",
+      "industry": "software",
+      "industry_state": "KNOWN",
+      "payload_kind": "btst_raw_candidate",
+      "priority": 1,
+      "producer_namespace": "btst",
+      "schema_major": 1,
+      "security_id": "600000.SH",
+      "setup": "btst_breakout",
+      "setup_consumed_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "setup_version": "v2",
+      "signal_session": "2026-08-11",
+      "signal_stage": "selected",
+      "snapshot_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "strategy_semver": "0.2.0",
+      "target_weight_ppm": 90000,
+      "trigger_strength_ppm": 900000
+    }
+  },
   "src.screening.offensive.v3.contracts.capital.AuthoritySnapshot": {
     "canonical_payload_sha256": "3550a9af6f86a2ec95504a1760fa50ee92acb83e864b9d434b411a3e918eb053",
     "content_hash": "3550a9af6f86a2ec95504a1760fa50ee92acb83e864b9d434b411a3e918eb053",

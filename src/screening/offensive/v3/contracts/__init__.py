@@ -44,6 +44,10 @@ from .base import (
     content_hash,
     domain_hash,
 )
+from .btst_candidate import (
+    BtstCandidateIndustryState,
+    BtstRawCandidatePayload,
+)
 from .capital import (
     AUTHORITY_STATE_TRANSITIONS,
     POSITION_STATE_TRANSITIONS,
@@ -231,6 +235,8 @@ __all__ = [
     "CorporateActionRiskComponent",
     "CounterfactualDecisionKey",
     "BrokerEnablementManifest",
+    "BtstCandidateIndustryState",
+    "BtstRawCandidatePayload",
     "ConfidenceLevel",
     "DisasterRecoveryManifest",
     "EntryFenceAcknowledgement",

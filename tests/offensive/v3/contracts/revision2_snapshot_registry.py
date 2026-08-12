@@ -11,6 +11,7 @@ from __future__ import annotations
 PUBLIC_MODEL_CASES = (
     "src.screening.offensive.v3.contracts.authorization.CapitalAuthorizationEnvelope",
     "src.screening.offensive.v3.contracts.base.RationalQuantity",
+    "src.screening.offensive.v3.contracts.btst_candidate.BtstRawCandidatePayload",
     "src.screening.offensive.v3.contracts.capital.AuthoritySnapshot",
     "src.screening.offensive.v3.contracts.capital.CapitalLiveOrderRisk",
     "src.screening.offensive.v3.contracts.capital.CapitalPositionRisk",
@@ -121,6 +122,7 @@ PUBLIC_ENUMS = (
     "src.screening.offensive.v3.contracts.base.EvidenceScope",
     "src.screening.offensive.v3.contracts.base.ExecutionMode",
     "src.screening.offensive.v3.contracts.base.SignalStage",
+    "src.screening.offensive.v3.contracts.btst_candidate.BtstCandidateIndustryState",
     "src.screening.offensive.v3.contracts.capital.AuthorityState",
     "src.screening.offensive.v3.contracts.capital.EconomicAssetKind",
     "src.screening.offensive.v3.contracts.capital.EconomicEventKind",
@@ -252,8 +254,8 @@ PROTECTED_PREIMAGE_CASES = (
 )
 
 
-assert len(PUBLIC_MODEL_CASES) == len(set(PUBLIC_MODEL_CASES)) == 105
-assert len(PUBLIC_ENUMS) == len(set(PUBLIC_ENUMS)) == 47
+assert len(PUBLIC_MODEL_CASES) == len(set(PUBLIC_MODEL_CASES)) == 106
+assert len(PUBLIC_ENUMS) == len(set(PUBLIC_ENUMS)) == 48
 assert len(PUBLIC_ALIASES) == len(set(PUBLIC_ALIASES)) == 11
 assert len(PUBLIC_PORTS) == len(set(PUBLIC_PORTS)) == 6
 assert len(ARTIFACT_HASH_CASES) == len(set(ARTIFACT_HASH_CASES)) == 31
