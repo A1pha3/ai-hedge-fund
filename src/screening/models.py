@@ -62,39 +62,13 @@ class StrategySignal(BaseModel):
     sub_factors: dict = Field(default_factory=dict)
 
 
-class MarketState(BaseModel):
-    """市场状态检测结果（§3.2 五项指标）"""
-
-    state_type: MarketStateType = MarketStateType.MIXED
-    adx: float = 0.0
-    atr_price_ratio: float = 0.0
-    breadth_ratio: float = 0.5
-    daily_return: float = 0.0
-    limit_up_count: int = 0
-    limit_down_count: int = 0
-    limit_up_down_ratio: float = 0.0
-    total_volume: float = 0.0
-    northbound_flow_days: int = 0
-    is_low_volume: bool = False
-    style_dispersion: float = 0.0
-    regime_flip_risk: float = 0.0
-    regime_gate_level: str = "normal"
-    regime_gate_reasons: list[str] = Field(default_factory=list)
-    btst_kill_switch_metrics: dict[str, float] = Field(default_factory=dict)
-    position_scale: float = Field(ge=0, le=1, default=1.0)
-    adjusted_weights: dict[str, float] = Field(
-        # 与 DEFAULT_STRATEGY_WEIGHTS 对齐的默认快照 (2026-08-12: trend/MR 双降权后).
-        # 生产路径 (detect_market_state) 显式传 adjusted_weights, 此默认仅测试/退化兜底.
-        default_factory=lambda: {
-            "trend": 0.0,
-            "mean_reversion": 0.0,
-            "fundamental": 0.15,
-            "event_sentiment": 0.05,
-        }
-    )
-    # P2-9: 宏观环境标签 (可选 — fetch_macro_snapshot 失败时为 None)
-    macro_context: dict | None = None
-
+# ---------------------------------------------------------------------------
+# 策略权重 — 唯一权威源
+# ---------------------------------------------------------------------------
+# 所有下游 (MarketState.adjusted_weights 默认值 / custom_weights.DEFAULT_WEIGHTS /
+# signal_fusion 归一化 / web slider) 都从这里派生, 禁止在别处重复硬编码.
+# weight=0 即禁用 — 融合层 _normalize_active_weights 天然排除 weight<=0 的策略.
+# 改一个策略的启停只需改这里一处.
 
 DEFAULT_STRATEGY_WEIGHTS: dict[str, float] = {
     # trend 降权到 0 (2026-08-11): 全 universe 涨停候选日实验 (n=13762, exec 测度, 无选择
@@ -121,29 +95,65 @@ DEFAULT_STRATEGY_WEIGHTS: dict[str, float] = {
 }
 
 
-#: 策略方向乘数 — 默认全部正向 (1.0).
-#:
-#: 历史: 2026-06-25 曾基于推荐池 (n=472) 诊断将 mean_reversion 设为 -1.0 (反向),
-#: 但随后全 universe 回测 (n=8136, 470 票 × 20 日期, 零 LLM 纯技术指标) 推翻了
-#: 该结论: 在全市场下 MR 是**正向有效因子** (IC=+0.040, p=0.0003, bullish mean
-#: +6.86% vs bearish +3.32%, bull-bear 差 +3.54%). 推荐池的反向现象是**选择偏差**
-#: (池子预筛选强势股, 把能反弹的超跌票过滤掉了), 不是 MR 因子本身的问题.
-#:
-#: NS-4 (commit 023acd74, autodev C225 n=1193/sub-factor, sep=-2.58%, IC=-0.128)
-#: 进一步发现 4 个 MR sub-factor 信号相对 T+1 系统性反向 — 短期 momentum 主导,
-#: 超卖票继续跌. NS-4 在 signal generators (technicals.py +
-#: strategy_scorer_mean_reversion.py) 内翻转 bullish/bearish 标签使信号方向
-#: 对齐 T+1; multiplier 保持 1.0 (信号已对齐, 无需再反转).
-#:
-#: 教训: 因子诊断必须用全 universe (无选择偏差), 不能只看推荐池; 信号方向修复
-#: 应在 generator 层 (语义对齐) 而非 multiplier 层 (盲反转). 参见 NS-4 keystone
-#: (commit 023acd74) 与 mean-reversion-reversed-20260625 memory 修正记录.
-STRATEGY_DIRECTION_MULTIPLIER: dict[str, float] = {
-    "trend": 1.0,
-    "mean_reversion": 1.0,  # NS-4 generator 层已对齐 T+1, multiplier 保持 1.0
-    "fundamental": 1.0,
-    "event_sentiment": 1.0,
-}
+def _default_adjusted_weights() -> dict[str, float]:
+    """MarketState.adjusted_weights 的延迟派生默认值.
+
+    返回 DEFAULT_STRATEGY_WEIGHTS 的副本, 保证 MarketState 默认值永远与权威源一致,
+    消除重复硬编码导致的 stale 风险 (此前曾 stale 过 0.30/0.20/0.30/0.20).
+    """
+    return dict(DEFAULT_STRATEGY_WEIGHTS)
+
+
+#: 当前启用的策略集合 (weight>0). 融合层 _normalize_active_weights 天然排除
+#: weight<=0 的策略, 所以此集合不是"额外开关", 只是 DEFAULT_STRATEGY_WEIGHTS 的
+#: 派生视图, 方便诊断和断言 ("当前只有 fundamental + event 在工作").
+ENABLED_STRATEGIES: frozenset[str] = frozenset(
+    name for name, weight in DEFAULT_STRATEGY_WEIGHTS.items() if weight > 0.0
+)
+
+
+class MarketState(BaseModel):
+    """市场状态检测结果（§3.2 五项指标）"""
+
+    state_type: MarketStateType = MarketStateType.MIXED
+    adx: float = 0.0
+    atr_price_ratio: float = 0.0
+    breadth_ratio: float = 0.5
+    daily_return: float = 0.0
+    limit_up_count: int = 0
+    limit_down_count: int = 0
+    limit_up_down_ratio: float = 0.0
+    total_volume: float = 0.0
+    northbound_flow_days: int = 0
+    is_low_volume: bool = False
+    style_dispersion: float = 0.0
+    regime_flip_risk: float = 0.0
+    regime_gate_level: str = "normal"
+    regime_gate_reasons: list[str] = Field(default_factory=list)
+    btst_kill_switch_metrics: dict[str, float] = Field(default_factory=dict)
+    position_scale: float = Field(ge=0, le=1, default=1.0)
+    adjusted_weights: dict[str, float] = Field(
+        # 从 DEFAULT_STRATEGY_WEIGHTS 派生 (2026-08-12): 此前是重复硬编码,
+        # 每次改权重都要手动同步, 曾 stale 过 (0.30/0.20/0.30/0.20 vs 0.15/0.05).
+        # 现在通过 _default_adjusted_weights() 延迟引用, 自动与权威源对齐.
+        # 生产路径 (detect_market_state) 显式传 adjusted_weights, 此默认仅测试/退化兜底.
+        default_factory=_default_adjusted_weights,
+    )
+    # P2-9: 宏观环境标签 (可选 — fetch_macro_snapshot 失败时为 None)
+    macro_context: dict | None = None
+
+
+# 历史注记 (2026-08-12): 此处原有一个 STRATEGY_DIRECTION_MULTIPLIER dict
+# (4 个策略全 1.0). 它的语义曾是"在融合层翻转信号方向", 但历史证明这层抽象
+# 是错误的 — 2026-06-25 曾据推荐池样本把 MR 设 -1.0, 全 universe 回测推翻;
+# NS-4 (commit 023acd74) 最终在 generator 层 (语义对齐) 修复了方向, multiplier
+# 全 1.0 沦为 no-op 占位符. 一个全 1.0 的乘性系数等价于不存在 — 已删除,
+# 连同 signal_fusion.compute_score_b 里的查找. 方向修复的唯一正解在 generator
+# 层 (technicals.py + strategy_scorer_mean_reversion.py), 不在融合层.
+#
+# 教训 (留给未来): 信号方向问题应在 generator 层用语义对齐解决 (bullish/bearish
+# 标签的含义), 而非在融合层加一个"方向乘数"做盲反转 — 后者会积累历史债且无
+# 人记得为什么是 -1.0. 参见 NS-4 keystone (commit 023acd74).
 
 
 class FusedScore(BaseModel):

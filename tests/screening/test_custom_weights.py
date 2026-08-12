@@ -23,14 +23,21 @@ from src.screening.custom_weights import (
 
 
 class TestStrategyWeights:
-    def test_default_weights_sum_to_one(self) -> None:
-        w = StrategyWeights()
-        assert abs(w.trend + w.mean_reversion + w.fundamental + w.event_sentiment - 1.0) < 1e-9
+    def test_default_weights_from_authority(self) -> None:
+        """默认权重从 DEFAULT_STRATEGY_WEIGHTS 派生 (2026-08-12 重构后不再 0.25 等分).
 
-    def test_default_all_0_25(self) -> None:
+        旧测试断言 0.25 等分 + sum=1, 但权威源在 trend/MR 降权后 sum=0.20 —
+        旧的"0.25 等分"是 stale 硬编码, 与 --auto 生产路径用两套冲突的默认权重.
+        现在默认值从权威源派生, sum 可以 < 1 (disabled 策略 weight=0).
+        """
+        from src.screening.models import DEFAULT_STRATEGY_WEIGHTS
+
         w = StrategyWeights()
         for key in STRATEGY_KEYS:
-            assert getattr(w, key) == 0.25
+            assert getattr(w, key) == DEFAULT_STRATEGY_WEIGHTS[key]
+        total = w.trend + w.mean_reversion + w.fundamental + w.event_sentiment
+        assert total > 0.0, "默认权重之和必须 > 0 (全 0 无法归一化)"
+        # 不再断言 sum==1 — 权威源在策略降权时 sum 可以 < 1, 归一化在消费时进行
 
     def test_custom_valid_weights(self) -> None:
         w = StrategyWeights(trend=0.5, mean_reversion=0.3, fundamental=0.1, event_sentiment=0.1)
@@ -45,9 +52,14 @@ class TestStrategyWeights:
         with pytest.raises(ValueError, match="不能超过 1.0"):
             StrategyWeights(trend=1.5, mean_reversion=0.0, fundamental=0.0, event_sentiment=0.0)
 
-    def test_reject_sum_not_one(self) -> None:
-        with pytest.raises(ValueError, match="权重之和必须为 1.0"):
-            StrategyWeights(trend=0.5, mean_reversion=0.3, fundamental=0.1, event_sentiment=0.0)
+    def test_reject_all_zero(self) -> None:
+        """全 0 权重被拒 (无法归一化, 会污染排序).
+
+        2026-08-12: 校验从 sum==1 放宽为 sum>0 — 权威源在策略降权时 sum 可以 < 1
+        (当前 sum=0.20: trend/MR weight=0). 但全 0 仍然非法.
+        """
+        with pytest.raises(ValueError, match="权重之和必须 > 0"):
+            StrategyWeights(trend=0.0, mean_reversion=0.0, fundamental=0.0, event_sentiment=0.0)
 
     def test_reject_nan(self) -> None:
         with pytest.raises(ValueError, match="必须为有限数"):
@@ -140,6 +152,7 @@ class TestExtractStrategyScore:
 
 class TestComputeWeightedScoreB:
     def test_all_bullish_equal_weights(self) -> None:
+        """四策略全 bullish + 等权 → 满分 1.0 (权重归一化后)."""
         rec = {
             "strategy_signals": {
                 "trend": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
@@ -148,7 +161,8 @@ class TestComputeWeightedScoreB:
                 "event_sentiment": {"direction": 1, "confidence": 100.0, "completeness": 1.0},
             },
         }
-        w = StrategyWeights()
+        # 显式等权 (不再依赖默认值, 默认值从权威源派生可能不等权)
+        w = StrategyWeights(trend=0.25, mean_reversion=0.25, fundamental=0.25, event_sentiment=0.25)
         score = _compute_weighted_score_b(rec, w)
         assert score == pytest.approx(1.0)
 
@@ -161,7 +175,7 @@ class TestComputeWeightedScoreB:
                 "event_sentiment": {"direction": -1, "confidence": 100.0, "completeness": 1.0},
             },
         }
-        w = StrategyWeights()
+        w = StrategyWeights(trend=0.25, mean_reversion=0.25, fundamental=0.25, event_sentiment=0.25)
         score = _compute_weighted_score_b(rec, w)
         assert score == pytest.approx(-1.0)
 
@@ -200,6 +214,7 @@ class TestComputeWeightedScoreB:
         assert _compute_weighted_score_b("bad", w) == 0.0
 
     def test_score_clamped_at_upper(self) -> None:
+        """confidence 超过 100 时 clamp 到 1.0 (无论权重 sum)."""
         rec = {
             "strategy_signals": {
                 "trend": {"direction": 1, "confidence": 200.0, "completeness": 1.0},
@@ -208,7 +223,8 @@ class TestComputeWeightedScoreB:
                 "event_sentiment": {"direction": 1, "confidence": 200.0, "completeness": 1.0},
             },
         }
-        w = StrategyWeights()
+        # 显式等权 — 测试 clamp 行为, 不依赖默认权重
+        w = StrategyWeights(trend=0.25, mean_reversion=0.25, fundamental=0.25, event_sentiment=0.25)
         score = _compute_weighted_score_b(rec, w)
         assert score == 1.0
 

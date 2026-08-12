@@ -500,23 +500,24 @@ def test_compute_score_b_trend_zero_normalizes_remaining() -> None:
     assert score_with_trend > score
 
 
-def test_mean_reversion_not_reversed_by_default() -> None:
-    """MR multiplier 保持 1.0 (正向, 不反转).
+def test_mean_reversion_signal_direction_aligned() -> None:
+    """MR bullish → score 为正 (NS-4 在 generator 层对齐 T+1).
 
     历史: 2026-06-25 全 universe 回测 (n=8136) 证明推荐池的 MR 反向是选择偏差
     (IC=+0.040, p=0.0003). 后续 NS-4 (commit 023acd74, autodev C225
     n=1193/sub-factor, sep=-2.58%, IC=-0.128) 发现 4 个 MR sub-factor 信号相对
     T+1 系统性反向 — 短期 momentum 主导, 超卖票继续跌. NS-4 在 signal generators
     (technicals.py + strategy_scorer_mean_reversion.py) 层翻转 bullish/bearish
-    标签使信号方向对齐 T+1; multiplier 不再需要反转, 保持 1.0.
+    标签使信号方向对齐 T+1.
 
     Post-NS-4 语义: bullish = overbought (动量延续看涨); bearish = oversold
-    (动量延续看跌). multiplier=1.0 时 MR bullish → score += 正值 (与 T+1 对齐).
-    """
-    from src.screening.models import STRATEGY_DIRECTION_MULTIPLIER
-    from src.screening.signal_fusion import compute_score_b
+    (动量延续看跌). MR bullish → score += 正值 (与 T+1 对齐).
 
-    assert STRATEGY_DIRECTION_MULTIPLIER.get("mean_reversion") == 1.0, "NS-4 已在 generator 层对齐 T+1 方向, multiplier 保持 1.0"
+    注: 原 STRATEGY_DIRECTION_MULTIPLIER (全 1.0 no-op) 已删除 — 方向修复的
+    唯一正解在 generator 层, 不在融合层乘数. 本测试保留行为验证 (bullish → 正分),
+    删除对已删常量的断言.
+    """
+    from src.screening.signal_fusion import compute_score_b
 
     # MR bullish (post-NS-4: overbought, 动量延续看涨) → score 为正
     sig = {"mean_reversion": StrategySignal(direction=1, confidence=80.0, completeness=1.0)}

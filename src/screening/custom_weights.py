@@ -12,9 +12,10 @@ Web 端通过滑块调整, 实时看到推荐变化。本模块是纯函数实�
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
+from src.screening.models import DEFAULT_STRATEGY_WEIGHTS
 from src.utils.numeric import safe_float as _safe_float
 
 # ---------------------------------------------------------------------------
@@ -35,13 +36,12 @@ MAX_STRATEGY_SCORE: float = 100.0
 #: 权重和容差 (允许 1e-6 浮点误差)
 WEIGHT_SUM_TOLERANCE: float = 1e-6
 
-#: 默认权重 (与 :data:`src.screening.models.DEFAULT_STRATEGY_WEIGHTS` 对齐, 但用 0.25 等分)
-DEFAULT_WEIGHTS: dict[str, float] = {
-    "trend": 0.25,
-    "mean_reversion": 0.25,
-    "fundamental": 0.25,
-    "event_sentiment": 0.25,
-}
+#: 默认权重 — 从权威源 :data:`src.screening.models.DEFAULT_STRATEGY_WEIGHTS` 派生 (2026-08-12).
+#: 此前是独立的 0.25 等分硬编码, 与权威源 (trend/MR 降权后 sum=0.20) 不一致,
+#: 导致 --auto 生产路径与 web slider 重算用两套互相冲突的"默认"权重. 派生后
+#: 权威源改一处, 此处自动同步. sum 可以 < 1.0 (disabled 策略 weight=0 是合法的);
+#: StrategyWeights.__post_init__ 已放宽 sum 校验到 sum>0, 归一化在消费时进行.
+DEFAULT_WEIGHTS: dict[str, float] = dict(DEFAULT_STRATEGY_WEIGHTS)
 
 
 # ---------------------------------------------------------------------------
@@ -65,15 +65,17 @@ class StrategyWeights:
         event_sentiment: 事件情绪策略权重
 
     Examples:
-        >>> w = StrategyWeights()  # 默认 0.25/0.25/0.25/0.25
-        >>> w.to_dict()
-        {'trend': 0.25, 'mean_reversion': 0.25, 'fundamental': 0.25, 'event_sentiment': 0.25}
+        >>> w = StrategyWeights()  # 默认从 DEFAULT_STRATEGY_WEIGHTS 派生
+        >>> w.to_dict()  # 当前权威源: trend=0, MR=0, f=0.15, e=0.05
+        {'trend': 0.0, 'mean_reversion': 0.0, 'fundamental': 0.15, 'event_sentiment': 0.05}
     """
 
-    trend: float = 0.25
-    mean_reversion: float = 0.25
-    fundamental: float = 0.25
-    event_sentiment: float = 0.25
+    # 默认值从 DEFAULT_WEIGHTS (= DEFAULT_STRATEGY_WEIGHTS) 派生 (2026-08-12).
+    # 此前硬编码 0.25 等分, 与权威源不一致; 现在自动同步.
+    trend: float = field(default_factory=lambda: DEFAULT_WEIGHTS["trend"])
+    mean_reversion: float = field(default_factory=lambda: DEFAULT_WEIGHTS["mean_reversion"])
+    fundamental: float = field(default_factory=lambda: DEFAULT_WEIGHTS["fundamental"])
+    event_sentiment: float = field(default_factory=lambda: DEFAULT_WEIGHTS["event_sentiment"])
 
     def __post_init__(self) -> None:
         # NaN/Inf 防御: 不走 _safe_float (会归零, 绕开检查) — 直接用 math.isfinite 验证
@@ -87,10 +89,13 @@ class StrategyWeights:
                 raise ValueError(f"权重 {key} 不能为负数, 当前: {val}")
             if val > 1.0:
                 raise ValueError(f"权重 {key} 不能超过 1.0, 当前: {val}")
-        # 求和校验
+        # 求和校验: 放宽为 sum>0 (2026-08-12). 权威源 DEFAULT_STRATEGY_WEIGHTS
+        # 在策略被降权到 0 时 sum 可以 < 1.0 (当前 sum=0.20: trend/MR disabled).
+        # slider 语义是"指定相对权重", 接受任意正权和, 归一化在消费时 (_normalize_active_weights) 进行.
+        # 全 0 仍然非法 (无法归一化, 会污染排序).
         total = self.trend + self.mean_reversion + self.fundamental + self.event_sentiment
-        if abs(total - 1.0) > WEIGHT_SUM_TOLERANCE:
-            raise ValueError(f"权重之和必须为 1.0, 当前: {total:.9f}")
+        if total <= 0.0:
+            raise ValueError(f"权重之和必须 > 0 (全 0 无法归一化), 当前: {total:.9f}")
 
     def to_dict(self) -> dict[str, float]:
         """转为 dict。"""
@@ -102,10 +107,10 @@ class StrategyWeights:
         }
 
     def normalize(self) -> "StrategyWeights":
-        """归一化到 sum=1.0 (若输入未严格归一化)。
+        """归一化到 sum=1.0 (disabled 策略 weight=0 会被排除后的相对权重).
 
-        注意: ``__post_init__`` 已严格校验 sum=1, 通常不需要此方法;
-        留作扩展, 允许在 ``__post_init__`` 之前对 raw input 做预处理。
+        2026-08-12: __post_init__ 现在校验 sum>0 而非 sum==1, 所以输入可能是
+        sum<1 的 (disabled 策略 weight=0). 此方法把 enabled 策略归一化到 sum=1.
         """
         total = self.trend + self.mean_reversion + self.fundamental + self.event_sentiment
         if total <= 0.0 or not math.isfinite(total):
@@ -183,13 +188,21 @@ def _compute_weighted_score_b(
     公式::
 
         per_strategy_score[s] = sign(direction_s) * confidence_s        # 范围 [-100, +100]
-        new_score_b = sum_s( weight_s * per_strategy_score[s] ) / 100   # 归一到 [-1, +1]
+        new_score_b = sum_s( weight_s * per_strategy_score[s] ) / (100 * sum_s(weight_s))
+
+    权重归一化后计算 (2026-08-12): 此前要求 sum(weight)==1 才能保证输出范围正确,
+    但权威源 DEFAULT_STRATEGY_WEIGHTS 在策略降权时 sum<1 (当前 0.20). 现在显式
+    归一化, 无论权重 sum 是多少, 输出范围都是 [-1, +1], 与生产路径 compute_score_b
+    的 _normalize_active_weights 语义一致. 全 0 权重由 __post_init__ 拒绝.
 
     当 rec 缺失 ``strategy_signals`` 或四策略分数全为 0 时, 返回原 ``score_b`` (容错)。
     """
     if not isinstance(rec, Mapping):
         return 0.0
     weights_dict = weights.to_dict()
+    total_weight = sum(weights_dict[strategy] for strategy in STRATEGY_KEYS)
+    if total_weight <= 0.0:
+        return _safe_float(rec.get("score_b"), 0.0)
     has_any_signal = False
     weighted_sum = 0.0
     for strategy in STRATEGY_KEYS:
@@ -200,7 +213,7 @@ def _compute_weighted_score_b(
     if not has_any_signal:
         # 无任何信号 — 回退到原 score_b
         return _safe_float(rec.get("score_b"), 0.0)
-    return max(-1.0, min(1.0, weighted_sum / MAX_STRATEGY_SCORE))
+    return max(-1.0, min(1.0, weighted_sum / (MAX_STRATEGY_SCORE * total_weight)))
 
 
 def reweight_recommendations(

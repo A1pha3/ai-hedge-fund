@@ -342,25 +342,26 @@ def _compute_total_volume(daily_basic: pd.DataFrame | None) -> float:
 
 
 def _apply_base_state_adjustments(*, metrics: MarketStateMetrics, adjusted: dict[str, float], position_scale: float) -> tuple[MarketStateType, float]:
-    # 2026-08-12: trend/mean_reversion 已降权到 0 (无偏审计: trend 无 IC / MR 负贡献,
-    # models.py DEFAULT_STRATEGY_WEIGHTS 注释). 原分支对 trend/MR 的 ± 调整为死操作
-    # (0 权重加减无效果), 且 MR 上调分支与审计证据反向 — 已清理. 保留 fundamental/
-    # event_sentiment 的 regime 调节 (有证据的策略权重才配被 regime 微调).
+    # Regime 调整比例化 (2026-08-12): 原来是绝对量调整 (+= 0.10), 杠杆随基准权重
+    # 变化 — 降权前 fundamental 0.30 上 +=0.10 是 +33%, 降权后 0.15 上 +=0.10 是 +67%,
+    # 意外放大了 regime 调节幅度. 改为乘性比例后, 无论 DEFAULT_STRATEGY_WEIGHTS
+    # 怎么变, regime 的相对调节幅度恒定. CRISIS 把 fundamental 抬 1.5× / event 砍 0.5×.
     if metrics.daily_return <= -0.05 or metrics.limit_down_count > 500 or (metrics.breadth_ratio <= 0.28 and metrics.limit_down_count >= 120):
-        adjusted["fundamental"] += 0.10
-        adjusted["event_sentiment"] -= 0.05
+        adjusted["fundamental"] *= 1.5
+        adjusted["event_sentiment"] *= 0.5
         return MarketStateType.CRISIS, 0.3
     if metrics.adx > 30 and metrics.atr_ratio < 0.012 and metrics.breadth_ratio >= 0.52:
-        adjusted["event_sentiment"] -= 0.04
+        adjusted["event_sentiment"] *= 0.8
         return MarketStateType.TREND, position_scale
     if metrics.atr_ratio < 0.012 and metrics.adx < 25:
-        adjusted["fundamental"] -= 0.04
+        adjusted["fundamental"] *= 0.85
         return MarketStateType.RANGE, position_scale
     return MarketStateType.MIXED, position_scale
 
 
 def _apply_limit_ratio_adjustments(*, metrics: MarketStateMetrics, adjusted: dict[str, float]) -> None:
     # Bug fix: 显式括号防 and/or 优先级歧义 (原来靠 Python 默认优先级碰巧正确)
+    # 比例化调整已是乘性, 无需转换.
     if (metrics.limit_down_count > 0 and metrics.limit_ratio >= 3.0) or (
         metrics.limit_up_count > 0 and metrics.limit_ratio <= (1 / 3)
     ):
@@ -369,22 +370,21 @@ def _apply_limit_ratio_adjustments(*, metrics: MarketStateMetrics, adjusted: dic
 
 
 def _apply_breadth_adjustments(*, metrics: MarketStateMetrics, adjusted: dict[str, float], position_scale: float) -> float:
-    # 2026-08-12: trend/MR 已降权到 0 — 原 branch 的 trend/MR 调整为死操作, 已清理.
+    # Regime 调整比例化 (2026-08-12): 原绝对量 → 乘性比例, 杠杆与基准解耦.
     if metrics.breadth_is_weak:
-        adjusted["event_sentiment"] -= 0.04
-        adjusted["fundamental"] += 0.06
+        adjusted["event_sentiment"] *= 0.8
+        adjusted["fundamental"] *= 1.3
         return position_scale * 0.75
     if metrics.breadth_is_strong:
-        adjusted["event_sentiment"] += 0.02
-        adjusted["fundamental"] -= 0.04
+        adjusted["event_sentiment"] *= 1.2
+        adjusted["fundamental"] *= 0.85
     return position_scale
 
 
 def _apply_northbound_adjustments(*, metrics: MarketStateMetrics, adjusted: dict[str, float]) -> None:
-    # 2026-08-12: trend/MR 已降权到 0 — 原 branch 的 trend/MR 调整为死操作
-    # (MR -= 0.07 与审计同向, 但 0 权重上无效果, 一并清理), 已清理.
+    # Regime 调整比例化 (2026-08-12): 原绝对量 → 乘性比例, 杠杆与基准解耦.
     if metrics.northbound_flow_days >= 3:
-        adjusted["fundamental"] += 0.05
+        adjusted["fundamental"] *= 1.3
     elif metrics.northbound_flow_days <= -3:
-        adjusted["fundamental"] -= 0.05
-        adjusted["event_sentiment"] += 0.02
+        adjusted["fundamental"] *= 0.7
+        adjusted["event_sentiment"] *= 1.2
