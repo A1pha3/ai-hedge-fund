@@ -309,6 +309,49 @@ class TestComputeWeightedScoreB:
 
         assert _compute_weighted_score_b(rec, weights) == 0.0
 
+    def test_selected_unavailable_strategy_does_not_fallback_to_unselected_signal(self) -> None:
+        """A valid user subset remains authoritative when its evidence is unavailable."""
+        rec = {
+            "strategy_signals": {
+                "trend": {
+                    "direction": 1,
+                    "confidence": 100.0,
+                    "completeness": 1.0,
+                },
+                "event_sentiment": {
+                    "direction": 1,
+                    "confidence": 100.0,
+                    "completeness": 0.0,
+                },
+            }
+        }
+        event_only = StrategyWeights(
+            trend=0.0,
+            mean_reversion=0.0,
+            fundamental=0.0,
+            event_sentiment=1.0,
+        )
+
+        assert _compute_weighted_score_b(rec, event_only) == 0.0
+
+    @pytest.mark.parametrize("raw_direction", [float("inf"), 2, 1.9, True])
+    def test_malformed_raw_direction_fails_closed(
+        self,
+        raw_direction: object,
+    ) -> None:
+        """Only exact non-boolean {-1, 0, 1} direction values are admissible."""
+        rec = {
+            "strategy_signals": {
+                "trend": {
+                    "direction": raw_direction,
+                    "confidence": 100.0,
+                    "completeness": 1.0,
+                }
+            }
+        }
+
+        assert _compute_weighted_score_b(rec, StrategyWeights()) == 0.0
+
     def test_mixed_signals(self) -> None:
         """Trend bullish 80, fundamental bearish 60 → net depends on weights."""
         rec = {

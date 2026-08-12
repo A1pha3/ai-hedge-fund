@@ -4,7 +4,7 @@
 Web 端通过滑块调整, 实时看到推荐变化。本模块是纯函数实现, 便于单测。
 
 主入口:
-  - :class:`StrategyWeights` — 四策略权重 dataclass (sum-to-1 校验)
+  - :class:`StrategyWeights` — 四策略非负相对权重 dataclass
   - :func:`reweight_recommendations` — 输入 rec 列表 + 权重, 返回按新 score_b 排序
   - :func:`load_latest_recommendations` (re-export) — 从最新 auto_screening 报告加载
 """
@@ -164,24 +164,22 @@ def _extract_strategy_score(rec: Mapping[str, Any], strategy: str) -> float:
     sig = signals.get(strategy)
     if not isinstance(sig, Mapping):
         return 0.0
-    direction_raw = sig.get("direction", 0)
-    try:
-        direction_int = int(direction_raw)
-    except (TypeError, ValueError):
-        return 0.0
-    # direction ∈ {-1, 0, +1}; 容忍 0 以外的小数退化
-    if direction_int > 0:
-        sign = 1.0
-    elif direction_int < 0:
-        sign = -1.0
-    else:
+    direction = _coerce_raw_direction(sig.get("direction", 0))
+    if direction == 0.0:
         return 0.0
     confidence = _safe_float(sig.get("confidence"), 0.0)
     completeness = _safe_float(sig.get("completeness"), 0.0)
     # completeness=0 → 数据不可用, 视为 0 避免污染
     if completeness <= 0.0:
         return 0.0
-    return sign * confidence
+    return direction * confidence
+
+
+def _coerce_raw_direction(value: Any) -> float:
+    """Accept only the exact JSON integer domain used by ``StrategySignal``."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0.0
+    return float(value) if value in (-1, 0, 1) else 0.0
 
 
 def _compute_weighted_score_b(
@@ -216,11 +214,7 @@ def _compute_weighted_score_b(
         raw_signal = raw_signals.get(strategy)
         if not isinstance(raw_signal, Mapping):
             continue
-        try:
-            direction_value = int(raw_signal.get("direction", 0))
-        except (TypeError, ValueError):
-            direction_value = 0
-        direction = 1.0 if direction_value > 0 else -1.0 if direction_value < 0 else 0.0
+        direction = _coerce_raw_direction(raw_signal.get("direction", 0))
         signal_inputs[strategy] = SignalScoreInput(
             direction=direction,
             confidence=min(
@@ -235,7 +229,6 @@ def _compute_weighted_score_b(
     normalized_weights = normalize_active_weights(
         weights.to_dict(),
         signal_inputs,
-        fallback_weights=DEFAULT_STRATEGY_WEIGHTS,
     )
     score = compute_weighted_signal_score(signal_inputs, normalized_weights)
     return max(-1.0, min(1.0, score))
@@ -261,7 +254,8 @@ def reweight_recommendations(
 
     Notes:
         - 不修改入参, 内部 deep-copy
-        - NaN/Inf 防御: 缺信号/异常 rec → 保留原 ``score_b``
+        - NaN/Inf 防御: 缺信号/异常 rec → 新 ``score_b`` 为 0
+        - 用户选择的策略不可用时返回 0，不回退到未选择的默认策略
         - 排序: 同分时 ticker 字典序升序 (稳定)
     """
     if not isinstance(recommendations, Sequence):

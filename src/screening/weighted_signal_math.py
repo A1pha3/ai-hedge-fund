@@ -19,11 +19,11 @@ def normalize_active_weights(
     weights: Mapping[str, float],
     signals: Mapping[str, SignalScoreInput],
     *,
-    fallback_weights: Mapping[str, float],
+    fallback_weights: Mapping[str, float] | None = None,
     excluded_names: set[str] | None = None,
     weight_overrides: Mapping[str, float] | None = None,
 ) -> dict[str, float]:
-    """Normalize weights over signals with usable completeness."""
+    """Normalize usable weights; apply defaults only when explicitly supplied."""
 
     excluded_names = excluded_names or set()
     weight_overrides = weight_overrides or {}
@@ -33,7 +33,7 @@ def normalize_active_weights(
         if signal.completeness > 0 and name not in excluded_names
     }
     total = sum(active.values())
-    if total <= 0:
+    if total <= 0 and fallback_weights is not None:
         active = {
             name: max(float(fallback_weights.get(name, 0.0)), 0.0)
             for name in signals

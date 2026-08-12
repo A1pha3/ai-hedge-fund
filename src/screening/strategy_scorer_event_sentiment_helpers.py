@@ -11,7 +11,7 @@ import logging
 import math
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -41,30 +41,68 @@ _EVENT_DECAY_LAMBDA = float(os.environ.get("EVENT_DECAY_LAMBDA", "0.35"))
 _A_SHARE_NEWS_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
-def _safe_date(date_str: str) -> datetime | None:
-    if not date_str:
+@dataclass(frozen=True)
+class _ParsedNewsTimestamp:
+    value: datetime
+    has_time: bool
+
+
+def _parse_news_timestamp(date_str: str) -> _ParsedNewsTimestamp | None:
+    """Parse a complete provider timestamp without discarding precision or zone."""
+    if not isinstance(date_str, str) or not (raw_value := date_str.strip()):
         return None
-    # autodev-13 / loop 101: "%Y-%m-%d %H:%M:%S" (space-separated) is the format
-    # akshare's 发布时间 field returns for A-share news (verified via
-    # ak.stock_news_em — e.g. "2026-07-03 11:22:00"). The prior format list only
-    # had the T-separated ISO variant, so EVERY A-share article date was
-    # unparseable → _resolve_news_article_days_old returned the 9999 sentinel →
-    # compute_event_decay(9999)≈0 (event_sentiment deaf to A-share freshness).
-    # Also add "%Y-%m-%d %H:%M" for the no-seconds variant. The %Y-%m-%d entry
-    # remains as a last-resort coarse match (date_str[:19] keeps a 10-char date
-    # intact when no time follows).
-    for fmt in (
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d %H:%M",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d",
-        "%Y%m%d",
-    ):
+
+    for date_format in ("%Y-%m-%d", "%Y%m%d"):
         try:
-            return datetime.strptime(date_str[:19], fmt)
+            return _ParsedNewsTimestamp(
+                value=datetime.strptime(raw_value, date_format),
+                has_time=False,
+            )
         except ValueError:
             continue
-    return None
+
+    # ``fromisoformat`` accepts AKShare's space-separated local timestamp as
+    # well as ISO ``T`` values and offsets.  Normalize the standard UTC suffix
+    # but never slice the input: dropping an offset changes the economic instant.
+    iso_value = f"{raw_value[:-1]}+00:00" if raw_value.endswith(("Z", "z")) else raw_value
+    try:
+        return _ParsedNewsTimestamp(
+            value=datetime.fromisoformat(iso_value),
+            has_time=True,
+        )
+    except ValueError:
+        return None
+
+
+def _safe_date(date_str: str) -> datetime | None:
+    parsed = _parse_news_timestamp(date_str)
+    return parsed.value if parsed is not None else None
+
+
+def _news_was_available(
+    published_value: str,
+    *,
+    decision_date: date,
+    decision_cutoff: datetime | None,
+) -> bool:
+    parsed = _parse_news_timestamp(published_value)
+    if parsed is None:
+        return False
+
+    published_at = parsed.value
+    if published_at.utcoffset() is None:
+        published_at = published_at.replace(tzinfo=_A_SHARE_NEWS_TIMEZONE)
+    else:
+        published_at = published_at.astimezone(_A_SHARE_NEWS_TIMEZONE)
+
+    if decision_cutoff is None:
+        return published_at.date() < decision_date
+
+    # A calendar date carries no within-day availability fact.  Prior local
+    # days are safe; same/future dates remain unknown and therefore ineligible.
+    if not parsed.has_time and published_at.date() >= decision_date:
+        return False
+    return published_at <= decision_cutoff
 
 
 def compute_event_decay(days_old: int) -> float:
@@ -470,12 +508,10 @@ def score_event_sentiment_strategy_from_inputs(
     eligible_news = [
         item
         for item in news_items
-        if (published_at := _safe_date(item.date)) is not None
-        and (
-            published_at.date() < decision_date
-            if decision_cutoff is None
-            else published_at.replace(tzinfo=_A_SHARE_NEWS_TIMEZONE)
-            <= decision_cutoff
+        if _news_was_available(
+            item.date,
+            decision_date=decision_date,
+            decision_cutoff=decision_cutoff,
         )
     ]
     return _build_event_sentiment_strategy_signal(news_items=eligible_news, trades=trades, trade_date=trade_date)

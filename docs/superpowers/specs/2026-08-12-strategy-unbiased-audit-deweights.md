@@ -39,7 +39,8 @@
 - 保留 `DEFAULT_STRATEGY_WEIGHTS` 作为唯一默认权重真理源，`MarketState`、custom weights 默认值和融合路径继续从它派生。
 - 默认权重恢复为 trend `0.40`、mean_reversion `0.20`、fundamental `0.15`、event_sentiment `0.05`。
 - regime 恢复研究变更前的 additive 规则；未机械撤销无关的重构和缺陷修复。
-- 纯输入 event scorer 在没有可信时刻时只接受决策日前的新闻，同日新闻默认拒绝；只有调用方显式提供时区明确的决策 cutoff 时，才接受该 cutoff 及之前的同日新闻。该修复只阻止后续同类泄漏，不会修复已经生成的历史报告。
+- 纯输入 event scorer 在没有可信时刻时只接受决策日前的新闻，同日新闻默认拒绝；只有调用方显式提供时区明确的决策 cutoff 时，才接受该 cutoff 及之前、且自身也带时刻的同日新闻。带 offset 的新闻时间按完整 instant 换算，禁止截掉 offset 后冒充上海本地时间；同日只有日期而无时刻仍视为未知。该修复只阻止后续同类泄漏，不会修复已经生成的历史报告。
+- custom/策略子集权重是用户明确的相对权重；所选策略证据不可用时 score 为 0，不得回退默认权重并让未选策略重新参与排序。生产融合内部的默认权重 fallback 保持独立、显式。
 
 ## 重新研究条件
 

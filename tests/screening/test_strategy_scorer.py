@@ -1986,6 +1986,87 @@ def test_score_event_sentiment_strategy_from_inputs_converts_utc_cutoff_to_shang
     assert [article["title"] for article in articles] == ["午后重大回购"]
 
 
+@pytest.mark.parametrize(
+    "published_at",
+    [
+        "2026-07-08T07:00:01Z",
+        "2026-07-08T07:00:01+00:00",
+    ],
+)
+def test_score_event_sentiment_strategy_from_inputs_preserves_news_timezone_at_cutoff(
+    published_at: str,
+) -> None:
+    """A qualified news instant one second after cutoff must stay in the future."""
+    from src.screening.strategy_scorer_event_sentiment_helpers import (
+        score_event_sentiment_strategy_from_inputs,
+    )
+
+    after_cutoff = CompanyNews(
+        ticker="000001",
+        title="收盘后重大回购",
+        author="source",
+        source="source",
+        date=published_at,
+        url=f"https://example.test/qualified-after-cutoff/{published_at}",
+        sentiment="positive",
+        content="公司收盘后公告重大回购",
+    )
+
+    signal = score_event_sentiment_strategy_from_inputs(
+        [after_cutoff],
+        [],
+        "20260708",
+        decision_cutoff=datetime(
+            2026,
+            7,
+            8,
+            15,
+            0,
+            tzinfo=ZoneInfo("Asia/Shanghai"),
+        ),
+    )
+
+    assert signal.direction == 0
+    assert signal.confidence == 0.0
+    assert signal.completeness == 0.0
+
+
+def test_score_event_sentiment_strategy_from_inputs_rejects_same_day_date_only_at_cutoff() -> None:
+    """A calendar date alone cannot prove same-day pre-cutoff availability."""
+    from src.screening.strategy_scorer_event_sentiment_helpers import (
+        score_event_sentiment_strategy_from_inputs,
+    )
+
+    unknown_time = CompanyNews(
+        ticker="000001",
+        title="公司重大回购",
+        author="source",
+        source="source",
+        date="2026-07-08",
+        url="https://example.test/date-only",
+        sentiment="positive",
+        content="公司公告重大回购",
+    )
+
+    signal = score_event_sentiment_strategy_from_inputs(
+        [unknown_time],
+        [],
+        "20260708",
+        decision_cutoff=datetime(
+            2026,
+            7,
+            8,
+            15,
+            0,
+            tzinfo=ZoneInfo("Asia/Shanghai"),
+        ),
+    )
+
+    assert signal.direction == 0
+    assert signal.confidence == 0.0
+    assert signal.completeness == 0.0
+
+
 def test_score_event_sentiment_strategy_from_inputs_rejects_naive_explicit_cutoff() -> None:
     """A cutoff without timezone semantics must fail closed instead of guessing."""
     from src.screening.strategy_scorer_event_sentiment_helpers import (
