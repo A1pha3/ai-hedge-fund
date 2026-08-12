@@ -1007,7 +1007,17 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     _injected = _inject_score_decomposition(ranking_pool, fused_by_ticker)
     logger.debug("[Auto] score_decomposition injected for %d/%d ranking_pool recs", _injected, len(ranking_pool))
 
-    ranked_pool = _rank_pool_by_investability(ranking_pool, trade_date)
+    # A selected-strategy run defines a new ranking policy: its custom score_b
+    # is the authoritative ordering.  The legacy investability reports were
+    # calibrated on the all-strategy production score/composite generation, so
+    # applying them here would let unselected strategies re-enter the ranking.
+    # Keep the existing attention/sector eligibility constraints below, but do
+    # not consume cross-policy composite or score-bucket evidence.
+    ranked_pool = (
+        ranking_pool
+        if selected_strategies
+        else _rank_pool_by_investability(ranking_pool, trade_date)
+    )
 
     # Keep the Top-30 production preselection intact.  The full-pool result is
     # an independently computed research challenger and cannot feed selection,

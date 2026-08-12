@@ -2067,6 +2067,52 @@ def test_score_event_sentiment_strategy_from_inputs_rejects_same_day_date_only_a
     assert signal.completeness == 0.0
 
 
+@pytest.mark.parametrize(
+    "published_at",
+    [
+        "2026-07-08+00:00",
+        "20260708+0000",
+        "2026-W28-3",
+    ],
+)
+def test_score_event_sentiment_strategy_from_inputs_rejects_date_without_explicit_time(
+    published_at: str,
+) -> None:
+    """Date-like ISO extensions cannot prove within-day publication time."""
+    from src.screening.strategy_scorer_event_sentiment_helpers import (
+        score_event_sentiment_strategy_from_inputs,
+    )
+
+    unknown_time = CompanyNews(
+        ticker="000001",
+        title="公司重大回购",
+        author="source",
+        source="source",
+        date=published_at,
+        url=f"https://example.test/date-without-time/{published_at}",
+        sentiment="positive",
+        content="公司公告重大回购",
+    )
+
+    signal = score_event_sentiment_strategy_from_inputs(
+        [unknown_time],
+        [],
+        "20260708",
+        decision_cutoff=datetime(
+            2026,
+            7,
+            8,
+            15,
+            0,
+            tzinfo=ZoneInfo("Asia/Shanghai"),
+        ),
+    )
+
+    assert signal.direction == 0
+    assert signal.confidence == 0.0
+    assert signal.completeness == 0.0
+
+
 def test_score_event_sentiment_strategy_from_inputs_rejects_naive_explicit_cutoff() -> None:
     """A cutoff without timezone semantics must fail closed instead of guessing."""
     from src.screening.strategy_scorer_event_sentiment_helpers import (

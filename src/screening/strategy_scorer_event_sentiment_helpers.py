@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -39,6 +40,11 @@ logger = logging.getLogger(__name__)
 
 _EVENT_DECAY_LAMBDA = float(os.environ.get("EVENT_DECAY_LAMBDA", "0.35"))
 _A_SHARE_NEWS_TIMEZONE = ZoneInfo("Asia/Shanghai")
+_NEWS_TIMESTAMP_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}"
+    r"(?::\d{2}(?:\.\d{1,6})?)?"
+    r"(?:[Zz]|[+-]\d{2}:\d{2})?$"
+)
 
 
 @dataclass(frozen=True)
@@ -61,9 +67,13 @@ def _parse_news_timestamp(date_str: str) -> _ParsedNewsTimestamp | None:
         except ValueError:
             continue
 
-    # ``fromisoformat`` accepts AKShare's space-separated local timestamp as
-    # well as ISO ``T`` values and offsets.  Normalize the standard UTC suffix
-    # but never slice the input: dropping an offset changes the economic instant.
+    # ``datetime.fromisoformat`` also accepts date-like extensions such as ISO
+    # week dates and ``YYYY-MM-DD+HH:MM``.  Those strings do not prove an
+    # within-day publication time, so admit only an explicit provider timestamp
+    # grammar before parsing.  Fractional seconds are capped at datetime's
+    # microsecond precision rather than silently truncated.
+    if _NEWS_TIMESTAMP_PATTERN.fullmatch(raw_value) is None:
+        return None
     iso_value = f"{raw_value[:-1]}+00:00" if raw_value.endswith(("Z", "z")) else raw_value
     try:
         return _ParsedNewsTimestamp(

@@ -368,6 +368,114 @@ def test_e2e_compute_pipeline_respects_selected_strategies_before_top_n_slice(tm
     assert payload["recommendations"][0]["ticker"] == "600001"
 
 
+def test_e2e_selected_strategy_unavailable_is_not_reranked_by_old_composite(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """A selected-strategy ranking must not consume an old all-strategy model."""
+    from src.screening.composite_score import CompositeEntry, CompositeReport
+    from src.screening.expected_return import ExpectedReturnReport
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("USE_BATCH_FETCHER", "true")
+    monkeypatch.setenv("TUSHARE_TOKEN", "test_token")
+    monkeypatch.setenv("INVESTABILITY_PROFIT_AWARE", "false")
+    report_dir = tmp_path / "data" / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("src.main._save_json_report", lambda *_a, **_kw: report_dir / "stub.json")
+    monkeypatch.setattr(
+        "src.screening.scoring_feature_refresh.refresh_scoring_features",
+        lambda *_args, **_kwargs: {"status": "test"},
+    )
+    monkeypatch.setattr(
+        "src.main._inject_recommended_prices",
+        lambda recommendations, _trade_date: recommendations,
+    )
+
+    candidates = _make_candidates(2)
+    market_state = _make_market_state()
+    unavailable_event = StrategySignal(
+        direction=0,
+        confidence=0.0,
+        completeness=0.0,
+    )
+    fused = [
+        FusedScore(
+            ticker=candidate.ticker,
+            name=candidate.name,
+            industry_sw=candidate.industry_sw,
+            score_b=original_score,
+            strategy_signals={
+                "trend": StrategySignal(
+                    direction=trend_direction,
+                    confidence=100.0,
+                    completeness=1.0,
+                ),
+                "mean_reversion": StrategySignal(direction=0, confidence=0.0, completeness=0.0),
+                "fundamental": StrategySignal(direction=0, confidence=0.0, completeness=0.0),
+                "event_sentiment": unavailable_event,
+            },
+            metrics={"close": 10.0},
+            arbitration_applied=[],
+            market_state=market_state,
+            weights_used={
+                "trend": 1.0,
+                "mean_reversion": 0.0,
+                "fundamental": 0.0,
+                "event_sentiment": 0.0,
+            },
+            decision="buy",
+        )
+        for candidate, original_score, trend_direction in zip(
+            candidates,
+            (0.9, 0.1),
+            (1, -1),
+        )
+    ]
+    patches = _patch_pipeline_layers(candidates, fused=fused)
+
+    # This report belongs to the old all-strategy scoring generation and ranks
+    # the two zero-score event-only candidates in the opposite order.
+    monkeypatch.setattr(
+        "src.screening.composite_score.compute_composite_scores_for_recommendations",
+        lambda **_kwargs: CompositeReport(
+            trade_date="20260607",
+            items=[
+                CompositeEntry(ticker=candidates[0].ticker, composite_score=0.1),
+                CompositeEntry(ticker=candidates[1].ticker, composite_score=0.9),
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        "src.screening.expected_return.compute_expected_returns",
+        lambda **_kwargs: ExpectedReturnReport(
+            trade_date="20260607",
+            lookback_days=60,
+            total_samples=0,
+        ),
+    )
+
+    from src.main import compute_auto_screening_results
+
+    with (
+        patches["build_candidate_pool"],
+        patches["score_batch"],
+        patches["fuse_batch"],
+        patches["detect_market_state"],
+    ):
+        payload = compute_auto_screening_results(
+            "20260607",
+            top_n=2,
+            selected_strategies=["event_sentiment"],
+        )
+
+    assert [rec["score_b"] for rec in payload["recommendations"]] == [0.0, 0.0]
+    assert [rec["ticker"] for rec in payload["recommendations"]] == [
+        candidates[0].ticker,
+        candidates[1].ticker,
+    ]
+
+
 # ---------------------------------------------------------------------------
 # 3. 报告 JSON 中无 NaN/Inf 泄漏
 # ---------------------------------------------------------------------------
