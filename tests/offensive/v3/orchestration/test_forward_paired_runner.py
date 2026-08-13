@@ -683,6 +683,13 @@ def test_no_run_terminal_status_forbids_later_pair_creation(rig: _Rig) -> None:
 
 
 def _commit_clear_run_pair(rig: _Rig) -> None:
+    """RETAINED-SPEC STALENESS: only used by batch-authority-skipped tests. It
+    calls ``freeze_shared_input`` (now unconditionally fail-closed) and the
+    naked-``capital_checkpoint_hash`` signature of ``build_pair_records``,
+    which the capital-checkpoint-v2 migration replaced with
+    ``champion_input``/``challenger_input``. Rewrite against the checkpoint-v2
+    API when the store-owned batch authority lands."""
+
     _wire_bundle_covering_signal(rig)
     from src.screening.offensive.v3.governance.regime_trial import (
         validate_regime_trial_bundle,
@@ -757,6 +764,11 @@ def test_exact_pair_must_prove_matching_terminal_status(rig: _Rig) -> None:
 def test_typed_candidate_drives_exchange_price_industry_and_raw_weight(
     rig: _Rig,
 ) -> None:
+    """RETAINED-SPEC STALENESS: besides ``freeze_shared_input`` (fail-closed),
+    this calls the single-``capital_snapshot`` signature of
+    ``build_arm_kernel_inputs``, replaced by per-arm capital checkpoints in the
+    checkpoint-v2 migration. Rewrite against that API on re-enablement."""
+
     committed_type = getattr(
         paired_trial_module,
         "CommittedBtstCandidate",

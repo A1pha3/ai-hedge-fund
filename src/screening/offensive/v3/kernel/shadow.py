@@ -29,6 +29,7 @@ from src.screening.offensive.v3.contracts.regime import (
     RegimeState,
 )
 from src.screening.offensive.v3.kernel.core import (
+    CoreError,
     DecisionConstraints,
     decide_core,
 )
@@ -260,11 +261,22 @@ def _project_line(
     """One counterfactual line derived from the shared core sizing output.
 
     Price converts micro-yuan to cents (MICROS_PER_CENT = 10_000); the
-    worst-case reserve recomputes from the line's own economics so the line
-    satisfies the ``ShadowOrderLine`` self-consistency validator. The
-    evidence identity is frozen by the caller's binding, never synthesized.
+    worst-case fee and cash reserve are copied verbatim from the core sizing
+    output (already fee-inclusive and cent-consistent), so the line satisfies
+    the ``ShadowOrderLine`` self-consistency validator without recomputation.
+    The evidence identity is frozen by the caller's binding, never
+    synthesized: a candidate that reaches line projection without a binding is
+    a kernel-input inconsistency and fails closed.
     """
 
+    if binding is None:
+        raise CoreError(
+            "missing_evidence_binding",
+            f"candidate {decision_line.candidate_id} reached shadow line "
+            "projection without a frozen evidence binding; a shadow line's "
+            "evidence identity comes from the kernel input and is never "
+            "synthesized",
+        )
     quantity = decision_line.quantity_units
     limit_price_cents = decision_line.limit_price_micros // MICROS_PER_CENT
     worst_case_price_cents = limit_price_cents
@@ -280,9 +292,9 @@ def _project_line(
         stage_id=stage_binding.stage_id,
         trial_id=stage_binding.trial_id,
         stage_manifest_hash=stage_binding.stage_manifest_hash,
-        evidence_id=binding.evidence_id if binding is not None else "",
-        evidence_artifact_hash=binding.evidence_artifact_hash if binding is not None else "0" * 64,
-        evidence_payload_hash=binding.evidence_payload_hash if binding is not None else "0" * 64,
+        evidence_id=binding.evidence_id,
+        evidence_artifact_hash=binding.evidence_artifact_hash,
+        evidence_payload_hash=binding.evidence_payload_hash,
         target_quantity_units=quantity,
         lot_size_units=LOT_UNITS,
         lot_rule_version=LOT_RULE_VERSION,

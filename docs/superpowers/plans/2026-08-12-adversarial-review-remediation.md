@@ -66,3 +66,13 @@
 ## 提交策略
 
 每个 R-task 独立提交；先测试后实现。任何任务发现需要扩大授权、改变既定经济合约或无法在现有 primitive 上守恒时，停止该任务并保持 fail-closed，不用 placeholder 绕过。
+
+## 完成状态（2026-08-13）
+
+验收 headline：`INACTIVE / FORWARD_TRIAL_NOT_STARTED`。契约迁移（ShadowDecision v4 / ShadowCapitalCheckpoint v2 / arm-invariant ShadowSharedInput / FrozenTradingSessionSchedule / SizingConfig）、双臂资本守恒、fail-closed 前向路径、R5 前门 `selected_policy_eligible` 一致性均已落地并由绿色测试锁定。以下为**有意的 dormancy 决策**（符合第一性原理 #5，非遗漏）：
+
+- **R2 部分由休眠满足**：`build_arm_kernel_inputs` 仍硬编码 `stage_id="stage-1"`。该 builder 当前零生产调用方、runner 已禁用，故不产生真实决策；真正接线时需从 sealed Stage 逐字绑定，届时移除硬编码。
+- **R3 分叉测试延后**：「至少两个 signal session 的分叉测试」存在于被 skip 的 replay retained-spec 中，其证明随 store-owned batch authority 一起延后；当前双臂守恒由 kernel 层绿色测试（cross-arm checkpoint 拒绝、无 single-snapshot shortcut、arm-invariant 共享事实）锁定。
+- **retained-spec 陈旧性**：`test_forward_trial_replay.run_official`、`test_forward_paired_runner._commit_clear_run_pair` 与 `test_typed_candidate_...` 调用 checkpoint-v2 前的旧 builder 签名，已在各自 docstring 标注「重写要求」；它们在 batch authority 落地前无法执行。
+- **R6 legacy journal 归档**：legacy backtest journal 的内容寻址审计归档为独立工件任务，未并入本次代码收口。
+

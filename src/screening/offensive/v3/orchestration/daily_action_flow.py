@@ -123,7 +123,10 @@ byte-identical 契约 (v2 ledger 零写)
 failure_reason keys 与值格式
 -------------------------------------------------------------------------------
 key = 步名: ``"lifecycle" | "capital" | "snapshot" | "evidence" | "producer" |
-"kernel" | "persist" | "shadow_decision" | "v2_comparison"``。
+"kernel" | "persist" | "shadow_decision" | "v2_comparison" |
+"economic_input_authority"``。当前 fail-closed shadow 管线只写
+``"economic_input_authority"`` (值为 ``economic_input_authority_unavailable:
+...``); 其余步名是历史 Plan 05 管线重新接线后才会再次出现的键。
 - 异常: ``f"{type(exc).__name__}: {exc}"`` (异常 ``__str__`` 携带稳定 error
   code, 如 ``EvidenceStoreError`` 的 ``evidence_not_committed_before_cutoff``)。
 - snapshot 加载失败: ``global_reason`` (为空时 ``"snapshot_unavailable"``)。
@@ -147,30 +150,16 @@ from src.screening.offensive.daily_action_snapshot import (
     VerifiedSnapshotResult,
 )
 from src.screening.offensive.v3.contracts import ExecutionMode
-from src.screening.offensive.v3.contracts.base import SignalStage
 from src.screening.offensive.v3.contracts.capital import CapitalRiskSnapshot
 from src.screening.offensive.v3.contracts.evidence import (
     EvidenceRecord,
     SignalEvidence,
 )
-from src.screening.offensive.v3.kernel.admission import BTST_FAMILY
 from src.screening.offensive.v3.kernel.models import (
     BlockReason,
     KernelInput,
-    PortfolioDecisionLine,
-    RawCandidate,
 )
 from src.screening.offensive.v3.policy.models import RuntimeMode
-
-_SECURITY_SUFFIXES = (".SH", ".SZ", ".BJ")
-"""v2 ticker 归一化: 去掉 v3 security_id 的交易所后缀再与 v2 6 位 ticker 比较。"""
-
-_INDUSTRY_UNKNOWN = "unknown"
-"""快照无行业标识符 (只有 industry_day_pct float) 时的保守共享 industry 桶。
-
-kernel sizing 按 industry key 聚合执行 per_industry_gross_cap; 快照不携带
-行业标识, 若用 float pct 当 key 会把每个候选分成独立桶、静默绕过该 cap。
-共享桶使 per_industry cap 保守地作用于全体候选 (等效于最严约束)。"""
 
 
 class LifecycleReaderPort(Protocol):
@@ -527,88 +516,6 @@ class DailyActionFlow:
         )
         return "failed", None, None, MappingProxyType({})
 
-    def _build_kernel_input(
-        self,
-        *,
-        snapshot: VerifiedDailyActionSnapshot,
-        capital: CapitalRiskSnapshot,
-        decision_cycle_id: str,
-        records: tuple[EvidenceRecord[SignalEvidence], ...],
-    ) -> KernelInput:
-        """从 producer records 与 snapshot 派生 kernel 冻结输入。
-
-        records 为空的合法路径: kernel 返回 NoTrade(NO_SIGNAL), 是 no-signal
-        的唯一权威。候选 identity 采用 ``btst:snapshot_id:ticker`` 确定性
-        构造 (GREEN 派生, 无现成 mapping)。lineage/stage/program 取 policy
-        envelope 的授权 grant (admission 契约: grant.subject_producer=btst
-        且 family 匹配时才 ADMITTED)。"""
-        ticker_by_candidate: dict[str, str] = {}
-        raw_candidates: list[RawCandidate] = []
-        for record in records:
-            envelope = record.evidence
-            if envelope.stage != SignalStage.SELECTED:
-                continue
-            ticker = _evidence_ticker(envelope.evidence_id)
-            candidate_id = f"btst:{snapshot.snapshot_id}:{ticker}"
-            ticker_by_candidate[candidate_id] = ticker
-            grant = self._authorized_grant()
-            raw_candidates.append(
-                RawCandidate(
-                    candidate_id=candidate_id,
-                    producer_namespace=envelope.subject_producer,
-                    # family_id 用 kernel admission 白名单常量 ``BTST_FAMILY``
-                    # (= "btst.limit-up-breakout", kernel/admission.py:25), 与
-                    # lineage/stage/program (下) 同从授权 grant 语义取, 完成
-                    # docstring 既定 "取授权 grant 才 ADMITTED" 意图。真实
-                    # producer 信封的 ``family_id`` 是 ``btst:<snapshot_id>``
-                    # (producers/btst.py:20, 非白名单) — 用之会被 admission 恒
-                    # BLOCKED(NO_AUTHORIZED_ENVELOPE) (kernel/admission.py:100,
-                    # 白名单外一律拒绝), 使真实 shadow 链路恒 NoTrade。这是
-                    # Task 9 S2b 硬阻塞 B 修复 (真实 producer+kernel 组合回归
-                    # 测试 test_daily_action_flow_family_fix.py 锁定)。
-                    family_id=BTST_FAMILY,
-                    economic_lineage_id=grant.economic_lineage_id,
-                    research_program_id=grant.research_program_id,
-                    stage_id=grant.stage_id,
-                    security_id=_security_id(ticker),
-                    direction="LONG",
-                    unscaled_target_gross_cents=_unscaled_target(capital),
-                    behavior_fingerprint=envelope.behavior_fingerprint,
-                    execution_version=envelope.execution_version,
-                    cost_version=envelope.cost_version,
-                    evidence_ids=(),
-                )
-            )
-        return KernelInput(
-            portfolio_id=self._portfolio_id,
-            signal_session=snapshot.signal_date,
-            decision_cycle_id=decision_cycle_id,
-            mode=self._policy_activation.mode,
-            policy_activation=self._policy_activation,
-            policy_snapshot=self._policy_snapshot,
-            envelope=self._envelope,
-            capital=capital,
-            deadlines=self._deadlines,
-            trusted_evidence_cutoff=self._trusted_evidence_cutoff,
-            raw_candidates=tuple(raw_candidates),
-            price_micros_by_candidate=tuple(
-                (
-                    candidate_id,
-                    _price_micros(
-                        snapshot.prices_by_ticker.get(ticker),
-                    ),
-                )
-                for candidate_id, ticker in ticker_by_candidate.items()
-            ),
-            industry_by_candidate=tuple(
-                (
-                    candidate_id,
-                    _INDUSTRY_UNKNOWN,
-                )
-                for candidate_id in ticker_by_candidate
-            ),
-        )
-
     def _authorized_grant(self) -> Any:
         """Envelope 中第一个 btst 授权 grant (admission 的匹配主体)。
 
@@ -620,68 +527,6 @@ class DailyActionFlow:
             if grant.subject_producer == "btst":
                 return grant
         return self._envelope.lineage_grants[0]
-
-    def _compare_v2_plans(
-        self,
-        v2_plans: tuple[Any, ...],
-        lines: tuple[PortfolioDecisionLine, ...],
-    ) -> dict[str, str]:
-        """归一化 ticker 对比: v2 有计划但 v3 无 → "v2_only", 反之 "v3_only"。"""
-        v3_tickers = {
-            _normalize_ticker(line.security_id)
-            for line in lines
-            if line.status == "ENTRY_PLANNED"
-        }
-        v2_tickers = {
-            _normalize_ticker(plan.ticker)
-            for plan in v2_plans
-        }
-        discrepancy: dict[str, str] = {}
-        for ticker in sorted(v2_tickers - v3_tickers):
-            discrepancy[ticker] = "v2_only"
-        for ticker in sorted(v3_tickers - v2_tickers):
-            discrepancy[ticker] = "v3_only"
-        return discrepancy
-
-
-def _normalize_ticker(value: str) -> str:
-    """归一化 ticker: 去掉 v3 security_id 的交易所后缀 (.SH/.SZ/.BJ)。"""
-    for suffix in _SECURITY_SUFFIXES:
-        if value.endswith(suffix):
-            return value[: -len(suffix)]
-    return value
-
-
-def _security_id(ticker: str) -> str:
-    """v2 6 位 ticker → v3 security_id (默认深市 .SZ; A-share 统一形态)。"""
-    return f"{ticker}.SZ"
-
-
-def _evidence_ticker(evidence_id: str) -> str:
-    """从 ``btst:snapshot_id:ticker:setup:stage`` 提取 ticker (第 3 段)。"""
-    return evidence_id.split(":")[2]
-
-
-def _unscaled_target(capital: CapitalRiskSnapshot) -> int:
-    """GREEN 派生: 按 NAV 的 1/4 取整的 counterfactual 目标 (cents)。
-
-    信封只有原始候选字段 (raw targets 契约), 无 explicit sizing 字段;
-    kernel 以 grant lineage cap × NAV 为上限, 该派生值只被 clamp DOWN,
-    不会提升至授权上限之外。"""
-    return max(int(capital.as_observed_nav_cents // 4), 100_000)
-
-
-def _price_micros(
-    prices: tuple[Any, ...] | None,
-) -> int:
-    """快照最后交易日收盘价 → micros; 无价时用 1000 万元微元 (1 元) 兜底。
-
-    prices 列为 (trade_date, open, high, low, close, volume, pct_change)
-    FrozenPriceRow; 取最后一行的 close (Decimal) 换算 micros。"""
-    if not prices:
-        return 10_000_000
-    row = prices[-1]
-    return int(float(row.close) * 1_000_000)
 
 
 __all__ = ["DailyActionFlow", "DailyActionFlowResult"]

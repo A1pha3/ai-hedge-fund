@@ -749,6 +749,16 @@ class _Rig:
         decision per arm, commit one pair, record the session status, and
         reserve both arms. Every trading session then drives the shared
         lifecycle (entry/exit/valuation/finalize) at the session close.
+
+        RETAINED-SPEC STALENESS: this body predates the capital-checkpoint-v2
+        / economic-input-v4 migration. It still calls ``freeze_shared_input``
+        (now unconditionally fail-closed) and the single-``capital_snapshot``
+        signatures of ``build_arm_kernel_inputs`` / ``build_pair_records``,
+        which were replaced by per-arm ``ShadowCapitalCheckpoint`` +
+        ``champion_input``/``challenger_input``. It cannot execute until the
+        store-owned batch authority lands, at which point it must be rewritten
+        against the checkpoint-v2 API (calling convention: the green builders
+        in tests/offensive/v3/kernel/test_shadow_kernel.py).
         """
 
         self.build_session_facts()

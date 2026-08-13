@@ -328,19 +328,20 @@ def reserve_pair(
 
     # Each arm's proxy store records its own reserve facts; the adapter is
     # per-arm, so both adapters must reserve (a single call would leave the
-    # other arm's lines without their RESERVE_COMMITTED fact).
+    # other arm's lines without their RESERVE_COMMITTED fact).  Build the
+    # two-arm context map once, then drive each adapter over the same map.
+    contexts = {
+        context_arm: ShadowArmExecutionContext(
+            trial_id=input.trial_id,
+            arm=context_arm,
+            portfolio_id=input.portfolio_id,
+            decision_store=replay_store,
+            capital_repository=arms[context_arm].repository,
+            writer_lease=lease,
+        )
+        for context_arm in (TrialArm.CHAMPION, TrialArm.CHALLENGER)
+    }
     for arm in (TrialArm.CHAMPION, TrialArm.CHALLENGER):
-        contexts = {
-            arm: ShadowArmExecutionContext(
-                trial_id=input.trial_id,
-                arm=arm,
-                portfolio_id=input.portfolio_id,
-                decision_store=replay_store,
-                capital_repository=arms[arm].repository,
-                writer_lease=lease,
-            )
-            for arm in (TrialArm.CHAMPION, TrialArm.CHALLENGER)
-        }
         arms[arm].adapter.reserve_committed_pair(pair_key, contexts)
 
 

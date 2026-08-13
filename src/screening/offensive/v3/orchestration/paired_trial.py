@@ -12,7 +12,7 @@ from datetime import date, datetime
 
 from pydantic import model_validator
 
-from src.screening.offensive.v3.contracts import CanonicalModel, ExecutionMode, Sha256
+from src.screening.offensive.v3.contracts import CanonicalModel, Sha256
 from src.screening.offensive.v3.contracts.btst_candidate import (
     BtstCandidateIndustryState,
     BtstRawCandidatePayload,
@@ -217,27 +217,6 @@ def freeze_shared_input(
     raise PairedTrialRunnerError(
         "forward_input_authority_unavailable",
         "store-owned trading schedule receipt is not implemented",
-    )
-
-    trial = validated.trial_manifest
-    sap = validated.sap_manifest
-    return ShadowSharedInput(
-        signal_session=session,
-        decision_cycle_id=cycle_id,
-        trial_manifest_hash=trial.artifact_hash(),
-        sap_manifest_hash=sap.artifact_hash(),
-        mode=ExecutionMode.DAILY_BAR_PROXY,
-        trusted_evidence_cutoff=trusted_at,
-        evidence_set_merkle_root=regime_hash,
-        regime_observation=regime,
-        trial_id=trial_id,
-        research_program_id=trial.research_program_id,
-        economic_lineage_id=trial.economic_lineage_id,
-        stage_id="stage-1",
-        stage_manifest_hash="1" * 64,
-        trust_bundle_hash=trial.trust_bundle_hash,
-        registry_epoch=trial.registry_epoch,
-        trusted_at=trusted_at,
     )
 
 
