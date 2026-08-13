@@ -42,11 +42,11 @@ def validate_referenced_payload(
     issuer_namespace: str,
     envelope: object,
     read_payload: Callable[[str], bytes],
-) -> None:
+) -> BtstRawCandidatePayload | None:
     """Validate namespace-specific raw evidence before the envelope commits."""
 
     if issuer_namespace != "btst" or type(envelope) is not SignalEvidence:
-        return
+        return None
 
     signal = envelope
     try:
@@ -108,6 +108,7 @@ def validate_referenced_payload(
             "BTST raw candidate does not match its signal envelope",
             evidence_id=signal.evidence_id,
         )
+    return candidate
 
 
 __all__ = [

@@ -8,13 +8,14 @@ complete session spine, and an active WAL database cannot be treated as an
 immutable current-truth snapshot. Every command therefore fails closed.
 This file pins the security boundary around an on-disk Trial root:
 
-- the root must resolve to a real directory; path-traversal roots and
-  symlink roots are rejected before anything is loaded;
+- the root must be a canonical absolute path to a real directory;
+  path-traversal roots and every symlinked component are rejected before
+  anything is loaded;
 - every command is strictly read-only (no writes, migrations, SQLite opens,
   or sidecars) and rejects symlinked layout artifacts before failing closed;
-- the CLI recognizes NO policy / regime / cap / mode override flags — those
-  frozen values come only from the sealed artifacts, never from the command
-  line or the environment;
+- the CLI recognizes NO policy / regime / cap / mode override flags and,
+  while unavailable, reads or binds NO frozen values from disk, the command
+  line, or the environment;
 - ``assess`` never fabricates a report from placeholder hashes or gates and
   writes no output while its real inputs are unavailable;
 - each subcommand dispatches to exactly one library entrypoint and nothing
@@ -30,6 +31,7 @@ official Trial. These tests cover the CLI's own guards and dispatch logic.
 from __future__ import annotations
 
 import importlib
+import json
 from datetime import date
 from pathlib import Path
 
@@ -111,6 +113,22 @@ def test_resolve_root_rejects_path_traversal(tmp_path: Path) -> None:
     assert excinfo.value.code == "root_path_traversal"
 
 
+def test_resolve_root_rejects_noncanonical_relative_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Operators must spell the root as its canonical absolute path."""
+
+    mod = _cli()
+    root = tmp_path / "trial-root"
+    root.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(mod.RegimeTrialCliError) as excinfo:
+        mod._resolve_trial_root(Path("trial-root"))
+
+    assert excinfo.value.code == "root_not_canonical"
+
+
 def test_resolve_root_rejects_symlink(tmp_path: Path) -> None:
     mod = _cli()
     real = tmp_path / "real"
@@ -142,6 +160,23 @@ def test_resolve_root_accepts_real_directory(tmp_path: Path) -> None:
     root.mkdir()
     resolved = mod._resolve_trial_root(root)
     assert resolved == root.resolve()
+
+
+def test_resolve_root_uses_only_lstat_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The final directory check must not re-follow the path after lstat."""
+
+    mod = _cli()
+    root = tmp_path / "trial-root"
+    root.mkdir()
+
+    def forbidden_is_dir(_path: Path) -> bool:
+        raise AssertionError("Path.is_dir follows symlinks")
+
+    monkeypatch.setattr(Path, "is_dir", forbidden_is_dir)
+
+    assert mod._resolve_trial_root(root) == root.absolute()
 
 
 # =============================================================================
@@ -320,8 +355,8 @@ def test_main_recognizes_no_override_flags(
     tmp_path: Path, flag: str, value: str
 ) -> None:
     """No policy / regime / cap / mode / cutoff override may be accepted:
-    those frozen values come only from the sealed artifacts. argparse must
-    reject every such flag as unrecognized."""
+    the unavailable CLI does not currently read or bind them at all. argparse
+    must reject every such flag as unrecognized."""
 
     mod = _cli()
     rc = mod.main(
@@ -438,3 +473,59 @@ def test_main_advance_session_dispatches_with_parsed_date(
     )
     assert rc == 0
     assert seen["market_session"] == date(2026, 8, 6)
+
+
+@pytest.mark.parametrize(
+    ("argv_tail", "expected_code"),
+    [
+        (("validate",), "validation_inputs_unavailable"),
+        (
+            ("decide-session", "--signal-session", "2026-08-06"),
+            "privileged_context_required",
+        ),
+        (
+            ("advance-session", "--market-session", "2026-08-07"),
+            "privileged_context_required",
+        ),
+        (
+            ("assess", "--output", "assessment.json"),
+            "assessment_inputs_unavailable",
+        ),
+    ],
+)
+def test_main_renders_unavailable_as_stable_typed_json_without_traceback(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    argv_tail: tuple[str, ...],
+    expected_code: str,
+) -> None:
+    """The operator surface reports one typed rejection, not an exception trace."""
+
+    mod = _cli()
+    root = _layout_only_root(tmp_path / "trial-root")
+    output = tmp_path / "assessment.json"
+    rendered_tail = tuple(
+        str(output) if value == "assessment.json" else value
+        for value in argv_tail
+    )
+
+    rc = mod.main(
+        [
+            rendered_tail[0],
+            "--root",
+            str(root),
+            "--trial-id",
+            "trial-regime-001",
+            *rendered_tail[1:],
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert rc == mod.UNAVAILABLE_EXIT_CODE
+    assert captured.out == ""
+    error = json.loads(captured.err)
+    assert error["code"] == expected_code
+    assert error["details"]["trial_id"] == "trial-regime-001"
+    assert captured.err.count("\n") == 1
+    assert "Traceback" not in captured.err
+    assert not output.exists()

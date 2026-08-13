@@ -11,11 +11,12 @@ Web 端通过滑块调整, 实时看到推荐变化。本模块是纯函数实�
 
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
-from src.screening.models import DEFAULT_STRATEGY_WEIGHTS
+from src.screening.models import ArbitrationAction, DEFAULT_STRATEGY_WEIGHTS, FusedScore
 from src.screening.weighted_signal_math import (
     compute_weighted_signal_score,
     normalize_active_weights,
@@ -204,11 +205,20 @@ def _compute_weighted_score_b(
 
     缺失或不可用的信号与生产融合路径相同，贡献为 0，不复用旧 ``score_b``。
     """
+    _, _, score = _compute_selected_policy_math(rec, weights)
+    return score
+
+
+def _compute_selected_policy_math(
+    rec: Mapping[str, Any],
+    weights: StrategyWeights,
+) -> tuple[dict[str, SignalScoreInput], dict[str, float], float]:
+    """Return the sanitized inputs, effective weights and selected-only score."""
     if not isinstance(rec, Mapping):
-        return 0.0
+        return {}, {}, 0.0
     raw_signals = rec.get("strategy_signals")
     if not isinstance(raw_signals, Mapping):
-        return 0.0
+        return {}, {}, 0.0
     signal_inputs: dict[str, SignalScoreInput] = {}
     for strategy in STRATEGY_KEYS:
         raw_signal = raw_signals.get(strategy)
@@ -231,7 +241,98 @@ def _compute_weighted_score_b(
         signal_inputs,
     )
     score = compute_weighted_signal_score(signal_inputs, normalized_weights)
-    return max(-1.0, min(1.0, score))
+    return signal_inputs, normalized_weights, max(-1.0, min(1.0, score))
+
+
+def _selected_policy_contributions(
+    signal_inputs: Mapping[str, SignalScoreInput],
+    effective_weights: Mapping[str, float],
+) -> dict[str, float]:
+    """Decompose the exact sanitized math used by the selected projection."""
+    contributions: dict[str, float] = {}
+    for strategy in STRATEGY_KEYS:
+        signal = signal_inputs.get(strategy)
+        contributions[strategy] = (
+            float(effective_weights.get(strategy, 0.0))
+            * float(signal.direction)
+            * (float(signal.confidence) / 100.0)
+            * float(signal.completeness)
+            if signal is not None
+            else 0.0
+        )
+    return contributions
+
+
+def _selected_policy_projection(
+    rec: Mapping[str, Any],
+    weights: StrategyWeights,
+) -> dict[str, Any]:
+    """Build one internally consistent selected-strategy policy projection.
+
+    Custom weighting is a policy boundary, not a scalar patch.  Every field
+    which describes the projected score is therefore derived together here.
+    The sole inherited admission fact is the production ``avoid`` arbitration:
+    it is a hard veto and can never be neutralized by choosing another factor.
+    """
+    signal_inputs, effective_weights, selected_score = _compute_selected_policy_math(
+        rec,
+        weights,
+    )
+    source_arbitration_raw = rec.get("arbitration_applied")
+    source_arbitration = (
+        [str(item) for item in source_arbitration_raw]
+        if isinstance(source_arbitration_raw, (list, tuple))
+        else []
+    )
+    hard_veto = ArbitrationAction.AVOID.value in source_arbitration
+    selected_evidence_available = any(
+        float(weight) > 0.0 for weight in effective_weights.values()
+    )
+    projected_score = -1.0 if hard_veto else selected_score
+    projected_arbitration = [ArbitrationAction.AVOID.value] if hard_veto else []
+
+    base_contributions = _selected_policy_contributions(
+        signal_inputs,
+        effective_weights,
+    )
+    base_sum = sum(base_contributions.values())
+    metrics = rec.get("metrics")
+    attention = (
+        _safe_float(metrics.get("attention_composite"), 0.0)
+        if isinstance(metrics, Mapping)
+        else 0.0
+    )
+    stability_bonus = _safe_float(rec.get("stability_bonus"), 0.0)
+
+    return {
+        "score_b": projected_score,
+        "decision": FusedScore.classify_decision(projected_score),
+        "weights_used": dict(effective_weights),
+        "arbitration_applied": projected_arbitration,
+        "score_policy": "selected-policy.v1",
+        "selected_policy_hard_veto": hard_veto,
+        "selected_policy_unavailable": not selected_evidence_available,
+        "selected_policy_eligible": selected_evidence_available and not hard_veto,
+        "score_decomposition": {
+            "projection_version": "selected-policy.v1",
+            "weights_used": dict(effective_weights),
+            "base_contributions": base_contributions,
+            # These fields are additive in name only in the legacy public
+            # schema.  A selected-policy score does not consume them, so keep
+            # its economic decomposition at zero and expose the observations
+            # explicitly as non-additive diagnostics below.
+            "attention_contribution": 0.0,
+            "stability_bonus": 0.0,
+            "diagnostics": {
+                "attention_composite": attention,
+                "stability_bonus": stability_bonus,
+            },
+            "consensus_bonus": 0.0,
+            "other_adjustments": projected_score - base_sum,
+            "hard_veto_applied": hard_veto,
+            "total": projected_score,
+        },
+    }
 
 
 def reweight_recommendations(
@@ -249,13 +350,16 @@ def reweight_recommendations(
         sort: 是否按新 score_b 降序排序 (默认 True)
 
     Returns:
-        新推荐列表 — 每条新增 ``original_score_b`` 字段保留旧值, ``score_b`` 被覆盖,
-        ``custom_weights`` 字段记录所用权重, 按新 ``score_b`` 降序。
+        新推荐列表。原策略语义保存为 ``original_*`` provenance；``score_b``、
+        ``decision``、``weights_used``、``arbitration_applied`` 与
+        ``score_decomposition`` 由同一个 selected-policy projection 原子派生。
+        结果按新 ``score_b`` 降序。
 
     Notes:
         - 不修改入参, 内部 deep-copy
         - NaN/Inf 防御: 缺信号/异常 rec → 新 ``score_b`` 为 0
-        - 用户选择的策略不可用时返回 0，不回退到未选择的默认策略
+        - 用户选择的策略不可用时返回 0、不回退到默认策略，且不可进入推荐 Top-N
+        - 上游显式 ``avoid`` 是不可覆盖 hard veto，并标记为不可进入 selected Top-N
         - 排序: 同分时 ticker 字典序升序 (稳定)
     """
     if not isinstance(recommendations, Sequence):
@@ -271,9 +375,28 @@ def reweight_recommendations(
             continue
         rec_copy: dict[str, Any] = dict(rec)
         original = _safe_float(rec.get("score_b"), 0.0)
-        new_score_b = _compute_weighted_score_b(rec, weights)
+        projection = _selected_policy_projection(rec, weights)
+        new_score_b = float(projection["score_b"])
         rec_copy["original_score_b"] = original
-        rec_copy["score_b"] = new_score_b
+        rec_copy["original_score_policy"] = str(rec.get("score_policy") or "")
+        rec_copy["original_decision"] = str(rec.get("decision") or "")
+        original_decomposition = rec.get("score_decomposition")
+        rec_copy["original_score_decomposition"] = (
+            copy.deepcopy(dict(original_decomposition))
+            if isinstance(original_decomposition, Mapping)
+            else {}
+        )
+        original_weights = rec.get("weights_used")
+        rec_copy["original_weights_used"] = (
+            dict(original_weights) if isinstance(original_weights, Mapping) else {}
+        )
+        original_arbitration = rec.get("arbitration_applied")
+        rec_copy["original_arbitration_applied"] = (
+            [str(item) for item in original_arbitration]
+            if isinstance(original_arbitration, (list, tuple))
+            else []
+        )
+        rec_copy.update(projection)
         rec_copy["custom_weights"] = dict(weights_dict)
         # NS-19/c284: bucket-stale reset on score_b boundary cross.
         # auto_screening 报告里的 bucket 校准 (bucket_label / expected_returns /

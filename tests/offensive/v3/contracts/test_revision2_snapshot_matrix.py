@@ -85,11 +85,11 @@ def _defined_subclasses(base: type[Any], modules: tuple[str, ...]) -> set[str]:
 
 
 def test_static_inventory_cardinality_is_explicit() -> None:
-    assert len(PUBLIC_MODEL_CASES) == 106
+    assert len(PUBLIC_MODEL_CASES) == 109
     assert len(PUBLIC_ENUMS) == 48
     assert len(PUBLIC_ALIASES) == 11
     assert len(PUBLIC_PORTS) == 6
-    assert len(ARTIFACT_HASH_CASES) == 31
+    assert len(ARTIFACT_HASH_CASES) == 32
     assert len(EVIDENCE_RECORD_SPECIALIZATIONS) == 4
 
 

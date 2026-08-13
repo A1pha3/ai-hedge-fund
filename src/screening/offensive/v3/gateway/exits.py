@@ -330,7 +330,7 @@ class ExitLane:
                 security_id=security_id,
                 due_session=due_session,
                 status=target_status,
-            ):
+            ) and not self._has_new_reopen(active, lot):
                 return self._mandate_from_row(active)
             if active is None and lot.reopen is not None:
                 mandate = self._reopen_chain_for_never_mandated_lot(
@@ -532,6 +532,15 @@ class ExitLane:
             ExitMandateRevisionKind.QUANTITY_REFRESH,
             str(active.mandate_hash),
             None,
+        )
+
+    @staticmethod
+    def _has_new_reopen(active, lot: ExitLotTruth) -> bool:
+        reopen = lot.reopen
+        if reopen is None:
+            return False
+        return reopen.reopened_by_execution_revision_id != str(
+            active.reopened_by_execution_revision_id or ""
         )
 
     def _build_mandate(

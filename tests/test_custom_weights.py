@@ -180,6 +180,156 @@ def test_reweight_recommendations_recomputes() -> None:
     assert a["custom_weights"] == w.to_dict()
 
 
+def test_reweight_recommendations_projects_unavailable_selected_policy_atomically() -> None:
+    """A missing selected signal cannot retain an old bullish decision/provenance."""
+    rec = _make_rec("A", trend=1, trend_conf=100.0, score_b=0.9)
+    rec.update(
+        {
+            "decision": "strong_buy",
+            "metrics": {"attention_composite": 0.8},
+            "stability_bonus": 10.0,
+            "weights_used": {
+                "trend": 1.0,
+                "mean_reversion": 0.0,
+                "fundamental": 0.0,
+                "event_sentiment": 0.0,
+            },
+            "arbitration_applied": ["consensus_bonus"],
+        }
+    )
+    rec["strategy_signals"]["event_sentiment"] = {
+        "direction": 0,
+        "confidence": 0.0,
+        "completeness": 0.0,
+    }
+
+    result = reweight_recommendations(
+        [rec],
+        StrategyWeights(
+            trend=0.0,
+            mean_reversion=0.0,
+            fundamental=0.0,
+            event_sentiment=1.0,
+        ),
+    )[0]
+
+    assert result["score_b"] == 0.0
+    assert result["decision"] == "neutral"
+    assert result["weights_used"] == {}
+    assert result["arbitration_applied"] == []
+    assert result["original_decision"] == "strong_buy"
+    assert result["original_arbitration_applied"] == ["consensus_bonus"]
+    assert result["selected_policy_eligible"] is False
+    assert result["selected_policy_unavailable"] is True
+    assert result["score_decomposition"]["total"] == 0.0
+    assert result["score_decomposition"]["weights_used"] == {}
+    assert result["score_decomposition"]["projection_version"] == "selected-policy.v1"
+    assert result["score_decomposition"]["attention_contribution"] == 0.0
+    assert result["score_decomposition"]["stability_bonus"] == 0.0
+    assert result["score_decomposition"]["diagnostics"] == {
+        "attention_composite": 0.8,
+        "stability_bonus": 10.0,
+    }
+
+
+def test_reweight_recommendations_preserves_forced_avoid_veto() -> None:
+    """The explicit production hard veto dominates a bullish selected signal."""
+    rec = _make_rec("VETO", trend=1, trend_conf=100.0, score_b=-1.0)
+    rec.update(
+        {
+            "decision": "strong_sell",
+            "weights_used": {
+                "trend": 0.5,
+                "mean_reversion": 0.25,
+                "fundamental": 0.1875,
+                "event_sentiment": 0.0625,
+            },
+            "arbitration_applied": ["avoid"],
+        }
+    )
+
+    result = reweight_recommendations(
+        [rec],
+        StrategyWeights(
+            trend=1.0,
+            mean_reversion=0.0,
+            fundamental=0.0,
+            event_sentiment=0.0,
+        ),
+    )[0]
+
+    assert result["score_b"] == -1.0
+    assert result["decision"] == "strong_sell"
+    assert result["arbitration_applied"] == ["avoid"]
+    assert result["selected_policy_hard_veto"] is True
+    assert result["selected_policy_eligible"] is False
+    assert result["score_decomposition"]["base_contributions"]["trend"] == 1.0
+    assert result["score_decomposition"]["other_adjustments"] == -2.0
+    assert result["score_decomposition"]["total"] == -1.0
+
+
+def test_reweight_recommendations_distinguishes_available_neutral_from_unavailable() -> None:
+    """A complete neutral signal is admissible; missing evidence is not."""
+    rec = _make_rec("NEUTRAL")
+    rec["strategy_signals"]["event_sentiment"] = {
+        "direction": 0,
+        "confidence": 0.0,
+        "completeness": 1.0,
+    }
+
+    result = reweight_recommendations(
+        [rec],
+        StrategyWeights(
+            trend=0.0,
+            mean_reversion=0.0,
+            fundamental=0.0,
+            event_sentiment=1.0,
+        ),
+    )[0]
+
+    assert result["score_b"] == 0.0
+    assert result["weights_used"] == {
+        "trend": 0.0,
+        "mean_reversion": 0.0,
+        "fundamental": 0.0,
+        "event_sentiment": 1.0,
+    }
+    assert result["selected_policy_eligible"] is True
+    assert result["selected_policy_unavailable"] is False
+
+
+def test_reweight_recommendations_preserves_complete_source_provenance() -> None:
+    """The selected projection must not erase the explanation of its source score."""
+    source_decomposition = {
+        "weights_used": {"trend": 1.0},
+        "base_contributions": {"trend": 0.8},
+        "total": 0.8,
+    }
+    rec = _make_rec("SOURCE", trend=1, trend_conf=80.0, score_b=0.8)
+    rec.update(
+        {
+            "score_policy": "production-layer-b.v1",
+            "decision": "strong_buy",
+            "score_decomposition": source_decomposition,
+        }
+    )
+
+    result = reweight_recommendations(
+        [rec],
+        StrategyWeights(
+            trend=0.0,
+            mean_reversion=1.0,
+            fundamental=0.0,
+            event_sentiment=0.0,
+        ),
+    )[0]
+
+    assert result["score_policy"] == "selected-policy.v1"
+    assert result["original_score_policy"] == "production-layer-b.v1"
+    assert result["original_score_decomposition"] == source_decomposition
+    assert result["original_score_decomposition"] is not source_decomposition
+
+
 def test_reweight_with_default_weights_matches_production_weighting() -> None:
     """默认重算使用生产 0.40/0.20/0.15/0.05 相对权重。"""
     recs = [
@@ -648,6 +798,51 @@ def test_web_custom_weights_endpoint_smoke(tmp_path: Path, monkeypatch: pytest.M
     # 报告里的 ticker 应在结果中
     tickers = [r["ticker"] for r in data["recommendations"]]
     assert "A" in tickers
+
+
+def test_web_custom_weights_excludes_unavailable_and_hard_veto_before_top_n(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The web recommendation set obeys the selected-policy admission bit."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.backend.routes import screening as screening_mod
+
+    eligible = _make_rec("ELIGIBLE", trend=1, trend_conf=50.0, score_b=0.5)
+    unavailable = _make_rec("UNAVAILABLE", trend=1, trend_conf=100.0, score_b=0.9)
+    unavailable["strategy_signals"]["trend"]["completeness"] = 0.0
+    hard_veto = _make_rec("VETO", trend=1, trend_conf=100.0, score_b=-1.0)
+    hard_veto["arbitration_applied"] = ["avoid"]
+    payload = {
+        "recommendations": [unavailable, hard_veto, eligible],
+        "market_state": {"regime_gate_level": "normal"},
+    }
+    monkeypatch.setattr(
+        screening_mod,
+        "_load_latest_auto_screening_payload",
+        lambda trade_date=None: payload,
+    )
+
+    app = FastAPI()
+    app.include_router(screening_mod.router)
+    response = TestClient(app).post(
+        "/api/screening/custom-weights",
+        json={
+            "trend": 1.0,
+            "mean_reversion": 0.0,
+            "fundamental": 0.0,
+            "event_sentiment": 0.0,
+            "top_n": 3,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [rec["ticker"] for rec in body["recommendations"]] == ["ELIGIBLE"]
+    assert body["top_n"] == 1
+    assert body["meta"]["policy_eligible_count"] == 1
+    assert body["meta"]["policy_excluded_count"] == 2
 
 
 def test_web_custom_weights_invalid_sum_returns_422() -> None:

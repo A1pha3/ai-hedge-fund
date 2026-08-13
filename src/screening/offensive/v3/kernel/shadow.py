@@ -22,6 +22,7 @@ from src.screening.offensive.v3.contracts.decision import (
     ShadowIssuerBinding,
     ShadowOrderLine,
     ShadowStageBinding,
+    ShadowTradingScheduleBinding,
 )
 from src.screening.offensive.v3.contracts.regime import (
     RegimeAdmissionMode,
@@ -48,8 +49,8 @@ ORDER_TYPE = "LIMIT"
 EXIT_SESSION_ORDINAL = 10
 SHADOW_ISSUER_ID = "growth-kernel.shadow.service"
 SHADOW_ISSUER_KEY_ID = "shadow-key-1"
-SHADOW_CAPABILITY_VERSION = "growth-kernel-shadow.v2"
-SHADOW_NAMESPACE = "growth-kernel.shadow.v2"
+SHADOW_CAPABILITY_VERSION = "growth-kernel-shadow.v3"
+SHADOW_NAMESPACE = "growth-kernel.shadow.v3"
 
 
 def _admission_blocked(policy, shared) -> bool:
@@ -93,8 +94,6 @@ def _constraints_by_lineage(
 
 def decide_shadow(
     kernel_input: ShadowKernelInput,
-    *,
-    config,
 ) -> ShadowDecision | NoTradeDecision:
     """One arm decision: shared core economics, arm-specific regime gate.
 
@@ -114,7 +113,9 @@ def decide_shadow(
     checkpoint = kernel_input.capital_checkpoint
     candidates = kernel_input.raw_candidates
 
-    constraints = _constraints_by_lineage(policy, checkpoint, config, candidates)
+    constraints = _constraints_by_lineage(
+        policy, checkpoint, kernel_input.sizing_config, candidates
+    )
     result = decide_core(
         candidates=candidates,
         constraints=constraints,
@@ -133,10 +134,11 @@ def decide_shadow(
 
 def _no_trade(kernel_input: ShadowKernelInput, reason: BlockReason) -> NoTradeDecision:
     return NoTradeDecision(
-        portfolio_id=kernel_input.shared.portfolio_id,
+        portfolio_id=kernel_input.portfolio_id,
         signal_session=kernel_input.shared.signal_session,
         decision_cycle_id=kernel_input.shared.decision_cycle_id,
         reason=reason,
+        kernel_input_hash=kernel_input.content_hash(),
     )
 
 
@@ -161,8 +163,9 @@ def _project_shadow_decision(
     trusted_at = shared.trusted_at
     signal_session = shared.signal_session
     cycle_id = shared.decision_cycle_id
-    target_entry_session = signal_session + timedelta(days=1)
-    target_exit_session = signal_session + timedelta(days=10)
+    schedule = shared.trading_session_schedule
+    target_entry_session = schedule.following_sessions[0]
+    target_exit_session = schedule.following_sessions[EXIT_SESSION_ORDINAL - 1]
 
     stage_binding = ShadowStageBinding(
         research_program_id=shared.research_program_id,
@@ -192,9 +195,9 @@ def _project_shadow_decision(
         capability_artifact_kind=ArtifactKind.SHADOW_DECISION,
         capability_namespace=SHADOW_NAMESPACE,
         capability_mode=shared.mode,
-        capability_schema_major=3,
+        capability_schema_major=4,
         capability_version=SHADOW_CAPABILITY_VERSION,
-        capability_scope=f"portfolio:{shared.portfolio_id}",
+        capability_scope=f"portfolio:{kernel_input.portfolio_id}",
         verification_result="VALID",
         verified_at=trusted_at,
         valid_until=trusted_at + timedelta(days=1),
@@ -204,14 +207,14 @@ def _project_shadow_decision(
     return ShadowDecision(
         artifact_kind=ArtifactKind.SHADOW_DECISION,
         artifact_namespace=SHADOW_NAMESPACE,
-        schema_major=3,
-        shadow_decision_id=f"shadow-{cycle_id}-{shared.trial_arm.value.lower()}",
+        schema_major=4,
+        shadow_decision_id=f"shadow-{cycle_id}-{kernel_input.arm.value.lower()}",
         counterfactual_key=CounterfactualDecisionKey(
-            portfolio_id=shared.portfolio_id,
+            portfolio_id=kernel_input.portfolio_id,
             signal_session=signal_session,
             counterfactual_cycle_id=cycle_id,
         ),
-        portfolio_id=shared.portfolio_id,
+        portfolio_id=kernel_input.portfolio_id,
         mode=shared.mode,
         target_entry_session=target_entry_session,
         producer_namespace="btst",
@@ -220,7 +223,17 @@ def _project_shadow_decision(
         economic_lineage_id=stage_binding.economic_lineage_id,
         stage_id=stage_binding.stage_id,
         trial_id=stage_binding.trial_id,
+        kernel_input_hash=kernel_input.content_hash(),
         shadow_policy_binding=binding,
+        trading_session_schedule_binding=ShadowTradingScheduleBinding(
+            calendar_id=schedule.calendar_id,
+            calendar_version=schedule.calendar_version,
+            calendar_artifact_hash=schedule.calendar_artifact_hash,
+            signal_session=schedule.signal_session,
+            following_sessions=schedule.following_sessions,
+            available_at=schedule.available_at,
+            schedule_hash=schedule.content_hash(),
+        ),
         policy_epoch=policy.policy_epoch,
         evidence_set_merkle_root=shared.evidence_set_merkle_root,
         shadow_stage_binding=stage_binding,
@@ -252,12 +265,11 @@ def _project_line(
     evidence identity is frozen by the caller's binding, never synthesized.
     """
 
-    quantity = max(decision_line.quantity_units, LOT_UNITS)
-    limit_price_cents = max(decision_line.limit_price_micros // MICROS_PER_CENT, 1)
+    quantity = decision_line.quantity_units
+    limit_price_cents = decision_line.limit_price_micros // MICROS_PER_CENT
     worst_case_price_cents = limit_price_cents
-    gross_cents = worst_case_price_cents * quantity
-    fee_cents = 0
-    estimated_reserve_cents = gross_cents + fee_cents
+    fee_cents = decision_line.worst_case_fee_reserve_cents
+    estimated_reserve_cents = decision_line.worst_case_reserve_cents
     return ShadowOrderLine(
         shadow_line_id=f"shadow-line-{decision_line.candidate_id}",
         security_id=decision_line.security_id,

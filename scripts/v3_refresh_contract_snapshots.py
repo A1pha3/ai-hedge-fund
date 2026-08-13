@@ -34,6 +34,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Resolve contract modules from this checkout, not from an editable install
+# that may point at a different worktree.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from src.screening.offensive.v3.contracts.base import CanonicalModel
 from src.screening.offensive.v3.policy.models import (
     ProducerIdentity,
@@ -61,7 +67,6 @@ from tests.offensive.v3.contracts.revision2_snapshot_registry import (
     WIRE_MODEL_EXCEPTIONS,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_ROOT = (
     REPO_ROOT
     / "tests/offensive/v3/contracts/fixtures/revision2"
@@ -104,6 +109,130 @@ BEHAVIOUR_FINGERPRINT_POLICY_KEYS = (
 # Existing contracts reuse their checked-in exemplar, optionally patched via
 # EXEMPLAR_PATCHES.
 EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
+    "src.screening.offensive.v3.contracts.decision.ShadowTradingScheduleBinding": {
+        "calendar_id": "sse-szse",
+        "calendar_version": "sse-szse-official-sessions.v1",
+        "calendar_artifact_hash": "c" * 64,
+        "signal_session": "2026-07-29",
+        "following_sessions": [
+            "2026-07-30", "2026-07-31", "2026-08-03", "2026-08-04",
+            "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-10",
+            "2026-08-11", "2026-08-12",
+        ],
+        "available_at": "2026-07-29T07:59:00Z",
+        "schedule_hash": "507ff12da013f93b8b04d5b80b88973e51e3628734227c786903b3a1ad170246",
+    },
+    "src.screening.offensive.v3.contracts.compatibility.LegacyShadowOrderLineV3": {
+        "shadow_line_id": "shadow-line-1",
+        "security_id": "600000.SH",
+        "producer_namespace": "auto.shadow",
+        "family_id": "auto-family",
+        "economic_lineage_id": "auto-lineage",
+        "research_program_id": "auto-program",
+        "stage_id": "auto-shadow-stage",
+        "trial_id": "auto-shadow-trial",
+        "stage_manifest_hash": "c" * 64,
+        "evidence_id": "shadow-evidence-1",
+        "evidence_artifact_hash": "d" * 64,
+        "evidence_payload_hash": "e" * 64,
+        "target_quantity_units": 100,
+        "lot_size_units": 100,
+        "lot_rule_version": "cn-a-share-lot.v1",
+        "order_type": "LIMIT",
+        "limit_price_cents": 1050,
+        "worst_case_price_cents": 1050,
+        "price_boundary_version": "cn-price-limit.v1",
+        "time_in_force": "OPEN_AUCTION",
+        "exit_session_ordinal": 10,
+        "estimated_fee_cents": 50,
+        "estimated_cash_reserve_cents": 105050,
+        "cost_assumption_version": "cn-a-share-30bps-tax.v2",
+        "execution_assumption_version": "t1-open-t10-open-slippage.v2",
+        "target_exit_session": "2026-08-08",
+    },
+    "src.screening.offensive.v3.contracts.compatibility.LegacyShadowDecisionV3": {
+        "artifact_kind": "shadow_decision",
+        "artifact_namespace": "growth-kernel.shadow.v2",
+        "schema_major": 3,
+        "shadow_decision_id": "shadow-decision-1",
+        "counterfactual_key": {
+            "portfolio_id": "portfolio-v3",
+            "signal_session": "2026-07-29",
+            "counterfactual_cycle_id": "auto-shadow-daily-v1",
+        },
+        "portfolio_id": "portfolio-v3",
+        "mode": "broker_confirmed",
+        "target_entry_session": "2026-07-30",
+        "producer_namespace": "auto.shadow",
+        "family_id": "auto-family",
+        "research_program_id": "auto-program",
+        "economic_lineage_id": "auto-lineage",
+        "stage_id": "auto-shadow-stage",
+        "trial_id": "auto-shadow-trial",
+        "shadow_policy_binding": {
+            "source_kind": "BASELINE_POLICY_ACTIVATION",
+            "baseline_policy_activation_hash": "a" * 64,
+            "policy_snapshot_hash": "b" * 64,
+            "policy_fingerprint": "2" * 64,
+        },
+        "policy_epoch": 4,
+        "evidence_set_merkle_root": "2" * 64,
+        "shadow_stage_binding": {
+            "research_program_id": "auto-program",
+            "economic_lineage_id": "auto-lineage",
+            "stage_id": "auto-shadow-stage",
+            "trial_id": "auto-shadow-trial",
+            "stage_manifest_hash": "c" * 64,
+        },
+        "counterfactual_lines": [{
+            "shadow_line_id": "shadow-line-1",
+            "security_id": "600000.SH",
+            "producer_namespace": "auto.shadow",
+            "family_id": "auto-family",
+            "economic_lineage_id": "auto-lineage",
+            "research_program_id": "auto-program",
+            "stage_id": "auto-shadow-stage",
+            "trial_id": "auto-shadow-trial",
+            "stage_manifest_hash": "c" * 64,
+            "evidence_id": "shadow-evidence-1",
+            "evidence_artifact_hash": "d" * 64,
+            "evidence_payload_hash": "e" * 64,
+            "target_quantity_units": 100,
+            "lot_size_units": 100,
+            "lot_rule_version": "cn-a-share-lot.v1",
+            "order_type": "LIMIT",
+            "limit_price_cents": 1050,
+            "worst_case_price_cents": 1050,
+            "price_boundary_version": "cn-price-limit.v1",
+            "time_in_force": "OPEN_AUCTION",
+            "exit_session_ordinal": 10,
+            "estimated_fee_cents": 50,
+            "estimated_cash_reserve_cents": 105050,
+            "cost_assumption_version": "cn-a-share-30bps-tax.v2",
+            "execution_assumption_version": "t1-open-t10-open-slippage.v2",
+            "target_exit_session": "2026-08-08",
+        }],
+        "cost_assumption_version": "cn-a-share-30bps-tax.v2",
+        "execution_assumption_version": "t1-open-t10-open-slippage.v2",
+        "created_at": "2026-07-29T08:00:00Z",
+        "available_at": "2026-07-29T08:00:00Z",
+        "execution_authority": "NONE",
+        "issuer_binding": {
+            "issuer_id": "growth-kernel.shadow.service",
+            "key_id": "shadow-key-1",
+            "capability_artifact_kind": "shadow_decision",
+            "capability_namespace": "growth-kernel.shadow.v2",
+            "capability_mode": "broker_confirmed",
+            "capability_schema_major": 3,
+            "capability_version": "growth-kernel-shadow.v2",
+            "capability_scope": "portfolio:portfolio-v3",
+            "verification_result": "VALID",
+            "verified_at": "2026-07-29T07:59:00Z",
+            "valid_until": "2026-07-29T08:04:00Z",
+            "trust_bundle_hash": "b" * 64,
+            "registry_epoch": 7,
+        },
+    },
     "src.screening.offensive.v3.contracts.btst_candidate.BtstRawCandidatePayload": {
         "payload_kind": "btst_raw_candidate",
         "schema_major": 1,
@@ -312,7 +441,7 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     'src.screening.offensive.v3.contracts.decision.ShadowDecision': {
         "artifact_kind": "shadow_decision",
-        "artifact_namespace": "growth-kernel.shadow.v2",
+        "artifact_namespace": "growth-kernel.shadow.v3",
         "available_at": "2026-07-29T08:00:00Z",
         "cost_assumption_version": "cn-a-share-30bps-tax.v2",
         "counterfactual_key": {
@@ -347,7 +476,7 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
                 "time_in_force": "OPEN_AUCTION",
                 "trial_id": "auto-shadow-trial",
                 "worst_case_price_cents": 1050,
-                "target_exit_session": "2026-08-08"
+                "target_exit_session": "2026-08-12"
             },
             {
                 "cost_assumption_version": "cn-a-share-30bps-tax.v2",
@@ -375,7 +504,7 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
                 "time_in_force": "OPEN_AUCTION",
                 "trial_id": "auto-shadow-trial",
                 "worst_case_price_cents": 800,
-                "target_exit_session": "2026-08-08"
+                "target_exit_session": "2026-08-12"
             }
         ],
         "created_at": "2026-07-29T08:00:00Z",
@@ -387,10 +516,10 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
         "issuer_binding": {
             "capability_artifact_kind": "shadow_decision",
             "capability_mode": "broker_confirmed",
-            "capability_namespace": "growth-kernel.shadow.v2",
-            "capability_schema_major": 3,
+            "capability_namespace": "growth-kernel.shadow.v3",
+            "capability_schema_major": 4,
             "capability_scope": "portfolio:portfolio-v3",
-            "capability_version": "growth-kernel-shadow.v2",
+            "capability_version": "growth-kernel-shadow.v3",
             "issuer_id": "growth-kernel.shadow.service",
             "key_id": "shadow-key-1",
             "registry_epoch": 7,
@@ -404,8 +533,21 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
         "portfolio_id": "portfolio-v3",
         "producer_namespace": "auto.shadow",
         "research_program_id": "auto-program",
-        "schema_major": 3,
+        "schema_major": 4,
         "shadow_decision_id": "shadow-decision-1",
+        "trading_session_schedule_binding": {
+            "calendar_id": "sse-szse",
+            "calendar_version": "sse-szse-official-sessions.v1",
+            "calendar_artifact_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "signal_session": "2026-07-29",
+            "following_sessions": [
+                "2026-07-30", "2026-07-31", "2026-08-03", "2026-08-04",
+                "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-10",
+                "2026-08-11", "2026-08-12"
+            ],
+            "available_at": "2026-07-29T07:59:00Z",
+            "schedule_hash": "507ff12da013f93b8b04d5b80b88973e51e3628734227c786903b3a1ad170246"
+        },
         "shadow_stage_binding": {
             "economic_lineage_id": "auto-lineage",
             "research_program_id": "auto-program",
@@ -416,6 +558,7 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
         "stage_id": "auto-shadow-stage",
         "target_entry_session": "2026-07-30",
         "trial_id": "auto-shadow-trial",
+        "kernel_input_hash": "1111111111111111111111111111111111111111111111111111111111111111",
         "shadow_policy_binding": {
             "source_kind": "BASELINE_POLICY_ACTIVATION",
             "baseline_policy_activation_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -429,6 +572,15 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
 # few fields changed shape (avoids re-stating a large stable payload). A dict
 # value replaces that sub-object wholesale.
 EXEMPLAR_PATCHES: dict[str, dict[str, Any]] = {
+    "src.screening.offensive.v3.contracts.decision.ShadowDecision": {
+        "artifact_namespace": "growth-kernel.shadow.v3",
+        "schema_major": 4,
+        "issuer_binding": {
+            "capability_namespace": "growth-kernel.shadow.v3",
+            "capability_schema_major": 4,
+            "capability_version": "growth-kernel-shadow.v3",
+        },
+    },
     POLICY_SNAPSHOT_NAME: {
         "schema_major": 2,
         "producers": {

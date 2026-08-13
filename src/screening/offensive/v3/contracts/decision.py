@@ -19,6 +19,7 @@ from .base import (
     SchemaVersion,
     Sha256,
     UtcInstant,
+    content_hash,
     domain_hash,
 )
 from ._decision_relations import (
@@ -42,7 +43,7 @@ NonNegativeExactInt = Annotated[ExactInteger, Field(ge=0)]
 
 #: Schema majors a shadow issuer capability may claim. The shadow artifact
 #: itself is schema major 3 while every executable Revision 2 artifact remains 2.
-ShadowCapabilitySchemaMajor = Annotated[ExactInteger, Field(ge=2, le=3)]
+ShadowCapabilitySchemaMajor = Annotated[ExactInteger, Field(ge=2, le=4)]
 PositiveQuantity = Annotated[QuantityUnits, Field(gt=0)]
 PositiveCents = Annotated[MoneyCents, Field(gt=0)]
 NonNegativeCents = Annotated[MoneyCents, Field(ge=0)]
@@ -1000,6 +1001,38 @@ class ShadowStageBinding(CanonicalModel):
     stage_manifest_hash: Sha256
 
 
+class ShadowTradingScheduleBinding(CanonicalModel):
+    """The complete cutoff-visible exchange schedule bound into a v4 decision."""
+
+    calendar_id: NonEmptyStr
+    calendar_version: NonEmptyStr
+    calendar_artifact_hash: Sha256
+    signal_session: date
+    following_sessions: Annotated[tuple[date, ...], Field(min_length=10, max_length=10)]
+    available_at: UtcInstant
+    schedule_hash: Sha256
+
+    @model_validator(mode="after")
+    def validate_schedule(self) -> Self:
+        if any(session <= self.signal_session for session in self.following_sessions):
+            raise ValueError("following trading sessions must follow signal_session")
+        if tuple(sorted(set(self.following_sessions))) != self.following_sessions:
+            raise ValueError("following trading sessions must be unique and increasing")
+        expected = content_hash(
+            {
+                "calendar_id": self.calendar_id,
+                "calendar_version": self.calendar_version,
+                "calendar_artifact_hash": self.calendar_artifact_hash,
+                "signal_session": self.signal_session,
+                "following_sessions": self.following_sessions,
+                "available_at": self.available_at,
+            }
+        )
+        if self.schedule_hash != expected:
+            raise ValueError("schedule hash must bind the complete trading schedule")
+        return self
+
+
 class ShadowOrderLine(CanonicalModel):
     """One complete but non-authoritative counterfactual entry line."""
 
@@ -1055,18 +1088,17 @@ class ShadowOrderLine(CanonicalModel):
 class ShadowDecision(CanonicalModel):
     """Complete counterfactual output with literal absence of execution authority.
 
-    Schema major 3 carries a discriminated ``ShadowPolicyBinding`` instead of an
-    activation hash: the Champion binds the trial's baseline policy activation,
-    the Challenger binds the target policy registration. Both are provenance,
-    never activation tokens. Historical schema-major-2 bytes remain readable
-    only through ``contracts.compatibility.LegacyShadowDecisionV2``.
+    Schema major 4 closes the pure economic input: the frozen trading-session
+    schedule and sizing configuration are hashed by ``ShadowKernelInput``, and
+    each line copies the kernel's explicit fee-inclusive reserve. Historical
+    schema-major-2/3 bytes remain read-only compatibility history.
     """
 
-    HASH_DOMAIN: ClassVar[str] = "ai-hedge-fund.v3.decision.shadow-decision.v2"
+    HASH_DOMAIN: ClassVar[str] = "ai-hedge-fund.v3.decision.shadow-decision.v3"
 
     artifact_kind: Literal[ArtifactKind.SHADOW_DECISION]
-    artifact_namespace: Literal["growth-kernel.shadow.v2"]
-    schema_major: Literal[3]
+    artifact_namespace: Literal["growth-kernel.shadow.v3"]
+    schema_major: Literal[4]
     shadow_decision_id: NonEmptyStr
     counterfactual_key: CounterfactualDecisionKey
     portfolio_id: NonEmptyStr
@@ -1078,7 +1110,9 @@ class ShadowDecision(CanonicalModel):
     economic_lineage_id: NonEmptyStr
     stage_id: NonEmptyStr
     trial_id: NonEmptyStr
+    kernel_input_hash: Sha256
     shadow_policy_binding: ShadowPolicyBinding
+    trading_session_schedule_binding: ShadowTradingScheduleBinding
     policy_epoch: PositiveExactInt
     evidence_set_merkle_root: Sha256
     shadow_stage_binding: ShadowStageBinding
@@ -1096,6 +1130,11 @@ class ShadowDecision(CanonicalModel):
             raise ValueError("shadow counterfactual key portfolio mismatches header")
         if self.target_entry_session <= self.counterfactual_key.signal_session:
             raise ValueError("shadow target session must follow signal session")
+        schedule = self.trading_session_schedule_binding
+        if schedule.signal_session != self.counterfactual_key.signal_session:
+            raise ValueError("shadow schedule signal_session mismatches decision key")
+        if self.target_entry_session != schedule.following_sessions[0]:
+            raise ValueError("shadow target entry must equal schedule T+1")
         if self.available_at < self.created_at:
             raise ValueError("shadow available_at cannot precede created_at")
         line_ids = [line.shadow_line_id for line in self.counterfactual_lines]
@@ -1122,6 +1161,8 @@ class ShadowDecision(CanonicalModel):
             stage.stage_manifest_hash,
         )
         for line in self.counterfactual_lines:
+            if line.target_exit_session != schedule.following_sessions[9]:
+                raise ValueError("shadow target exit must equal schedule T+10")
             line_header = (
                 line.producer_namespace,
                 line.family_id,
@@ -1175,6 +1216,7 @@ __all__ = [
     "ShadowIssuerBinding",
     "ShadowOrderLine",
     "ShadowStageBinding",
+    "ShadowTradingScheduleBinding",
     "StageAdmissionBinding",
     "StageLossExpectedVersion",
     "TrustedClockObservation",

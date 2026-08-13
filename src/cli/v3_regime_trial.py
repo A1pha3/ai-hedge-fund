@@ -17,11 +17,12 @@ Four subcommands over one on-disk Trial root:
 Security boundary (pinned by ``test_v3_regime_trial_cli`` +
 ``test_regime_trial_import_boundary``):
 
-- the root must resolve to a real directory; path-traversal roots and
-  symlink roots reject before anything is loaded;
+- the root must be supplied as a canonical absolute path to a real directory;
+  path-traversal roots and any symlinked path component reject before anything
+  is loaded;
 - the CLI recognizes NO policy / regime / cap / mode / evidence-cutoff
-  override flags and reads NO environment switches — those frozen values
-  come only from the sealed artifacts;
+  override flags and reads NO environment switches. While all commands are
+  unavailable, it does not read or bind any frozen value from disk either;
 - the CLI never auto-creates or auto-seals a Trial;
 - the module imports only the trial-path surface (runner, replay engine,
   proxy adapter, lifecycle, decision store, genesis, evaluator); it never
@@ -39,7 +40,9 @@ not make an official Trial executable, validatable, or evaluable by themselves.
 from __future__ import annotations
 
 import argparse
+import json
 import stat
+import sys
 from datetime import date, datetime
 from pathlib import Path
 from typing import Callable
@@ -52,6 +55,10 @@ _LAYOUT_FILES: tuple[str, ...] = (
     "evidence.sqlite3",
 )
 _LAYOUT_DIRS: tuple[str, ...] = ("archive", "blobs")
+
+# Stable operator-facing result for a well-formed command whose required
+# governance/operational proof is not wired. Usage errors remain argparse's 2.
+UNAVAILABLE_EXIT_CODE = 78
 
 
 class RegimeTrialCliError(RuntimeError):
@@ -68,9 +75,10 @@ class RegimeTrialCliError(RuntimeError):
 def _resolve_trial_root(root: str | Path) -> Path:
     """Resolve a Trial root, rejecting traversal / symlink / missing roots.
 
-    The root must name a real directory whose path contains no ``..``
-    segment and is not itself a symlink. Resolution is absolute so the
-    rest of the CLI is immune to the caller's cwd.
+    The root must name a real directory using its canonical absolute spelling.
+    Its path contains no ``..`` segment and no component may be a symlink.
+    Metadata is inspected exclusively with ``lstat`` so the final directory
+    check cannot re-follow a path after the no-symlink proof.
     """
 
     path = Path(root)
@@ -83,16 +91,26 @@ def _resolve_trial_root(root: str | Path) -> Path:
             "a Trial root must not contain a '..' path segment",
             root=str(root),
         )
+    if not path.is_absolute():
+        raise RegimeTrialCliError(
+            "root_not_canonical",
+            "a Trial root must be supplied as a canonical absolute path",
+            root=str(root),
+        )
     # Reject a symlink at any existing component, not only the leaf. A
     # non-symlink leaf under a symlinked parent is equally repointable.
     absolute = path.absolute()
     current = Path(absolute.anchor)
+    leaf_mode: int | None = None
+    missing_component = False
     for part in absolute.parts[1:]:
         current /= part
         try:
             mode = current.lstat().st_mode
         except FileNotFoundError:
+            missing_component = True
             break
+        leaf_mode = mode
         if stat.S_ISLNK(mode):
             raise RegimeTrialCliError(
                 "root_symlink_rejected",
@@ -100,7 +118,7 @@ def _resolve_trial_root(root: str | Path) -> Path:
                 root=str(root),
                 component=str(current),
             )
-    if not path.is_dir():
+    if missing_component or leaf_mode is None or not stat.S_ISDIR(leaf_mode):
         raise RegimeTrialCliError(
             "root_not_found",
             "a Trial root must be an existing directory",
@@ -285,10 +303,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="v3_regime_trial",
         description=(
-            "Operator CLI for the BTST regime paired shadow trial. All"
-            " policy/regime/cap/mode values come from the sealed Trial"
-            " artifacts under --root; no override flags or environment"
-            " switches are recognized."
+            "Reserved operator CLI for the BTST regime paired shadow trial."
+            " All commands currently fail closed without reading or binding"
+            " frozen policy/regime/cap/mode values. No override flags or"
+            " environment switches are recognized; --root must be a canonical"
+            " absolute path with no symlinked component."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -341,24 +360,46 @@ def main(argv: list[str] | None = None) -> int:
         # argparse exits 2 on a usage error (unknown subcommand or flag);
         # surface it as a non-zero return code instead of killing the process.
         return int(exc.code) if isinstance(exc.code, int) else 2
-    root = _resolve_trial_root(args.root)
-    if args.command == "validate":
-        return validate_trial(root=root, trial_id=args.trial_id)
-    if args.command == "decide-session":
-        return decide_session(
-            root=root, trial_id=args.trial_id, signal_session=args.signal_session
+    try:
+        root = _resolve_trial_root(args.root)
+        if args.command == "validate":
+            return validate_trial(root=root, trial_id=args.trial_id)
+        if args.command == "decide-session":
+            return decide_session(
+                root=root,
+                trial_id=args.trial_id,
+                signal_session=args.signal_session,
+            )
+        if args.command == "advance-session":
+            return advance_market_session(
+                root=root,
+                trial_id=args.trial_id,
+                market_session=args.market_session,
+            )
+        if args.command == "assess":
+            return assess_trial(root=root, trial_id=args.trial_id, output=args.output)
+    except RegimeTrialCliError as exc:
+        print(
+            json.dumps(
+                {
+                    "code": exc.code,
+                    "details": exc.details,
+                    "message": str(exc),
+                    "status": "unavailable",
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ),
+            file=sys.stderr,
         )
-    if args.command == "advance-session":
-        return advance_market_session(
-            root=root, trial_id=args.trial_id, market_session=args.market_session
-        )
-    if args.command == "assess":
-        return assess_trial(root=root, trial_id=args.trial_id, output=args.output)
+        return UNAVAILABLE_EXIT_CODE
     return 2
 
 
 __all__ = [
     "RegimeTrialCliError",
+    "UNAVAILABLE_EXIT_CODE",
     "advance_market_session",
     "assess_trial",
     "decide_session",

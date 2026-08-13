@@ -48,7 +48,10 @@ from src.screening.offensive.v3.contracts.base import (
 from src.screening.offensive.v3.contracts.evidence import SignalEvidence
 from src.screening.offensive.v3.contracts.governance import TrustBundle
 from src.screening.offensive.v3.evidence.blob_store import BlobStore
-from src.screening.offensive.v3.evidence.repository import EvidenceRepository
+from src.screening.offensive.v3.evidence.repository import (
+    EvidenceRepository,
+    EvidenceStoreError,
+)
 from src.screening.offensive.v3.services.btst_producer_api import BtstProducerApi
 from src.screening.offensive.daily_action_readiness import (
     BOARD_RULE_VERSION,
@@ -631,14 +634,14 @@ def test_oversold_bounce_disabled_produces_no_ob_signals(world: _World) -> None:
         assert record.evidence.family_id == f"btst:{SNAPSHOT_ID}"
 
 
-def test_correction_revision_appends_without_rewriting(world: _World) -> None:
+def test_behavior_change_requires_a_new_evidence_generation(world: _World) -> None:
     records = world.service.produce_and_publish(_snapshot())
     evidence_id = records[0].evidence.evidence_id
     original_candidate = world.service.candidate_payload(
         records[0], expected_signal_session=SIGNAL_DATE
     )
 
-    # 同 evidence_id 的新 revision: 经裸 store prepare + activate (append-only)
+    # behavior fingerprint 变化不是 correction，必须使用新的 evidence generation/id。
     world.clock.advance(minutes=1)
     revised_candidate = original_candidate.model_copy(
         update={"behavior_fingerprint": "c" * 64}
@@ -653,23 +656,17 @@ def test_correction_revision_appends_without_rewriting(world: _World) -> None:
         }
     )
     payload = revised.model_dump_json().encode("utf-8")
-    world.raw_repository.prepare_revision(world.sign(payload), payload)
-    world.clock.advance(minutes=1)
-    world.raw_repository.activate_revision(evidence_id, 2)
+    with pytest.raises(EvidenceStoreError) as rejected:
+        world.raw_repository.prepare_revision(
+            world.sign(payload),
+            payload,
+            referenced_payload=revised_candidate.canonical_bytes(),
+        )
 
-    world.clock.advance(minutes=1)
-    active = world.service.active_signal(
-        evidence_id, cutoff=world.clock.now_value
-    )
-    assert active is not None
-    assert active.revision == 2
-    assert active.evidence.behavior_fingerprint == "c" * 64
-
-    # append-only: revision 1 仍可读, 只是不再是 active 投影
-    legacy = world.raw_repository.get(evidence_id, revision=1)
-    assert legacy.revision == 1
-    assert not legacy.is_active
-    assert legacy.evidence.behavior_fingerprint == "b" * 64
+    assert rejected.value.code == "revision_lineage_mismatch"
+    active = world.raw_repository.get(evidence_id)
+    assert active.revision == active.active_revision == 1
+    assert active.evidence.behavior_fingerprint == "b" * 64
 
 
 def test_btst_has_no_runtime_gate(world: _World) -> None:

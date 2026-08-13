@@ -45,8 +45,8 @@ APPROVED_SERIALIZATION_DIGESTS = {
         "f60ce29b40a8f2fd55e893b0d3b5959d151ef004195ffa067c783513c28f39e7",
     ),
     "shadow": (
-        "07e355206ffe89ab3833a00022a2cb3f04d79464bc2d58dee89609a638564dee",
-        "5aab361743b455592aed78d0378be7c723f7962e01c2504938680da9e1a7c446",
+        "b7f6f30cdcdb8b17e3b395d53a582b799035436d30f9c6b80f199c21b53be9d9",
+        "92f47a6078f09f973fbd7b1497b86c6d86d4fc25bd1edf414b6dff4e47358fae",
     ),
     "permit": (
         "559cd93df4056284cde96eb0fbc5a3af3a5f3513eb6f39e26ee69a2818f7ce5c",
@@ -74,6 +74,7 @@ CHECKPOINT2_NAMES = (
     "CounterfactualDecisionKey",
     "ShadowOrderLine",
     "ShadowDecision",
+    "ShadowTradingScheduleBinding",
     "BaselineShadowPolicyBinding",
     "ShadowPolicySourceKind",
     "PermitDisposition",
@@ -142,6 +143,7 @@ def _api() -> SimpleNamespace:
         StageLossExpectedVersion=contracts.StageLossExpectedVersion,
         canonical_json_bytes=contracts.canonical_json_bytes,
         domain_hash=contracts.domain_hash,
+        content_hash=contracts.content_hash,
     )
 
 
@@ -634,10 +636,10 @@ def _shadow_issuer(api):
         issuer_id="growth-kernel.shadow.service",
         key_id="shadow-key-1",
         capability_artifact_kind=api.ArtifactKind.SHADOW_DECISION,
-        capability_namespace="growth-kernel.shadow.v2",
+        capability_namespace="growth-kernel.shadow.v3",
         capability_mode=api.ExecutionMode.BROKER_CONFIRMED,
-        capability_schema_major=3,
-        capability_version="growth-kernel-shadow.v2",
+        capability_schema_major=4,
+        capability_version="growth-kernel-shadow.v3",
         capability_scope=f"portfolio:{PORTFOLIO_ID}",
         verification_result="VALID",
         verified_at=CLOSE_FINALIZED,
@@ -654,6 +656,28 @@ def _shadow_stage_binding(api):
         stage_id="auto-shadow-stage",
         trial_id="auto-shadow-trial",
         stage_manifest_hash=HASH_C,
+    )
+
+
+def _shadow_schedule_binding(api):
+    following_sessions = tuple(
+        date.fromisoformat(value)
+        for value in (
+            "2026-07-30", "2026-07-31", "2026-08-03", "2026-08-04",
+            "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-10",
+            "2026-08-11", "2026-08-12",
+        )
+    )
+    payload = {
+        "calendar_id": "sse-szse",
+        "calendar_version": "sse-szse-official-sessions.v1",
+        "calendar_artifact_hash": HASH_C,
+        "signal_session": SIGNAL_SESSION,
+        "following_sessions": following_sessions,
+        "available_at": CLOSE_FINALIZED,
+    }
+    return api.ShadowTradingScheduleBinding(
+        **payload, schedule_hash=api.content_hash(payload)
     )
 
 
@@ -687,15 +711,15 @@ def _shadow_line(api, *, suffix="1", security_id="600000.SH"):
         estimated_cash_reserve_cents=price * quantity + fee,
         cost_assumption_version="cn-a-share-30bps-tax.v2",
         execution_assumption_version="t1-open-t10-open-slippage.v2",
-        target_exit_session=date(2026, 8, 8),
+        target_exit_session=date(2026, 8, 12),
     )
 
 
 def _shadow_payload(api, **overrides):
     values = {
         "artifact_kind": api.ArtifactKind.SHADOW_DECISION,
-        "artifact_namespace": "growth-kernel.shadow.v2",
-        "schema_major": 3,
+        "artifact_namespace": "growth-kernel.shadow.v3",
+        "schema_major": 4,
         "shadow_decision_id": "shadow-decision-1",
         "counterfactual_key": api.CounterfactualDecisionKey(
             portfolio_id=PORTFOLIO_ID,
@@ -711,12 +735,14 @@ def _shadow_payload(api, **overrides):
         "economic_lineage_id": "auto-lineage",
         "stage_id": "auto-shadow-stage",
         "trial_id": "auto-shadow-trial",
+        "kernel_input_hash": HASH_D,
         "shadow_policy_binding": api.BaselineShadowPolicyBinding(
             source_kind=api.ShadowPolicySourceKind.BASELINE_POLICY_ACTIVATION,
             baseline_policy_activation_hash=HASH_A,
             policy_snapshot_hash=HASH_B,
             policy_fingerprint=EVIDENCE_ROOT,
         ),
+        "trading_session_schedule_binding": _shadow_schedule_binding(api),
         "policy_epoch": 4,
         "evidence_set_merkle_root": EVIDENCE_ROOT,
         "shadow_stage_binding": _shadow_stage_binding(api),

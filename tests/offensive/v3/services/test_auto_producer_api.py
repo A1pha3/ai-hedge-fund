@@ -7,8 +7,8 @@
 3. no cache reopen — monkeypatch pandas.read_csv 抛错, produce 不触碰文件系统。
 4. no authorization field — 信封无 authorization 字段 / model_dump 无该 key。
 5. OB disabled — oversold_bounce 未启用 → 产出信号中无该 setup。
-6. correction provenance — 同 evidence_id 新 revision (prepare+activate)
-   → active 指向新 revision, 旧 revision 仍可读 (append-only, 不 rewrite)。
+6. correction provenance — behavior generation 不得借同 evidence_id revision
+   改写；行为变化必须使用新 generation/id。
 7. producer namespace separation — auto/btst 信封 subject_producer 各自归属,
    evidence_id 空间互不混淆。
 8. auto shadow gate — OFF/AUTHORITATIVE/BTST_CANARY/默认 None → 抛
@@ -681,11 +681,11 @@ def test_oversold_bounce_disabled_produces_no_ob_signals(world: _World) -> None:
         assert record.evidence.family_id == f"auto:{SNAPSHOT_ID}"
 
 
-def test_correction_revision_appends_without_rewriting(world: _World) -> None:
+def test_behavior_change_requires_a_new_evidence_generation(world: _World) -> None:
     records = world.auto_service.produce_and_publish(_snapshot())
     evidence_id = records[0].evidence.evidence_id
 
-    # 同 evidence_id 的新 revision: 经裸 store prepare + activate (append-only)
+    # behavior fingerprint 变化不是 correction，必须使用新的 evidence generation/id。
     world.clock.advance(minutes=1)
     prepare_time = world.clock.now_value
     revised = world.signal_envelope(
@@ -699,23 +699,16 @@ def test_correction_revision_appends_without_rewriting(world: _World) -> None:
         provider_published_at=prepare_time - timedelta(minutes=1),
     )
     payload = revised.model_dump_json().encode("utf-8")
-    world.raw_auto_repository.prepare_revision(world.sign_auto(payload), payload)
-    world.clock.advance(minutes=1)
-    world.raw_auto_repository.activate_revision(evidence_id, 2)
+    with pytest.raises(EvidenceStoreError) as rejected:
+        world.raw_auto_repository.prepare_revision(
+            world.sign_auto(payload),
+            payload,
+        )
 
-    world.clock.advance(minutes=1)
-    active = world.auto_service.active_signal(
-        evidence_id, cutoff=world.clock.now_value
-    )
-    assert active is not None
-    assert active.revision == 2
-    assert active.evidence.behavior_fingerprint == "c" * 64
-
-    # append-only: revision 1 仍可读, 只是不再是 active 投影
-    legacy = world.raw_auto_repository.get(evidence_id, revision=1)
-    assert legacy.revision == 1
-    assert not legacy.is_active
-    assert legacy.evidence.behavior_fingerprint == "a" * 64
+    assert rejected.value.code == "revision_lineage_mismatch"
+    active = world.raw_auto_repository.get(evidence_id)
+    assert active.revision == active.active_revision == 1
+    assert active.evidence.behavior_fingerprint == "a" * 64
 
 
 def test_auto_and_btst_evidence_id_spaces_are_disjoint(world: _World) -> None:

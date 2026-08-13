@@ -124,7 +124,13 @@ class BtstProducerApi:
                 )
             payload = envelope.model_dump_json().encode("utf-8")
             signed = self._signer(payload)
-            records.append(self._repository.publish(signed, payload))
+            records.append(
+                self._repository.publish(
+                    signed,
+                    payload,
+                    referenced_payload=candidate_bytes,
+                )
+            )
         return tuple(records)
 
     def candidate_payload(
@@ -156,10 +162,7 @@ class BtstProducerApi:
             ) from exc
         if (
             type(stored.evidence) is not SignalEvidence
-            or stored.model_copy(
-                update={"active_revision": record.active_revision}
-            ).canonical_bytes()
-            != record.canonical_bytes()
+            or stored.canonical_bytes() != record.canonical_bytes()
         ):
             raise BtstCandidateEvidenceError(
                 "signal_record_untrusted",
@@ -168,7 +171,18 @@ class BtstProducerApi:
                 revision=record.revision,
             )
         try:
-            raw = self._repository.raw_payload(envelope.payload_content_hash)
+            raw = self._repository.raw_payload(
+                envelope.payload_content_hash,
+                evidence_id=envelope.evidence_id,
+                revision=record.revision,
+            )
+        except EvidenceStoreError as exc:
+            raise BtstCandidateEvidenceError(
+                exc.code,
+                "authoritative raw candidate payload is unavailable",
+                evidence_id=envelope.evidence_id,
+                reason=exc.code,
+            ) from exc
         except BlobStoreError as exc:
             code = (
                 "candidate_payload_missing"

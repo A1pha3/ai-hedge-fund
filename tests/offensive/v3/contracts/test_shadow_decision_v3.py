@@ -1,4 +1,4 @@
-"""Schema-major-3 ShadowDecision + read-only legacy compatibility tests."""
+"""Schema-major-4 ShadowDecision + read-only legacy compatibility tests."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from src.screening.offensive.v3.contracts.compatibility import (
     LegacyShadowDecisionV2,
+    LegacyShadowDecisionV3,
     ShadowCompatibilityError,
     read_shadow_decision_json,
 )
@@ -44,17 +45,29 @@ def _legacy_bytes() -> bytes:
     return json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
 
+def _legacy_v3_bytes() -> bytes:
+    payload = _fixture_payload("compatibility.LegacyShadowDecisionV3")
+    return json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+
 # --------------------------------------------------------------------------- #
-# Current schema-major-3 ShadowDecision
+# Current schema-major-4 ShadowDecision
 # --------------------------------------------------------------------------- #
 
 
 def test_current_shadow_decision_round_trips_with_baseline_binding() -> None:
     decision = _validate_current(_current_payload())
-    assert decision.schema_major == 3
-    assert decision.artifact_namespace == "growth-kernel.shadow.v2"
+    assert decision.schema_major == 4
+    assert decision.artifact_namespace == "growth-kernel.shadow.v3"
     binding = decision.shadow_policy_binding
     assert isinstance(binding, BaselineShadowPolicyBinding)
+    schedule = decision.trading_session_schedule_binding
+    assert schedule.signal_session == decision.counterfactual_key.signal_session
+    assert schedule.following_sessions[0] == decision.target_entry_session
+    assert all(
+        line.target_exit_session == schedule.following_sessions[9]
+        for line in decision.counterfactual_lines
+    )
     assert binding.source_kind is ShadowPolicySourceKind.BASELINE_POLICY_ACTIVATION
     rebuilt = ShadowDecision.model_validate_json(decision.canonical_bytes(), strict=True)
     assert rebuilt == decision
@@ -93,11 +106,24 @@ def test_current_shadow_decision_rejects_legacy_namespace() -> None:
         ShadowDecision.model_validate(payload, strict=True)
 
 
-def test_current_shadow_decision_hashes_under_domain_v2_schema_three() -> None:
+@pytest.mark.parametrize("mutation", ["entry", "exit", "signal"])
+def test_current_shadow_decision_rejects_schedule_divergence(mutation: str) -> None:
+    payload = _current_payload()
+    if mutation == "entry":
+        payload["target_entry_session"] = "2026-07-31"
+    elif mutation == "exit":
+        payload["counterfactual_lines"][0]["target_exit_session"] = "2026-08-09"
+    else:
+        payload["trading_session_schedule_binding"]["signal_session"] = "2026-07-28"
+    with pytest.raises(ValidationError, match="schedule|session"):
+        ShadowDecision.model_validate(payload, strict=True)
+
+
+def test_current_shadow_decision_hashes_under_domain_v3_schema_four() -> None:
     decision = _validate_current(_current_payload())
     legacy = LegacyShadowDecisionV2.model_validate_json(_legacy_bytes(), strict=True)
-    assert decision.HASH_DOMAIN == "ai-hedge-fund.v3.decision.shadow-decision.v2"
-    assert decision.schema_major == 3
+    assert decision.HASH_DOMAIN == "ai-hedge-fund.v3.decision.shadow-decision.v3"
+    assert decision.schema_major == 4
     # The schema-3 artifact and the historical schema-2 artifact never collide.
     assert decision.artifact_hash() != legacy.artifact_hash()
 
@@ -139,3 +165,14 @@ def test_legacy_shadow_rejects_current_schema_fields() -> None:
     }
     with pytest.raises(ValidationError, match="extra_forbidden"):
         LegacyShadowDecisionV2.model_validate(payload, strict=True)
+
+
+def test_schema_three_shadow_is_read_only_and_keeps_original_domain() -> None:
+    payload = _legacy_v3_bytes()
+    parsed = read_shadow_decision_json(payload, official_trial=False)
+    assert isinstance(parsed, LegacyShadowDecisionV3)
+    assert parsed.schema_major == 3
+    assert parsed.artifact_namespace == "growth-kernel.shadow.v2"
+    assert parsed.HASH_DOMAIN == "ai-hedge-fund.v3.decision.shadow-decision.v2"
+    with pytest.raises(ShadowCompatibilityError, match="legacy_shadow_not_official"):
+        read_shadow_decision_json(payload, official_trial=True)

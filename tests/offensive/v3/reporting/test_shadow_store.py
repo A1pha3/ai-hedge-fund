@@ -40,12 +40,14 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 
 from src.screening.offensive.v3.contracts import ArtifactKind, ExecutionMode
+from src.screening.offensive.v3.contracts.base import content_hash
 from src.screening.offensive.v3.contracts.decision import (
     CounterfactualDecisionKey,
     ShadowDecision,
     ShadowIssuerBinding,
     ShadowOrderLine,
     ShadowStageBinding,
+    ShadowTradingScheduleBinding,
 )
 from src.screening.offensive.v3.contracts.trial import (
     BaselineShadowPolicyBinding,
@@ -62,6 +64,38 @@ HASH = "a" * 64
 ARTIFACT_HASH = "b" * 64
 PAYLOAD_HASH = "c" * 64
 FAMILY = "btst.limit-up-breakout"
+
+
+def _next_trading_sessions(signal_session: date, count: int = 10) -> tuple[date, ...]:
+    """The next ``count`` weekday sessions after ``signal_session``.
+
+    The store contract only needs a self-consistent frozen schedule; the exact
+    calendar authority is the kernel's concern, not the in-memory store's.
+    """
+    sessions: list[date] = []
+    day = signal_session
+    while len(sessions) < count:
+        day += timedelta(days=1)
+        if day.weekday() < 5:
+            sessions.append(day)
+    return tuple(sessions)
+
+
+def _schedule_binding(
+    signal_session: date, created_at: datetime
+) -> ShadowTradingScheduleBinding:
+    sessions = _next_trading_sessions(signal_session)
+    payload = {
+        "calendar_id": "sse-szse",
+        "calendar_version": "sse-szse-official-sessions.v1",
+        "calendar_artifact_hash": HASH,
+        "signal_session": signal_session,
+        "following_sessions": sessions,
+        "available_at": created_at,
+    }
+    return ShadowTradingScheduleBinding(
+        **payload, schedule_hash=content_hash(payload)
+    )
 
 
 def _make_shadow_decision(
@@ -87,6 +121,8 @@ def _make_shadow_decision(
         trial_id="trial-1",
         stage_manifest_hash=HASH,
     )
+    schedule_binding = _schedule_binding(signal_session, created_at)
+    sessions = schedule_binding.following_sessions
     line = ShadowOrderLine(
         shadow_line_id=shadow_line_id,
         security_id=security_id,
@@ -113,16 +149,16 @@ def _make_shadow_decision(
         estimated_cash_reserve_cents=1050 * 100 + 315,
         cost_assumption_version="cn-a-share-costs.v1",
         execution_assumption_version="btst.funnel.v1",
-        target_exit_session=signal_session + timedelta(days=10),
+        target_exit_session=sessions[9],
     )
     issuer = ShadowIssuerBinding(
         issuer_id="growth-kernel.shadow.service",
         key_id="shadow-key-1",
         capability_artifact_kind=ArtifactKind.SHADOW_DECISION,
-        capability_namespace="growth-kernel.shadow.v2",
+        capability_namespace="growth-kernel.shadow.v3",
         capability_mode=ExecutionMode.DAILY_BAR_PROXY,
-        capability_schema_major=3,
-        capability_version="growth-kernel-shadow.v2",
+        capability_schema_major=4,
+        capability_version="growth-kernel-shadow.v3",
         capability_scope=f"portfolio:{portfolio_id}",
         verification_result="VALID",
         verified_at=created_at,
@@ -132,8 +168,8 @@ def _make_shadow_decision(
     )
     return ShadowDecision(
         artifact_kind=ArtifactKind.SHADOW_DECISION,
-        artifact_namespace="growth-kernel.shadow.v2",
-        schema_major=3,
+        artifact_namespace="growth-kernel.shadow.v3",
+        schema_major=4,
         shadow_decision_id=shadow_decision_id,
         counterfactual_key=CounterfactualDecisionKey(
             portfolio_id=portfolio_id,
@@ -142,19 +178,21 @@ def _make_shadow_decision(
         ),
         portfolio_id=portfolio_id,
         mode=ExecutionMode.DAILY_BAR_PROXY,
-        target_entry_session=signal_session + timedelta(days=1),
+        target_entry_session=sessions[0],
         producer_namespace="btst",
         family_id=FAMILY,
         research_program_id="prog-1",
         economic_lineage_id="eline-1",
         stage_id="stage-1",
         trial_id="trial-1",
+        kernel_input_hash=HASH,
         shadow_policy_binding=BaselineShadowPolicyBinding(
             source_kind=ShadowPolicySourceKind.BASELINE_POLICY_ACTIVATION,
             baseline_policy_activation_hash=HASH,
             policy_snapshot_hash=HASH,
             policy_fingerprint=HASH,
         ),
+        trading_session_schedule_binding=schedule_binding,
         policy_epoch=1,
         evidence_set_merkle_root=HASH,
         shadow_stage_binding=stage_binding,

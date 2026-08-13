@@ -5,12 +5,16 @@ measure whether regime-gating the BTST breakout entry (Champion `IGNORE` vs
 Challenger `NORMAL_ONLY`) improves real P&L. This path never issues a live
 order.
 
-> **Current status (2026-08-12):** the contracts, stores, runner/replay/
+> **Current status (2026-08-13):** the contracts, stores, runner/replay/
 > evaluator primitives, and fixture-driven adversarial tests are present, but
-> the official forward Trial has **not started**. Real producer input,
-> independent capital state for both arms, signed Stage/session cutoffs,
+> the official forward Trial has **not started**. Typed candidate construction
+> is replay-verifiable, but the official runner
+> itself is disabled with `forward_input_authority_unavailable`: there is no
+> store-owned committed snapshot receipt, complete ordered session-batch root,
+> or sealed exchange decision window. Official CLI producer wiring,
+> independent arm capital, signed Stage/session cutoffs,
 > exchange-calendar T+1/T+10 scheduling, and originating-lot lifecycle remain
-> to be corrected and operationally wired. Replay/capital/consumption inputs
+> unavailable. Replay/capital/consumption inputs
 > are therefore unavailable to the CLI assessment. No official result can yet
 > be evaluated or considered for promotion.
 
@@ -32,6 +36,16 @@ erase the economic divergence between arms. The primitives model an atomic
 pair-commit boundary and exact-validation on replay, but the standalone CLI
 does not yet assemble the real producer and per-arm capital inputs required to
 exercise that path officially.
+
+The same safety gate covers current-cost and 2×-slippage replay before it
+creates a target directory or restores capital. Individually committed
+candidate records cannot prove that the candidate set is complete. The gate
+must not be replaced by a caller-provided boolean, DTO, or synthetic witness.
+The disabled runner and replay engine hold no injected producer, kernel,
+capital, clock or store capability. Decision, advance, missed-session
+finalization and replay reject before reading even an existing pair or target
+path. Therefore legacy pair/status rows cannot trigger reserve resumption and
+the unavailable path cannot write `NO_RUN`.
 
 ## The on-disk Trial root
 
@@ -68,8 +82,9 @@ python scripts/v3_regime_trial.py <command> --root PATH --trial-id ID
   (`..`) and symlink roots are rejected before anything is loaded.
 - **No override flags.** The CLI recognises **no** `--policy-mode`,
   `--runtime-mode`, `--admission-mode`, `--cap`, or `--evidence-cutoff`
-  flag, and reads **no** environment switch. Every frozen value comes from
-  the sealed artefacts.
+  flag, and reads **no** environment switch. The current unavailable commands
+  read no frozen values at all; a future enabled command may consume them
+  only from canonically rooted sealed artefacts.
 - **No auto-create / auto-seal.** The CLI cannot create or seal a Trial.
 - **No executable surface.** The trial path imports only the runner, replay
   engine, proxy adapter, lifecycle, decision store, genesis, and evaluator.
@@ -80,7 +95,10 @@ python scripts/v3_regime_trial.py <command> --root PATH --trial-id ID
 
 None of the four commands is self-contained over the current root. They check
 only the fixed path layout with no-follow metadata reads, then **fail closed**
-without opening SQLite or Trial content. In particular, the CLI does not bind a real BTST
+without opening SQLite or Trial content. Consequently, none of the four
+commands currently reads frozen policy/Stage/session values or proves a
+canonical Trial root; path-shape validation must never be described as such a
+proof. In particular, the CLI does not bind a real BTST
 producer payload to both policy arms, derive each arm's own PIT capital state,
 enforce a signed Stage and per-session evidence cutoff, resolve T+1/T+10 from
 the exchange calendar, or carry the originating lot through exit and company

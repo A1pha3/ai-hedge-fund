@@ -80,13 +80,15 @@ def publish(self, signed: SignedEnvelope, payload: bytes) -> ActiveEvidenceRecor
 
 ### Task 3: Outcome Finalizer, plan-line identity, and mode-pure portfolio paths
 
-**Interfaces:** Produces `OutcomeFinalizer.finalize_due(as_of)` and `OutcomeEvidence` revisions tied to `plan_line_economic_contract_key` plus distinct decision-day evaluation units.
+**Current safe interface (2026-08-13 adversarial correction):** the mode-bound `OutcomeFinalizer(execution_mode, signer_capability, signer)` retains exact constructor checks and database-enforced immutable local plan-line registration. `finalize_due`, `revise_outcome` and `outcome_fact` are deliberately unavailable and raise `outcome_input_authority_unavailable` before clock, SessionSpine, capital, Evidence Store, signer, fence or local database access. Registration is candidate metadata only; it is not an execution binding or publication authority. Existing local finalized markers are non-authoritative legacy locators and are not read.
+
+The earlier implementation was not capable of authoritative plan-line attribution: lineage/date matching could reuse one lot across multiple lines, capital corrections were reduced once per joined leg, cancelled sessions remained in the ordinal calendar, and independent local publication-intent databases had no single-writer fence. The local `outcome_publication_intents` proposal was therefore removed before release rather than documented as crash-convergent. Publication may reopen only with a store-owned line-to-lot/source binding, cancellation-aware sealed exchange calendar, one-event-once exact correction reducer, execution-completeness receipts, and an Evidence-namespace writer lease/fence plus revision reservation/CAS.
 
 - [x] **Step 1: Write failing tests** for T+1/T+10 session ordinals, no-fill, partial fill, late fill, EXIT_PENDING, fee/company-action finality, raw close exclusion, proxy/manual/broker separation, bust/reopen and unavailable finality.
 - [x] **Step 2: Add counting tests** proving all partial fills/fee revisions/corrections of one plan-line contract count as one mature outcome, while each pre-registered decision day contributes at most one governance evaluation unit; 150 outcomes and 60 decision days/ESS remain separate fields.
 - [x] **Step 3: Verify RED** with `uv run pytest tests/offensive/v3/evidence/test_outcomes.py -v`.
-- [x] **Step 4: Implement finalizer** from AccountCapitalTruth/read models. Official portfolio path uses daily unit NAV by mode projection; broker account economics remain complete even if an out-of-protocol trade is unattributed.
-- [x] **Step 5: Verify and commit** with `git commit -m "feat(v3): finalize economic outcomes without sample inflation"`.
+- [ ] **Step 4: Implement authoritative finalizer** from the required store-owned bindings and exact AccountCapitalTruth reducer. The previous heuristic implementation is retained only as future-design tests marked `future authority`; it is not callable.
+- [x] **Step 5: Fail closed pending authority** with active poison-dependency tests proving publication, revision and historical reads perform no read or write before returning the typed unavailable result. Plan-line preregistration rejects non-enum modes with a typed error and SQLite triggers reject UPDATE/DELETE.
 
 ### Task 4: Attempt, dual-key evidence consumption, and global multiplicity ledgers
 

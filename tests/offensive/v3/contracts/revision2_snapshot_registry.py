@@ -51,6 +51,7 @@ PUBLIC_MODEL_CASES = (
     "src.screening.offensive.v3.contracts.decision.ShadowIssuerBinding",
     "src.screening.offensive.v3.contracts.decision.ShadowOrderLine",
     "src.screening.offensive.v3.contracts.decision.ShadowStageBinding",
+    "src.screening.offensive.v3.contracts.decision.ShadowTradingScheduleBinding",
     "src.screening.offensive.v3.contracts.decision.StageAdmissionBinding",
     "src.screening.offensive.v3.contracts.decision.StageLossExpectedVersion",
     "src.screening.offensive.v3.contracts.decision.TrustedClockObservation",
@@ -77,7 +78,9 @@ PUBLIC_MODEL_CASES = (
     "src.screening.offensive.v3.contracts.regime.RegimeObservation",
     "src.screening.offensive.v3.contracts.regime.RegimeSourceRevision",
     "src.screening.offensive.v3.contracts.compatibility.LegacyShadowDecisionV2",
+    "src.screening.offensive.v3.contracts.compatibility.LegacyShadowDecisionV3",
     "src.screening.offensive.v3.contracts.compatibility.LegacyShadowOrderLine",
+    "src.screening.offensive.v3.contracts.compatibility.LegacyShadowOrderLineV3",
     "src.screening.offensive.v3.contracts.trial.BaselineShadowPolicyBinding",
     "src.screening.offensive.v3.contracts.trial.TargetShadowPolicyBinding",
     "src.screening.offensive.v3.contracts.governance.ApprovalAttestationBinding",
@@ -196,6 +199,7 @@ ARTIFACT_HASH_CASES = (
     "src.screening.offensive.v3.contracts.capital.CapitalRiskSnapshot",
     "src.screening.offensive.v3.contracts.capital.ExitMandate",
     "src.screening.offensive.v3.contracts.compatibility.LegacyShadowDecisionV2",
+    "src.screening.offensive.v3.contracts.compatibility.LegacyShadowDecisionV3",
     "src.screening.offensive.v3.contracts.decision.AuthorizationIssuanceBinding",
     "src.screening.offensive.v3.contracts.decision.GatewayExpectedVersions",
     "src.screening.offensive.v3.contracts.decision.PortfolioDecision",
@@ -254,9 +258,9 @@ PROTECTED_PREIMAGE_CASES = (
 )
 
 
-assert len(PUBLIC_MODEL_CASES) == len(set(PUBLIC_MODEL_CASES)) == 106
+assert len(PUBLIC_MODEL_CASES) == len(set(PUBLIC_MODEL_CASES)) == 109
 assert len(PUBLIC_ENUMS) == len(set(PUBLIC_ENUMS)) == 48
 assert len(PUBLIC_ALIASES) == len(set(PUBLIC_ALIASES)) == 11
 assert len(PUBLIC_PORTS) == len(set(PUBLIC_PORTS)) == 6
-assert len(ARTIFACT_HASH_CASES) == len(set(ARTIFACT_HASH_CASES)) == 31
+assert len(ARTIFACT_HASH_CASES) == len(set(ARTIFACT_HASH_CASES)) == 32
 assert len(EVIDENCE_RECORD_SPECIALIZATIONS) == 4

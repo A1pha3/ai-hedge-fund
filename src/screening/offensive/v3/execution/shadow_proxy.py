@@ -1,7 +1,14 @@
-"""Plan Task 9: ShadowDecision-only T0 reserve and T+1 entry adapter.
+"""Withdrawn ShadowDecision-only capital adapter construction material.
+
+All public capital-mutation facades currently fail closed with
+``shadow_capital_fence_authority_unavailable`` before observing caller input.
+The official forward Trial never started; there are no authoritative shadow
+positions.  Mutation bodies remain only as future contract material until each
+arm capital database has a local fencing epoch and takeover protocol.  Pure
+identity helpers and the read-only originating-lot lookup remain usable.
 
 The shadow adapter is the counterfactual counterpart to the authorised
-``DailyBarProxy``. It consumes schema-major-3 ``ShadowDecision`` artifacts
+``DailyBarProxy``. It consumes current schema-major-4 ``ShadowDecision`` artifacts
 read from a complete committed pair in the durable
 ``TrialArmDecisionStore`` — never an ``ExecutionPermit`` or a
 ``PortfolioDecisionSeal`` — and turns them into mode-pure capital truth in
@@ -36,7 +43,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Callable, Final, Mapping
+from typing import Callable, Final, Mapping, NoReturn
 
 import sqlalchemy as sa
 
@@ -52,6 +59,7 @@ from src.screening.offensive.v3.contracts import (
     ArtifactKind,
     ExecutionMode,
     ExecutionSide,
+    canonical_json_bytes,
 )
 from src.screening.offensive.v3.contracts.decision import ShadowDecision
 from src.screening.offensive.v3.contracts.execution import (
@@ -101,7 +109,7 @@ _EXIT_TERMINAL_PHASES: Final[tuple[str, ...]] = (
 #: The shadow decision carries literal absence of execution authority; the
 #: adapter re-validates this defensively before any capital write.
 _REQUIRED_EXECUTION_AUTHORITY: Final[str] = "NONE"
-_SOURCE_AUTHORITY: Final[str] = "growth-kernel.shadow.v2"
+_SOURCE_AUTHORITY: Final[str] = "growth-kernel.shadow.v3"
 
 
 class ShadowProxyError(Exception):
@@ -111,6 +119,23 @@ class ShadowProxyError(Exception):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.details = details
+
+
+def _reject_shadow_capital_mutation() -> NoReturn:
+    """Withdraw the un-fenced temporary shadow-capital write capability.
+
+    The official forward Trial has never started, so this namespace contains
+    no authoritative economic positions or exit obligations.  Its internal
+    mutation implementation is retained as future, testable construction
+    material, but no public facade may reach it until a capital-local writer
+    fencing epoch and takeover protocol are implemented.
+    """
+
+    raise ShadowProxyError(
+        "shadow_capital_fence_authority_unavailable",
+        "the temporary shadow-ledger mutation namespace is withdrawn until"
+        " capital-local writer fencing is implemented",
+    )
 
 
 def shadow_economic_id(
@@ -129,6 +154,51 @@ def shadow_economic_id(
     """
 
     return f"shadow:{trial_id}:{arm.value}:{cycle_id}:{line_id}:{event_kind}"
+
+
+def _shadow_position_identity(
+    trial_id: str,
+    arm: TrialArm,
+    cycle_id: str,
+    line_id: str,
+    event_kind: str,
+) -> str:
+    preimage = canonical_json_bytes(
+        {
+            "trial_id": trial_id,
+            "arm": arm.value,
+            "decision_cycle_id": cycle_id,
+            "shadow_line_id": line_id,
+            "event_kind": event_kind,
+        }
+    )
+    return hashlib.sha256(preimage).hexdigest()
+
+
+def shadow_position_lineage_id(
+    trial_id: str,
+    arm: TrialArm,
+    cycle_id: str,
+    line_id: str,
+) -> str:
+    """Collision-resistant position identity for one decision line."""
+
+    return "shadow-position:" + _shadow_position_identity(
+        trial_id, arm, cycle_id, line_id, "position-lineage"
+    )
+
+
+def shadow_lot_id(
+    trial_id: str,
+    arm: TrialArm,
+    cycle_id: str,
+    line_id: str,
+) -> str:
+    """Collision-resistant lot identity for one originating decision line."""
+
+    return "shadow-lot:" + _shadow_position_identity(
+        trial_id, arm, cycle_id, line_id, "economic-lot"
+    )
 
 
 def _payload_hash(*parts: object) -> str:
@@ -190,6 +260,37 @@ class ShadowEntryResult:
     shadow_decision_id: str
     artifact_hash: str
     lines: tuple[ShadowEntryLineResult, ...]
+
+
+@dataclass(frozen=True)
+class ShadowLotOrigin:
+    """Immutable join of one capital lot to its originating decision line."""
+
+    operation_id: str
+    trial_id: str
+    arm: TrialArm
+    portfolio_id: str
+    signal_session: date
+    decision_cycle_id: str
+    shadow_decision_id: str
+    artifact_hash: str
+    shadow_line_id: str
+    security_id: str
+    target_entry_session: date
+    target_exit_session: date
+    exit_session_ordinal: int
+    lot_size_units: int
+    position_lineage_id: str
+    economic_lot_id: str
+    source_binding: CapitalSourceBinding
+
+    @property
+    def pair_key(self) -> tuple[str, str, str]:
+        return (
+            self.trial_id,
+            self.signal_session.isoformat(),
+            self.decision_cycle_id,
+        )
 
 
 @dataclass(frozen=True)
@@ -270,6 +371,33 @@ _SCHEMA_DDL = (
     "  SELECT RAISE(ABORT,"
     "   'immutable table: shadow_proxy_operations rejects DELETE');"
     " END",
+    # Only origin fields not already owned by the immutable operation row are
+    # stored here. Reads join the parent row, avoiding a second copy of trial,
+    # pair, decision, line, security, entry-session, or source-binding truth.
+    "CREATE TABLE IF NOT EXISTS shadow_lot_origins ("
+    " operation_id TEXT PRIMARY KEY"
+    "  REFERENCES shadow_proxy_operations(operation_id),"
+    " position_lineage_id TEXT NOT NULL,"
+    " economic_lot_id TEXT NOT NULL UNIQUE,"
+    " target_exit_session TEXT NOT NULL,"
+    " exit_session_ordinal INTEGER NOT NULL,"
+    " lot_size_units INTEGER NOT NULL,"
+    " CHECK (exit_session_ordinal = 10),"
+    " CHECK (lot_size_units > 0),"
+    " UNIQUE (position_lineage_id, economic_lot_id)"
+    ")",
+    "CREATE TRIGGER IF NOT EXISTS shadow_lot_origins_no_update"
+    " BEFORE UPDATE ON shadow_lot_origins"
+    " BEGIN"
+    "  SELECT RAISE(ABORT,"
+    "   'immutable table: shadow_lot_origins rejects UPDATE');"
+    " END",
+    "CREATE TRIGGER IF NOT EXISTS shadow_lot_origins_no_delete"
+    " BEFORE DELETE ON shadow_lot_origins"
+    " BEGIN"
+    "  SELECT RAISE(ABORT,"
+    "   'immutable table: shadow_lot_origins rejects DELETE');"
+    " END",
     # Each completed phase appends one fact with a unique (operation_id,
     # phase) key and a payload hash. Exact replay reads the fact; a divergent
     # replay under the same key is a protocol breach.
@@ -284,7 +412,7 @@ _SCHEMA_DDL = (
 
 
 class ShadowProxyAdapter:
-    """Reserve and settle committed shadow entries into arm capital truth."""
+    """Read-only shell around withdrawn shadow-capital mutation material."""
 
     def __init__(
         self,
@@ -304,6 +432,7 @@ class ShadowProxyAdapter:
         with self._engine.begin() as conn:
             for statement in _SCHEMA_DDL:
                 conn.execute(sa.text(statement))
+        self._verify_origin_integrity()
 
     @staticmethod
     def _configure_connection(engine: sa.engine.Engine) -> None:
@@ -322,6 +451,26 @@ class ShadowProxyAdapter:
         if self._fault_hook is not None:
             self._fault_hook(phase)
 
+    def _verify_origin_integrity(self) -> None:
+        """Reject legacy/partial operation stores; origin cannot be guessed."""
+
+        with self._engine.connect() as conn:
+            orphan = conn.execute(
+                sa.text(
+                    "SELECT o.operation_id FROM shadow_proxy_operations o"
+                    " LEFT JOIN shadow_lot_origins l"
+                    " ON l.operation_id = o.operation_id"
+                    " WHERE l.operation_id IS NULL LIMIT 1"
+                )
+            ).first()
+        if orphan is not None:
+            raise ShadowProxyError(
+                "shadow_lot_origin_cutover_required",
+                "legacy shadow operations have no authoritative lot origin;"
+                " use a new shadow namespace rather than guessing a backfill",
+                operation_id=str(orphan.operation_id),
+            )
+
     # ===================================================================
     # T0 reserve
     # ===================================================================
@@ -339,6 +488,8 @@ class ShadowProxyAdapter:
         after one arm commits lets replay commit the other without changing
         the first.
         """
+
+        _reject_shadow_capital_mutation()
 
         records = self._read_committed_pair(pair_key, contexts)
         receipts: dict[TrialArm, ShadowReserveReceipt] = {}
@@ -469,6 +620,8 @@ class ShadowProxyAdapter:
         reserve. A divergent replay under the same stable id is a protocol
         breach raised before any new capital write.
         """
+
+        _reject_shadow_capital_mutation()
 
         arm = context.arm
         decision = self._read_arm_shadow_decision(pair_key, context)
@@ -603,8 +756,18 @@ class ShadowProxyAdapter:
                 decision.trial_id, arm, cycle, line.shadow_line_id, "entry-reserve"
             ),
             reserve_remaining_cents=int(line.estimated_cash_reserve_cents),
-            position_lineage_id=line.economic_lineage_id,
-            economic_lot_id=f"shadow-lot:{line.shadow_line_id}",
+            position_lineage_id=shadow_position_lineage_id(
+                decision.trial_id,
+                arm,
+                cycle,
+                line.shadow_line_id,
+            ),
+            economic_lot_id=shadow_lot_id(
+                decision.trial_id,
+                arm,
+                cycle,
+                line.shadow_line_id,
+            ),
             attribution=self._line_attribution(line),
             source_authority=_SOURCE_AUTHORITY,
             source_binding=binding,
@@ -661,6 +824,8 @@ class ShadowProxyAdapter:
         ledger and the capital fill idempotency then make an exact replay
         converge quietly.
         """
+
+        _reject_shadow_capital_mutation()
 
         arm = input.arm
         operation_id = shadow_economic_id(
@@ -821,10 +986,10 @@ class ShadowProxyAdapter:
     def _validate_admission(
         self, decision: ShadowDecision, ctx: ShadowArmExecutionContext
     ) -> None:
-        if decision.schema_major != 3:
+        if decision.schema_major != 4:
             raise ShadowProxyError(
                 "shadow_schema_mismatch",
-                "the adapter accepts only schema-major-3 ShadowDecision",
+                "the adapter accepts only current schema-major-4 ShadowDecision",
                 observed_schema_major=decision.schema_major,
                 arm=ctx.arm.value,
             )
@@ -912,6 +1077,19 @@ class ShadowProxyAdapter:
         binding: CapitalSourceBinding,
     ) -> None:
         binding_json = binding.model_dump_json()
+        cycle_id = decision.counterfactual_key.counterfactual_cycle_id
+        position_lineage_id = shadow_position_lineage_id(
+            decision.trial_id,
+            arm,
+            cycle_id,
+            line.shadow_line_id,
+        )
+        economic_lot_id = shadow_lot_id(
+            decision.trial_id,
+            arm,
+            cycle_id,
+            line.shadow_line_id,
+        )
         with self._engine.begin() as conn:
             existing = conn.execute(
                 sa.text(
@@ -966,6 +1144,15 @@ class ShadowProxyAdapter:
                         "an operation already exists with different content",
                         operation_id=operation_id,
                     )
+                self._require_matching_lot_origin(
+                    conn,
+                    operation_id=operation_id,
+                    position_lineage_id=position_lineage_id,
+                    economic_lot_id=economic_lot_id,
+                    target_exit_session=str(line.target_exit_session),
+                    exit_session_ordinal=int(line.exit_session_ordinal),
+                    lot_size_units=int(line.lot_size_units),
+                )
                 return
             conn.execute(
                 sa.text(
@@ -983,6 +1170,123 @@ class ShadowProxyAdapter:
                 ),
                 values,
             )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO shadow_lot_origins"
+                    " (operation_id, position_lineage_id, economic_lot_id,"
+                    " target_exit_session, exit_session_ordinal, lot_size_units)"
+                    " VALUES (:operation_id, :lineage, :lot, :target_exit,"
+                    " :exit_ordinal, :lot_size)"
+                ),
+                {
+                    "operation_id": operation_id,
+                    "lineage": position_lineage_id,
+                    "lot": economic_lot_id,
+                    "target_exit": str(line.target_exit_session),
+                    "exit_ordinal": int(line.exit_session_ordinal),
+                    "lot_size": int(line.lot_size_units),
+                },
+            )
+
+    @staticmethod
+    def _require_matching_lot_origin(
+        conn: sa.engine.Connection,
+        *,
+        operation_id: str,
+        position_lineage_id: str,
+        economic_lot_id: str,
+        target_exit_session: str,
+        exit_session_ordinal: int,
+        lot_size_units: int,
+    ) -> None:
+        row = conn.execute(
+            sa.text(
+                "SELECT position_lineage_id, economic_lot_id,"
+                " target_exit_session, exit_session_ordinal, lot_size_units"
+                " FROM shadow_lot_origins WHERE operation_id = :operation_id"
+            ),
+            {"operation_id": operation_id},
+        ).first()
+        candidate = (
+            position_lineage_id,
+            economic_lot_id,
+            target_exit_session,
+            exit_session_ordinal,
+            lot_size_units,
+        )
+        if row is None or tuple(row) != candidate:
+            raise ShadowProxyError(
+                "shadow_proxy_protocol_breach",
+                "an operation has a missing or divergent immutable lot origin",
+                operation_id=operation_id,
+            )
+
+    def lot_origin(
+        self,
+        position_lineage_id: str,
+        economic_lot_id: str,
+    ) -> ShadowLotOrigin:
+        """Read the single immutable decision origin of one capital lot."""
+
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                sa.text(
+                    "SELECT o.operation_id, o.trial_id, o.arm, o.portfolio_id,"
+                    " o.signal_session, o.decision_cycle_id,"
+                    " o.shadow_decision_id, o.artifact_hash, o.shadow_line_id,"
+                    " o.security_id, o.target_entry_session,"
+                    " o.source_binding_json, l.target_exit_session,"
+                    " l.exit_session_ordinal, l.lot_size_units,"
+                    " l.position_lineage_id, l.economic_lot_id"
+                    " FROM shadow_lot_origins l"
+                    " JOIN shadow_proxy_operations o"
+                    " ON o.operation_id = l.operation_id"
+                    " WHERE l.position_lineage_id = :lineage"
+                    " AND l.economic_lot_id = :lot"
+                ),
+                {"lineage": position_lineage_id, "lot": economic_lot_id},
+            ).first()
+        if row is None:
+            raise ShadowProxyError(
+                "shadow_lot_origin_missing",
+                "capital lot has no authoritative shadow decision origin",
+                position_lineage_id=position_lineage_id,
+                economic_lot_id=economic_lot_id,
+            )
+        try:
+            arm = TrialArm(str(row.arm))
+            binding = CapitalSourceBinding.model_validate_json(
+                str(row.source_binding_json)
+            )
+            return ShadowLotOrigin(
+                operation_id=str(row.operation_id),
+                trial_id=str(row.trial_id),
+                arm=arm,
+                portfolio_id=str(row.portfolio_id),
+                signal_session=date.fromisoformat(str(row.signal_session)),
+                decision_cycle_id=str(row.decision_cycle_id),
+                shadow_decision_id=str(row.shadow_decision_id),
+                artifact_hash=str(row.artifact_hash),
+                shadow_line_id=str(row.shadow_line_id),
+                security_id=str(row.security_id),
+                target_entry_session=date.fromisoformat(
+                    str(row.target_entry_session)
+                ),
+                target_exit_session=date.fromisoformat(
+                    str(row.target_exit_session)
+                ),
+                exit_session_ordinal=int(row.exit_session_ordinal),
+                lot_size_units=int(row.lot_size_units),
+                position_lineage_id=str(row.position_lineage_id),
+                economic_lot_id=str(row.economic_lot_id),
+                source_binding=binding,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ShadowProxyError(
+                "shadow_lot_origin_corrupt",
+                "stored lot origin cannot be parsed exactly",
+                economic_lot_id=economic_lot_id,
+            ) from exc
 
     def _has_fact(self, operation_id: str, phase: str) -> bool:
         with self._engine.connect() as conn:
@@ -1090,4 +1394,6 @@ __all__ = [
     "ShadowProxyError",
     "ShadowReserveReceipt",
     "shadow_economic_id",
+    "shadow_lot_id",
+    "shadow_position_lineage_id",
 ]

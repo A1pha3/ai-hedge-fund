@@ -213,10 +213,15 @@ def test_custom_weights_endpoint_attaches_verdict(monkeypatch) -> None:
         lambda trade_date=None: payload,
     )
     # Stub the reweight to pass-through (we're testing verdict attachment, not
-    # the reweight math).
+    # the reweight math). Production reweight_recommendations stamps
+    # ``selected_policy_eligible`` on every rec (custom_weights.py), and the
+    # endpoint filters to policy-eligible recs for front-door consistency with
+    # the CLI; mirror that stamp so the controlled recs survive the filter.
     monkeypatch.setattr(
         "src.screening.custom_weights.reweight_recommendations",
-        lambda recs, weights: recs,
+        lambda recs, weights: [
+            {**rec, "selected_policy_eligible": True} for rec in recs
+        ],
     )
 
     app = FastAPI()

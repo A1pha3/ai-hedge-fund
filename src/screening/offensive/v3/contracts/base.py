@@ -214,8 +214,8 @@ def domain_hash(domain: str, schema_major: int, payload: Any) -> str:
     """Hash a Revision 2 payload in one explicit domain-separated envelope.
 
     The envelope ``schema_major`` is the domain-hashing scheme version. Revision
-    2 artifacts seal under major 2; a ShadowDecision whose own artifact schema
-    major is 3 seals its envelope under major 3. This does not loosen the
+    2 artifacts seal under major 2; historical/current ShadowDecision artifacts
+    seal under their own schema major 3/4. This does not loosen the
     ``SchemaVersion`` field type that every Revision 2 contract still enforces.
     """
 
@@ -235,7 +235,7 @@ def domain_hash(domain: str, schema_major: int, payload: Any) -> str:
 
 
 #: Domain-hash envelope schema majors admitted by this revision.
-_DOMAIN_SCHEMA_MAJORS: frozenset[int] = frozenset({2, 3})
+_DOMAIN_SCHEMA_MAJORS: frozenset[int] = frozenset({2, 3, 4})
 
 
 class CanonicalModel(BaseModel):

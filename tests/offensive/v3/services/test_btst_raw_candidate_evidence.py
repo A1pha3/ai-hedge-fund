@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -13,8 +17,15 @@ from src.screening.offensive.setups.base import DetectionResult
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
 from src.screening.offensive.v3.contracts.base import SignalStage
 from src.screening.offensive.v3.contracts.evidence import EvidenceRecord, SignalEvidence
-from src.screening.offensive.v3.evidence.repository import EvidenceStoreError
+from src.screening.offensive.v3.evidence.repository import (
+    EVIDENCE_STORE_SCHEMA_VERSION,
+    EvidenceRepository,
+    EvidenceStoreError,
+)
 from src.screening.offensive.v3.producers import btst as btst_producer
+from src.screening.offensive.v3.services.btst_producer_api import (
+    BtstCandidateEvidenceError,
+)
 from tests.offensive.v3.services.test_btst_producer_api import (
     BTST_FINGERPRINT,
     CONSUMED_FP,
@@ -142,7 +153,7 @@ def test_raw_payload_is_durable_and_bound_to_each_signal_record(world: _World) -
         assert payload.behavior_fingerprint == record.evidence.behavior_fingerprint
 
 
-def test_missing_or_tampered_bound_raw_blob_fails_closed(
+def test_external_blob_loss_does_not_override_authoritative_raw_payload(
     world: _World,
 ) -> None:
     record = world.service.produce_and_publish(_snapshot())[0]
@@ -150,17 +161,303 @@ def test_missing_or_tampered_bound_raw_blob_fails_closed(
     assert callable(reader), "BTST service must expose the verified payload reader"
     blob_path = world.blob_store.blob_path(record.evidence.payload_content_hash)
 
-    original = blob_path.read_bytes()
     blob_path.unlink()
-    with pytest.raises(Exception) as missing:
-        reader(record, expected_signal_session=SIGNAL_DATE)
-    assert getattr(missing.value, "code", None) == "candidate_payload_missing"
+    payload = reader(record, expected_signal_session=SIGNAL_DATE)
 
-    blob_path.parent.mkdir(parents=True, exist_ok=True)
-    blob_path.write_bytes(original + b" ")
+    assert payload.content_hash() == record.evidence.payload_content_hash
+
+
+def test_tampered_authoritative_raw_payload_fails_closed(world: _World) -> None:
+    record = world.service.produce_and_publish(_snapshot())[0]
+    content_hash = record.evidence.payload_content_hash
+    with sqlite3.connect(world.database_path) as conn:
+        conn.execute("DROP TRIGGER evidence_referenced_payloads_no_update")
+        conn.execute(
+            "UPDATE evidence_referenced_payloads SET payload = ?"
+            " WHERE issuer_namespace = ? AND content_hash = ?",
+            (b"tampered", "btst", content_hash),
+        )
+
     with pytest.raises(Exception) as tampered:
-        reader(record, expected_signal_session=SIGNAL_DATE)
-    assert getattr(tampered.value, "code", None) == "candidate_payload_hash_mismatch"
+        world.service.candidate_payload(
+            record,
+            expected_signal_session=SIGNAL_DATE,
+        )
+
+    assert getattr(tampered.value, "code", None) == "referenced_payload_corrupt"
+
+
+def test_missing_authoritative_raw_payload_never_falls_back_to_external_mirror(
+    world: _World,
+) -> None:
+    record = world.service.produce_and_publish(_snapshot())[0]
+    content_hash = record.evidence.payload_content_hash
+    assert world.blob_store.blob_path(content_hash).is_file()
+    with sqlite3.connect(world.database_path) as conn:
+        conn.execute("DROP TRIGGER evidence_referenced_payloads_no_delete")
+        conn.execute(
+            "DELETE FROM evidence_referenced_payloads"
+            " WHERE issuer_namespace = ? AND content_hash = ?",
+            ("btst", content_hash),
+        )
+
+    with pytest.raises(BtstCandidateEvidenceError) as missing:
+        world.service.candidate_payload(
+            record,
+            expected_signal_session=SIGNAL_DATE,
+        )
+
+    assert getattr(missing.value, "code", None) == "referenced_payload_missing"
+    with pytest.raises(EvidenceStoreError) as reopen:
+        EvidenceRepository(
+            database_path=world.database_path,
+            blob_store=world.blob_store,
+            verifier=world.verifier,
+            trust_head_provider=world.head_provider,
+            issuer_namespace="btst",
+            clock=world.clock,
+        )
+    assert reopen.value.code == "referenced_payload_missing"
+
+
+def test_missing_indexed_binding_never_falls_back_to_btst_blob_mirror(
+    world: _World,
+) -> None:
+    record = world.service.produce_and_publish(_snapshot())[0]
+    content_hash = record.evidence.payload_content_hash
+    assert world.blob_store.blob_path(content_hash).is_file()
+    with sqlite3.connect(world.database_path) as conn:
+        conn.execute("DROP TRIGGER evidence_referenced_bindings_no_delete")
+        conn.execute(
+            "DELETE FROM evidence_referenced_bindings"
+            " WHERE issuer_namespace = ? AND evidence_id = ? AND revision = ?",
+            ("btst", record.evidence.evidence_id, record.revision),
+        )
+
+    with pytest.raises(BtstCandidateEvidenceError) as rejected:
+        world.service.candidate_payload(
+            record,
+            expected_signal_session=SIGNAL_DATE,
+        )
+
+    assert rejected.value.code == "referenced_payload_binding_missing"
+
+
+def test_idempotent_publish_never_repairs_missing_authoritative_raw_from_mirror(
+    world: _World,
+) -> None:
+    record = world.service.produce_and_publish(_snapshot())[0]
+    content_hash = record.evidence.payload_content_hash
+    raw = world.blob_store.get(content_hash)
+    payload = record.evidence.model_dump_json().encode("utf-8")
+    signed = world.sign(payload)
+    with sqlite3.connect(world.database_path) as conn:
+        conn.execute("DROP TRIGGER evidence_referenced_payloads_no_delete")
+        conn.execute(
+            "DELETE FROM evidence_referenced_payloads"
+            " WHERE issuer_namespace = ? AND content_hash = ?",
+            ("btst", content_hash),
+        )
+
+    with pytest.raises(EvidenceStoreError) as rejected:
+        world.raw_repository.publish(
+            signed,
+            payload,
+            referenced_payload=raw,
+        )
+
+    assert rejected.value.code == "referenced_payload_missing"
+    with sqlite3.connect(world.database_path) as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM evidence_referenced_payloads"
+            " WHERE issuer_namespace = ? AND content_hash = ?",
+            ("btst", content_hash),
+        ).fetchone()
+    assert count == (0,)
+
+
+def test_authoritative_raw_payload_rows_are_sqlite_immutable(world: _World) -> None:
+    record = world.service.produce_and_publish(_snapshot())[0]
+    content_hash = record.evidence.payload_content_hash
+
+    with sqlite3.connect(world.database_path) as conn:
+        with pytest.raises(sqlite3.IntegrityError, match="immutable table"):
+            conn.execute(
+                "UPDATE evidence_referenced_payloads SET payload = ?"
+                " WHERE issuer_namespace = ? AND content_hash = ?",
+                (b"tampered", "btst", content_hash),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable table"):
+            conn.execute(
+                "DELETE FROM evidence_referenced_payloads"
+                " WHERE issuer_namespace = ? AND content_hash = ?",
+                ("btst", content_hash),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable table"):
+            conn.execute(
+                "UPDATE evidence_schema_meta SET schema_version = 1"
+                " WHERE issuer_namespace = 'btst'"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable table"):
+            conn.execute(
+                "DELETE FROM evidence_schema_meta"
+                " WHERE issuer_namespace = 'btst'"
+            )
+
+    assert (
+        world.raw_repository.raw_payload(content_hash)
+        == world.blob_store.get(content_hash)
+    )
+
+
+def test_nonempty_legacy_store_requires_explicit_offline_cutover(
+    world: _World,
+) -> None:
+    record = world.service.produce_and_publish(_snapshot())[0]
+    legacy_path = str(Path(world.database_path).with_name("legacy.sqlite3"))
+    with sqlite3.connect(legacy_path) as conn:
+        conn.execute(
+            "CREATE TABLE evidence_head ("
+            "issuer_namespace TEXT PRIMARY KEY,"
+            "last_commit_sequence BIGINT NOT NULL,"
+            "dependency_root TEXT NOT NULL)"
+        )
+        conn.execute(
+            "CREATE TABLE evidence_records ("
+            "issuer_namespace TEXT NOT NULL, evidence_id TEXT NOT NULL,"
+            "revision BIGINT NOT NULL, evidence_kind TEXT NOT NULL,"
+            "record_json TEXT NOT NULL, payload_content_hash TEXT NOT NULL,"
+            "ingested_at TEXT NOT NULL, activated_at TEXT NOT NULL,"
+            "commit_sequence BIGINT NOT NULL, supersedes_revision BIGINT,"
+            "dependency_root TEXT NOT NULL,"
+            "PRIMARY KEY (issuer_namespace, evidence_id, revision))"
+        )
+        conn.execute(
+            "CREATE TABLE evidence_prepared ("
+            "issuer_namespace TEXT NOT NULL, evidence_id TEXT NOT NULL,"
+            "revision BIGINT NOT NULL, evidence_kind TEXT NOT NULL,"
+            "record_json TEXT NOT NULL, payload_content_hash TEXT NOT NULL,"
+            "ingested_at TEXT NOT NULL, commit_sequence BIGINT NOT NULL,"
+            "supersedes_revision BIGINT NOT NULL, dependency_root TEXT NOT NULL,"
+            "PRIMARY KEY (issuer_namespace, evidence_id, revision))"
+        )
+        conn.execute(
+            "INSERT INTO evidence_head VALUES (?, ?, ?)",
+            ("btst", 1, "1" * 64),
+        )
+        conn.execute(
+            "INSERT INTO evidence_records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "btst",
+                record.evidence.evidence_id,
+                1,
+                "signal",
+                record.model_dump_json(),
+                hashlib.sha256(record.evidence.canonical_bytes()).hexdigest(),
+                record.ingested_at.isoformat(),
+                record.ingested_at.isoformat(),
+                1,
+                None,
+                "1" * 64,
+            ),
+        )
+
+    with pytest.raises(EvidenceStoreError) as rejected:
+        EvidenceRepository(
+            database_path=legacy_path,
+            blob_store=world.blob_store,
+            verifier=world.verifier,
+            trust_head_provider=world.head_provider,
+            issuer_namespace="btst",
+            clock=world.clock,
+        )
+
+    assert rejected.value.code == "legacy_store_requires_offline_cutover"
+    with sqlite3.connect(legacy_path) as conn:
+        v2_objects = conn.execute(
+            "SELECT name FROM sqlite_schema"
+            " WHERE name IN ('evidence_schema_meta',"
+            " 'evidence_referenced_payloads', 'evidence_referenced_bindings')"
+        ).fetchall()
+    assert v2_objects == []
+
+
+def test_empty_legacy_namespace_initializes_exact_schema_v2(world: _World) -> None:
+    empty_path = str(Path(world.database_path).with_name("empty-legacy.sqlite3"))
+    with sqlite3.connect(empty_path) as conn:
+        conn.execute(
+            "CREATE TABLE evidence_head ("
+            "issuer_namespace TEXT PRIMARY KEY,"
+            "last_commit_sequence BIGINT NOT NULL,"
+            "dependency_root TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO evidence_head VALUES (?, ?, ?)",
+            ("btst", 0, "0" * 64),
+        )
+
+    EvidenceRepository(
+        database_path=empty_path,
+        blob_store=world.blob_store,
+        verifier=world.verifier,
+        trust_head_provider=world.head_provider,
+        issuer_namespace="btst",
+        clock=world.clock,
+    )
+
+    with sqlite3.connect(empty_path) as conn:
+        version = conn.execute(
+            "SELECT schema_version FROM evidence_schema_meta"
+            " WHERE issuer_namespace = 'btst'"
+        ).fetchone()
+    assert version == (EVIDENCE_STORE_SCHEMA_VERSION,)
+
+
+def test_reopen_rejects_same_named_but_weakened_immutability_trigger(
+    world: _World,
+) -> None:
+    with sqlite3.connect(world.database_path) as conn:
+        conn.execute("DROP TRIGGER evidence_referenced_payloads_no_update")
+        conn.execute(
+            "CREATE TRIGGER evidence_referenced_payloads_no_update"
+            " BEFORE UPDATE ON evidence_referenced_payloads"
+            " BEGIN SELECT 1; END"
+        )
+
+    with pytest.raises(EvidenceStoreError) as rejected:
+        EvidenceRepository(
+            database_path=world.database_path,
+            blob_store=world.blob_store,
+            verifier=world.verifier,
+            trust_head_provider=world.head_provider,
+            issuer_namespace="btst",
+            clock=world.clock,
+        )
+
+    assert rejected.value.code == "evidence_schema_definition_mismatch"
+
+
+def test_open_rejects_same_named_but_weakened_schema_table(world: _World) -> None:
+    malformed_path = str(Path(world.database_path).with_name("malformed-v2.sqlite3"))
+    with sqlite3.connect(malformed_path) as conn:
+        conn.execute(
+            "CREATE TABLE evidence_referenced_payloads ("
+            "issuer_namespace TEXT NOT NULL, content_hash TEXT NOT NULL,"
+            "payload BLOB NOT NULL, rogue_column TEXT,"
+            "PRIMARY KEY (issuer_namespace, content_hash))"
+        )
+
+    with pytest.raises(EvidenceStoreError) as rejected:
+        EvidenceRepository(
+            database_path=malformed_path,
+            blob_store=world.blob_store,
+            verifier=world.verifier,
+            trust_head_provider=world.head_provider,
+            issuer_namespace="btst",
+            clock=world.clock,
+        )
+
+    assert rejected.value.code == "evidence_schema_definition_mismatch"
 
 
 def test_reader_rejects_wrong_expected_session_and_candidate_identity(
@@ -255,7 +552,7 @@ def test_store_rejects_btst_signal_whose_referenced_payload_is_missing(
     with pytest.raises(EvidenceStoreError) as rejected:
         world.raw_repository.publish(signed, payload)
 
-    assert rejected.value.code == "referenced_payload_missing"
+    assert rejected.value.code == "referenced_payload_ingress_required"
     assert world.raw_repository.commit_sequence() == 0
 
 
@@ -270,7 +567,11 @@ def test_store_rejects_btst_signal_whose_referenced_bytes_are_not_candidate(
     signed, payload = _signed_signal(world, envelope)
 
     with pytest.raises(EvidenceStoreError) as rejected:
-        world.raw_repository.publish(signed, payload)
+        world.raw_repository.publish(
+            signed,
+            payload,
+            referenced_payload=b"not a candidate",
+        )
 
     assert rejected.value.code == "referenced_payload_invalid"
     assert world.raw_repository.commit_sequence() == 0
@@ -296,7 +597,11 @@ def test_store_rejects_valid_candidate_bound_to_wrong_identity_session_or_versio
     signed, payload = _signed_signal(world, envelope)
 
     with pytest.raises(EvidenceStoreError) as rejected:
-        world.raw_repository.publish(signed, payload)
+        world.raw_repository.publish(
+            signed,
+            payload,
+            referenced_payload=candidate.canonical_bytes(),
+        )
 
     assert rejected.value.code == "referenced_payload_binding_mismatch"
     assert world.raw_repository.commit_sequence() == 0
@@ -313,8 +618,179 @@ def test_prepare_revision_revalidates_btst_referenced_payload(world: _World) -> 
     with pytest.raises(EvidenceStoreError) as rejected:
         world.raw_repository.prepare_revision(signed, payload)
 
-    assert rejected.value.code == "referenced_payload_missing"
+    assert rejected.value.code == "referenced_payload_ingress_required"
     assert world.raw_repository.commit_sequence() == before_sequence
+
+
+def test_db_trigger_rejects_btst_signal_row_without_indexed_raw_binding(
+    world: _World,
+) -> None:
+    record = world.service.produce_and_publish(_snapshot())[0]
+    forged_id = f"{record.evidence.evidence_id}:unbound"
+    forged = record.model_copy(
+        update={"evidence": record.evidence.model_copy(update={"evidence_id": forged_id})}
+    )
+
+    with sqlite3.connect(world.database_path) as conn:
+        with pytest.raises(sqlite3.IntegrityError, match="referenced payload binding"):
+            conn.execute(
+                "INSERT INTO evidence_records (issuer_namespace, evidence_id,"
+                " revision, evidence_kind, record_json, payload_content_hash,"
+                " ingested_at, activated_at, commit_sequence,"
+                " supersedes_revision, dependency_root)"
+                " VALUES (?, ?, 1, 'signal', ?, ?, ?, ?, ?, NULL, ?)",
+                (
+                    "btst",
+                    forged_id,
+                    forged.model_dump_json(),
+                    "f" * 64,
+                    forged.ingested_at.isoformat(),
+                    forged.ingested_at.isoformat(),
+                    999,
+                    "f" * 64,
+                ),
+            )
+
+
+def test_authoritative_raw_hit_does_not_scan_evidence_history(
+    world: _World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = world.service.produce_and_publish(_snapshot())[0]
+    content_hash = record.evidence.payload_content_hash
+
+    def fail_scan(*_args, **_kwargs):
+        raise AssertionError("raw hit scanned evidence history")
+
+    monkeypatch.setattr(
+        world.raw_repository,
+        "_committed_record_references",
+        fail_scan,
+        raising=False,
+    )
+
+    assert (
+        hashlib.sha256(world.raw_repository.raw_payload(content_hash)).hexdigest()
+        == content_hash
+    )
+
+
+def test_concurrent_identical_publish_converges_without_sqlite_error(
+    world: _World,
+) -> None:
+    candidate = _build_payload(_candidate(), stage=SignalStage.SELECTED)
+    raw = candidate.canonical_bytes()
+    envelope = _envelope_for_candidate(world, candidate)
+    signed, payload = _signed_signal(world, envelope)
+    peer = EvidenceRepository(
+        database_path=world.database_path,
+        blob_store=world.blob_store,
+        verifier=world.verifier,
+        trust_head_provider=world.head_provider,
+        issuer_namespace="btst",
+        clock=world.clock,
+    )
+    barrier = threading.Barrier(2)
+
+    def publish(repository: EvidenceRepository):
+        barrier.wait()
+        return repository.publish(
+            signed,
+            payload,
+            referenced_payload=raw,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        records = tuple(executor.map(publish, (world.raw_repository, peer)))
+
+    assert records[0].canonical_bytes() == records[1].canonical_bytes()
+    assert world.raw_repository.commit_sequence() == 1
+
+
+def test_publish_commits_authoritative_raw_bytes_before_external_blob_can_vanish(
+    world: _World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = _build_payload(_candidate(), stage=SignalStage.SELECTED)
+    candidate_bytes = candidate.canonical_bytes()
+    candidate_hash = world.raw_repository.persist_payload(candidate_bytes)
+    envelope = _envelope_for_candidate(world, candidate)
+    signed, payload = _signed_signal(world, envelope)
+    candidate_path = world.blob_store.blob_path(candidate_hash)
+    original_put = world.blob_store.put_durable
+
+    def remove_candidate_after_validation(bytes_to_store: bytes) -> str:
+        if bytes_to_store == payload and candidate_path.exists():
+            os.unlink(candidate_path)
+        return original_put(bytes_to_store)
+
+    monkeypatch.setattr(
+        world.blob_store,
+        "put_durable",
+        remove_candidate_after_validation,
+    )
+
+    record = world.raw_repository.publish(
+        signed,
+        payload,
+        referenced_payload=candidate_bytes,
+    )
+
+    assert not candidate_path.exists()
+    assert world.raw_repository.raw_payload(candidate_hash) == candidate_bytes
+    assert (
+        world.service.candidate_payload(
+            record,
+            expected_signal_session=SIGNAL_DATE,
+        )
+        == candidate
+    )
+
+
+def test_prepare_commits_authoritative_raw_bytes_before_external_blob_can_vanish(
+    world: _World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = world.service.produce_and_publish(_snapshot())[0]
+    original_candidate = world.service.candidate_payload(
+        original,
+        expected_signal_session=SIGNAL_DATE,
+    )
+    revised_candidate = original_candidate.model_copy(
+        update={"target_weight_ppm": original_candidate.target_weight_ppm - 1}
+    )
+    revised_bytes = revised_candidate.canonical_bytes()
+    revised_hash = world.raw_repository.persist_payload(revised_bytes)
+    revised_envelope = original.evidence.model_copy(
+        update={
+            "payload_content_hash": revised_hash,
+        }
+    )
+    signed, payload = _signed_signal(world, revised_envelope)
+    revised_path = world.blob_store.blob_path(revised_hash)
+    original_put = world.blob_store.put_durable
+
+    def remove_candidate_after_validation(bytes_to_store: bytes) -> str:
+        if bytes_to_store == payload and revised_path.exists():
+            os.unlink(revised_path)
+        return original_put(bytes_to_store)
+
+    monkeypatch.setattr(
+        world.blob_store,
+        "put_durable",
+        remove_candidate_after_validation,
+    )
+
+    prepared = world.raw_repository.prepare_revision(
+        signed,
+        payload,
+        referenced_payload=revised_bytes,
+    )
+    world.raw_repository.activate_revision(original.evidence.evidence_id, 2)
+
+    assert prepared.revision == 2
+    assert not revised_path.exists()
+    assert world.raw_repository.raw_payload(revised_hash) == revised_bytes
 
 
 def test_candidate_reader_rejects_uncommitted_self_consistent_record(
@@ -362,24 +838,69 @@ def test_candidate_reader_accepts_committed_historical_revision_after_correction
         expected_signal_session=SIGNAL_DATE,
     )
     revised_candidate = original_candidate.model_copy(
-        update={"behavior_fingerprint": "c" * 64}
+        update={"target_weight_ppm": original_candidate.target_weight_ppm - 1}
     )
     revised_hash = world.raw_repository.persist_payload(
         revised_candidate.canonical_bytes()
     )
     revised_envelope = original.evidence.model_copy(
         update={
-            "behavior_fingerprint": "c" * 64,
             "payload_content_hash": revised_hash,
         }
     )
     signed, payload = _signed_signal(world, revised_envelope)
-    world.raw_repository.prepare_revision(signed, payload)
+    world.raw_repository.prepare_revision(
+        signed,
+        payload,
+        referenced_payload=revised_candidate.canonical_bytes(),
+    )
     world.raw_repository.activate_revision(original.evidence.evidence_id, 2)
 
+    historical_projection = world.raw_repository.get(
+        original.evidence.evidence_id,
+        revision=1,
+    )
     replayed = world.service.candidate_payload(
-        original,
+        historical_projection,
         expected_signal_session=SIGNAL_DATE,
     )
 
     assert replayed == original_candidate
+
+
+def test_candidate_reader_rejects_caller_owned_active_projection(
+    world: _World,
+) -> None:
+    original = world.service.produce_and_publish(_snapshot())[0]
+    original_candidate = world.service.candidate_payload(
+        original,
+        expected_signal_session=SIGNAL_DATE,
+    )
+    revised_candidate = original_candidate.model_copy(
+        update={"target_weight_ppm": original_candidate.target_weight_ppm - 1}
+    )
+    revised_hash = world.raw_repository.persist_payload(
+        revised_candidate.canonical_bytes()
+    )
+    revised_envelope = original.evidence.model_copy(
+        update={
+            "payload_content_hash": revised_hash,
+        }
+    )
+    signed, payload = _signed_signal(world, revised_envelope)
+    world.raw_repository.prepare_revision(
+        signed,
+        payload,
+        referenced_payload=revised_candidate.canonical_bytes(),
+    )
+    world.raw_repository.activate_revision(original.evidence.evidence_id, 2)
+
+    forged_active = original.model_copy(update={"active_revision": 1})
+    assert forged_active.is_active
+    with pytest.raises(Exception) as rejected:
+        world.service.candidate_payload(
+            forged_active,
+            expected_signal_session=SIGNAL_DATE,
+        )
+
+    assert getattr(rejected.value, "code", None) == "signal_record_untrusted"

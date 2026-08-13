@@ -51,6 +51,7 @@ from test_auto_flow import (
     _trust_capability,
 )
 from test_daily_action_flow import (
+    _REQUIRES_ECONOMIC_INPUT_AUTHORITY,
     _FakePersister,
     _FakeSnapshotLoader,
     _config,
@@ -224,6 +225,7 @@ def family_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _FamilyWorl
 # --------------------------------------------------------------------------
 
 
+@_REQUIRES_ECONOMIC_INPUT_AUTHORITY
 def test_kernel_input_candidates_carry_btst_family_whitelist(
     family_world: _FamilyWorld, tmp_path: Path
 ) -> None:
@@ -243,6 +245,7 @@ def test_kernel_input_candidates_carry_btst_family_whitelist(
         assert candidate.family_id == BTST_FAMILY
 
 
+@_REQUIRES_ECONOMIC_INPUT_AUTHORITY
 def test_real_admission_admits_real_producer_candidates(
     family_world: _FamilyWorld, tmp_path: Path
 ) -> None:
@@ -266,6 +269,7 @@ def test_real_admission_admits_real_producer_candidates(
         assert status.block_reason is not BlockReason.NO_AUTHORIZED_ENVELOPE
 
 
+@_REQUIRES_ECONOMIC_INPUT_AUTHORITY
 def test_real_kernel_produces_and_persists_shadow_decision(
     family_world: _FamilyWorld, tmp_path: Path
 ) -> None:

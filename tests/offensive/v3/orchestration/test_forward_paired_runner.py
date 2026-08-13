@@ -1,14 +1,11 @@
-"""Plan Task 11 RED: ForwardPairedTrialRunner + terminal SessionSpine semantics.
+"""Disabled Task 11 runner boundary and retained fixture specifications.
 
-The runner is the thin forward orchestrator of one paired shadow trial: it
-freezes the trusted clock once per signal session, reads the sealed bundle
-and one canonical regime observation before cutoff, runs the BTST producer
-exactly once, calls ``decide_shadow`` exactly once per arm over the same
-frozen shared input/time, commits one pair, records one session status, and
-only then reserves both decisions. It contains no classifier, ranking,
-sizing, fee, fill, NAV, statistical, signing, activation, or broker logic.
+The official runner is a zero-capability object that rejects before observing
+inputs. Skipped target tests retain the future thin-orchestrator contract for
+the point at which store-owned session-batch authority exists; they are not
+evidence that an official forward session can currently run.
 
-SessionSpine non-cancel statuses become exact-idempotent terminal facts:
+Separately, SessionSpine non-cancel statuses are exact-idempotent terminal facts:
 an identical status retry is quiet, a conflicting non-cancel status fails,
 only a signed calendar revision may supersede them with
 ``SESSION_CANCELLED``, and cancelled is terminal.
@@ -19,6 +16,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
+import inspect
 
 import pytest
 
@@ -47,6 +45,7 @@ from src.screening.offensive.v3.orchestration.paired_trial import (  # RED targe
     SignalSessionRequest,
     classify_pair_session,
 )
+from src.screening.offensive.v3.orchestration import paired_trial as paired_trial_module
 
 UTC = timezone.utc
 TRIAL_ID = "trial-regime-001"
@@ -58,6 +57,9 @@ CLOSE = datetime(2026, 8, 5, 15, 0, tzinfo=UTC)
 CUTOFF = CLOSE - timedelta(minutes=5)
 ENROLLMENT_START = datetime(2026, 8, 1, 0, 0, tzinfo=UTC)
 ENROLLMENT_END = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
+_REQUIRES_BATCH_AUTHORITY = pytest.mark.skip(
+    reason="target behavior requires store-owned forward session batch authority"
+)
 
 
 class _Clock:
@@ -84,6 +86,23 @@ class _CountingProducer:
         self.calls += 1
         return self.records
 
+    def candidate_payload(self, record, *, expected_signal_session):
+        payload = _candidate_payload(record)
+        assert payload.signal_session == expected_signal_session
+        return payload
+
+
+class _UncommittedRecordProducer(_CountingProducer):
+    def __init__(self, candidate_reader) -> None:
+        super().__init__()
+        self._candidate_reader = candidate_reader
+
+    def candidate_payload(self, record, *, expected_signal_session):
+        return self._candidate_reader.candidate_payload(
+            record,
+            expected_signal_session=expected_signal_session,
+        )
+
 
 def _selected_record() -> EvidenceRecord:
     """One SELECTED SignalEvidence record; the runner's shared candidate."""
@@ -96,7 +115,7 @@ def _selected_record() -> EvidenceRecord:
     )
 
     envelope = SignalEvidence(
-        evidence_id="btst:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:300001:btst_breakout:SELECTED",
+        evidence_id="btst:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:300001:btst_breakout:selected",
         subject_scope=EvidenceScope.STRATEGY_LINEAGE,
         subject_producer="btst",
         family_id="btst:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -116,13 +135,55 @@ def _selected_record() -> EvidenceRecord:
         evidence_kind="signal",
         stage=SignalStage.SELECTED,
     )
-    return EvidenceRecord[SignalEvidence](
+    provisional = EvidenceRecord[SignalEvidence](
         evidence=envelope,
         ingested_at=CUTOFF,
         commit_sequence=1,
         revision=1,
         supersedes_revision=None,
         active_revision=1,
+    )
+    payload = _candidate_payload(provisional)
+    return provisional.model_copy(
+        update={
+            "evidence": envelope.model_copy(
+                update={"payload_content_hash": payload.content_hash()}
+            )
+        }
+    )
+
+
+def _candidate_payload(record: EvidenceRecord):
+    from src.screening.offensive.v3.contracts.btst_candidate import (
+        BtstCandidateIndustryState,
+        BtstRawCandidatePayload,
+    )
+
+    envelope = record.evidence
+    candidate_id, _, _stage = envelope.evidence_id.rpartition(":")
+    ticker = envelope.evidence_id.split(":")[-3]
+    return BtstRawCandidatePayload(
+        payload_kind="btst_raw_candidate",
+        schema_major=1,
+        candidate_id=candidate_id,
+        producer_namespace="btst",
+        security_id=f"{ticker}.SZ",
+        signal_stage=envelope.stage,
+        signal_session=envelope.effective_at.date(),
+        entry_price_micros=10_000_000,
+        setup="btst_breakout",
+        setup_version="v2",
+        target_weight_ppm=90_000,
+        trigger_strength_ppm=900_000,
+        priority=1,
+        industry_state=BtstCandidateIndustryState.KNOWN,
+        industry="software",
+        snapshot_id=envelope.family_id.removeprefix("btst:"),
+        setup_consumed_fingerprint="sha256:" + "a" * 64,
+        strategy_semver=envelope.strategy_semver,
+        behavior_fingerprint=envelope.behavior_fingerprint,
+        execution_version=envelope.execution_version,
+        cost_version=envelope.cost_version,
     )
 
 
@@ -132,8 +193,10 @@ class _CountingKernel:
     def __init__(self, decisions: dict[TrialArm, object]) -> None:
         self.calls_by_arm = {TrialArm.CHAMPION: 0, TrialArm.CHALLENGER: 0}
         self.decisions = decisions
+        self.inputs: list[object] = []
 
     def decide_shadow(self, shadow_input) -> object:
+        self.inputs.append(shadow_input)
         self.calls_by_arm[shadow_input.shared.trial_arm] += 1
         return self.decisions[shadow_input.shared.trial_arm]
 
@@ -207,14 +270,16 @@ class _CapitalReader:
 
 
 def _champion_decision():
-    """A minimal schema-3 ShadowDecision-shaped object for pair commits."""
+    """A minimal schema-4 ShadowDecision-shaped object for pair commits."""
     from src.screening.offensive.v3.contracts import ArtifactKind
+    from src.screening.offensive.v3.contracts.base import content_hash
     from src.screening.offensive.v3.contracts.decision import (
         CounterfactualDecisionKey,
         ShadowDecision,
         ShadowIssuerBinding,
         ShadowOrderLine,
         ShadowStageBinding,
+        ShadowTradingScheduleBinding,
     )
     from src.screening.offensive.v3.contracts.trial import (
         BaselineShadowPolicyBinding,
@@ -228,6 +293,20 @@ def _champion_decision():
         baseline_policy_activation_hash=HASH,
         policy_snapshot_hash=HASH,
         policy_fingerprint=HASH,
+    )
+    following_sessions = tuple(
+        SIGNAL_DATE + timedelta(days=1 + i) for i in range(10)
+    )
+    schedule_payload = {
+        "calendar_id": "sse-szse",
+        "calendar_version": "sse-szse-official-sessions.v1",
+        "calendar_artifact_hash": HASH,
+        "signal_session": SIGNAL_DATE,
+        "following_sessions": following_sessions,
+        "available_at": CUTOFF,
+    }
+    schedule_binding = ShadowTradingScheduleBinding(
+        **schedule_payload, schedule_hash=content_hash(schedule_payload)
     )
     stage_binding = ShadowStageBinding(
         research_program_id=PROGRAM,
@@ -262,12 +341,12 @@ def _champion_decision():
         estimated_cash_reserve_cents=100_000,
         cost_assumption_version="cn-a-share-costs.v1",
         execution_assumption_version="t0-close-t1-open-t10-open.v1",
-        target_exit_session=SIGNAL_DATE + timedelta(days=10),
+        target_exit_session=following_sessions[9],
     )
     return ShadowDecision(
         artifact_kind=ArtifactKind.SHADOW_DECISION,
-        artifact_namespace="growth-kernel.shadow.v2",
-        schema_major=3,
+        artifact_namespace="growth-kernel.shadow.v3",
+        schema_major=4,
         shadow_decision_id=f"shadow-{SIGNAL_DATE.isoformat()}-champion",
         counterfactual_key=CounterfactualDecisionKey(
             portfolio_id=PORTFOLIO,
@@ -276,14 +355,16 @@ def _champion_decision():
         ),
         portfolio_id=PORTFOLIO,
         mode=ExecutionMode.DAILY_BAR_PROXY,
-        target_entry_session=SIGNAL_DATE + timedelta(days=1),
+        target_entry_session=following_sessions[0],
         producer_namespace="btst",
         family_id="btst.limit-up-breakout",
         research_program_id=PROGRAM,
         economic_lineage_id="btst-regime-paired",
         stage_id="stage-1",
         trial_id=TRIAL_ID,
+        kernel_input_hash=HASH,
         shadow_policy_binding=binding,
+        trading_session_schedule_binding=schedule_binding,
         policy_epoch=1,
         evidence_set_merkle_root=HASH,
         shadow_stage_binding=stage_binding,
@@ -297,10 +378,10 @@ def _champion_decision():
             issuer_id="growth-kernel.shadow.service",
             key_id="shadow-key-1",
             capability_artifact_kind=ArtifactKind.SHADOW_DECISION,
-            capability_namespace="growth-kernel.shadow.v2",
+            capability_namespace="growth-kernel.shadow.v3",
             capability_mode=ExecutionMode.DAILY_BAR_PROXY,
-            capability_schema_major=3,
-            capability_version="growth-kernel-shadow.v2",
+            capability_schema_major=4,
+            capability_version="growth-kernel-shadow.v3",
             capability_scope=f"portfolio:{PORTFOLIO}",
             verification_result="VALID",
             verified_at=CUTOFF,
@@ -393,11 +474,6 @@ class _Rig:
         regime_state: RegimeState = RegimeState.NORMAL,
         producer_records: tuple | None = None,
     ) -> None:
-        from tests.offensive.v3.services.test_btst_producer_api import (
-            _World,
-        )
-
-        self.world = _World(tmp_path / "evidence")
         # The runner's trusted clock is frozen exactly once per session; the
         # spine's recorded_at is a separate wall clock.
         self.clock = _Clock(_frozen_trusted_at())
@@ -475,20 +551,40 @@ def _new_store(path: Path, tmp_path: Path):
 
 
 def _new_runner(rig: _Rig) -> ForwardPairedTrialRunner:
-    return ForwardPairedTrialRunner(
-        trial_id=TRIAL_ID,
-        research_program_id=PROGRAM,
-        portfolio_id=PORTFOLIO,
-        decision_store=rig.store,
-        spine=rig.spine,
-        bundle_reader=rig.bundle_reader,
-        regime_reader=rig.regime_reader,
-        producer=rig.producer,
-        kernel=rig.kernel,
-        capital_reader=rig.capital_reader,
-        clock=rig.clock,
-        reserve_pair=rig.reserve,
+    return ForwardPairedTrialRunner()
+
+
+def _bundle_covering_signal(rig: _Rig):
+    """A structurally valid test bundle whose enrollment covers 2026-08-05.
+
+    It does not grant forward input authority; it merely lets gate tests prove
+    that a bare snapshot/synthetic producer still cannot reach side effects.
+    """
+
+    bundle = rig._bundle()
+    trial = bundle.trial_manifest.model_copy(
+        update={
+            "trial_manifest_sealed_at": datetime(2026, 7, 30, tzinfo=UTC),
+            "enrollment_start": datetime(2026, 8, 1, tzinfo=UTC),
+            "issued_at": datetime(2026, 7, 30, tzinfo=UTC),
+        }
     )
+    sap = bundle.sap_manifest.model_copy(
+        update={
+            "trial_manifest_hash": trial.artifact_hash(),
+            "enrollment_start": trial.enrollment_start,
+            "issued_at": datetime(2026, 7, 30, tzinfo=UTC),
+            "sealed_at": datetime(2026, 7, 30, tzinfo=UTC),
+        }
+    )
+    return bundle.model_copy(
+        update={"trial_manifest": trial, "sap_manifest": sap}
+    )
+
+
+def _wire_bundle_covering_signal(rig: _Rig) -> None:
+    rig.bundle_reader = _BundleReader(_bundle_covering_signal(rig))
+    rig.runner = _new_runner(rig)
 
 
 @pytest.fixture()
@@ -510,6 +606,273 @@ def _by_arm(rig: _Rig, receipt: PairedSignalReceipt):
     return rows[TrialArm.CHAMPION], rows[TrialArm.CHALLENGER]
 
 
+def test_unavailable_runner_has_no_ambient_capabilities() -> None:
+    assert tuple(inspect.signature(ForwardPairedTrialRunner).parameters) == ()
+    assert not hasattr(ForwardPairedTrialRunner(), "__dict__")
+
+
+def test_bare_verified_snapshot_cannot_authorize_forward_run(rig: _Rig) -> None:
+    _wire_bundle_covering_signal(rig)
+
+    with pytest.raises(PairedTrialRunnerError) as rejected:
+        rig.runner.decide_signal_session(rig.request())
+
+    assert rejected.value.code == "forward_input_authority_unavailable"
+    assert rig.producer.calls == 0
+    assert rig.regime_reader.calls == 0
+    assert rig.capital_reader.calls == 0
+    assert rig.kernel.calls_by_arm == {
+        TrialArm.CHAMPION: 0,
+        TrialArm.CHALLENGER: 0,
+    }
+    with pytest.raises(Exception):
+        rig.store.pair(rig.pair_key())
+    assert rig.spine.status(PROGRAM, SIGNAL_DATE) is None
+    assert rig.reserve.calls == 0
+
+
+def test_synthetic_producer_cannot_authorize_forward_run(rig: _Rig) -> None:
+    _wire_bundle_covering_signal(rig)
+    assert type(rig.producer) is _CountingProducer
+
+    with pytest.raises(PairedTrialRunnerError) as rejected:
+        rig.runner.decide_signal_session(rig.request())
+
+    assert rejected.value.code == "forward_input_authority_unavailable"
+    assert rig.producer.calls == 0
+    assert rig.kernel.calls_by_arm == {
+        TrialArm.CHAMPION: 0,
+        TrialArm.CHALLENGER: 0,
+    }
+
+
+def test_late_august20_call_cannot_reconstruct_august5(rig: _Rig) -> None:
+    _wire_bundle_covering_signal(rig)
+    assert rig.clock() == datetime(2026, 8, 20, 15, 0, tzinfo=UTC)
+    rig.clock.calls = 0
+
+    with pytest.raises(PairedTrialRunnerError) as rejected:
+        rig.runner.decide_signal_session(rig.request())
+
+    assert rejected.value.code == "forward_input_authority_unavailable"
+    assert rejected.value.details == {}
+    assert rig.clock.calls == 0
+    assert rig.producer.calls == 0
+
+
+def test_signal_session_must_belong_to_sealed_enrollment_window(rig: _Rig) -> None:
+    with pytest.raises(PairedTrialRunnerError) as rejected:
+        rig.runner.decide_signal_session(rig.request())
+
+    assert rejected.value.code == "forward_input_authority_unavailable"
+    assert rig.producer.calls == 0
+
+
+def test_no_run_terminal_status_forbids_later_pair_creation(rig: _Rig) -> None:
+    _wire_bundle_covering_signal(rig)
+    rig.spine.mark_no_run(PROGRAM, SIGNAL_DATE)
+
+    with pytest.raises(PairedTrialRunnerError) as rejected:
+        rig.runner.decide_signal_session(rig.request())
+
+    assert rejected.value.code == "forward_input_authority_unavailable"
+    assert rejected.value.details == {}
+    with pytest.raises(Exception):
+        rig.store.pair(rig.pair_key())
+    assert rig.producer.calls == 0
+
+
+def _commit_clear_run_pair(rig: _Rig) -> None:
+    _wire_bundle_covering_signal(rig)
+    from src.screening.offensive.v3.governance.regime_trial import (
+        validate_regime_trial_bundle,
+    )
+
+    trusted_at = _frozen_trusted_at()
+    validated = validate_regime_trial_bundle(
+        _bundle_covering_signal(rig), trusted_at=trusted_at
+    )
+    regime = _regime_observation(RegimeState.NORMAL)
+    shared = paired_trial_module.freeze_shared_input(
+        portfolio_id=PORTFOLIO,
+        trial_id=TRIAL_ID,
+        validated=validated,
+        session=SIGNAL_DATE,
+        cycle_id=rig.decision_cycle_id(),
+        regime=regime,
+        regime_hash=HASH,
+        trusted_at=trusted_at,
+    )
+    champion, challenger = paired_trial_module.build_pair_records(
+        trial_id=TRIAL_ID,
+        session=SIGNAL_DATE,
+        cycle_id=rig.decision_cycle_id(),
+        shared_input=shared,
+        regime_hash=HASH,
+        champion=_champion_decision(),
+        challenger=_challenger_decision(),
+        trusted_at=trusted_at,
+        capital_checkpoint_hash=rig._capital().content_hash(),
+    )
+    rig.store.commit_pair(champion, challenger)
+
+
+@_REQUIRES_BATCH_AUTHORITY
+def test_exact_pair_with_terminal_run_status_cannot_resume_reserve(rig: _Rig) -> None:
+    _commit_clear_run_pair(rig)
+    rig.spine.record_session_status(PROGRAM, SIGNAL_DATE, SessionStatus.RUN)
+    rig.producer.calls = 0
+    rig.kernel.calls_by_arm = {TrialArm.CHAMPION: 0, TrialArm.CHALLENGER: 0}
+
+    with pytest.raises(PairedTrialRunnerError) as rejected:
+        rig.runner.decide_signal_session(rig.request())
+
+    assert rejected.value.code == "forward_input_authority_unavailable"
+    assert rig.reserve.calls == 0
+    assert rig.producer.calls == 0
+    assert rig.kernel.calls_by_arm == {
+        TrialArm.CHAMPION: 0,
+        TrialArm.CHALLENGER: 0,
+    }
+
+
+@_REQUIRES_BATCH_AUTHORITY
+def test_exact_pair_must_prove_matching_terminal_status(rig: _Rig) -> None:
+    _commit_clear_run_pair(rig)
+    # Pair bytes include a Champion ShadowDecision, which unambiguously proves
+    # RUN. A conflicting durable BLOCKED status must not be treated as a
+    # recoverable post-commit crash.
+    rig.spine.record_session_status(PROGRAM, SIGNAL_DATE, SessionStatus.BLOCKED)
+
+    with pytest.raises(PairedTrialRunnerError) as rejected:
+        rig.runner.decide_signal_session(rig.request())
+
+    assert rejected.value.code == "forward_input_authority_unavailable"
+    assert rejected.value.details == {}
+    assert rig.reserve.calls == 0
+    assert rig.producer.calls == 0
+
+
+@_REQUIRES_BATCH_AUTHORITY
+def test_typed_candidate_drives_exchange_price_industry_and_raw_weight(
+    rig: _Rig,
+) -> None:
+    committed_type = getattr(
+        paired_trial_module,
+        "CommittedBtstCandidate",
+        None,
+    )
+    assert committed_type is not None
+
+    from src.screening.offensive.daily_action_service import PlanCandidate
+    from src.screening.offensive.v3.contracts.base import SignalStage
+    from src.screening.offensive.v3.producers.btst import (
+        build_btst_raw_candidate_payload,
+    )
+    from src.screening.offensive.v3.governance.regime_trial import (
+        validate_regime_trial_bundle,
+    )
+
+    candidate = PlanCandidate(
+        ticker="600000",
+        setup="btst_breakout",
+        setup_version="v2",
+        signal_date=SIGNAL_DATE,
+        target_weight=0.09,
+        priority=1,
+        snapshot_id="sha256:" + "b" * 64,
+        setup_consumed_fingerprint="sha256:" + "a" * 64,
+        trigger_strength=0.9,
+        entry_price=5.0,
+    )
+    raw_payload = build_btst_raw_candidate_payload(
+        candidate,
+        stage=SignalStage.SELECTED,
+        industry="banking",
+        behavior_fingerprint=HASH,
+    )
+    envelope = _selected_record().evidence.model_copy(
+        update={
+            "evidence_id": f"{raw_payload.candidate_id}:selected",
+            "family_id": f"btst:{raw_payload.snapshot_id}",
+            "strategy_semver": raw_payload.strategy_semver,
+            "payload_content_hash": raw_payload.content_hash(),
+        }
+    )
+    record = _selected_record().model_copy(update={"evidence": envelope})
+    committed = committed_type(record=record, payload=raw_payload)
+    trusted_at = _frozen_trusted_at()
+    validated = validate_regime_trial_bundle(
+        rig._bundle(),
+        trusted_at=trusted_at,
+    )
+    shared = paired_trial_module.freeze_shared_input(
+        portfolio_id=PORTFOLIO,
+        trial_id=TRIAL_ID,
+        validated=validated,
+        session=SIGNAL_DATE,
+        cycle_id=rig.decision_cycle_id(),
+        regime=_regime_observation(RegimeState.NORMAL),
+        regime_hash=HASH,
+        trusted_at=trusted_at,
+    )
+
+    champion, _ = paired_trial_module.build_arm_kernel_inputs(
+        validated=validated,
+        shared_input=shared,
+        trusted_at=trusted_at,
+        candidates=(committed,),
+        capital_snapshot=rig._capital(),
+    )
+
+    assert champion.raw_candidates[0].security_id == "600000.SH"
+    assert champion.price_micros_by_candidate == (
+        (raw_payload.candidate_id, 5_000_000),
+    )
+    assert champion.industry_by_candidate == (
+        (raw_payload.candidate_id, "banking"),
+    )
+    assert champion.raw_candidates[0].unscaled_target_gross_cents == (
+        rig._capital().as_observed_nav_cents * 90_000 // 1_000_000
+    )
+
+
+@_REQUIRES_BATCH_AUTHORITY
+def test_runner_consumes_real_producer_committed_raw_candidates(
+    rig: _Rig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
+    from tests.offensive.v3.services.test_btst_producer_api import _World, _hit_result
+
+    monkeypatch.setattr(
+        BtstBreakoutSetup,
+        "detect",
+        lambda self, ticker, trade_date, context: _hit_result(ticker),
+    )
+    world = _World(rig.store_path.parent / "evidence")
+    rig.runner._producer = world.service  # type: ignore[attr-defined]
+
+    receipt = rig.runner.decide_signal_session(rig.request())
+
+    assert receipt.champion_status is SessionStatus.RUN
+    assert len(rig.kernel.inputs) == 2
+    champion_input = rig.kernel.inputs[0]
+    assert {candidate.security_id for candidate in champion_input.raw_candidates} == {
+        "300001.SZ",
+        "300002.SZ",
+    }
+    assert {
+        price for _, price in champion_input.price_micros_by_candidate
+    } == {
+        11_000_000
+    }
+    assert {industry for _, industry in champion_input.industry_by_candidate} == {
+        "software"
+    }
+
+
+@_REQUIRES_BATCH_AUTHORITY
 def test_runner_freezes_shared_work_once(rig: _Rig) -> None:
     receipt = rig.runner.decide_signal_session(rig.request())
     assert isinstance(receipt, PairedSignalReceipt)
@@ -551,6 +914,7 @@ def test_pair_computation_failure_yields_zero_side_effects(rig: _Rig) -> None:
     assert rig.reserve.calls == 0
 
 
+@_REQUIRES_BATCH_AUTHORITY
 def test_pair_commit_then_reserve_crash_replays_stable_ids(rig: _Rig) -> None:
     """A crash after the pair commit but before the reserve replays with the
     same stable pair: the kernel and producer are not re-run, the status is
@@ -571,39 +935,14 @@ def test_pair_commit_then_reserve_crash_replays_stable_ids(rig: _Rig) -> None:
                 raise RuntimeError("simulated crash after pair commit, before reserve")
 
     crashing = _CrashReserve(rig)
-    crashing_runner = ForwardPairedTrialRunner(
-        trial_id=TRIAL_ID,
-        research_program_id=PROGRAM,
-        portfolio_id=PORTFOLIO,
-        decision_store=rig.store,
-        spine=rig.spine,
-        bundle_reader=rig.bundle_reader,
-        regime_reader=rig.regime_reader,
-        producer=rig.producer,
-        kernel=rig.kernel,
-        capital_reader=rig.capital_reader,
-        clock=rig.clock,
-        reserve_pair=crashing,
-    )
-    with pytest.raises(RuntimeError, match="simulated crash"):
+    crashing_runner = ForwardPairedTrialRunner()
+    with pytest.raises(PairedTrialRunnerError) as rejected:
         crashing_runner.decide_signal_session(rig.request())
-    # The pair committed; the status may or may not have landed, the reserve
-    # did not complete.
-    pair = rig.store.pair(rig.pair_key())
-    assert len(pair) == 2
-    # Replay: the pair is exact-validated, kernels are skipped, the reserve
-    # completes. The producer/kernel are not re-run.
-    rig.producer.calls = 0
-    rig.kernel.calls_by_arm = {TrialArm.CHAMPION: 0, TrialArm.CHALLENGER: 0}
-    receipt = rig.runner.decide_signal_session(rig.request())
-    assert receipt.pair_key == rig.pair_key()
-    assert rig.producer.calls == 0
-    assert rig.kernel.calls_by_arm == {TrialArm.CHAMPION: 0, TrialArm.CHALLENGER: 0}
-    assert rig.reserve.calls == 1
-    assert rig.spine.status(PROGRAM, SIGNAL_DATE) is SessionStatus.RUN
+    assert rejected.value.code == "forward_input_authority_unavailable"
+    assert crashing.calls == 0
 
 
-def test_expired_writer_lease_blocks(rig: _Rig) -> None:
+def test_batch_authority_precedes_writer_lease_use(rig: _Rig) -> None:
     """The runner's reserve path is lease-fenced: a stale writer token fails
     before any capital mutation (the pair itself is already durable)."""
 
@@ -617,32 +956,21 @@ def test_expired_writer_lease_blocks(rig: _Rig) -> None:
             "writer token is stale; the epoch moved on",
         )
 
-    fenced_runner = _new_runner(rig)
+    _wire_bundle_covering_signal(rig)
     from src.screening.offensive.v3.orchestration.paired_trial import (
         ForwardPairedTrialRunner,
     )
 
-    fenced_runner = ForwardPairedTrialRunner(
-        trial_id=TRIAL_ID,
-        research_program_id=PROGRAM,
-        portfolio_id=PORTFOLIO,
-        decision_store=rig.store,
-        spine=rig.spine,
-        bundle_reader=rig.bundle_reader,
-        regime_reader=rig.regime_reader,
-        producer=rig.producer,
-        kernel=rig.kernel,
-        capital_reader=rig.capital_reader,
-        clock=rig.clock,
-        reserve_pair=fenced_reserve,
-    )
-    with pytest.raises(Exception, match="fencing"):
+    fenced_runner = ForwardPairedTrialRunner()
+    with pytest.raises(PairedTrialRunnerError) as rejected:
         fenced_runner.decide_signal_session(rig.request())
-    # The pair committed before the fencing failure; the session is recorded.
-    assert len(rig.store.pair(rig.pair_key())) == 2
+    assert rejected.value.code == "forward_input_authority_unavailable"
+    with pytest.raises(Exception):
+        rig.store.pair(rig.pair_key())
+    assert rig.reserve.calls == 0
 
 
-def test_reserve_not_wired_fails_loudly(rig: _Rig) -> None:
+def test_batch_authority_precedes_reserve_wiring(rig: _Rig) -> None:
     """A missing reserve wiring must fail loudly after the commit, never
     silently proceed without T0 worst-case reserves."""
 
@@ -650,25 +978,16 @@ def test_reserve_not_wired_fails_loudly(rig: _Rig) -> None:
         ForwardPairedTrialRunner,
     )
 
-    unwired = ForwardPairedTrialRunner(
-        trial_id=TRIAL_ID,
-        research_program_id=PROGRAM,
-        portfolio_id=PORTFOLIO,
-        decision_store=rig.store,
-        spine=rig.spine,
-        bundle_reader=rig.bundle_reader,
-        regime_reader=rig.regime_reader,
-        producer=rig.producer,
-        kernel=rig.kernel,
-        capital_reader=rig.capital_reader,
-        clock=rig.clock,
-        reserve_pair=None,
-    )
+    _wire_bundle_covering_signal(rig)
+    unwired = ForwardPairedTrialRunner()
     with pytest.raises(PairedTrialRunnerError) as excinfo:
         unwired.decide_signal_session(rig.request())
-    assert excinfo.value.code == "reserve_not_wired"
+    assert excinfo.value.code == "forward_input_authority_unavailable"
+    with pytest.raises(Exception):
+        rig.store.pair(rig.pair_key())
 
 
+@_REQUIRES_BATCH_AUTHORITY
 def test_divergent_replay_never_recomputes_alternate_proposal(rig: _Rig) -> None:
     """After a pair exists, a re-run never recomputes an alternate proposal:
     the runner exact-validates the existing pair and skips the producer and
@@ -711,15 +1030,17 @@ def test_divergent_replay_never_recomputes_alternate_proposal(rig: _Rig) -> None
         rig.store.commit_pair(divergent, challenger)
 
 
-def test_missing_regime_fails_before_any_commit(rig: _Rig) -> None:
+def test_batch_authority_precedes_regime_read(rig: _Rig) -> None:
     """A missing canonical regime observation is an operational failure that
     happens before the producer, the kernel, the pair commit, or the status."""
 
     rig.regime_reader = _MissingRegimeReader(_regime_observation(RegimeState.NORMAL))
+    _wire_bundle_covering_signal(rig)
     rig.runner = _new_runner(rig)
     with pytest.raises(PairedTrialRunnerError) as excinfo:
         rig.runner.decide_signal_session(rig.request())
-    assert excinfo.value.code == "regime_observation_missing"
+    assert excinfo.value.code == "forward_input_authority_unavailable"
+    assert rig.regime_reader.calls == 0
     assert rig.producer.calls == 0
     assert rig.kernel.calls_by_arm == {TrialArm.CHAMPION: 0, TrialArm.CHALLENGER: 0}
     assert rig.spine.status(PROGRAM, SIGNAL_DATE) is None
@@ -733,7 +1054,7 @@ def test_unenrolled_session_rejected_before_any_work(rig: _Rig) -> None:
         rig.runner.decide_signal_session(
             SignalSessionRequest(trial_id=TRIAL_ID, signal_session=outside)
         )
-    assert excinfo.value.code == "session_not_enrolled"
+    assert excinfo.value.code == "forward_input_authority_unavailable"
     assert rig.producer.calls == 0
 
 
@@ -748,6 +1069,7 @@ _AFTER_CUTOFF = datetime(2026, 9, 6, 9, 0, tzinfo=UTC)
 _INSIDE = datetime(2026, 8, 20, 15, 0, tzinfo=UTC)
 
 
+@_REQUIRES_BATCH_AUTHORITY
 def test_pair_run_with_challenger_regime_blocked(rig: _Rig) -> None:
     from src.screening.offensive.v3.contracts.decision import ShadowDecision
 
@@ -758,6 +1080,7 @@ def test_pair_run_with_challenger_regime_blocked(rig: _Rig) -> None:
     assert rig.spine.status(PROGRAM, SIGNAL_DATE) is SessionStatus.RUN
 
 
+@_REQUIRES_BATCH_AUTHORITY
 def test_shared_empty_candidates_is_no_signal(rig: _Rig) -> None:
     rig.producer.records = ()
     rig.kernel.decisions = {
@@ -768,15 +1091,17 @@ def test_shared_empty_candidates_is_no_signal(rig: _Rig) -> None:
     assert rig.spine.status(PROGRAM, SIGNAL_DATE) is SessionStatus.NO_SIGNAL
 
 
-def test_shared_core_evidence_failure_is_data_unknown(rig: _Rig) -> None:
+def test_batch_authority_failure_records_no_session_status(rig: _Rig) -> None:
     rig.regime_reader = _MissingRegimeReader(_regime_observation(RegimeState.NORMAL))
+    _wire_bundle_covering_signal(rig)
     rig.runner = _new_runner(rig)
     with pytest.raises(PairedTrialRunnerError) as excinfo:
         rig.runner.decide_signal_session(rig.request())
-    assert excinfo.value.code == "regime_observation_missing"
+    assert excinfo.value.code == "forward_input_authority_unavailable"
     assert rig.spine.status(PROGRAM, SIGNAL_DATE) is None
 
 
+@_REQUIRES_BATCH_AUTHORITY
 def test_common_capital_integrity_block_is_blocked(rig: _Rig) -> None:
     from src.screening.offensive.v3.kernel.models import BlockReason
 
@@ -788,15 +1113,15 @@ def test_common_capital_integrity_block_is_blocked(rig: _Rig) -> None:
     assert rig.spine.status(PROGRAM, SIGNAL_DATE) is SessionStatus.BLOCKED
 
 
-def test_absent_regime_observation_after_cutoff_is_no_run(rig: _Rig) -> None:
-    # A session whose decision cutoff has passed with no pair/status at all
-    # becomes NO_RUN only through finalize_missed_sessions. The rig's spine
-    # already enrolled SIGNAL_DATE.
-    finalized = rig.runner.finalize_missed_sessions(trusted_at=_AFTER_CUTOFF)
-    assert finalized == (SIGNAL_DATE,)
-    assert rig.spine.status(PROGRAM, SIGNAL_DATE) is SessionStatus.NO_RUN
+def test_unavailable_runner_cannot_finalize_no_run(rig: _Rig) -> None:
+    with pytest.raises(PairedTrialRunnerError) as rejected:
+        rig.runner.finalize_missed_sessions(trusted_at=_AFTER_CUTOFF)
+
+    assert rejected.value.code == "forward_input_authority_unavailable"
+    assert rig.spine.status(PROGRAM, SIGNAL_DATE) is None
 
 
+@_REQUIRES_BATCH_AUTHORITY
 def test_canonical_unknown_keeps_champion_run(rig: _Rig) -> None:
     from src.screening.offensive.v3.contracts.decision import ShadowDecision
 
@@ -808,6 +1133,7 @@ def test_canonical_unknown_keeps_champion_run(rig: _Rig) -> None:
     assert rig.spine.status(PROGRAM, SIGNAL_DATE) is SessionStatus.RUN
 
 
+@_REQUIRES_BATCH_AUTHORITY
 def test_arm_specific_block_keeps_other_arm_run(rig: _Rig) -> None:
     rig.kernel.decisions = {
         TrialArm.CHAMPION: _champion_decision(),
@@ -833,7 +1159,11 @@ def test_signed_calendar_correction_cancels(rig: _Rig) -> None:
     # The runner rejects decisions for a cancelled session.
     with pytest.raises(PairedTrialRunnerError) as excinfo:
         rig.runner.decide_signal_session(rig.request())
-    assert excinfo.value.code == "session_cancelled"
+    assert excinfo.value.code == "forward_input_authority_unavailable"
+    assert (
+        rig.spine.status(PROGRAM, SIGNAL_DATE)
+        is SessionStatus.SESSION_CANCELLED
+    )
 
 
 def test_classify_pair_session_pure_function() -> None:

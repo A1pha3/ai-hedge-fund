@@ -101,6 +101,18 @@ PORTFOLIO = "paper-v3"
 HASH = "a" * 64
 BEHAVIOR = "b" * 64
 
+# The shadow-decision pipeline fails closed with
+# ``economic_input_authority_unavailable`` until a store-owned exchange schedule
+# and complete ``ShadowKernelInput`` are wired to ``decide_shadow``
+# (daily_action_flow.py module docstring). Tests whose core assertion requires
+# the pipeline to actually run (evidence/producer/kernel/persister calls or a
+# published ``ShadowDecision``) are retained below as future specifications but
+# skipped; the fail-closed boundary itself is locked by
+# ``test_shadow_pipeline_fails_before_evidence_producer_kernel_or_persist``.
+_REQUIRES_ECONOMIC_INPUT_AUTHORITY = pytest.mark.skip(
+    reason="target behavior requires the store-owned economic input authority"
+)
+
 
 # --------------------------------------------------------------------------
 # kernel 层 fixture (照抄 test_admission / test_risk / test_decide; 自包含)
@@ -509,6 +521,7 @@ def _decision_line(security_id="300001.SH", *, candidate_id="cand-1", **override
         "direction": "LONG",
         "quantity_units": 100,
         "limit_price_micros": 10_500_000,
+        "worst_case_fee_reserve_cents": 0,
         "worst_case_reserve_cents": 105_000,
         "status": "ENTRY_PLANNED",
     }
@@ -759,9 +772,10 @@ def test_lifecycle_query_precedes_snapshot_scan(tmp_path: Path) -> None:
     # 只读资本投影 as_of = signal_date 15:00 UTC (AutoFlow 同款约定)
     assert capital_reader.calls == [(PORTFOLIO, AS_OF)]
     # scheduler/lifecycle call before snapshot/scan: lifecycle 恒先于
-    # snapshot 加载, 也先于 BTST producer scan
+    # snapshot 加载。producer scan 目前因 economic input authority 缺失而
+    # fail-closed, 从不被调用; lifecycle < producer 的排序在管线重新启用后由
+    # retained spec 覆盖。
     assert order.index("lifecycle") < order.index("snapshot")
-    assert order.index("lifecycle") < order.index("producer")
 
 
 def test_missing_snapshot_skips_shadow_pipeline(tmp_path: Path) -> None:
@@ -772,7 +786,7 @@ def test_missing_snapshot_skips_shadow_pipeline(tmp_path: Path) -> None:
     )
     producer = _FakeProducer()
     evidence_store = _FakeEvidenceStore()
-    kernel = _FakeKernel(_portfolio_decision())
+    kernel = _FakeKernel(None)
     persister = _FakePersister()
     flow = _make_flow(
         lifecycle_reader=lifecycle,
@@ -805,6 +819,7 @@ def test_missing_snapshot_skips_shadow_pipeline(tmp_path: Path) -> None:
     assert result.no_trade_reason is None
 
 
+@_REQUIRES_ECONOMIC_INPUT_AUTHORITY
 def test_missed_window_records_evidence_failure_and_continues(tmp_path: Path) -> None:
     evidence_store = _FakeEvidenceStore(
         error=EvidenceStoreError(
@@ -831,6 +846,7 @@ def test_missed_window_records_evidence_failure_and_continues(tmp_path: Path) ->
     assert result.shadow_decision_id == persister.calls[0].shadow_decision_id
 
 
+@_REQUIRES_ECONOMIC_INPUT_AUTHORITY
 def test_stale_capital_is_no_trade_form(tmp_path: Path) -> None:
     stale = _stale_capital()
     capital_reader = _FakeCapitalReader(stale)
@@ -865,6 +881,7 @@ def test_stale_capital_is_no_trade_form(tmp_path: Path) -> None:
     assert result.discrepancy == {}
 
 
+@_REQUIRES_ECONOMIC_INPUT_AUTHORITY
 def test_no_signal_never_constructs_empty_shadow_decision(tmp_path: Path) -> None:
     kernel = _RecordingKernel(GrowthKernel(_config()))
     producer = _FakeProducer(records=())  # scan 无候选
@@ -893,6 +910,7 @@ def test_no_signal_never_constructs_empty_shadow_decision(tmp_path: Path) -> Non
     assert result.discrepancy == {}
 
 
+@_REQUIRES_ECONOMIC_INPUT_AUTHORITY
 def test_v2_comparison_reports_discrepancies(tmp_path: Path) -> None:
     decision = _portfolio_decision(
         _decision_line("300001.SH"),
@@ -916,6 +934,7 @@ def test_v2_comparison_reports_discrepancies(tmp_path: Path) -> None:
     assert result.failure_reason == {}
 
 
+@_REQUIRES_ECONOMIC_INPUT_AUTHORITY
 def test_repeat_run_is_deterministic(tmp_path: Path) -> None:
     producer = _FakeProducer()
     kernel = _FakeKernel(_portfolio_decision())
@@ -947,8 +966,9 @@ def test_v2_ledger_bytes_are_byte_identical(tmp_path: Path) -> None:
     flow = _make_flow()
     result = _run(flow, tmp_path)
 
-    # byte-identical 契约: v3 shadow 运行绝不写 v2 ledger
-    assert result.shadow_decision_status == "ok"
+    # byte-identical 契约: v3 shadow 运行绝不写 v2 ledger。fail-closed 下管线
+    # 不产生决策 (status "failed"), 但 data_dir 零写契约不变且更强。
+    assert result.shadow_decision_status == "failed"
     assert ledger.read_bytes() == b"v2-ledger-sentinel-0001"
     after = sorted(str(p.relative_to(data_dir)) for p in data_dir.rglob("*"))
     assert after == before
@@ -1019,6 +1039,7 @@ def test_off_mode_skips_everything_with_zero_calls(tmp_path: Path) -> None:
     assert order == []
 
 
+@_REQUIRES_ECONOMIC_INPUT_AUTHORITY
 def test_happy_path_persists_shadow_decision(tmp_path: Path) -> None:
     capital = _fresh_capital()
     capital_reader = _FakeCapitalReader(capital)
@@ -1061,6 +1082,34 @@ def test_happy_path_persists_shadow_decision(tmp_path: Path) -> None:
     assert trusted_at == NOW
 
 
+def test_shadow_pipeline_fails_before_evidence_producer_kernel_or_persist(
+    tmp_path: Path,
+) -> None:
+    evidence_store = _FakeEvidenceStore()
+    producer = _FakeProducer()
+    kernel = _FakeKernel(None)
+    persister = _FakePersister()
+    flow = _make_flow(
+        evidence_store=evidence_store,
+        producer=producer,
+        kernel=kernel,
+        persister=persister,
+        evidence_ids=("ev-1",),
+    )
+
+    result = _run(flow, tmp_path)
+
+    assert result.shadow_decision_status == "failed"
+    assert "economic_input_authority_unavailable" in (
+        result.failure_reason["economic_input_authority"]
+    )
+    assert evidence_store.calls == []
+    assert producer.calls == []
+    assert kernel.calls == []
+    assert persister.calls == []
+
+
+@_REQUIRES_ECONOMIC_INPUT_AUTHORITY
 def test_producer_failure_is_isolated(tmp_path: Path) -> None:
     producer = _FakeProducer(error=RuntimeError("producer_down"))
     kernel = _FakeKernel(_portfolio_decision())
@@ -1161,6 +1210,7 @@ def test_non_shadow_modes_skip_shadow_pipeline(tmp_path: Path, mode: RuntimeMode
 # --------------------------------------------------------------------------
 
 
+@_REQUIRES_ECONOMIC_INPUT_AUTHORITY
 def test_shadow_line_economics_derive_from_kernel_in_cents(tmp_path: Path) -> None:
     """C-1 回归: limit_price_micros (micro-yuan) 必须按 10_000 换算为 cents。
 
@@ -1186,6 +1236,7 @@ def test_shadow_line_economics_derive_from_kernel_in_cents(tmp_path: Path) -> No
     )
 
 
+@_REQUIRES_ECONOMIC_INPUT_AUTHORITY
 def test_shadow_lines_are_canonically_sorted(tmp_path: Path) -> None:
     """C-2 回归: kernel 输出 rank 顺序 ≠ candidate_id 字典序时, ShadowDecision
     canonical-order 校验 (line_ids == sorted) 必须由 flow 显式排序满足。"""
@@ -1209,6 +1260,7 @@ def test_shadow_lines_are_canonically_sorted(tmp_path: Path) -> None:
     ]
 
 
+@_REQUIRES_ECONOMIC_INPUT_AUTHORITY
 def test_shadow_construction_failure_is_recorded_not_crashed(tmp_path: Path) -> None:
     """M-3 回归: ShadowDecision 构造期异常 (如 evidence_id 格式非法 →
     ``_evidence_ticker`` 解析失败) 记入 kernel 步 reason, run() 不崩溃,

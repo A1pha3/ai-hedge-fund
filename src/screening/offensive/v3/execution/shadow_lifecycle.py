@@ -1,4 +1,9 @@
-"""Plan Task 10: the complete shadow capital lifecycle facade.
+"""Withdrawn shadow-capital lifecycle construction material.
+
+Every public mutation facade rejects before external observation until the two
+temporary arm ledgers have capital-local writer fencing.  This namespace has
+never hosted authoritative positions; generic Gateway exits and
+AccountCapitalTruth correction/company-action APIs are not gated here.
 
 :class:`ShadowProxyLifecycle` is the per-trial orchestrator that drives one
 trading session of a paired shadow trial through the fixed session ladder
@@ -34,6 +39,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from bisect import bisect_right
 from typing import Callable, Mapping
 
 from src.screening.offensive.v3.capital.checkpoints import (
@@ -67,8 +73,12 @@ from src.screening.offensive.v3.execution.shadow_proxy import (
     ShadowArmExecutionContext,
     ShadowExitResult,
     ShadowExitSettlementInput,
+    ShadowLotOrigin,
     ShadowProxyAdapter,
     ShadowProxyError,
+    _reject_shadow_capital_mutation,
+    shadow_lot_id,
+    shadow_position_lineage_id,
 )
 from src.screening.offensive.v3.gateway.exits import (
     ClaimedExitWork,
@@ -158,7 +168,7 @@ class PairedLifecycleReceipt:
 
 
 class ShadowProxyLifecycle:
-    """Drive the fixed shadow capital session ladder for both arms."""
+    """Fail-closed shell around the future shadow session ladder."""
 
     def __init__(
         self,
@@ -191,6 +201,8 @@ class ShadowProxyLifecycle:
         ``OPEN_RECONCILED`` checkpoint, close the valuation, and finalize.
         A crash after one arm finalizes must let replay finalize the other.
         """
+
+        _reject_shadow_capital_mutation()
 
         receipts: dict[TrialArm, ArmSessionReceipt] = {}
         for arm in (TrialArm.CHAMPION, TrialArm.CHALLENGER):
@@ -288,17 +300,22 @@ class ShadowProxyLifecycle:
         survive risk and stage halts unchanged.
         """
 
+        _reject_shadow_capital_mutation()
+
         state = self._states[arm]
         repository = state.capital_repository
         snapshot = repository.capital_risk_snapshot(self._clock())
-        decision = self._read_arm_decision(arm)
-        binding = self._shadow_binding(decision)
         reopened = {
             (lot.position_lineage_id, lot.economic_lot_id): lot
             for lot in repository.reopen_exit_obligations()
         }
         lots: list[ExitLotTruth] = []
         for position in snapshot.positions:
+            origin = state.adapter.lot_origin(
+                position.position_lineage_id,
+                position.economic_lot_id,
+            )
+            self._verify_lot_origin(state, position, origin, trading_sessions)
             reopen = reopened.get(
                 (position.position_lineage_id, position.economic_lot_id)
             )
@@ -320,9 +337,9 @@ class ShadowProxyLifecycle:
                     economic_lineage_id=position.economic_lineage_id,
                     stage_id=position.stage_id,
                     position_state=position.state,
-                    signal_session=decision.counterfactual_key.signal_session,
+                    signal_session=origin.signal_session,
                     entry_session_ordinal=_ENTRY_SESSION_ORDINAL,
-                    entry_plan_evidence_artifact_hash=decision.artifact_hash(),
+                    entry_plan_evidence_artifact_hash=origin.artifact_hash,
                     settled_quantity=int(position.settled_quantity),
                     tradable_quantity=int(position.tradable_quantity),
                     live_exit_leaves=live_leaves,
@@ -363,23 +380,26 @@ class ShadowProxyLifecycle:
         truth before the lane declares them sold.
         """
 
+        _reject_shadow_capital_mutation()
+
         state = self._states[arm]
         lane = state.exit_lane
-        decision = self._read_arm_decision(arm)
-        binding = self._shadow_binding(decision)
-        cycle = decision.counterfactual_key.counterfactual_cycle_id
         command_at = self._clock()
         claims = lane.claim_due_exit_work(
             as_of_session=session, worker_id=_SHADOW_WORKER_ID
         )
         results: list[ShadowExitResult] = []
         for claim in claims:
+            origin = state.adapter.lot_origin(
+                claim.position_lineage_id,
+                claim.economic_lot_id,
+            )
+            decision = self._verify_origin_decision(state, origin)
             result = self._settle_one_exit(
                 state=state,
                 claim=claim,
+                origin=origin,
                 decision=decision,
-                binding=binding,
-                cycle=cycle,
                 bars=bars,
                 scenario=scenario,
                 command_at=command_at,
@@ -394,9 +414,8 @@ class ShadowProxyLifecycle:
         *,
         state: ShadowArmLifecycleState,
         claim: ClaimedExitWork,
+        origin: ShadowLotOrigin,
         decision: ShadowDecision,
-        binding: CapitalSourceBinding,
-        cycle: str,
         bars: Mapping[str, DailyBar],
         scenario: ProxyCostScenario,
         command_at: datetime,
@@ -420,14 +439,14 @@ class ShadowProxyLifecycle:
         input = ShadowExitSettlementInput(
             trial_id=state.trial_id,
             arm=state.arm,
-            cycle_id=cycle,
+            cycle_id=origin.decision_cycle_id,
             attempt_id=attempt_id,
             client_order_id=claim.stable_client_order_id,
             mandate_hash=claim.exit_mandate_id,
             security_id=claim.security_id,
             limit_price_cents=_OPEN_EXIT_LIMIT_CENTS,
             quantity_units=claim.executable_quantity,
-            lot_size_units=int(decision.counterfactual_lines[0].lot_size_units),
+            lot_size_units=origin.lot_size_units,
             position_lineage_id=claim.position_lineage_id,
             economic_lot_id=claim.economic_lot_id,
             attribution=FillAttribution(
@@ -436,7 +455,7 @@ class ShadowProxyLifecycle:
                 economic_lineage_id=position.economic_lineage_id,
                 stage_id=position.stage_id,
             ),
-            source_binding=binding,
+            source_binding=origin.source_binding,
         )
         result = state.adapter.settle_exit_line(
             input,
@@ -471,7 +490,9 @@ class ShadowProxyLifecycle:
         self, arm: TrialArm, session_input: ShadowSessionInput
     ) -> None:
         state = self._states[arm]
-        decision = self._read_arm_decision(arm)
+        decision = self._read_current_arm_decision(arm)
+        if decision is None:
+            return
         if decision.target_entry_session != session_input.session:
             return  # no entry targets this session
         context = ShadowArmExecutionContext(
@@ -511,6 +532,8 @@ class ShadowProxyLifecycle:
         finalization — no stale close is ever substituted.
         """
 
+        _reject_shadow_capital_mutation()
+
         state = self._states[arm]
         repository = state.capital_repository
         evidence = snapshot_evidence.evidence
@@ -525,7 +548,7 @@ class ShadowProxyLifecycle:
             idempotency_key=(
                 f"shadow-close:{state.trial_id}:{arm.value}:{session_evidence_key(snapshot_evidence)}"
             ),
-            source_authority="growth-kernel.shadow.v2",
+            source_authority="growth-kernel.shadow.v3",
             effective_at=as_of,
             as_of=as_of,
             expected_stream_version=repository.stream_version(),
@@ -546,6 +569,8 @@ class ShadowProxyLifecycle:
         self, arm: TrialArm, session: date
     ) -> SessionCheckpointReceipt:
         """Advance the ``SESSION_FINALIZED`` checkpoint and verify the ledger."""
+
+        _reject_shadow_capital_mutation()
 
         state = self._states[arm]
         repository = state.capital_repository
@@ -619,16 +644,127 @@ class ShadowProxyLifecycle:
         return frozenset(str(row.phase) for row in rows)
 
     def _read_arm_decision(self, arm: TrialArm) -> ShadowDecision:
-        state = self._states[arm]
-        records = state.decision_store.pair(state.pair_key)
-        for record in records:
-            if record.arm is arm and isinstance(record.decision, ShadowDecision):
-                return record.decision
+        decision = self._read_current_arm_decision(arm)
+        if decision is not None:
+            return decision
         raise ShadowProxyError(
             "not_a_shadow_decision",
             "the arm has no committed ShadowDecision to drive the lifecycle",
             arm=arm.value,
         )
+
+    def _read_current_arm_decision(
+        self, arm: TrialArm
+    ) -> ShadowDecision | None:
+        state = self._states[arm]
+        records = state.decision_store.pair(state.pair_key)
+        for record in records:
+            if record.arm is arm:
+                return (
+                    record.decision
+                    if isinstance(record.decision, ShadowDecision)
+                    else None
+                )
+        raise ShadowProxyError(
+            "arm_not_in_pair",
+            "the committed pair has no decision for this arm",
+            arm=arm.value,
+        )
+
+    def _verify_lot_origin(
+        self,
+        state: ShadowArmLifecycleState,
+        position,
+        origin: ShadowLotOrigin,
+        trading_sessions: tuple[date, ...],
+    ) -> None:
+        self._verify_origin_decision(state, origin)
+        if (
+            origin.trial_id != state.trial_id
+            or origin.arm is not state.arm
+            or origin.portfolio_id != state.portfolio_id
+            or origin.position_lineage_id != position.position_lineage_id
+            or origin.economic_lot_id != position.economic_lot_id
+        ):
+            raise ShadowProxyError(
+                "shadow_lot_origin_scope_mismatch",
+                "lot origin does not belong to this trial arm and capital lot",
+                economic_lot_id=position.economic_lot_id,
+            )
+        first_after = bisect_right(trading_sessions, origin.signal_session)
+        due_index = first_after + _ENTRY_SESSION_ORDINAL + (
+            origin.exit_session_ordinal - 2
+        )
+        if due_index >= len(trading_sessions):
+            raise ShadowProxyError(
+                "shadow_origin_calendar_insufficient",
+                "trading calendar cannot validate the originating exit due date",
+                economic_lot_id=origin.economic_lot_id,
+            )
+        computed_due = trading_sessions[due_index]
+        if computed_due != origin.target_exit_session:
+            raise ShadowProxyError(
+                "shadow_origin_calendar_mismatch",
+                "caller calendar would change the originating decision due date",
+                expected=origin.target_exit_session.isoformat(),
+                observed=computed_due.isoformat(),
+                economic_lot_id=origin.economic_lot_id,
+            )
+
+    def _verify_origin_decision(
+        self,
+        state: ShadowArmLifecycleState,
+        origin: ShadowLotOrigin,
+    ) -> ShadowDecision:
+        records = state.decision_store.pair(origin.pair_key)
+        record = next((item for item in records if item.arm is origin.arm), None)
+        if record is None or not isinstance(record.decision, ShadowDecision):
+            raise ShadowProxyError(
+                "shadow_origin_decision_missing",
+                "lot origin does not resolve to a committed ShadowDecision",
+                economic_lot_id=origin.economic_lot_id,
+            )
+        decision = record.decision
+        expected_binding = self._shadow_binding(decision)
+        line = next(
+            (
+                item
+                for item in decision.counterfactual_lines
+                if item.shadow_line_id == origin.shadow_line_id
+            ),
+            None,
+        )
+        if (
+            decision.shadow_decision_id != origin.shadow_decision_id
+            or decision.artifact_hash() != origin.artifact_hash
+            or expected_binding != origin.source_binding
+            or decision.target_entry_session != origin.target_entry_session
+            or line is None
+            or line.security_id != origin.security_id
+            or origin.position_lineage_id
+            != shadow_position_lineage_id(
+                origin.trial_id,
+                origin.arm,
+                origin.decision_cycle_id,
+                origin.shadow_line_id,
+            )
+            or origin.economic_lot_id
+            != shadow_lot_id(
+                origin.trial_id,
+                origin.arm,
+                origin.decision_cycle_id,
+                origin.shadow_line_id,
+            )
+            or line.target_exit_session != origin.target_exit_session
+            or int(line.exit_session_ordinal) != origin.exit_session_ordinal
+            or int(line.lot_size_units) != origin.lot_size_units
+        ):
+            raise ShadowProxyError(
+                "shadow_lot_origin_binding_mismatch",
+                "stored lot origin diverges from its committed decision line",
+                economic_lot_id=origin.economic_lot_id,
+            )
+        return decision
 
     @staticmethod
     def _shadow_binding(decision: ShadowDecision) -> CapitalSourceBinding:
