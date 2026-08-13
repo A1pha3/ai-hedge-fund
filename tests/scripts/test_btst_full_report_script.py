@@ -139,7 +139,7 @@ class _FakePro:
 
 def test_btst_full_report_main_writes_requested_trade_date_outputs(monkeypatch, tmp_path: Path) -> None:
     fake_pro = _FakePro()
-    fake_tushare = SimpleNamespace(set_token=lambda _token: None, pro_api=lambda: fake_pro)
+    fake_tushare = SimpleNamespace(set_token=lambda _token: None, pro_api=lambda **kwargs: fake_pro)
 
     monkeypatch.setitem(sys.modules, "tushare", fake_tushare)
     monkeypatch.setattr(btst_full_report, "parse_args", lambda: SimpleNamespace(trade_date="20260417"))
