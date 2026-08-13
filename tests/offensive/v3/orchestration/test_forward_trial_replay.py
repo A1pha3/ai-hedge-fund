@@ -1,17 +1,11 @@
-"""Plan Task 12 RED/GREEN: deterministic current-cost + 2x-slippage full replay.
+"""Disabled Task 12 replay boundary and retained fixture specifications.
 
-``ForwardTrialReplayEngine`` restores both pre-enrollment genesis archives
-into fresh paths and replays the whole paired-trial timeline in chronological
-order. A ``CURRENT_COST`` replay must reproduce the official pair decisions,
-capital events, session checkpoints, and restated-final NAV paths
-byte-for-byte; deleting the replay directory and rerunning must produce the
-same result hashes. ``DOUBLE_SLIPPAGE`` re-runs the entire path with 60bps
-adverse entry/exit slippage from the open-resolution core — the same policy
-and market facts, only the cost model differs — and its later decisions may
-legitimately diverge (capital/risk/capacity drift). The engine never calls
-the producer publisher and never creates new ``SignalEvidence``.
+The official replay engine is a zero-capability object that rejects before
+observing inputs or target paths. Skipped tests retain the future deterministic
+current-cost and 2x-slippage contract after store-owned session-batch authority
+exists; they do not claim that an official replay can currently run.
 
-The official world is built with the real GrowthKernel, the real BTST
+The fixture world is built with the real GrowthKernel, the real BTST
 producer over a verified PIT snapshot, and a real Ed25519-trusted regime
 evidence store; the official driver and the replay engine share the same
 module-level builders (:func:`freeze_shared_input`,
@@ -72,6 +66,7 @@ from src.screening.offensive.v3.orchestration.genesis import (
     TrialGenesisArchive,
 )
 from src.screening.offensive.v3.orchestration.paired_trial import (
+    CommittedBtstCandidate,
     build_arm_kernel_inputs,
     build_pair_records,
     classify_pair_session,
@@ -84,6 +79,8 @@ from src.screening.offensive.v3.orchestration.replay import (  # RED target
     ReplaySessionFacts,
     TrialReplayError,
     TrialReplayInput,
+    _require_scenario_inputs,
+    _require_signal_facts,
     drive_session_lifecycle,
 )
 from src.screening.offensive.v3.orchestration.trial_store import (
@@ -128,6 +125,9 @@ _EXIT_POLICY_FINGERPRINT = HASH
 _SECURITY = "300001.SZ"
 #: The entry limit the producer's frozen price derives (1000.0000 yuan).
 _ENTRY_LIMIT_CENTS = 1098
+_REQUIRES_BATCH_AUTHORITY = pytest.mark.skip(
+    reason="target behavior requires store-owned forward session batch authority"
+)
 
 
 def _entry_bar(session: date) -> DailyBar:
@@ -657,12 +657,10 @@ class _Rig:
                 worst_case_fee_ppm=3_000,
             )
         )
-        self.replayer = ForwardTrialReplayEngine(
-            kernel=self.kernel, clock=self.clock
-        )
+        self.replayer = ForwardTrialReplayEngine()
         self.session_facts: dict[date, ReplaySessionFacts] = {}
         self.active_regimes: dict[date, ActiveRegimeObservation] = {}
-        self.selected: dict[date, tuple[EvidenceRecord[SignalEvidence], ...]] = {}
+        self.selected: dict[date, tuple[CommittedBtstCandidate, ...]] = {}
 
     # -- evidence helpers ----------------------------------------------------
 
@@ -683,9 +681,9 @@ class _Rig:
             )
         return self.active_regimes[session]
 
-    def selected_records(
+    def selected_candidates(
         self, session: date
-    ) -> tuple[EvidenceRecord[SignalEvidence], ...]:
+    ) -> tuple[CommittedBtstCandidate, ...]:
         if session not in self.selected:
             snapshot = _producer_snapshot(session)
             # The funnel's envelopes are observed at the signal-date 15:00
@@ -702,8 +700,16 @@ class _Rig:
                 )
             )
             records = self.producer_world.service.produce_and_publish(snapshot)
+            selected = tuple(record for record in records if _is_selected(record))
             self.selected[session] = tuple(
-                record for record in records if _is_selected(record)
+                CommittedBtstCandidate(
+                    record=record,
+                    payload=self.producer_world.service.candidate_payload(
+                        record,
+                        expected_signal_session=session,
+                    ),
+                )
+                for record in selected
             )
         return self.selected[session]
 
@@ -726,8 +732,8 @@ class _Rig:
                     if session in SIGNALS
                     else None
                 ),
-                selected_records=(
-                    self.selected_records(session)
+                selected_candidates=(
+                    self.selected_candidates(session)
                     if session in SIGNALS
                     else ()
                 ),
@@ -743,6 +749,16 @@ class _Rig:
         decision per arm, commit one pair, record the session status, and
         reserve both arms. Every trading session then drives the shared
         lifecycle (entry/exit/valuation/finalize) at the session close.
+
+        RETAINED-SPEC STALENESS: this body predates the capital-checkpoint-v2
+        / economic-input-v4 migration. It still calls ``freeze_shared_input``
+        (now unconditionally fail-closed) and the single-``capital_snapshot``
+        signatures of ``build_arm_kernel_inputs`` / ``build_pair_records``,
+        which were replaced by per-arm ``ShadowCapitalCheckpoint`` +
+        ``champion_input``/``challenger_input``. It cannot execute until the
+        store-owned batch authority lands, at which point it must be rewritten
+        against the checkpoint-v2 API (calling convention: the green builders
+        in tests/offensive/v3/kernel/test_shadow_kernel.py).
         """
 
         self.build_session_facts()
@@ -771,7 +787,7 @@ class _Rig:
                     validated=_validated_bundle(),
                     shared_input=shared_input,
                     trusted_at=trusted_at,
-                    records=facts.selected_records,
+                    candidates=facts.selected_candidates or (),
                     capital_snapshot=capital_snapshot,
                 )
                 champion = self.kernel.decide_shadow(champion_input)
@@ -794,7 +810,7 @@ class _Rig:
                     classify_pair_session(
                         champion,
                         challenger,
-                        shared_candidate_count=len(facts.selected_records),
+                        shared_candidate_count=len(facts.selected_candidates or ()),
                     ),
                 )
                 latest_pair_key = _pair_key(session)
@@ -961,24 +977,40 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Rig:
 # =============================================================================
 
 
-def test_current_cost_replay_reproduces_official_path(rig: _Rig, tmp_path: Path) -> None:
-    rig.run_official()
-    champion_nav, challenger_nav, decision_root, checkpoint_root = (
-        rig.official_hashes()
-    )
-    result = rig.replayer.replay(
-        rig.replay_input(), ReplayScenario.CURRENT_COST, tmp_path / "current"
-    )
-    assert isinstance(result, PairedReplayResult)
-    assert result.sessions_replayed == len(SESSIONS)
-    assert result.champion_nav_path_hash == champion_nav
-    assert result.challenger_nav_path_hash == challenger_nav
-    assert result.decision_root == decision_root
-    assert result.lifecycle_root == checkpoint_root
-    assert result.champion_capital_report.endswith(":True")
-    assert result.challenger_capital_report.endswith(":True")
+@pytest.mark.parametrize(
+    "scenario",
+    (ReplayScenario.CURRENT_COST, ReplayScenario.DOUBLE_SLIPPAGE),
+)
+def test_replay_requires_store_owned_session_batch_authority(
+    tmp_path: Path,
+    scenario: ReplayScenario,
+) -> None:
+    target = tmp_path / scenario.value
+    replayer = ForwardTrialReplayEngine()
+
+    with pytest.raises(TrialReplayError) as rejected:
+        replayer.replay(object(), scenario, target)  # type: ignore[arg-type]
+
+    assert rejected.value.code == "forward_input_authority_unavailable"
+    assert not target.exists()
 
 
+def test_unavailable_replay_does_not_even_resolve_target_path() -> None:
+    class PoisonPath:
+        def __fspath__(self) -> str:
+            raise AssertionError("target path was resolved before authority gate")
+
+    with pytest.raises(TrialReplayError) as rejected:
+        ForwardTrialReplayEngine().replay(
+            object(),  # type: ignore[arg-type]
+            ReplayScenario.CURRENT_COST,
+            PoisonPath(),  # type: ignore[arg-type]
+        )
+
+    assert rejected.value.code == "forward_input_authority_unavailable"
+
+
+@_REQUIRES_BATCH_AUTHORITY
 def test_current_cost_replay_is_deterministic_across_delete_and_rerun(
     rig: _Rig, tmp_path: Path
 ) -> None:
@@ -999,6 +1031,7 @@ def test_current_cost_replay_is_deterministic_across_delete_and_rerun(
     assert second.decision_hashes == first.decision_hashes
 
 
+@_REQUIRES_BATCH_AUTHORITY
 def test_current_cost_replay_rejects_divergent_decision_bytes(
     rig: _Rig, tmp_path: Path
 ) -> None:
@@ -1012,9 +1045,9 @@ def test_current_cost_replay_rejects_divergent_decision_bytes(
         sessions=tuple(
             replace(
                 f,
-                selected_records=()
+                selected_candidates=()
                 if f.session in SIGNALS
-                else f.selected_records,
+                else f.selected_candidates,
             )
             for f in input_.sessions
         ),
@@ -1026,11 +1059,38 @@ def test_current_cost_replay_rejects_divergent_decision_bytes(
     assert exc.value.code == "decision_divergence"
 
 
+def test_signal_session_replay_requires_authoritative_candidate_store(
+    rig: _Rig,
+) -> None:
+    with pytest.raises(TrialReplayError) as rejected:
+        rig.replayer.replay(
+            replace(rig.replay_input(), signal_evidence_store=None),
+            ReplayScenario.CURRENT_COST,
+            object(),  # type: ignore[arg-type]
+        )
+
+    assert rejected.value.code == "forward_input_authority_unavailable"
+
+
+def test_replay_facts_share_exact_store_owned_raw_candidate_bytes(rig: _Rig) -> None:
+    rig.build_session_facts()
+
+    for session in SIGNALS:
+        candidates = rig.session_facts[session].selected_candidates
+        assert candidates is not None
+        for candidate in candidates:
+            raw = rig.producer_world.raw_repository.raw_payload(
+                candidate.record.evidence.payload_content_hash
+            )
+            assert raw == candidate.payload.canonical_bytes()
+
+
 # =============================================================================
 # Step 2: DOUBLE_SLIPPAGE full alternate path
 # =============================================================================
 
 
+@_REQUIRES_BATCH_AUTHORITY
 def test_double_slippage_is_a_full_path_replay_not_a_return_drag(
     rig: _Rig, tmp_path: Path
 ) -> None:
@@ -1052,6 +1112,7 @@ def test_double_slippage_is_a_full_path_replay_not_a_return_drag(
     assert stress.stress_ledger_hashes[1] != current.challenger_nav_path_hash
 
 
+@_REQUIRES_BATCH_AUTHORITY
 def test_double_slippage_never_compares_to_official_bytes(
     rig: _Rig, tmp_path: Path
 ) -> None:
@@ -1072,61 +1133,29 @@ def test_double_slippage_never_compares_to_official_bytes(
 # =============================================================================
 
 
-def test_missing_regime_fact_fails_before_any_commit(
-    rig: _Rig, tmp_path: Path
-) -> None:
-    rig.run_official()
-    input_ = rig.replay_input()
-    input_ = replace(
-        input_,
-        sessions=tuple(
-            replace(
-                f,
-                regime_observation=None
-                if f.session in SIGNALS
-                else f.regime_observation,
-            )
-            for f in input_.sessions
-        ),
-    )
+def test_missing_regime_fact_fails_before_any_commit(rig: _Rig) -> None:
+    rig.build_session_facts()
+    session = SIGNALS[0]
+    facts = replace(rig.session_facts[session], regime_observation=None)
+
     with pytest.raises(TrialReplayError) as exc:
-        rig.replayer.replay(
-            input_, ReplayScenario.CURRENT_COST, tmp_path / "x"
-        )
+        _require_signal_facts(session, facts)
+
     assert exc.value.code == "signal_facts_missing"
 
 
 def test_revised_after_cutoff_regime_fails_closed(
-    rig: _Rig, tmp_path: Path
+    rig: _Rig,
 ) -> None:
-    rig.run_official()
-    # A bound regime observation that diverges from the official active
-    # revision at the cutoff (a corrected-after-cutoff observation) is
-    # rejected before any decision is rebuilt.
-    session = SIGNALS[0]
-    input_ = rig.replay_input()
-    input_ = replace(
-        input_,
-        sessions=tuple(
-            replace(
-                f,
-                regime_observation=(
-                    _fake_regime(rig, session)
-                    if f.session == session
-                    else f.regime_observation
-                ),
-            )
-            for f in input_.sessions
-        ),
-    )
+    # Even an input carrying revised facts is not inspected before the
+    # store-owned session-batch authority exists.
     with pytest.raises(TrialReplayError) as exc:
         rig.replayer.replay(
-            input_, ReplayScenario.CURRENT_COST, tmp_path / "x"
+            object(),  # type: ignore[arg-type]
+            ReplayScenario.CURRENT_COST,
+            object(),  # type: ignore[arg-type]
         )
-    assert exc.value.code in (
-        "pit_regime_divergence",
-        "pit_regime_revision_mismatch",
-    )
+    assert exc.value.code == "forward_input_authority_unavailable"
 
 
 def _fake_regime(rig: _Rig, session: date) -> ActiveRegimeObservation:
@@ -1141,6 +1170,7 @@ def _fake_regime(rig: _Rig, session: date) -> ActiveRegimeObservation:
     )
 
 
+@_REQUIRES_BATCH_AUTHORITY
 def test_replay_never_calls_producer_or_creates_signal_evidence(
     rig: _Rig, tmp_path: Path
 ) -> None:
@@ -1167,27 +1197,25 @@ def _evidence_count(repository: EvidenceRepository) -> int:
         )
 
 
-def test_replay_refuses_nonempty_target_directory(
-    rig: _Rig, tmp_path: Path
-) -> None:
-    rig.run_official()
+def test_replay_refuses_nonempty_target_directory(tmp_path: Path) -> None:
     target = tmp_path / "occupied"
     target.mkdir()
     (target / "existing.txt").write_text("x", encoding="utf-8")
+    replayer = ForwardTrialReplayEngine()
     with pytest.raises(TrialReplayError) as exc:
-        rig.replayer.replay(
-            rig.replay_input(), ReplayScenario.CURRENT_COST, target
+        replayer.replay(
+            object(), ReplayScenario.CURRENT_COST, target  # type: ignore[arg-type]
         )
-    assert exc.value.code == "target_not_empty"
+    assert exc.value.code == "forward_input_authority_unavailable"
+    assert (target / "existing.txt").read_text(encoding="utf-8") == "x"
 
 
 def test_replay_requires_official_store_for_current_cost(
-    rig: _Rig, tmp_path: Path
+    rig: _Rig,
 ) -> None:
-    rig.run_official()
     input_ = replace(rig.replay_input(), official_store=None)
+
     with pytest.raises(TrialReplayError) as exc:
-        rig.replayer.replay(
-            input_, ReplayScenario.CURRENT_COST, tmp_path / "x"
-        )
+        _require_scenario_inputs(input_, ReplayScenario.CURRENT_COST)
+
     assert exc.value.code == "official_store_required"

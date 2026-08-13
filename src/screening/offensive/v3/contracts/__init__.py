@@ -44,6 +44,10 @@ from .base import (
     content_hash,
     domain_hash,
 )
+from .btst_candidate import (
+    BtstCandidateIndustryState,
+    BtstRawCandidatePayload,
+)
 from .capital import (
     AUTHORITY_STATE_TRANSITIONS,
     POSITION_STATE_TRANSITIONS,
@@ -100,6 +104,7 @@ from .decision import (
     ShadowIssuerBinding,
     ShadowOrderLine,
     ShadowStageBinding,
+    ShadowTradingScheduleBinding,
     StageAdmissionBinding,
     StageLossExpectedVersion,
     TrustedClockObservation,
@@ -231,6 +236,8 @@ __all__ = [
     "CorporateActionRiskComponent",
     "CounterfactualDecisionKey",
     "BrokerEnablementManifest",
+    "BtstCandidateIndustryState",
+    "BtstRawCandidatePayload",
     "ConfidenceLevel",
     "DisasterRecoveryManifest",
     "EntryFenceAcknowledgement",
@@ -339,6 +346,7 @@ __all__ = [
     "ShadowIssuerBinding",
     "ShadowOrderLine",
     "ShadowStageBinding",
+    "ShadowTradingScheduleBinding",
     "StageAdmissionBinding",
     "StageManifest",
     "StageLossExpectedVersion",

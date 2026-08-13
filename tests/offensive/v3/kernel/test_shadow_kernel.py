@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import inspect
 import json
 
 import pytest
@@ -26,8 +27,10 @@ from src.screening.offensive.v3.contracts.authorization import (
     AuthorizationKind,
 )
 from src.screening.offensive.v3.contracts.capital import (
+    CapitalPositionRisk,
     CapitalRiskSnapshot,
     ExposureScope,
+    PositionState,
     RiskExposureBucket,
 )
 from src.screening.offensive.v3.contracts.governance import (
@@ -63,6 +66,7 @@ from src.screening.offensive.v3.kernel.models import (
     BlockReason,
     CandidateEvidenceBinding,
     DeadlineContract,
+    FrozenTradingSessionSchedule,
     NoTradeDecision,
     ShadowCapitalCheckpoint,
     ShadowKernelInput,
@@ -90,6 +94,18 @@ HASH = "a" * 64
 TARGET_HASH = "b" * 64
 ZERO64 = "0" * 64
 BEHAVIOR = "d" * 64
+TRADING_SESSIONS = (
+    date(2026, 8, 6),
+    date(2026, 8, 7),
+    date(2026, 8, 10),
+    date(2026, 8, 11),
+    date(2026, 8, 12),
+    date(2026, 8, 13),
+    date(2026, 8, 14),
+    date(2026, 8, 17),
+    date(2026, 8, 18),
+    date(2026, 8, 19),
+)
 
 # ---------------------------------------------------------------------------
 # builders (mirror the governance-trial test fixtures; self-contained)
@@ -371,12 +387,10 @@ def _shared(
     **overrides,
 ) -> ShadowSharedInput:
     values = {
-        "portfolio_id": PORTFOLIO,
         "signal_session": SIGNAL_DATE,
         "decision_cycle_id": "daily-action-2026-08-05",
         "trial_manifest_hash": trial.artifact_hash(),
         "sap_manifest_hash": sap.artifact_hash(),
-        "trial_arm": TrialArm.CHAMPION,
         "mode": ExecutionMode.DAILY_BAR_PROXY,
         "trusted_evidence_cutoff": cutoff,
         "evidence_set_merkle_root": HASH,
@@ -389,6 +403,14 @@ def _shared(
         "trust_bundle_hash": HASH,
         "registry_epoch": trial.registry_epoch,
         "trusted_at": NOW,
+        "trading_session_schedule": FrozenTradingSessionSchedule(
+            calendar_id="sse-szse",
+            calendar_version="sse-szse-official-sessions.v1",
+            calendar_artifact_hash="c" * 64,
+            signal_session=SIGNAL_DATE,
+            following_sessions=TRADING_SESSIONS,
+            available_at=cutoff,
+        ),
     }
     values.update(overrides)
     return ShadowSharedInput(**values)
@@ -447,20 +469,38 @@ def _shadow_input(
     binding: object,
     shared: ShadowSharedInput,
     capital: CapitalRiskSnapshot,
+    arm: TrialArm = TrialArm.CHAMPION,
+    portfolio_id: str = PORTFOLIO,
     candidates=(),
     prices=(),
     industries=(),
     **overrides,
 ) -> ShadowKernelInput:
     values = {
+        "portfolio_id": portfolio_id,
+        "arm": arm,
         "shared": shared,
         "policy_snapshot": policy,
         "shadow_policy_binding": binding,
         "capital_checkpoint": ShadowCapitalCheckpoint(
+            trial_id=shared.trial_id,
+            arm=arm,
+            portfolio_id=portfolio_id,
+            mode=shared.mode,
+            capital_store_id=(
+                f"{shared.trial_id}:{arm.value}:capital"
+            ),
+            trial_genesis_manifest_hash="1" * 64,
+            arm_capital_genesis_root=(
+                "2" * 64
+                if arm is TrialArm.CHAMPION
+                else "3" * 64
+            ),
             capital_snapshot_hash=capital.content_hash(),
             capital_snapshot=capital,
         ),
         "deadlines": _deadlines(),
+        "sizing_config": _config(),
         "candidate_evidence_bindings": tuple(
             _evidence_binding(c.candidate_id) for c in candidates
         ),
@@ -485,12 +525,7 @@ def _paired_world(
     trial = _trial_manifest(baseline, target)
     sap = _sap(trial)
     regime = _regime_observation(regime_state)
-    shared_champion = _shared(
-        trial=trial, sap=sap, regime=regime, trial_arm=TrialArm.CHAMPION
-    )
-    shared_challenger = _shared(
-        trial=trial, sap=sap, regime=regime, trial_arm=TrialArm.CHALLENGER
-    )
+    shared = _shared(trial=trial, sap=sap, regime=regime)
     capital = _capital_checkpoint()
     champion_binding = BaselineShadowPolicyBinding(
         source_kind=ShadowPolicySourceKind.BASELINE_POLICY_ACTIVATION,
@@ -510,8 +545,9 @@ def _paired_world(
     champion = _shadow_input(
         policy=baseline,
         binding=champion_binding,
-        shared=shared_champion,
+        shared=shared,
         capital=capital,
+        arm=TrialArm.CHAMPION,
         candidates=candidates,
         prices=prices,
         industries=industries,
@@ -519,13 +555,14 @@ def _paired_world(
     challenger = _shadow_input(
         policy=target,
         binding=target_binding,
-        shared=shared_challenger,
+        shared=shared,
         capital=capital,
+        arm=TrialArm.CHALLENGER,
         candidates=candidates,
         prices=prices,
         industries=industries,
     )
-    return champion, challenger, shared_champion, baseline, target, trial, sap
+    return champion, challenger, shared, baseline, target, trial, sap
 
 
 def _config(**overrides) -> SizingConfig:
@@ -672,8 +709,9 @@ def test_shadow_input_rejects_mismatched_policy_binding_hashes() -> None:
     with pytest.raises(ValidationError):
         ShadowKernelInput.model_validate_json(json.dumps(values), strict=True)
     values = json.loads(champion.model_dump_json())
-    values["shared"]["trial_arm"] = TrialArm.CHALLENGER.value
-    # a Champion arm cannot carry a target registration binding
+    values["arm"] = TrialArm.CHALLENGER.value
+    values["capital_checkpoint"]["arm"] = TrialArm.CHALLENGER.value
+    # a Challenger arm cannot carry a baseline activation binding
     with pytest.raises(ValidationError):
         ShadowKernelInput.model_validate_json(json.dumps(values), strict=True)
 
@@ -686,11 +724,329 @@ def test_shadow_input_rejects_capital_checkpoint_with_mismatched_hash() -> None:
         ShadowKernelInput.model_validate_json(json.dumps(values), strict=True)
 
 
+def test_shadow_capital_checkpoint_binds_arm_store_and_genesis_provenance() -> None:
+    capital = _capital_checkpoint()
+
+    checkpoint = ShadowCapitalCheckpoint(
+        trial_id="trial-regime-001",
+        arm=TrialArm.CHAMPION,
+        portfolio_id=PORTFOLIO,
+        mode=ExecutionMode.DAILY_BAR_PROXY,
+        capital_store_id="trial-regime-001:CHAMPION:capital",
+        trial_genesis_manifest_hash="1" * 64,
+        arm_capital_genesis_root="2" * 64,
+        capital_snapshot_hash=capital.content_hash(),
+        capital_snapshot=capital,
+    )
+
+    assert checkpoint.arm is TrialArm.CHAMPION
+    assert checkpoint.capital_store_id.endswith(":CHAMPION:capital")
+    assert checkpoint.arm_capital_genesis_root == "2" * 64
+
+
+def test_shadow_input_rejects_checkpoint_from_other_arm() -> None:
+    champion, *_ = _paired_world()
+    values = json.loads(champion.model_dump_json())
+    values["capital_checkpoint"]["arm"] = TrialArm.CHALLENGER.value
+
+    with pytest.raises(ValidationError, match="capital checkpoint arm"):
+        ShadowKernelInput.model_validate_json(json.dumps(values), strict=True)
+
+
+def test_paired_builder_has_no_single_capital_snapshot_shortcut() -> None:
+    from src.screening.offensive.v3.orchestration.paired_trial import (
+        build_arm_kernel_inputs,
+    )
+
+    parameters = inspect.signature(build_arm_kernel_inputs).parameters
+    assert "capital_snapshot" not in parameters
+    assert "champion_capital_checkpoint" in parameters
+    assert "challenger_capital_checkpoint" in parameters
+
+
+def test_shared_input_contains_only_arm_invariant_external_facts() -> None:
+    assert "portfolio_id" not in ShadowSharedInput.model_fields
+    assert "trial_arm" not in ShadowSharedInput.model_fields
+    assert {"portfolio_id", "arm"} <= set(ShadowKernelInput.model_fields)
+
+
+def test_shadow_decision_binds_exact_canonical_kernel_input_hash() -> None:
+    champion, *_ = _paired_world()
+
+    decision = _kernel().decide_shadow(champion)
+
+    assert decision.kernel_input_hash == champion.content_hash()
+
+
+def test_pair_builder_requires_exact_arm_kernel_inputs_not_naked_checkpoints() -> None:
+    from src.screening.offensive.v3.orchestration.paired_trial import (
+        build_pair_records,
+    )
+
+    parameters = inspect.signature(build_pair_records).parameters
+    assert "champion_input" in parameters
+    assert "challenger_input" in parameters
+    assert "champion_capital_checkpoint" not in parameters
+    assert "challenger_capital_checkpoint" not in parameters
+
+
+def test_paired_builder_preserves_two_independent_capital_checkpoints() -> None:
+    from src.screening.offensive.v3.governance.regime_trial import (
+        ValidatedRegimeTrialBundle,
+    )
+    from src.screening.offensive.v3.orchestration.paired_trial import (
+        build_arm_kernel_inputs,
+    )
+
+    champion, challenger, shared, baseline, target, trial, sap = _paired_world(
+        candidates=()
+    )
+    validated = ValidatedRegimeTrialBundle(
+        champion_policy=baseline,
+        challenger_policy=target,
+        baseline_policy=baseline,
+        target_policy=target,
+        trial_manifest=trial,
+        sap_manifest=sap,
+        admission_delta=("producers.btst_regime_admission_mode",),
+    )
+
+    rebuilt_champion, rebuilt_challenger = build_arm_kernel_inputs(
+        validated=validated,
+        shared_input=shared,
+        candidates=(),
+        champion_capital_checkpoint=champion.capital_checkpoint,
+        challenger_capital_checkpoint=challenger.capital_checkpoint,
+        deadlines=champion.deadlines,
+        sizing_config=champion.sizing_config,
+    )
+
+    assert rebuilt_champion.capital_checkpoint == champion.capital_checkpoint
+    assert rebuilt_challenger.capital_checkpoint == challenger.capital_checkpoint
+    assert (
+        rebuilt_champion.capital_checkpoint.content_hash()
+        != rebuilt_challenger.capital_checkpoint.content_hash()
+    )
+
+
+def test_pair_records_bind_each_arm_capital_checkpoint_hash() -> None:
+    from src.screening.offensive.v3.orchestration.paired_trial import (
+        build_pair_records,
+    )
+
+    champion_input, challenger_input, shared, *_ = _paired_world(candidates=())
+    champion_decision = _kernel().decide_shadow(champion_input)
+    challenger_decision = _kernel().decide_shadow(challenger_input)
+    champion_hash = champion_input.capital_checkpoint.content_hash()
+    challenger_hash = challenger_input.capital_checkpoint.content_hash()
+
+    champion_record, challenger_record = build_pair_records(
+        trial_id=shared.trial_id,
+        session=shared.signal_session,
+        cycle_id=shared.decision_cycle_id,
+        shared_input=shared,
+        regime_hash=HASH,
+        champion=champion_decision,
+        challenger=challenger_decision,
+        trusted_at=shared.trusted_at,
+        champion_input=champion_input,
+        challenger_input=challenger_input,
+    )
+
+    assert champion_record.arm_capital_checkpoint_hash == champion_hash
+    assert challenger_record.arm_capital_checkpoint_hash == challenger_hash
+
+
+def test_arm_decision_consumes_its_own_cash_gross_and_drawdown_truth() -> None:
+    champion, *_ = _paired_world()
+    position = CapitalPositionRisk(
+        portfolio_id=PORTFOLIO,
+        broker_account_id=None,
+        mode=ExecutionMode.DAILY_BAR_PROXY,
+        position_lineage_id="existing-position",
+        economic_lot_id="existing-lot",
+        security_id="600000.SH",
+        producer_namespace="btst",
+        research_program_id=PROGRAM,
+        economic_lineage_id=LINEAGE,
+        stage_id="stage-1",
+        state=PositionState.OPEN,
+        settled_quantity=100,
+        tradable_quantity=100,
+        share_receivable_quantity=0,
+        marked_gross_cents=200_000,
+    )
+    gross_buckets = tuple(
+        RiskExposureBucket(
+            scope=scope,
+            portfolio_id=(None if scope is ExposureScope.GLOBAL else PORTFOLIO),
+            research_program_id=(
+                PROGRAM
+                if scope in {
+                    ExposureScope.RESEARCH_PROGRAM,
+                    ExposureScope.ECONOMIC_LINEAGE,
+                    ExposureScope.STAGE,
+                }
+                else None
+            ),
+            economic_lineage_id=(
+                LINEAGE
+                if scope in {ExposureScope.ECONOMIC_LINEAGE, ExposureScope.STAGE}
+                else None
+            ),
+            stage_id=("stage-1" if scope is ExposureScope.STAGE else None),
+            position_marked_gross_cents=200_000,
+            live_order_leaves_gross_cents=0,
+            reserved_entry_gross_cents=0,
+            pending_stress_cents=0,
+            corporate_action_pending_risk_cents=0,
+            unattributed_risk_cents=0,
+            total_gross_cents=200_000,
+        )
+        for scope in ExposureScope
+    )
+    stressed = _capital_checkpoint(
+        available_cash_cents=500_000,
+        positions=(position,),
+        exposures=gross_buckets,
+        total_gross_exposure_cents=200_000,
+        as_observed_nav_cents=9_000_000,
+        lifetime_high_water_mark_cents=10_000_000,
+        active_epoch_high_water_mark_cents=10_000_000,
+        lifetime_drawdown_ppm=100_000,
+        active_epoch_drawdown_ppm=100_000,
+    )
+    stressed_checkpoint = ShadowCapitalCheckpoint(
+        trial_id=champion.shared.trial_id,
+        arm=champion.arm,
+        portfolio_id=champion.portfolio_id,
+        mode=champion.shared.mode,
+        capital_store_id="trial-regime-001:CHAMPION:stressed-capital",
+        trial_genesis_manifest_hash="1" * 64,
+        arm_capital_genesis_root="4" * 64,
+        capital_snapshot_hash=stressed.content_hash(),
+        capital_snapshot=stressed,
+    )
+    stressed_input = ShadowKernelInput.model_validate(
+        champion.model_copy(
+            update={"capital_checkpoint": stressed_checkpoint}
+        ).model_dump(mode="python"),
+        strict=True,
+    )
+
+    clear_decision = _kernel().decide_shadow(champion)
+    stressed_decision = _kernel().decide_shadow(stressed_input)
+
+    assert stressed.total_gross_exposure_cents == 200_000
+    assert stressed.available_cash_cents != champion.capital_checkpoint.capital_snapshot.available_cash_cents
+    assert stressed.active_epoch_drawdown_ppm != champion.capital_checkpoint.capital_snapshot.active_epoch_drawdown_ppm
+    assert stressed_decision != clear_decision
+
+
+def test_distinct_checkpoint_provenance_with_same_economics_has_same_result() -> None:
+    champion, *_ = _paired_world()
+    original = champion.capital_checkpoint
+    independently_bound = ShadowCapitalCheckpoint(
+        trial_id=original.trial_id,
+        arm=original.arm,
+        portfolio_id=original.portfolio_id,
+        mode=original.mode,
+        capital_store_id="independent-capital-store",
+        trial_genesis_manifest_hash=original.trial_genesis_manifest_hash,
+        arm_capital_genesis_root="5" * 64,
+        capital_snapshot_hash=original.capital_snapshot_hash,
+        capital_snapshot=original.capital_snapshot,
+    )
+    independent_input = ShadowKernelInput.model_validate(
+        champion.model_copy(
+            update={"capital_checkpoint": independently_bound}
+        ).model_dump(mode="python"),
+        strict=True,
+    )
+
+    assert independently_bound.content_hash() != original.content_hash()
+    # The decision embeds the exact kernel_input_hash (input provenance), so
+    # full decision bytes legitimately differ for a distinct checkpoint; the
+    # authority-free economics must be identical.
+    assert economic_shadow_projection(
+        _kernel().decide_shadow(independent_input)
+    ) == economic_shadow_projection(_kernel().decide_shadow(champion))
+
+
 def test_shadow_input_round_trips_strict() -> None:
     champion, challenger, *_ = _paired_world()
     rebuilt = ShadowKernelInput.model_validate_json(champion.model_dump_json(), strict=True)
     assert rebuilt == champion
     assert rebuilt.content_hash() == champion.content_hash()
+
+
+def test_shadow_input_requires_frozen_sizing_config() -> None:
+    champion, *_ = _paired_world()
+    values = json.loads(champion.model_dump_json())
+    values.pop("sizing_config")
+    with pytest.raises(ValidationError, match="sizing_config"):
+        ShadowKernelInput.model_validate_json(json.dumps(values), strict=True)
+
+
+def test_shadow_schedule_is_exact_t_plus_one_and_t_plus_ten_sessions() -> None:
+    champion, *_ = _paired_world()
+    decision = _kernel().decide_shadow(champion)
+    assert decision.target_entry_session == TRADING_SESSIONS[0]
+    assert decision.counterfactual_lines[0].target_exit_session == TRADING_SESSIONS[9]
+    assert decision.counterfactual_lines[0].target_exit_session != (
+        SIGNAL_DATE + timedelta(days=10)
+    )
+    binding = decision.trading_session_schedule_binding
+    assert binding.calendar_artifact_hash == "c" * 64
+    assert binding.following_sessions == TRADING_SESSIONS
+    assert binding.schedule_hash == champion.shared.trading_session_schedule.content_hash()
+
+
+def test_shadow_projection_copies_kernel_fee_inclusive_reserve_exactly() -> None:
+    champion, *_ = _paired_world()
+    decision = GrowthKernel(_config(worst_case_fee_ppm=0)).decide_shadow(champion)
+    line = decision.counterfactual_lines[0]
+    gross = line.worst_case_price_cents * line.target_quantity_units
+    expected_fee = -(
+        -(gross * champion.sizing_config.worst_case_fee_ppm) // 1_000_000
+    )
+    assert expected_fee > 0
+    assert line.estimated_fee_cents == expected_fee
+    assert line.estimated_cash_reserve_cents == gross + expected_fee
+
+
+def test_shadow_output_depends_on_embedded_config_not_kernel_constructor_state() -> None:
+    champion, *_ = _paired_world()
+    first = GrowthKernel(_config(worst_case_fee_ppm=0)).decide_shadow(champion)
+    second = GrowthKernel(_config(worst_case_fee_ppm=999_999)).decide_shadow(champion)
+    assert first.canonical_bytes() == second.canonical_bytes()
+
+
+def test_shadow_schedule_rejects_wrong_length_order_cutoff_and_policy_version() -> None:
+    champion, *_ = _paired_world()
+    baseline = json.loads(champion.model_dump_json())
+    mutations = []
+    too_short = json.loads(json.dumps(baseline))
+    too_short["shared"]["trading_session_schedule"]["following_sessions"] = [
+        value.isoformat() for value in TRADING_SESSIONS[:-1]
+    ]
+    mutations.append(too_short)
+    unordered = json.loads(json.dumps(baseline))
+    unordered["shared"]["trading_session_schedule"]["following_sessions"][1] = (
+        TRADING_SESSIONS[0].isoformat()
+    )
+    mutations.append(unordered)
+    late = json.loads(json.dumps(baseline))
+    late["shared"]["trading_session_schedule"]["available_at"] = NOW.isoformat()
+    mutations.append(late)
+    wrong_version = json.loads(json.dumps(baseline))
+    wrong_version["shared"]["trading_session_schedule"]["calendar_version"] = (
+        "unbound-calendar.v9"
+    )
+    mutations.append(wrong_version)
+    for values in mutations:
+        with pytest.raises(ValidationError):
+            ShadowKernelInput.model_validate_json(json.dumps(values), strict=True)
 
 
 def test_decide_shadow_has_no_external_clock_argument() -> None:
@@ -750,12 +1106,17 @@ def test_regime_change_does_not_alter_champion_economics() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_candidate_permutation_does_not_change_decision_bytes() -> None:
+def test_candidate_permutation_does_not_change_economic_projection() -> None:
     champion_a, *_ = _paired_world(candidates=("cand-a", "cand-b"))
     champion_b, *_ = _paired_world(candidates=("cand-b", "cand-a"))
     a_decision = _kernel().decide_shadow(champion_a)
     b_decision = _kernel().decide_shadow(champion_b)
-    assert a_decision.canonical_bytes() == b_decision.canonical_bytes()
+    # Lines are canonically ordered, so the authority-free economics are
+    # permutation invariant; only the embedded kernel_input_hash (the exact
+    # input provenance) differs between the two orderings.
+    assert economic_shadow_projection(a_decision) == economic_shadow_projection(
+        b_decision
+    )
 
 
 def test_repeated_process_serialization_reproduces_exact_bytes() -> None:

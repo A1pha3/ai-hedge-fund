@@ -75,13 +75,13 @@ def _make_rec(
 # ===========================================================================
 
 
-def test_default_weights_sum_to_one() -> None:
-    """默认权重 sum=1.0, 全部 0.25。"""
+def test_default_weights_follow_production_authority() -> None:
+    """默认重算权重与生产唯一权重源一致。"""
     w = StrategyWeights()
-    assert w.trend == 0.25
-    assert w.mean_reversion == 0.25
-    assert w.fundamental == 0.25
-    assert w.event_sentiment == 0.25
+    assert w.trend == 0.40
+    assert w.mean_reversion == 0.20
+    assert w.fundamental == 0.15
+    assert w.event_sentiment == 0.05
     assert w.to_dict() == DEFAULT_WEIGHTS
 
 
@@ -103,12 +103,21 @@ def test_custom_weights_sum_to_one() -> None:
 # ===========================================================================
 
 
-def test_weights_not_summing_to_one_raises() -> None:
-    """sum=0.9 或 1.1 都被拒绝。"""
-    with pytest.raises(ValueError, match="权重之和必须为 1.0"):
-        StrategyWeights(trend=0.3, mean_reversion=0.3, fundamental=0.2, event_sentiment=0.1)  # sum=0.9
-    with pytest.raises(ValueError, match="权重之和必须为 1.0"):
-        StrategyWeights(trend=0.4, mean_reversion=0.3, fundamental=0.3, event_sentiment=0.1)  # sum=1.1
+def test_positive_relative_weights_do_not_need_to_sum_to_one() -> None:
+    """消费时统一归一化，因此任意正的有限相对权重和都合法。"""
+    assert StrategyWeights(
+        trend=0.3,
+        mean_reversion=0.3,
+        fundamental=0.2,
+        event_sentiment=0.1,
+    ).normalize().to_dict() == pytest.approx(
+        {
+            "trend": 1 / 3,
+            "mean_reversion": 1 / 3,
+            "fundamental": 2 / 9,
+            "event_sentiment": 1 / 9,
+        }
+    )
 
 
 # ===========================================================================
@@ -171,8 +180,158 @@ def test_reweight_recommendations_recomputes() -> None:
     assert a["custom_weights"] == w.to_dict()
 
 
-def test_reweight_with_balanced_weights_matches_average() -> None:
-    """等权 0.25/0.25/0.25/0.25 → score_b = 四策略分数均值。"""
+def test_reweight_recommendations_projects_unavailable_selected_policy_atomically() -> None:
+    """A missing selected signal cannot retain an old bullish decision/provenance."""
+    rec = _make_rec("A", trend=1, trend_conf=100.0, score_b=0.9)
+    rec.update(
+        {
+            "decision": "strong_buy",
+            "metrics": {"attention_composite": 0.8},
+            "stability_bonus": 10.0,
+            "weights_used": {
+                "trend": 1.0,
+                "mean_reversion": 0.0,
+                "fundamental": 0.0,
+                "event_sentiment": 0.0,
+            },
+            "arbitration_applied": ["consensus_bonus"],
+        }
+    )
+    rec["strategy_signals"]["event_sentiment"] = {
+        "direction": 0,
+        "confidence": 0.0,
+        "completeness": 0.0,
+    }
+
+    result = reweight_recommendations(
+        [rec],
+        StrategyWeights(
+            trend=0.0,
+            mean_reversion=0.0,
+            fundamental=0.0,
+            event_sentiment=1.0,
+        ),
+    )[0]
+
+    assert result["score_b"] == 0.0
+    assert result["decision"] == "neutral"
+    assert result["weights_used"] == {}
+    assert result["arbitration_applied"] == []
+    assert result["original_decision"] == "strong_buy"
+    assert result["original_arbitration_applied"] == ["consensus_bonus"]
+    assert result["selected_policy_eligible"] is False
+    assert result["selected_policy_unavailable"] is True
+    assert result["score_decomposition"]["total"] == 0.0
+    assert result["score_decomposition"]["weights_used"] == {}
+    assert result["score_decomposition"]["projection_version"] == "selected-policy.v1"
+    assert result["score_decomposition"]["attention_contribution"] == 0.0
+    assert result["score_decomposition"]["stability_bonus"] == 0.0
+    assert result["score_decomposition"]["diagnostics"] == {
+        "attention_composite": 0.8,
+        "stability_bonus": 10.0,
+    }
+
+
+def test_reweight_recommendations_preserves_forced_avoid_veto() -> None:
+    """The explicit production hard veto dominates a bullish selected signal."""
+    rec = _make_rec("VETO", trend=1, trend_conf=100.0, score_b=-1.0)
+    rec.update(
+        {
+            "decision": "strong_sell",
+            "weights_used": {
+                "trend": 0.5,
+                "mean_reversion": 0.25,
+                "fundamental": 0.1875,
+                "event_sentiment": 0.0625,
+            },
+            "arbitration_applied": ["avoid"],
+        }
+    )
+
+    result = reweight_recommendations(
+        [rec],
+        StrategyWeights(
+            trend=1.0,
+            mean_reversion=0.0,
+            fundamental=0.0,
+            event_sentiment=0.0,
+        ),
+    )[0]
+
+    assert result["score_b"] == -1.0
+    assert result["decision"] == "strong_sell"
+    assert result["arbitration_applied"] == ["avoid"]
+    assert result["selected_policy_hard_veto"] is True
+    assert result["selected_policy_eligible"] is False
+    assert result["score_decomposition"]["base_contributions"]["trend"] == 1.0
+    assert result["score_decomposition"]["other_adjustments"] == -2.0
+    assert result["score_decomposition"]["total"] == -1.0
+
+
+def test_reweight_recommendations_distinguishes_available_neutral_from_unavailable() -> None:
+    """A complete neutral signal is admissible; missing evidence is not."""
+    rec = _make_rec("NEUTRAL")
+    rec["strategy_signals"]["event_sentiment"] = {
+        "direction": 0,
+        "confidence": 0.0,
+        "completeness": 1.0,
+    }
+
+    result = reweight_recommendations(
+        [rec],
+        StrategyWeights(
+            trend=0.0,
+            mean_reversion=0.0,
+            fundamental=0.0,
+            event_sentiment=1.0,
+        ),
+    )[0]
+
+    assert result["score_b"] == 0.0
+    assert result["weights_used"] == {
+        "trend": 0.0,
+        "mean_reversion": 0.0,
+        "fundamental": 0.0,
+        "event_sentiment": 1.0,
+    }
+    assert result["selected_policy_eligible"] is True
+    assert result["selected_policy_unavailable"] is False
+
+
+def test_reweight_recommendations_preserves_complete_source_provenance() -> None:
+    """The selected projection must not erase the explanation of its source score."""
+    source_decomposition = {
+        "weights_used": {"trend": 1.0},
+        "base_contributions": {"trend": 0.8},
+        "total": 0.8,
+    }
+    rec = _make_rec("SOURCE", trend=1, trend_conf=80.0, score_b=0.8)
+    rec.update(
+        {
+            "score_policy": "production-layer-b.v1",
+            "decision": "strong_buy",
+            "score_decomposition": source_decomposition,
+        }
+    )
+
+    result = reweight_recommendations(
+        [rec],
+        StrategyWeights(
+            trend=0.0,
+            mean_reversion=1.0,
+            fundamental=0.0,
+            event_sentiment=0.0,
+        ),
+    )[0]
+
+    assert result["score_policy"] == "selected-policy.v1"
+    assert result["original_score_policy"] == "production-layer-b.v1"
+    assert result["original_score_decomposition"] == source_decomposition
+    assert result["original_score_decomposition"] is not source_decomposition
+
+
+def test_reweight_with_default_weights_matches_production_weighting() -> None:
+    """默认重算使用生产 0.40/0.20/0.15/0.05 相对权重。"""
     recs = [
         _make_rec(
             "X",
@@ -188,8 +347,8 @@ def test_reweight_with_balanced_weights_matches_average() -> None:
     ]
     w = StrategyWeights()
     out = reweight_recommendations(recs, w)
-    # weighted = 0.25*100 + 0.25*80 + 0.25*60 + 0.25*40 = 70 → /100 = 0.70
-    assert abs(out[0]["score_b"] - 0.70) < 1e-9
+    # 默认权重和 0.80，归一后为 0.50/0.25/0.1875/0.0625。
+    assert abs(out[0]["score_b"] - 0.8375) < 1e-9
 
 
 # ===========================================================================
@@ -560,7 +719,7 @@ def test_cli_custom_weights_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
 
 def test_cli_custom_weights_invalid_weights_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """--custom-weights 权重和 != 1.0 时应返回 1 (校验失败)。"""
+    """--custom-weights 全零相对权重应在读报告前返回校验错误。"""
     monkeypatch.chdir(tmp_path)
     repo_root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
@@ -569,10 +728,10 @@ def test_cli_custom_weights_invalid_weights_returns_error(tmp_path: Path, monkey
             "-m",
             "src.main",
             "--custom-weights",
-            "--trend=0.5",
-            "--mean-reversion=0.5",
-            "--fundamental=0.5",
-            "--event-sentiment=0.5",  # sum=2.0
+            "--trend=0",
+            "--mean-reversion=0",
+            "--fundamental=0",
+            "--event-sentiment=0",
         ],
         cwd=str(repo_root),
         env={**os.environ, "PYTHONPATH": str(repo_root)},
@@ -641,6 +800,51 @@ def test_web_custom_weights_endpoint_smoke(tmp_path: Path, monkeypatch: pytest.M
     assert "A" in tickers
 
 
+def test_web_custom_weights_excludes_unavailable_and_hard_veto_before_top_n(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The web recommendation set obeys the selected-policy admission bit."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.backend.routes import screening as screening_mod
+
+    eligible = _make_rec("ELIGIBLE", trend=1, trend_conf=50.0, score_b=0.5)
+    unavailable = _make_rec("UNAVAILABLE", trend=1, trend_conf=100.0, score_b=0.9)
+    unavailable["strategy_signals"]["trend"]["completeness"] = 0.0
+    hard_veto = _make_rec("VETO", trend=1, trend_conf=100.0, score_b=-1.0)
+    hard_veto["arbitration_applied"] = ["avoid"]
+    payload = {
+        "recommendations": [unavailable, hard_veto, eligible],
+        "market_state": {"regime_gate_level": "normal"},
+    }
+    monkeypatch.setattr(
+        screening_mod,
+        "_load_latest_auto_screening_payload",
+        lambda trade_date=None: payload,
+    )
+
+    app = FastAPI()
+    app.include_router(screening_mod.router)
+    response = TestClient(app).post(
+        "/api/screening/custom-weights",
+        json={
+            "trend": 1.0,
+            "mean_reversion": 0.0,
+            "fundamental": 0.0,
+            "event_sentiment": 0.0,
+            "top_n": 3,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [rec["ticker"] for rec in body["recommendations"]] == ["ELIGIBLE"]
+    assert body["top_n"] == 1
+    assert body["meta"]["policy_eligible_count"] == 1
+    assert body["meta"]["policy_excluded_count"] == 2
+
+
 def test_web_custom_weights_invalid_sum_returns_422() -> None:
     """权重和 != 1.0 → 422。"""
     from fastapi import FastAPI
@@ -689,21 +893,21 @@ def test_web_custom_weights_negative_weight_returns_422() -> None:
 # ===========================================================================
 
 
-def test_reweight_missing_signals_falls_back_to_original_score() -> None:
-    """rec 完全缺失 strategy_signals → 保留原 score_b。"""
+def test_reweight_missing_signals_fails_closed_to_zero() -> None:
+    """rec 缺失信号时不复用旧权重产生的 score_b。"""
     recs = [{"ticker": "X", "name": "x", "score_b": 0.42}]
     w = StrategyWeights()
     out = reweight_recommendations(recs, w)
-    assert out[0]["score_b"] == 0.42
+    assert out[0]["score_b"] == 0.0
     assert out[0]["original_score_b"] == 0.42
 
 
-def test_reweight_empty_signals_falls_back() -> None:
-    """strategy_signals 为空 dict → 保留原 score_b。"""
+def test_reweight_empty_signals_fails_closed_to_zero() -> None:
+    """空信号集与生产 compute_score_b 一样返回 0。"""
     recs = [{"ticker": "Y", "score_b": 0.1, "strategy_signals": {}}]
     w = StrategyWeights()
     out = reweight_recommendations(recs, w)
-    assert out[0]["score_b"] == 0.1
+    assert out[0]["score_b"] == 0.0
 
 
 # ===========================================================================

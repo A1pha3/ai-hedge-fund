@@ -1,12 +1,4 @@
-"""Plan 05 Task 2 (RED): OutcomeFinalizerService 能力矩阵 + 透传行为。
-
-覆盖 Step 1 能力矩阵(import 边界、无 gateway/capital 方法、kind 隔离、
-signer 私有)与最终化透传(register_plan_line / finalize_due / outcome_fact
-直通底层 OutcomeFinalizer)。
-
-本文件引用尚未实现的服务骨架(方法体一律 raise NotImplementedError);
-当前应整体 RED, 由主代理随后实现 GREEN。
-"""
+"""Plan 05 Task 2: disabled OutcomeFinalizerService capability boundary."""
 
 from __future__ import annotations
 
@@ -46,8 +38,8 @@ from src.screening.offensive.v3.contracts import (
 )
 from src.screening.offensive.v3.contracts.governance import TrustBundle
 from src.screening.offensive.v3.evidence.blob_store import BlobStore
+from src.screening.offensive.v3.contracts.evidence import OutcomeEvidence
 from src.screening.offensive.v3.evidence.outcomes import (
-    OutcomeEvidence,
     OutcomeFinalizerError,
     PlanLineDefinition,
 )
@@ -250,9 +242,11 @@ class _World:
             evidence_repository=self.evidence,
             session_spine=self.spine,
             signer=self._sign,
+            signer_capability=self._capability,
             clock=self.clock,
             issuer_namespace="outcome.finalizer",
             behavior_fingerprint=HASH,
+            execution_mode=ExecutionMode.DAILY_BAR_PROXY,
         )
 
     def _sign(self, payload: bytes):
@@ -418,6 +412,14 @@ def world(tmp_path: Path) -> _World:
     return _World(tmp_path)
 
 
+requires_future_outcome_authority = pytest.mark.skip(
+    reason=(
+        "future authority: outcome publication requires exact plan-line,"
+        " calendar, reducer, and single-writer bindings"
+    )
+)
+
+
 def _forbidden_import_segments(source: str) -> list[str]:
     violations: list[str] = []
     for line in source.splitlines():
@@ -499,6 +501,7 @@ def test_api_surface_excludes_gateway_capital_and_other_lanes(
         assert not hasattr(service, name), name
 
 
+@requires_future_outcome_authority
 def test_kind_isolation_only_outcome_evidence_is_written(
     world: _World,
 ) -> None:
@@ -534,11 +537,24 @@ def test_signer_is_private_no_public_accessor(world: _World) -> None:
         assert not hasattr(service, name), name
 
 
+def test_service_rejects_plan_line_from_another_mode(world: _World) -> None:
+    with pytest.raises(OutcomeFinalizerError) as excinfo:
+        world.service.register_plan_line(
+            world.plan_line(
+                "pl-service-broker",
+                mode=ExecutionMode.BROKER_CONFIRMED,
+            )
+        )
+
+    assert excinfo.value.code == "execution_mode_mismatch"
+
+
 # --------------------------------------------------------------------------
 # Step 3: 最终化透传
 # --------------------------------------------------------------------------
 
 
+@requires_future_outcome_authority
 def test_filled_plan_line_finalizes_exactly_one_outcome(world: _World) -> None:
     world.fill(
         "exec-e",
@@ -574,17 +590,18 @@ def test_filled_plan_line_finalizes_exactly_one_outcome(world: _World) -> None:
     assert world.service.finalize_due(DUE, program=PROGRAM) == ()
 
 
-def test_no_fill_line_finalizes_as_no_fill(world: _World) -> None:
+@requires_future_outcome_authority
+def test_absent_execution_fact_finalizes_as_unavailable(world: _World) -> None:
     definition = world.plan_line("pl-empty")
     world.service.register_plan_line(definition)
     finalized = world.service.finalize_due(DUE, program=PROGRAM)
     assert finalized == ("pl-empty",)
     fact = world.service.outcome_fact("pl-empty")
-    assert fact.classification == "NO_FILL"
+    assert fact.classification == "UNAVAILABLE"
     assert fact.realized_pnl_cents is None
 
 
-def test_unknown_plan_line_outcome_fails_closed(world: _World) -> None:
+def test_historical_outcome_reads_are_unavailable(world: _World) -> None:
     with pytest.raises(OutcomeFinalizerError) as excinfo:
         world.service.outcome_fact("pl-never-registered")
-    assert excinfo.value.code == "outcome_unknown"
+    assert excinfo.value.code == "outcome_input_authority_unavailable"

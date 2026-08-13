@@ -4,18 +4,24 @@
 Web 端通过滑块调整, 实时看到推荐变化。本模块是纯函数实现, 便于单测。
 
 主入口:
-  - :class:`StrategyWeights` — 四策略权重 dataclass (sum-to-1 校验)
+  - :class:`StrategyWeights` — 四策略非负相对权重 dataclass
   - :func:`reweight_recommendations` — 输入 rec 列表 + 权重, 返回按新 score_b 排序
   - :func:`load_latest_recommendations` (re-export) — 从最新 auto_screening 报告加载
 """
 
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
-from src.screening.models import DEFAULT_STRATEGY_WEIGHTS
+from src.screening.models import ArbitrationAction, DEFAULT_STRATEGY_WEIGHTS, FusedScore
+from src.screening.weighted_signal_math import (
+    compute_weighted_signal_score,
+    normalize_active_weights,
+    SignalScoreInput,
+)
 from src.utils.numeric import safe_float as _safe_float
 
 # ---------------------------------------------------------------------------
@@ -37,7 +43,7 @@ MAX_STRATEGY_SCORE: float = 100.0
 WEIGHT_SUM_TOLERANCE: float = 1e-6
 
 #: 默认权重 — 从权威源 :data:`src.screening.models.DEFAULT_STRATEGY_WEIGHTS` 派生 (2026-08-12).
-#: 此前是独立的 0.25 等分硬编码, 与权威源 (trend/MR 降权后 sum=0.20) 不一致,
+#: 此前是独立的 0.25 等分硬编码, 与权威源不一致,
 #: 导致 --auto 生产路径与 web slider 重算用两套互相冲突的"默认"权重. 派生后
 #: 权威源改一处, 此处自动同步. sum 可以 < 1.0 (disabled 策略 weight=0 是合法的);
 #: StrategyWeights.__post_init__ 已放宽 sum 校验到 sum>0, 归一化在消费时进行.
@@ -56,7 +62,7 @@ DEFAULT_WEIGHTS: dict[str, float] = dict(DEFAULT_STRATEGY_WEIGHTS)
 
 @dataclass
 class StrategyWeights:
-    """四策略权重 — sum-to-1 校验。
+    """四策略非负相对权重；至少一个权重必须大于零。
 
     Fields:
         trend: 趋势策略权重
@@ -66,8 +72,8 @@ class StrategyWeights:
 
     Examples:
         >>> w = StrategyWeights()  # 默认从 DEFAULT_STRATEGY_WEIGHTS 派生
-        >>> w.to_dict()  # 当前权威源: trend=0, MR=0, f=0.15, e=0.05
-        {'trend': 0.0, 'mean_reversion': 0.0, 'fundamental': 0.15, 'event_sentiment': 0.05}
+        >>> w.to_dict()  # 当前权威源: trend=.40, MR=.20, f=.15, e=.05
+        {'trend': 0.4, 'mean_reversion': 0.2, 'fundamental': 0.15, 'event_sentiment': 0.05}
     """
 
     # 默认值从 DEFAULT_WEIGHTS (= DEFAULT_STRATEGY_WEIGHTS) 派生 (2026-08-12).
@@ -89,8 +95,8 @@ class StrategyWeights:
                 raise ValueError(f"权重 {key} 不能为负数, 当前: {val}")
             if val > 1.0:
                 raise ValueError(f"权重 {key} 不能超过 1.0, 当前: {val}")
-        # 求和校验: 放宽为 sum>0 (2026-08-12). 权威源 DEFAULT_STRATEGY_WEIGHTS
-        # 在策略被降权到 0 时 sum 可以 < 1.0 (当前 sum=0.20: trend/MR disabled).
+        # 求和校验允许任意正的相对权重和；DEFAULT_STRATEGY_WEIGHTS 未来即使
+        # 禁用某个策略也无需凑成 1.0。
         # slider 语义是"指定相对权重", 接受任意正权和, 归一化在消费时 (_normalize_active_weights) 进行.
         # 全 0 仍然非法 (无法归一化, 会污染排序).
         total = self.trend + self.mean_reversion + self.fundamental + self.event_sentiment
@@ -159,24 +165,22 @@ def _extract_strategy_score(rec: Mapping[str, Any], strategy: str) -> float:
     sig = signals.get(strategy)
     if not isinstance(sig, Mapping):
         return 0.0
-    direction_raw = sig.get("direction", 0)
-    try:
-        direction_int = int(direction_raw)
-    except (TypeError, ValueError):
-        return 0.0
-    # direction ∈ {-1, 0, +1}; 容忍 0 以外的小数退化
-    if direction_int > 0:
-        sign = 1.0
-    elif direction_int < 0:
-        sign = -1.0
-    else:
+    direction = _coerce_raw_direction(sig.get("direction", 0))
+    if direction == 0.0:
         return 0.0
     confidence = _safe_float(sig.get("confidence"), 0.0)
     completeness = _safe_float(sig.get("completeness"), 0.0)
     # completeness=0 → 数据不可用, 视为 0 避免污染
     if completeness <= 0.0:
         return 0.0
-    return sign * confidence
+    return direction * confidence
+
+
+def _coerce_raw_direction(value: Any) -> float:
+    """Accept only the exact JSON integer domain used by ``StrategySignal``."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0.0
+    return float(value) if value in (-1, 0, 1) else 0.0
 
 
 def _compute_weighted_score_b(
@@ -187,33 +191,148 @@ def _compute_weighted_score_b(
 
     公式::
 
-        per_strategy_score[s] = sign(direction_s) * confidence_s        # 范围 [-100, +100]
-        new_score_b = sum_s( weight_s * per_strategy_score[s] ) / (100 * sum_s(weight_s))
+        active = {s | completeness_s > 0}
+        normalized_weight[s] = weight[s] / sum_active(weight)
+        new_score_b = sum_active(
+            normalized_weight[s] * sign(direction_s)
+            * confidence_s / 100 * completeness_s
+        )
 
     权重归一化后计算 (2026-08-12): 此前要求 sum(weight)==1 才能保证输出范围正确,
-    但权威源 DEFAULT_STRATEGY_WEIGHTS 在策略降权时 sum<1 (当前 0.20). 现在显式
+    但权威源 DEFAULT_STRATEGY_WEIGHTS 是相对权重，sum 可能小于 1（当前 0.80）。现在显式
     归一化, 无论权重 sum 是多少, 输出范围都是 [-1, +1], 与生产路径 compute_score_b
     的 _normalize_active_weights 语义一致. 全 0 权重由 __post_init__ 拒绝.
 
-    当 rec 缺失 ``strategy_signals`` 或四策略分数全为 0 时, 返回原 ``score_b`` (容错)。
+    缺失或不可用的信号与生产融合路径相同，贡献为 0，不复用旧 ``score_b``。
     """
+    _, _, score = _compute_selected_policy_math(rec, weights)
+    return score
+
+
+def _compute_selected_policy_math(
+    rec: Mapping[str, Any],
+    weights: StrategyWeights,
+) -> tuple[dict[str, SignalScoreInput], dict[str, float], float]:
+    """Return the sanitized inputs, effective weights and selected-only score."""
     if not isinstance(rec, Mapping):
-        return 0.0
-    weights_dict = weights.to_dict()
-    total_weight = sum(weights_dict[strategy] for strategy in STRATEGY_KEYS)
-    if total_weight <= 0.0:
-        return _safe_float(rec.get("score_b"), 0.0)
-    has_any_signal = False
-    weighted_sum = 0.0
+        return {}, {}, 0.0
+    raw_signals = rec.get("strategy_signals")
+    if not isinstance(raw_signals, Mapping):
+        return {}, {}, 0.0
+    signal_inputs: dict[str, SignalScoreInput] = {}
     for strategy in STRATEGY_KEYS:
-        score = _extract_strategy_score(rec, strategy)
-        if score != 0.0:
-            has_any_signal = True
-        weighted_sum += weights_dict[strategy] * score
-    if not has_any_signal:
-        # 无任何信号 — 回退到原 score_b
-        return _safe_float(rec.get("score_b"), 0.0)
-    return max(-1.0, min(1.0, weighted_sum / (MAX_STRATEGY_SCORE * total_weight)))
+        raw_signal = raw_signals.get(strategy)
+        if not isinstance(raw_signal, Mapping):
+            continue
+        direction = _coerce_raw_direction(raw_signal.get("direction", 0))
+        signal_inputs[strategy] = SignalScoreInput(
+            direction=direction,
+            confidence=min(
+                100.0,
+                max(0.0, _safe_float(raw_signal.get("confidence"), 0.0)),
+            ),
+            completeness=min(
+                1.0,
+                max(0.0, _safe_float(raw_signal.get("completeness"), 0.0)),
+            ),
+        )
+    normalized_weights = normalize_active_weights(
+        weights.to_dict(),
+        signal_inputs,
+    )
+    score = compute_weighted_signal_score(signal_inputs, normalized_weights)
+    return signal_inputs, normalized_weights, max(-1.0, min(1.0, score))
+
+
+def _selected_policy_contributions(
+    signal_inputs: Mapping[str, SignalScoreInput],
+    effective_weights: Mapping[str, float],
+) -> dict[str, float]:
+    """Decompose the exact sanitized math used by the selected projection."""
+    contributions: dict[str, float] = {}
+    for strategy in STRATEGY_KEYS:
+        signal = signal_inputs.get(strategy)
+        contributions[strategy] = (
+            float(effective_weights.get(strategy, 0.0))
+            * float(signal.direction)
+            * (float(signal.confidence) / 100.0)
+            * float(signal.completeness)
+            if signal is not None
+            else 0.0
+        )
+    return contributions
+
+
+def _selected_policy_projection(
+    rec: Mapping[str, Any],
+    weights: StrategyWeights,
+) -> dict[str, Any]:
+    """Build one internally consistent selected-strategy policy projection.
+
+    Custom weighting is a policy boundary, not a scalar patch.  Every field
+    which describes the projected score is therefore derived together here.
+    The sole inherited admission fact is the production ``avoid`` arbitration:
+    it is a hard veto and can never be neutralized by choosing another factor.
+    """
+    signal_inputs, effective_weights, selected_score = _compute_selected_policy_math(
+        rec,
+        weights,
+    )
+    source_arbitration_raw = rec.get("arbitration_applied")
+    source_arbitration = (
+        [str(item) for item in source_arbitration_raw]
+        if isinstance(source_arbitration_raw, (list, tuple))
+        else []
+    )
+    hard_veto = ArbitrationAction.AVOID.value in source_arbitration
+    selected_evidence_available = any(
+        float(weight) > 0.0 for weight in effective_weights.values()
+    )
+    projected_score = -1.0 if hard_veto else selected_score
+    projected_arbitration = [ArbitrationAction.AVOID.value] if hard_veto else []
+
+    base_contributions = _selected_policy_contributions(
+        signal_inputs,
+        effective_weights,
+    )
+    base_sum = sum(base_contributions.values())
+    metrics = rec.get("metrics")
+    attention = (
+        _safe_float(metrics.get("attention_composite"), 0.0)
+        if isinstance(metrics, Mapping)
+        else 0.0
+    )
+    stability_bonus = _safe_float(rec.get("stability_bonus"), 0.0)
+
+    return {
+        "score_b": projected_score,
+        "decision": FusedScore.classify_decision(projected_score),
+        "weights_used": dict(effective_weights),
+        "arbitration_applied": projected_arbitration,
+        "score_policy": "selected-policy.v1",
+        "selected_policy_hard_veto": hard_veto,
+        "selected_policy_unavailable": not selected_evidence_available,
+        "selected_policy_eligible": selected_evidence_available and not hard_veto,
+        "score_decomposition": {
+            "projection_version": "selected-policy.v1",
+            "weights_used": dict(effective_weights),
+            "base_contributions": base_contributions,
+            # These fields are additive in name only in the legacy public
+            # schema.  A selected-policy score does not consume them, so keep
+            # its economic decomposition at zero and expose the observations
+            # explicitly as non-additive diagnostics below.
+            "attention_contribution": 0.0,
+            "stability_bonus": 0.0,
+            "diagnostics": {
+                "attention_composite": attention,
+                "stability_bonus": stability_bonus,
+            },
+            "consensus_bonus": 0.0,
+            "other_adjustments": projected_score - base_sum,
+            "hard_veto_applied": hard_veto,
+            "total": projected_score,
+        },
+    }
 
 
 def reweight_recommendations(
@@ -227,16 +346,20 @@ def reweight_recommendations(
     Args:
         recommendations: 推荐列表, 每条至少含 ``ticker`` / ``strategy_signals``
             (内含四策略 ``direction`` / ``confidence`` / ``completeness``)
-        weights: 用户指定的四策略权重 (必须 sum-to-1)
+        weights: 用户指定的四策略相对权重 (至少一个权重大于零)
         sort: 是否按新 score_b 降序排序 (默认 True)
 
     Returns:
-        新推荐列表 — 每条新增 ``original_score_b`` 字段保留旧值, ``score_b`` 被覆盖,
-        ``custom_weights`` 字段记录所用权重, 按新 ``score_b`` 降序。
+        新推荐列表。原策略语义保存为 ``original_*`` provenance；``score_b``、
+        ``decision``、``weights_used``、``arbitration_applied`` 与
+        ``score_decomposition`` 由同一个 selected-policy projection 原子派生。
+        结果按新 ``score_b`` 降序。
 
     Notes:
         - 不修改入参, 内部 deep-copy
-        - NaN/Inf 防御: 缺信号/异常 rec → 保留原 ``score_b``
+        - NaN/Inf 防御: 缺信号/异常 rec → 新 ``score_b`` 为 0
+        - 用户选择的策略不可用时返回 0、不回退到默认策略，且不可进入推荐 Top-N
+        - 上游显式 ``avoid`` 是不可覆盖 hard veto，并标记为不可进入 selected Top-N
         - 排序: 同分时 ticker 字典序升序 (稳定)
     """
     if not isinstance(recommendations, Sequence):
@@ -252,9 +375,28 @@ def reweight_recommendations(
             continue
         rec_copy: dict[str, Any] = dict(rec)
         original = _safe_float(rec.get("score_b"), 0.0)
-        new_score_b = _compute_weighted_score_b(rec, weights)
+        projection = _selected_policy_projection(rec, weights)
+        new_score_b = float(projection["score_b"])
         rec_copy["original_score_b"] = original
-        rec_copy["score_b"] = new_score_b
+        rec_copy["original_score_policy"] = str(rec.get("score_policy") or "")
+        rec_copy["original_decision"] = str(rec.get("decision") or "")
+        original_decomposition = rec.get("score_decomposition")
+        rec_copy["original_score_decomposition"] = (
+            copy.deepcopy(dict(original_decomposition))
+            if isinstance(original_decomposition, Mapping)
+            else {}
+        )
+        original_weights = rec.get("weights_used")
+        rec_copy["original_weights_used"] = (
+            dict(original_weights) if isinstance(original_weights, Mapping) else {}
+        )
+        original_arbitration = rec.get("arbitration_applied")
+        rec_copy["original_arbitration_applied"] = (
+            [str(item) for item in original_arbitration]
+            if isinstance(original_arbitration, (list, tuple))
+            else []
+        )
+        rec_copy.update(projection)
         rec_copy["custom_weights"] = dict(weights_dict)
         # NS-19/c284: bucket-stale reset on score_b boundary cross.
         # auto_screening 报告里的 bucket 校准 (bucket_label / expected_returns /

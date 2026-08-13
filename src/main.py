@@ -863,6 +863,22 @@ def _inject_score_decomposition(
 
     injected = 0
     for rec in ranking_pool:
+        if rec.get("score_policy") == "selected-policy.v1":
+            decomposition = rec.get("score_decomposition")
+            if isinstance(decomposition, dict):
+                refreshed = dict(decomposition)
+                diagnostics = refreshed.get("diagnostics")
+                refreshed_diagnostics = (
+                    dict(diagnostics) if isinstance(diagnostics, dict) else {}
+                )
+                refreshed_diagnostics["stability_bonus"] = rec.get(
+                    "stability_bonus",
+                    0.0,
+                )
+                refreshed["diagnostics"] = refreshed_diagnostics
+                rec["score_decomposition"] = refreshed
+                injected += 1
+            continue
         fused_item = fused_by_ticker.get(str(rec.get("ticker", "")))
         if fused_item is None:
             continue
@@ -986,7 +1002,11 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
             selected_weights,
         )
         full_shadow_pool = [dict(item) for item in reweighted_results]
-        ranking_pool = reweighted_results[:ranking_pool_size]
+        ranking_pool = [
+            item
+            for item in reweighted_results
+            if item.get("selected_policy_eligible") is True
+        ][:ranking_pool_size]
     else:
         sorted_results = sorted(fused, key=lambda item: item.score_b, reverse=True)
         full_shadow_pool = [item.model_dump(mode="json") for item in sorted_results]
@@ -1007,14 +1027,28 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     _injected = _inject_score_decomposition(ranking_pool, fused_by_ticker)
     logger.debug("[Auto] score_decomposition injected for %d/%d ranking_pool recs", _injected, len(ranking_pool))
 
-    ranked_pool = _rank_pool_by_investability(ranking_pool, trade_date)
+    # A selected-strategy run defines a new ranking policy: its custom score_b
+    # is the authoritative ordering.  The legacy investability reports were
+    # calibrated on the all-strategy production score/composite generation, so
+    # applying them here would let unselected strategies re-enter the ranking.
+    # Keep the existing attention/sector eligibility constraints below, but do
+    # not consume cross-policy composite or score-bucket evidence.
+    ranked_pool = (
+        ranking_pool
+        if selected_strategies
+        else _rank_pool_by_investability(ranking_pool, trade_date)
+    )
 
     # Keep the Top-30 production preselection intact.  The full-pool result is
     # an independently computed research challenger and cannot feed selection,
     # sizing, ledger plans, or recommendation order.
     shadow_ranking = _rank_full_pool_shadow(full_shadow_pool, trade_date)
 
-    top_results_serializable = _select_top_n_with_constraints(ranked_pool, top_n)
+    top_results_serializable = _select_top_n_with_constraints(
+        ranked_pool,
+        top_n,
+        relax_constraints=not bool(selected_strategies),
+    )
     top_results_for_sector = [fused_by_ticker.get(str(rec.get("ticker", "")), rec) for rec in top_results_serializable]
 
     # Sector concentration guard
@@ -2738,7 +2772,12 @@ def _print_auto_screening_table(
         print(format_rotation_block(industry_signals, top_n=5, bottom_n=3), end="")
 
 
-def _select_top_n_with_constraints(ranked_pool: list[dict], top_n: int) -> list[dict]:
+def _select_top_n_with_constraints(
+    ranked_pool: list[dict],
+    top_n: int,
+    *,
+    relax_constraints: bool = True,
+) -> list[dict]:
     """Select Top N from ranked pool with two post-ranking constraints:
 
     1. **att exclusion**: Skip stocks whose ``attention_composite`` exceeds
@@ -2755,7 +2794,10 @@ def _select_top_n_with_constraints(ranked_pool: list[dict], top_n: int) -> list[
 
     Both constraints are applied greedily on the already-ranked pool, so the
     highest-investability stock always gets priority. The ranked pool is
-    typically top_n * 3, so there is ample depth for filtering.
+    typically top_n * 3, so there is ample depth for filtering.  The legacy
+    default is ``relax_constraints=True``.  Selected-policy callers set it to
+    false because an explicit factor subset must not backfill candidates which
+    violate that policy's eligibility envelope.
     """
     att_threshold = float(os.environ.get("AUTO_ATT_EXCLUSION_THRESHOLD", "0.7"))
     max_per_sector = int(os.environ.get("AUTO_MAX_PER_SECTOR", "3"))
@@ -2764,7 +2806,12 @@ def _select_top_n_with_constraints(ranked_pool: list[dict], top_n: int) -> list[
         d = rec.get("score_decomposition")
         if not isinstance(d, dict):
             return None
-        v = d.get("attention_contribution", 0.0)
+        diagnostics = d.get("diagnostics")
+        v = (
+            diagnostics.get("attention_composite")
+            if isinstance(diagnostics, dict)
+            else d.get("attention_contribution", 0.0)
+        )
         try:
             return float(v) if v is not None else None
         except (TypeError, ValueError):
@@ -2791,7 +2838,7 @@ def _select_top_n_with_constraints(ranked_pool: list[dict], top_n: int) -> list[
 
     # Try with full constraints first
     result = _select(att_threshold, max_per_sector)
-    if len(result) >= top_n:
+    if len(result) >= top_n or not relax_constraints:
         return result
 
     # Relax sector cap progressively

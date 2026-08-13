@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from src.screening.offensive.v3.contracts.base import CanonicalModel
+from src.screening.offensive.v3.kernel.config import SizingConfig
 from src.screening.offensive.v3.kernel.models import (
     BlockReason,
     PortfolioDecisionLine,
@@ -23,15 +23,7 @@ LOT_UNITS: int = 100
 FEE_PPM_SCALE: int = 1_000_000
 
 
-class SizingConfig(CanonicalModel):
-    """Central capacity limits; producers cannot override them."""
-
-    per_ticker_gross_cap_cents: int
-    per_industry_gross_cap_cents: int
-    per_day_gross_cap_cents: int
-    portfolio_gross_cap_cents: int
-    worst_case_fee_ppm: int
-    min_lot_units: int = LOT_UNITS
+from src.screening.offensive.v3.contracts.base import CanonicalModel
 
 
 class SizedCandidate(CanonicalModel):
@@ -45,6 +37,7 @@ class SizedCandidate(CanonicalModel):
     status: str  # ENTRY_PLANNED | BLOCKED
     quantity_units: int = 0
     limit_price_micros: int = 0
+    worst_case_fee_reserve_cents: int = 0
     worst_case_reserve_cents: int = 0
     block_reason: BlockReason | None = None
 
@@ -175,6 +168,11 @@ def size_portfolio(
                 _blocked(candidate, BlockReason.PRICE_BOUNDARY_INVALID)
             )
             continue
+        if price % MICROS_PER_CENT != 0:
+            lines.append(
+                _blocked(candidate, BlockReason.PRICE_BOUNDARY_INVALID)
+            )
+            continue
         ticker = candidate.security_id
         industry = industry_by_candidate.get(candidate.candidate_id, "")
         allowed = capacity_limit(
@@ -208,9 +206,10 @@ def size_portfolio(
             lines.append(_blocked(candidate, BlockReason.LOT_FLOOR_ZERO))
             continue
         gross_cents = quantity * price // MICROS_PER_CENT
-        reserve = gross_cents + worst_case_fee_cents(
+        fee_reserve = worst_case_fee_cents(
             gross_cents, config.worst_case_fee_ppm
         )
+        reserve = gross_cents + fee_reserve
         cash_remaining -= reserve
         ticker_used[ticker] = ticker_used.get(ticker, 0) + gross_cents
         industry_used[industry] = (
@@ -228,6 +227,7 @@ def size_portfolio(
                 status="ENTRY_PLANNED",
                 quantity_units=quantity,
                 limit_price_micros=price,
+                worst_case_fee_reserve_cents=fee_reserve,
                 worst_case_reserve_cents=reserve,
                 block_reason=None,
             )
@@ -265,6 +265,7 @@ def decision_lines(sized: tuple[SizedCandidate, ...]) -> tuple[PortfolioDecision
                 direction="ENTRY",
                 quantity_units=line.quantity_units,
                 limit_price_micros=line.limit_price_micros,
+                worst_case_fee_reserve_cents=line.worst_case_fee_reserve_cents,
                 worst_case_reserve_cents=line.worst_case_reserve_cents,
                 status=line.status,
                 block_reason=line.block_reason,

@@ -31,6 +31,11 @@ from src.screening.signal_fusion_arbitration_helpers import (
     initialize_arbitration_state,
     maybe_apply_forced_avoid,
 )
+from src.screening.weighted_signal_math import (
+    compute_weighted_signal_score,
+    normalize_active_weights,
+    SignalScoreInput,
+)
 
 #: NS-17: signal_fusion (打分核心) 之前零 logger — 无法回答 "为什么 X 得 0.32"。
 #: 模块 logger 供 per-ticker score breakdown (DEBUG, opt-in via LOG_LEVEL=DEBUG)。
@@ -80,22 +85,33 @@ def _normalize_active_weights(
     excluded_names: set[str] | None = None,
     weight_overrides: dict[str, float] | None = None,
 ) -> dict[str, float]:
-    excluded_names = excluded_names or set()
-    weight_overrides = weight_overrides or {}
-    active = {name: max(weight_overrides.get(name, weights.get(name, 0.0)), 0.0) for name, signal in signals.items() if signal.completeness > 0 and name not in excluded_names}
-    total = sum(active.values())
-    if total <= 0:
-        active = {name: DEFAULT_STRATEGY_WEIGHTS.get(name, 0.0) for name in signals if name not in excluded_names}
-        total = sum(active.values())
-    return {name: value / total for name, value in active.items()} if total > 0 else {}
+    return normalize_active_weights(
+        weights,
+        _to_signal_score_inputs(signals),
+        fallback_weights=DEFAULT_STRATEGY_WEIGHTS,
+        excluded_names=excluded_names,
+        weight_overrides=weight_overrides,
+    )
+
+
+def _to_signal_score_inputs(
+    signals: dict[str, StrategySignal],
+) -> dict[str, SignalScoreInput]:
+    return {
+        name: SignalScoreInput(
+            direction=float(signal.direction),
+            confidence=float(signal.confidence),
+            completeness=float(signal.completeness),
+        )
+        for name, signal in signals.items()
+    }
 
 
 def _compute_raw_score(normalized_weights: dict[str, float], signals: dict[str, StrategySignal]) -> float:
-    score = 0.0
-    for name, signal in signals.items():
-        weight = normalized_weights.get(name, 0.0)
-        score += weight * signal.direction * (signal.confidence / 100.0) * signal.completeness
-    return score
+    return compute_weighted_signal_score(
+        _to_signal_score_inputs(signals),
+        normalized_weights,
+    )
 
 
 def _is_hard_cliff_profitability(signals: dict[str, StrategySignal]) -> bool:
@@ -361,10 +377,10 @@ def compute_score_b(signals: dict[str, StrategySignal], weights: dict[str, float
     # 信号方向修复在 generator 层 (NS-4, commit 023acd74): bullish/bearish 标签
     # 语义对齐 T+1. 融合层不再需要方向乘数 — 旧的 STRATEGY_DIRECTION_MULTIPLIER
     # (全 1.0 no-op) 已删除. 参见 models.py 历史注记.
-    score = 0.0
-    for name, signal in signals.items():
-        weight = normalized_weights.get(name, 0.0)
-        score += weight * signal.direction * (signal.confidence / 100.0) * signal.completeness
+    score = compute_weighted_signal_score(
+        _to_signal_score_inputs(signals),
+        normalized_weights,
+    )
 
     if ArbitrationAction.CONSENSUS_BONUS.value in arbitration_applied:
         # GAMMA-016: apply bonus in the direction of the consensus, not

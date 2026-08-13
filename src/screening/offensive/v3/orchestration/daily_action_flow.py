@@ -1,11 +1,14 @@
-"""Plan 05 Task 7: DailyActionFlow — --daily-action lifecycle-first 编排。
+"""Plan 05 Task 7: lifecycle-first ``--daily-action`` shadow observer.
 
-一次 ``run`` 产出一份 ``DailyActionFlowResult``: 只读资本投影 + lifecycle
-义务查询 + 已验证快照加载 + 影子决策 (BTST producer → GrowthKernel → 持久化
-``ShadowDecision``) + v2↔v3 对比差异报告。本编排**只生产 ShadowDecision /
-discrepancy 报告 / 只读投影 — 绝不产生任何 v3 可执行授权**
-(``execution_authority`` 恒 ``"none"``, 镜像 ``ShadowDecision.execution_authority:
-Literal["NONE"]``, contracts/decision.py:1077)。
+Current safety state: capital/lifecycle/snapshot reads remain available, but
+the shadow-decision pipeline fails before evidence, producer, kernel or
+persister calls with ``economic_input_authority_unavailable``.  It stays
+disabled until a store-owned exchange schedule and complete
+``ShadowKernelInput`` are wired to ``decide_shadow``.  This module does not
+construct ``ShadowDecision`` and cannot publish a current v4 artifact.
+
+The detailed pipeline description below is retained as historical Plan 05
+context only; the fail-closed state above is authoritative.
 
 -------------------------------------------------------------------------------
 status 值域 (每步独立)
@@ -120,7 +123,10 @@ byte-identical 契约 (v2 ledger 零写)
 failure_reason keys 与值格式
 -------------------------------------------------------------------------------
 key = 步名: ``"lifecycle" | "capital" | "snapshot" | "evidence" | "producer" |
-"kernel" | "persist" | "shadow_decision" | "v2_comparison"``。
+"kernel" | "persist" | "shadow_decision" | "v2_comparison" |
+"economic_input_authority"``。当前 fail-closed shadow 管线只写
+``"economic_input_authority"`` (值为 ``economic_input_authority_unavailable:
+...``); 其余步名是历史 Plan 05 管线重新接线后才会再次出现的键。
 - 异常: ``f"{type(exc).__name__}: {exc}"`` (异常 ``__str__`` 携带稳定 error
   code, 如 ``EvidenceStoreError`` 的 ``evidence_not_committed_before_cutoff``)。
 - snapshot 加载失败: ``global_reason`` (为空时 ``"snapshot_unavailable"``)。
@@ -132,9 +138,8 @@ OFF 模式整体无条目。
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Literal, Mapping, Protocol
@@ -144,48 +149,17 @@ from src.screening.offensive.daily_action_snapshot import (
     VerifiedDailyActionSnapshot,
     VerifiedSnapshotResult,
 )
-from src.screening.offensive.v3.contracts import (
-    ArtifactKind,
-    ExecutionMode,
-)
-from src.screening.offensive.v3.contracts.base import SignalStage
+from src.screening.offensive.v3.contracts import ExecutionMode
 from src.screening.offensive.v3.contracts.capital import CapitalRiskSnapshot
-from src.screening.offensive.v3.contracts.decision import (
-    CounterfactualDecisionKey,
-    ShadowDecision,
-    ShadowIssuerBinding,
-    ShadowOrderLine,
-    ShadowStageBinding,
-)
-from src.screening.offensive.v3.contracts.trial import (
-    BaselineShadowPolicyBinding,
-    ShadowPolicySourceKind,
-)
 from src.screening.offensive.v3.contracts.evidence import (
     EvidenceRecord,
     SignalEvidence,
 )
-from src.screening.offensive.v3.kernel.admission import BTST_FAMILY
 from src.screening.offensive.v3.kernel.models import (
     BlockReason,
     KernelInput,
-    NoTradeDecision,
-    PortfolioDecision,
-    PortfolioDecisionLine,
-    RawCandidate,
 )
-from src.screening.offensive.v3.kernel.sizing import LOT_UNITS, MICROS_PER_CENT
 from src.screening.offensive.v3.policy.models import RuntimeMode
-
-_SECURITY_SUFFIXES = (".SH", ".SZ", ".BJ")
-"""v2 ticker 归一化: 去掉 v3 security_id 的交易所后缀再与 v2 6 位 ticker 比较。"""
-
-_INDUSTRY_UNKNOWN = "unknown"
-"""快照无行业标识符 (只有 industry_day_pct float) 时的保守共享 industry 桶。
-
-kernel sizing 按 industry key 聚合执行 per_industry_gross_cap; 快照不携带
-行业标识, 若用 float pct 当 key 会把每个候选分成独立桶、静默绕过该 cap。
-共享桶使 per_industry cap 保守地作用于全体候选 (等效于最严约束)。"""
 
 
 class LifecycleReaderPort(Protocol):
@@ -529,169 +503,18 @@ class DailyActionFlow:
         BlockReason | None,
         Mapping[str, str],
     ]:
-        """SHADOW 模式下的证据加载 → BTST scan → kernel → ShadowDecision 持久化。
+        """Fail closed until a store-owned schedule can feed ``decide_shadow``.
 
-        依序执行, 每步独立 try/except: evidence 失败记 reason 后管线继续,
-        producer/kernel/persist 失败则中止后续步 (status "failed")。
+        The legacy path projected an executable ``PortfolioDecision`` into a
+        shadow artifact with natural calendar arithmetic.  It must not publish
+        evidence or call the producer/kernel/persister while the authoritative
+        schedule and ``ShadowKernelInput`` wiring are unavailable.
         """
-        # a. frozen evidence 加载 (宽容: None = benign miss, 异常 = 记 reason 继续)
-        for evidence_id in self._evidence_ids:
-            try:
-                self._evidence_store.active_revision(
-                    evidence_id, self._trusted_evidence_cutoff
-                )
-            except Exception as exc:
-                reasons["evidence"] = f"{type(exc).__name__}: {exc}"
-
-        # b. BTST producer (kernel 是 no-signal 的唯一权威, 空候选也照送)
-        try:
-            records = self._btst_producer.produce_and_publish(snapshot)
-        except Exception as exc:
-            reasons["producer"] = f"{type(exc).__name__}: {exc}"
-            return "failed", None, None, MappingProxyType({})
-
-        # c. kernel 决策 (含 KernelInput 与 ShadowDecision 构造, 同属一步)
-        try:
-            kernel_input = self._build_kernel_input(
-                snapshot=snapshot,
-                capital=capital,
-                decision_cycle_id=decision_cycle_id,
-                records=records,
-            )
-            decision = self._kernel.decide(
-                kernel_input, trusted_at=trusted_at
-            )
-            if isinstance(decision, NoTradeDecision):
-                # NoTrade 形态: 绝不构造/持久化空 ShadowDecision
-                # (min_length=1 契约), 不调用 persister。
-                return (
-                    "no_signal",
-                    None,
-                    decision.reason,
-                    MappingProxyType({}),
-                )
-            # 确定性 id: 同 signal_date 二次 run 产出同一 id (不依赖 store 序列)。
-            shadow_decision_id = f"shadow-{decision_cycle_id}"
-            shadow_decision = self._build_shadow_decision(
-                decision=decision,
-                snapshot=snapshot,
-                decision_cycle_id=decision_cycle_id,
-                shadow_decision_id=shadow_decision_id,
-                trusted_at=trusted_at,
-                capital=capital,
-            )
-        except Exception as exc:
-            reasons["kernel"] = f"{type(exc).__name__}: {exc}"
-            return "failed", None, None, MappingProxyType({})
-
-        # d. ShadowDecision 持久化
-        try:
-            persisted = self._shadow_persister.publish_shadow_decision(
-                shadow_decision
-            )
-        except Exception as exc:
-            reasons["persist"] = f"{type(exc).__name__}: {exc}"
-            return "failed", None, None, MappingProxyType({})
-
-        # e. v2 对比 (仅当注入 v2 plans reader 时)
-        discrepancy: Mapping[str, str] = MappingProxyType({})
-        if self._v2_plans_reader is not None:
-            try:
-                v2_plans = self._v2_plans_reader(signal_date)
-                discrepancy = MappingProxyType(
-                    self._compare_v2_plans(
-                        v2_plans,
-                        decision.lines,
-                    )
-                )
-            except Exception as exc:
-                reasons["v2_comparison"] = (
-                    f"{type(exc).__name__}: {exc}"
-                )
-                discrepancy = MappingProxyType({})
-        return "ok", persisted, None, discrepancy
-
-    def _build_kernel_input(
-        self,
-        *,
-        snapshot: VerifiedDailyActionSnapshot,
-        capital: CapitalRiskSnapshot,
-        decision_cycle_id: str,
-        records: tuple[EvidenceRecord[SignalEvidence], ...],
-    ) -> KernelInput:
-        """从 producer records 与 snapshot 派生 kernel 冻结输入。
-
-        records 为空的合法路径: kernel 返回 NoTrade(NO_SIGNAL), 是 no-signal
-        的唯一权威。候选 identity 采用 ``btst:snapshot_id:ticker`` 确定性
-        构造 (GREEN 派生, 无现成 mapping)。lineage/stage/program 取 policy
-        envelope 的授权 grant (admission 契约: grant.subject_producer=btst
-        且 family 匹配时才 ADMITTED)。"""
-        ticker_by_candidate: dict[str, str] = {}
-        raw_candidates: list[RawCandidate] = []
-        for record in records:
-            envelope = record.evidence
-            if envelope.stage != SignalStage.SELECTED:
-                continue
-            ticker = _evidence_ticker(envelope.evidence_id)
-            candidate_id = f"btst:{snapshot.snapshot_id}:{ticker}"
-            ticker_by_candidate[candidate_id] = ticker
-            grant = self._authorized_grant()
-            raw_candidates.append(
-                RawCandidate(
-                    candidate_id=candidate_id,
-                    producer_namespace=envelope.subject_producer,
-                    # family_id 用 kernel admission 白名单常量 ``BTST_FAMILY``
-                    # (= "btst.limit-up-breakout", kernel/admission.py:25), 与
-                    # lineage/stage/program (下) 同从授权 grant 语义取, 完成
-                    # docstring 既定 "取授权 grant 才 ADMITTED" 意图。真实
-                    # producer 信封的 ``family_id`` 是 ``btst:<snapshot_id>``
-                    # (producers/btst.py:20, 非白名单) — 用之会被 admission 恒
-                    # BLOCKED(NO_AUTHORIZED_ENVELOPE) (kernel/admission.py:100,
-                    # 白名单外一律拒绝), 使真实 shadow 链路恒 NoTrade。这是
-                    # Task 9 S2b 硬阻塞 B 修复 (真实 producer+kernel 组合回归
-                    # 测试 test_daily_action_flow_family_fix.py 锁定)。
-                    family_id=BTST_FAMILY,
-                    economic_lineage_id=grant.economic_lineage_id,
-                    research_program_id=grant.research_program_id,
-                    stage_id=grant.stage_id,
-                    security_id=_security_id(ticker),
-                    direction="LONG",
-                    unscaled_target_gross_cents=_unscaled_target(capital),
-                    behavior_fingerprint=envelope.behavior_fingerprint,
-                    execution_version=envelope.execution_version,
-                    cost_version=envelope.cost_version,
-                    evidence_ids=(),
-                )
-            )
-        return KernelInput(
-            portfolio_id=self._portfolio_id,
-            signal_session=snapshot.signal_date,
-            decision_cycle_id=decision_cycle_id,
-            mode=self._policy_activation.mode,
-            policy_activation=self._policy_activation,
-            policy_snapshot=self._policy_snapshot,
-            envelope=self._envelope,
-            capital=capital,
-            deadlines=self._deadlines,
-            trusted_evidence_cutoff=self._trusted_evidence_cutoff,
-            raw_candidates=tuple(raw_candidates),
-            price_micros_by_candidate=tuple(
-                (
-                    candidate_id,
-                    _price_micros(
-                        snapshot.prices_by_ticker.get(ticker),
-                    ),
-                )
-                for candidate_id, ticker in ticker_by_candidate.items()
-            ),
-            industry_by_candidate=tuple(
-                (
-                    candidate_id,
-                    _INDUSTRY_UNKNOWN,
-                )
-                for candidate_id in ticker_by_candidate
-            ),
+        reasons["economic_input_authority"] = (
+            "economic_input_authority_unavailable: store-owned trading schedule "
+            "and decide_shadow wiring are not implemented"
         )
+        return "failed", None, None, MappingProxyType({})
 
     def _authorized_grant(self) -> Any:
         """Envelope 中第一个 btst 授权 grant (admission 的匹配主体)。
@@ -704,239 +527,6 @@ class DailyActionFlow:
             if grant.subject_producer == "btst":
                 return grant
         return self._envelope.lineage_grants[0]
-
-    def _build_shadow_decision(
-        self,
-        *,
-        decision: PortfolioDecision,
-        snapshot: VerifiedDailyActionSnapshot,
-        decision_cycle_id: str,
-        shadow_decision_id: str,
-        trusted_at: datetime,
-        capital: CapitalRiskSnapshot,
-    ) -> ShadowDecision:
-        """构造确定性 ShadowDecision: 恒无执行授权 + 非空 counterfactual_lines。
-
-        target_entry_session = signal_date 次日 (shadow 恒不产生可执行授权;
-        line 的 economics 由 kernel sizing 输出派生, 完全 counterfactual)。
-        """
-        grant = self._authorized_grant()
-        family_id = f"btst:{snapshot.snapshot_id}"
-        binding = ShadowStageBinding(
-            research_program_id=grant.research_program_id,
-            economic_lineage_id=grant.economic_lineage_id,
-            stage_id=grant.stage_id,
-            trial_id=grant.trial_id,
-            stage_manifest_hash=grant.stage_manifest_hash,
-        )
-        lines = tuple(
-            self._build_shadow_line(
-                decision_line=line,
-                grant=grant,
-                family_id=family_id,
-                target_exit_session=snapshot.signal_date
-                + timedelta(days=10),
-            )
-            for line in decision.lines
-            if line.status == "ENTRY_PLANNED"
-        )
-        # ShadowDecision 校验要求 counterfactual_lines 按 shadow_line_id
-        # 字典序 (canonical order); kernel 输出是 rank 顺序, 与 candidate_id
-        # 字典序不一定一致, 必须显式排序 (确定性契约)。
-        lines = tuple(
-            sorted(
-                lines,
-                key=lambda line: line.shadow_line_id,
-            )
-        )
-        return ShadowDecision(
-            artifact_kind=ArtifactKind.SHADOW_DECISION,
-            artifact_namespace="growth-kernel.shadow.v2",
-            schema_major=3,
-            shadow_decision_id=shadow_decision_id,
-            counterfactual_key=CounterfactualDecisionKey(
-                portfolio_id=self._portfolio_id,
-                signal_session=snapshot.signal_date,
-                counterfactual_cycle_id=decision_cycle_id,
-            ),
-            portfolio_id=self._portfolio_id,
-            mode=self._policy_activation.mode,
-            target_entry_session=snapshot.signal_date
-            + timedelta(days=1),
-            producer_namespace="btst",
-            family_id=family_id,
-            research_program_id=grant.research_program_id,
-            economic_lineage_id=grant.economic_lineage_id,
-            stage_id=grant.stage_id,
-            trial_id=grant.trial_id,
-            shadow_policy_binding=BaselineShadowPolicyBinding(
-                source_kind=ShadowPolicySourceKind.BASELINE_POLICY_ACTIVATION,
-                baseline_policy_activation_hash=self._policy_activation.artifact_hash(),
-                policy_snapshot_hash=capital.policy_activation_hash,
-                policy_fingerprint=capital.policy_activation_hash,
-            ),
-            policy_epoch=self._policy_activation.policy_epoch,
-            evidence_set_merkle_root=capital.policy_activation_hash,
-            shadow_stage_binding=binding,
-            counterfactual_lines=lines,
-            cost_assumption_version=grant.cost_version,
-            execution_assumption_version=grant.execution_version,
-            created_at=trusted_at,
-            available_at=trusted_at,
-            execution_authority="NONE",
-            issuer_binding=self._shadow_issuer_binding(trusted_at),
-        )
-
-    def _build_shadow_line(
-        self,
-        *,
-        decision_line: PortfolioDecisionLine,
-        grant: Any,
-        family_id: str,
-        target_exit_session: date,
-    ) -> ShadowOrderLine:
-        """一条 counterfactual 入口 line: 由 kernel sizing 输出派生 economics。
-
-        价格 = ``limit_price_micros`` 按 ``MICROS_PER_CENT`` (10_000) 换算为
-        cents (micros 是 micro-yuan, 不是 cents — 除 1_000_000 得 yuan, 错);
-        fee 从 kernel 决策行的 ``worst_case_reserve_cents`` 反推 (kernel 已按
-        其 ``SizingConfig.worst_case_fee_ppm`` 计入 reserve), 与 kernel 口径
-        一致而非本 flow 硬编码 ppm。reserve = limit_price_cents × qty + fee
-        自洽以满足 ``ShadowOrderLine`` 校验。T+10 ordinal 恒为原生整数 10。
-        """
-        quantity = max(decision_line.quantity_units, LOT_UNITS)
-        # micro-yuan → cents (MICROS_PER_CENT = 10_000; 非 1_000_000)。
-        limit_price_cents = max(
-            decision_line.limit_price_micros // MICROS_PER_CENT,
-            1,
-        )
-        # kernel 实际 gross 与 reserve (与其 fee_ppm 一致): gross = qty ×
-        # micros // MICROS_PER_CENT, fee = reserve - gross。
-        kernel_gross = (
-            decision_line.quantity_units
-            * decision_line.limit_price_micros
-            // MICROS_PER_CENT
-        )
-        fee = max(
-            decision_line.worst_case_reserve_cents - kernel_gross,
-            0,
-        )
-        shadow_gross = limit_price_cents * quantity
-        return ShadowOrderLine(
-            shadow_line_id=f"shadow-line-{decision_line.candidate_id}",
-            security_id=decision_line.security_id,
-            producer_namespace="btst",
-            family_id=family_id,
-            economic_lineage_id=grant.economic_lineage_id,
-            research_program_id=grant.research_program_id,
-            stage_id=grant.stage_id,
-            trial_id=grant.trial_id,
-            stage_manifest_hash=grant.stage_manifest_hash,
-            evidence_id=f"btst:shadow:{decision_line.candidate_id}",
-            evidence_artifact_hash=_sha256_hex(decision_line.candidate_id),
-            evidence_payload_hash=_sha256_hex(
-                f"{decision_line.candidate_id}:{decision_line.quantity_units}"
-            ),
-            target_quantity_units=quantity,
-            lot_size_units=LOT_UNITS,
-            lot_rule_version="cn-a-share-lot.v1",
-            order_type="LIMIT",
-            limit_price_cents=limit_price_cents,
-            worst_case_price_cents=limit_price_cents,
-            price_boundary_version="cn-price-limit.v1",
-            time_in_force="OPEN_AUCTION",
-            exit_session_ordinal=10,
-            estimated_fee_cents=fee,
-            estimated_cash_reserve_cents=shadow_gross + fee,
-            cost_assumption_version=grant.cost_version,
-            execution_assumption_version=grant.execution_version,
-            target_exit_session=target_exit_session,
-        )
-
-    def _shadow_issuer_binding(self, trusted_at: datetime) -> ShadowIssuerBinding:
-        """SHADOW 能力 issuer 绑定: 恒 VALID 且能力覆盖 created_at。"""
-        return ShadowIssuerBinding(
-            issuer_id="growth-kernel.shadow.service",
-            key_id="shadow-key-1",
-            capability_artifact_kind=ArtifactKind.SHADOW_DECISION,
-            capability_namespace="growth-kernel.shadow.v2",
-            capability_mode=self._policy_activation.mode,
-            capability_schema_major=3,
-            capability_version="growth-kernel-shadow.v2",
-            capability_scope=f"portfolio:{self._portfolio_id}",
-            verification_result="VALID",
-            verified_at=trusted_at,
-            valid_until=trusted_at + timedelta(days=1),
-            trust_bundle_hash=self._policy_activation.trust_bundle_hash,
-            registry_epoch=self._policy_activation.registry_epoch,
-        )
-
-    def _compare_v2_plans(
-        self,
-        v2_plans: tuple[Any, ...],
-        lines: tuple[PortfolioDecisionLine, ...],
-    ) -> dict[str, str]:
-        """归一化 ticker 对比: v2 有计划但 v3 无 → "v2_only", 反之 "v3_only"。"""
-        v3_tickers = {
-            _normalize_ticker(line.security_id)
-            for line in lines
-            if line.status == "ENTRY_PLANNED"
-        }
-        v2_tickers = {
-            _normalize_ticker(plan.ticker)
-            for plan in v2_plans
-        }
-        discrepancy: dict[str, str] = {}
-        for ticker in sorted(v2_tickers - v3_tickers):
-            discrepancy[ticker] = "v2_only"
-        for ticker in sorted(v3_tickers - v2_tickers):
-            discrepancy[ticker] = "v3_only"
-        return discrepancy
-
-
-def _normalize_ticker(value: str) -> str:
-    """归一化 ticker: 去掉 v3 security_id 的交易所后缀 (.SH/.SZ/.BJ)。"""
-    for suffix in _SECURITY_SUFFIXES:
-        if value.endswith(suffix):
-            return value[: -len(suffix)]
-    return value
-
-
-def _security_id(ticker: str) -> str:
-    """v2 6 位 ticker → v3 security_id (默认深市 .SZ; A-share 统一形态)。"""
-    return f"{ticker}.SZ"
-
-
-def _evidence_ticker(evidence_id: str) -> str:
-    """从 ``btst:snapshot_id:ticker:setup:stage`` 提取 ticker (第 3 段)。"""
-    return evidence_id.split(":")[2]
-
-
-def _unscaled_target(capital: CapitalRiskSnapshot) -> int:
-    """GREEN 派生: 按 NAV 的 1/4 取整的 counterfactual 目标 (cents)。
-
-    信封只有原始候选字段 (raw targets 契约), 无 explicit sizing 字段;
-    kernel 以 grant lineage cap × NAV 为上限, 该派生值只被 clamp DOWN,
-    不会提升至授权上限之外。"""
-    return max(int(capital.as_observed_nav_cents // 4), 100_000)
-
-
-def _price_micros(
-    prices: tuple[Any, ...] | None,
-) -> int:
-    """快照最后交易日收盘价 → micros; 无价时用 1000 万元微元 (1 元) 兜底。
-
-    prices 列为 (trade_date, open, high, low, close, volume, pct_change)
-    FrozenPriceRow; 取最后一行的 close (Decimal) 换算 micros。"""
-    if not prices:
-        return 10_000_000
-    row = prices[-1]
-    return int(float(row.close) * 1_000_000)
-
-
-def _sha256_hex(value: str) -> str:
-    """64 位十六进制哈希 (evidence 引用字段契约)。"""
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 __all__ = ["DailyActionFlow", "DailyActionFlowResult"]

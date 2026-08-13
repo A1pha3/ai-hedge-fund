@@ -760,7 +760,19 @@ async def apply_custom_weights(req: CustomWeightsRequest) -> ScreeningResponse:
         event_sentiment=req.event_sentiment,
     )
     reweighted = reweight_recommendations(recs, weights)
-    top = reweighted[: max(1, req.top_n)]
+    # Front-door parity with the CLI: only selected-policy-eligible recs are
+    # shown (same ``selected_policy_eligible is True`` predicate as main.py).
+    # NOTE: unlike the CLI, the web path intentionally does NOT re-run
+    # ``_select_top_n_with_constraints`` (att exclusion / sector cap) — it
+    # re-ranks an already-constrained stored report, whereas the CLI re-weights
+    # the full fused pool. Do not "fix" this asymmetry by re-filtering here
+    # (double-filtering) or by dropping the CLI constraints.
+    eligible = [
+        rec
+        for rec in reweighted
+        if rec.get("selected_policy_eligible") is True
+    ]
+    top = eligible[: max(1, req.top_n)]
     # c329: attach the front-door verdict (same helper /auto and /latest use).
     top = _attach_front_door_verdicts(top, payload)
 
@@ -782,6 +794,8 @@ async def apply_custom_weights(req: CustomWeightsRequest) -> ScreeningResponse:
         meta={
             "weights": weights.to_dict(),
             "total_recommendations": len(recs),
+            "policy_eligible_count": len(eligible),
+            "policy_excluded_count": len(reweighted) - len(eligible),
             "applied_top_n": req.top_n,
         },
     )

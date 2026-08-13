@@ -1,56 +1,46 @@
-# trend 策略降权设计（对抗审查 + 无偏实验后的化简方案）
+# trend 策略降权研究重建（已拒绝）
 
-**日期**: 2026-08-11
-**状态**: 设计待审
-**性质**: 一个被对抗审查从"两阶段大工程"化简为"单因子降权"的方案
+**日期**：2026-08-11
 
-## 0. 本 spec 取代了什么
+**复核日期**：2026-08-12
 
-本文件取代同日早先的 `2026-08-11-two-layer-factor-vocabulary-unification-design.md` 的方向。那个方向（两层因子词汇统一 + 审计器扩展 + 二维交互 + 融合 + kelly 去耦）经独立子代理对抗审查 + 两轮无偏实验后被否决。否决证据记录在 §5，供未来审计者参考，避免重走。
+**状态**：`RESEARCH_RECONSTRUCTION_REJECTED`
 
-## 1. 问题（经无偏验证）
+**性质**：保留用于审计的历史研究记录，不是生产设计、策略证据或授权输入
 
-生产 `score_b` 的趋势策略 `trend` 占默认权重 **0.40（最大）**，但它在涨停候选日（BTST 主战场，理论上 trend 最该有效的域）**无前向预测力**：
+## 结论
 
-| 验证（全 universe 涨停候选日，n=13762，exec 测度，无选择偏差） | 结果 |
-|---|---|
-| Spearman(trend_conf, T+10) | −0.0318（无 IC，五分位 WR 42-45% 不分离） |
-| 跨窗 | H1 −0.111 / H2 +0.007 **不一致**（弱信号不稳定） |
-| long(+1) 子集内部 (n=11647) | ρ=−0.0203，跨窗不一致（85% 的票上 trend 无贡献） |
-| short(−1) 子集 (n=2115) | WR 53.6%（**真信号，不能动**） |
+本文件原先提出把 `DEFAULT_STRATEGY_WEIGHTS.trend` 从 `0.40` 降为 `0.0`。该行为变更已被拒绝，生产默认权重恢复为 `0.40/0.20/0.15/0.05`。原研究不能用于改变准入、排序、仓位或资本授权，也不能充当 `PolicyActivation`、Trial、SAP、Stage、EDGE evidence 或任何治理签发物。
 
-数据来源：`data/reports/trend_gate_unbiased_experiment.json`（脚本 `scripts/trend_gate_unbiased_experiment.py`，全 universe price_cache，截止涨停日切片无 look-ahead，特征契约=生产 `score_trend_strategy`）。
+历史报告中的相关性、胜率和样本量只保留为调查线索。它们没有在生产同口径的候选宇宙、执行合约、公司行动处理和受信事件时间线上重验，因此不得解释为“降权不会变差”或“可直接上线”。
 
-## 2. 决策：降权，不翻转，不融合
+## 原研究记录
 
-**降权 trend（0.40 → 接近 0），不动 direction/multiplier，不扩展审计器，不融合。**
+原脚本 `scripts/trend_gate_unbiased_experiment.py` 在价格缓存中扫描涨停日，报告过以下结果：
 
-理由（第一性原理）：
-- **降权无预测力因子是零风险单调改善**——去掉噪声，让有 IC 的因子（fundamental/MR/strength gate）归一化后权重大。`_normalize_active_weights`（signal_fusion.py:77）安全处理权重归一，与 weekday/streak 当年移出 strength 同构。
-- **翻转是错的**：long 内部 ρ 弱且跨窗不一致，任何方向翻转都不稳健；且会污染 short 子集的 53.6% 真信号。重蹈 NS-4 盲翻转覆辙（models.py:120 注释："翻转应在 generator 层而非 multiplier 层盲反转"）。
-- **不需要 A/B 验证降权**：A/B 是为有风险的翻转准备的。降权一个已证无 IC 的因子不需要对照——它不会让任何东西变差。
+| 历史统计 | 原报告值 | 当前解释 |
+|---|---:|---|
+| 样本量 | 13,762 | 研究重建样本，不是 `--auto` 的冻结决策样本 |
+| Spearman(trend_conf, T+10) | −0.0318 | 受执行与公司行动口径污染，不可授权 |
+| 跨窗 | H1 −0.111 / H2 +0.007 | 不稳定，且不等价于组合净值证据 |
+| long 子集 | ρ=−0.0203 | 仅作待重验假设 |
+| short 子集 | WR 53.6% | 仅作待重验假设 |
 
-## 3. 执行
+这些数字不再支持 `trend 0.40 → 0.0`。原文关于“零风险单调改善”和“不需要 A/B”的判断一并撤销；改变排序函数本身就是行为变化，必须进入新的证据世代。
 
-1. **`DEFAULT_STRATEGY_WEIGHTS`（models.py:97）trend 0.40 → 0.0**（先置 0 最干净；如需保留趋势作为 metadata 观测可留极小值如 0.05，但默认置 0）。
-2. **锚定测试**：`test_signal_fusion.py` 加守卫——trend weight=0 时 score_b 计算正常、归一化后 fundamental/MR/event 权重正确放大、不抛错。
-3. **empirical dogfood 回测**：跑一次 `--auto` 历史日期，确认 score_b Top-N 排序变化方向合理（无 trend 主导后，排序应由 fundamental/MR 决定），不退化。
-4. **不动**：direction 逻辑、multiplier（全 1.0）、审计器、gate、kelly、daily_action 路径。
+## 拒绝原因
 
-## 4. 验收
+1. **候选宇宙不一致**：脚本扫描所有满足涨停阈值的 ticker-day；生产 `--auto` 排名消费的是当日 Layer-A 候选及其过滤结果。研究样本没有重放每个决策日实际冻结的候选集、排除项和排序前输入，不能据此推断生产 Top-N 的增量效果。
+2. **退出合约不一致**：脚本按 T+1 `open` 入场、T+10 `close` 退出，并在开盘价缺失时回退到同日 `close`。目标生产合约固定为 T+1 开盘买、T+10 开盘卖，还必须计入真实成本、未成交、部分成交和现金占用。单票 raw return 不能替代完整组合路径。
+3. **公司行动未正确处理**：脚本直接计算 `exit_close / entry_open - 1`。虽然导入了 `chained_return_pct`，但扫描路径没有调用它，也没有绑定公司行动事件或可重验价格版本；拆分、分红、复权口径变化可能制造虚假收益跳变。
+4. **事件时点证据受污染**：后续用于比较剩余策略的 2026-08-12 审计把缓存中的整段新闻传给每个历史决策日。旧纯输入 scorer 会把未来新闻的负 `days_old` 压成 `0`，例如可把 2026-08-11 新闻用于 2026-02-26 决策。该泄漏不直接改变 trend 分数，但会使“去掉 trend 后放大已有正 IC 因子”的比较依据失效。
+5. **缺少版本化前向证据**：研究没有预注册 champion/challenger、冻结 policy fingerprint、受信 cutoff、expected-session spine、成本模型或组合级门槛。配置文件和研究报告均不是权限。
 
-- trend 置 0 后，offensive 套件（3441）+ btst（25）全绿，不退化。
-- 锚定测试覆盖 trend=0 的 score_b 归一化。
-- dogfood 回测 score_b Top-N 不出现异常（如全 0 分、全同分、排名坍缩）。
+## 生产处置与重新研究条件
 
-## 5. 被否决方案的否决证据（供未来审计者）
+- 保留“单一权重真理源”重构；所有默认消费者继续从 `DEFAULT_STRATEGY_WEIGHTS` 派生。
+- 恢复研究变更前的生产默认权重：trend `0.40`、mean_reversion `0.20`、fundamental `0.15`、event_sentiment `0.05`。
+- 恢复研究变更前的 additive regime 调整。任何乘性调整或降权都必须作为新的、版本化的 shadow challenger。
+- 如重启研究，必须重放 `--auto` 的冻结 Layer-A universe，使用 T+1 open / T+10 open、真实成本与现金路径、公司行动安全收益，以及决策 cutoff 前已入库的事件证据；随后收集同模式前向证据。
 
-早先方向："两层因子词汇统一"——基于"两层断层是问题"。被否决：
-
-1. **候选宇宙混淆（最致命）**：动机证据 "+3.55% vs −1.19%" 来自**不同候选宇宙**（+3.55% 是 BTST full_market detect 路径 v2 trades，−1.19% 是 --auto 推荐池 score_b Top3）。"同炉对照"无效（daily_action.py:8/319/259 铁证）。"正收益来自 gating/反向来自 trend"归因不成立。
-2. **score_b 非系统性反向**：全推荐池 mean +4.19%（正），Q5 五分位 +1.04%（仍正！），仅 Top10% −1.53%。非单调倒 U = 校准问题，非"Layer2 词汇反向"。
-3. **"trend 反向"非选择偏差伪象也非真反向**：全 universe 实测是无 IC（不是 MR 式全 universe 正 IC）。早先的"剔除 trend 前提"方向对，但"需要统一审计+融合"的工程量被夸大。
-4. **权重措辞误导**：早先 spec 的 trend 0.56 是 08-10 单日 regime-adjusted 快照，非 DEFAULT(0.40)。
-5. **gate 已有效**：gate 同池增量 alpha Wilson 分离 True（+2.38pp），不需要"融合进 score_b"。
-
-**方法论教训**：作者自我审查保护了核心假设（"断层是问题"），独立子代理无此偏误才抓到候选宇宙混淆。empirical 无偏实验（70 秒全 universe scan）> 有偏样本推断 + 静态 spec 推理。
+满足这些条件只会产生候选研究结果，不会自动获得生产授权。

@@ -67,29 +67,13 @@ class StrategySignal(BaseModel):
 # ---------------------------------------------------------------------------
 # 所有下游 (MarketState.adjusted_weights 默认值 / custom_weights.DEFAULT_WEIGHTS /
 # signal_fusion 归一化 / web slider) 都从这里派生, 禁止在别处重复硬编码.
-# weight=0 即禁用 — 融合层 _normalize_active_weights 天然排除 weight<=0 的策略.
-# 改一个策略的启停只需改这里一处.
+# 融合层与所有默认权重消费者都必须从此处派生，避免行为口径漂移。
 
 DEFAULT_STRATEGY_WEIGHTS: dict[str, float] = {
-    # trend 降权到 0 (2026-08-11): 全 universe 涨停候选日实验 (n=13762, exec 测度, 无选择
-    # 偏差) 证 trend 无前向预测力 — Spearman(conf,T+10)=-0.0318, 五分位 WR 42-45% 不分离,
-    # 跨窗 H1=-0.111/H2=+0.007 不一致; long(+1) 子集内部 (n=11647) ρ=-0.0203 同样无 IC.
-    # 非翻转 (short 子集 53.6% WR 是真信号, long 弱且跨窗不稳, 避 NS-4 盲翻转覆辙) —
-    # 降权一个无 IC 因子是零风险单调改善, 让有 IC 的 fundamental/MR 归一化放大.
-    # 实验脚本 scripts/trend_gate_unbiased_experiment.py; 决策包
-    # docs/superpowers/specs/2026-08-11-trend-strategy-deweight-design.md
-    "trend": 0.0,
-    # mean_reversion 降权到 0 (2026-08-12): 三策略无偏审计 (n=16470, exec 测度, 无选择
-    # 偏差) 证 MR 是**负贡献** — signed(direction×conf) Spearman(contrib,T+10)=-0.0819
-    # 跨窗 H1=-0.108/H2=-0.071 同向, 五分位单调下降 (48.4%→36.8%); direction 维度
-    # dir+1 WR=41.0% vs dir-1 WR=51.8% (差 10.8pp); **T+1 也倒挂** (signed ρ=-0.0282,
-    # NS-4 翻转是 T+1 验证的) — 方向本身在涨停候选日宇宙上错误, 非 horizon 冲突.
-    # 非翻转 (NS-4 翻转版已在生产, 无新证据支持方向反转; 2026-06-25 曾因推荐池样本
-    # 把 multiplier 设 -1.0 后被全 universe 回测推翻, models.py 注释即此教训) —
-    # 降权负贡献因子与 trend 降权同构, 让有正证据的 fundamental/event 归一化放大.
-    # 实验脚本 scripts/strategy_unbiased_audit.py; 决策包
-    # docs/superpowers/specs/2026-08-12-strategy-unbiased-audit-deweights.md
-    "mean_reversion": 0.0,
+    # 2026-08-11/12 的降权研究重建因 universe、exit、公司行动与 event
+    # 时点泄漏不匹配被拒绝；生产默认恢复到该研究变更前的最后接受语义。
+    "trend": 0.40,
+    "mean_reversion": 0.20,
     "fundamental": 0.15,
     "event_sentiment": 0.05,
 }
@@ -104,9 +88,8 @@ def _default_adjusted_weights() -> dict[str, float]:
     return dict(DEFAULT_STRATEGY_WEIGHTS)
 
 
-#: 当前启用的策略集合 (weight>0). 融合层 _normalize_active_weights 天然排除
-#: weight<=0 的策略, 所以此集合不是"额外开关", 只是 DEFAULT_STRATEGY_WEIGHTS 的
-#: 派生视图, 方便诊断和断言 ("当前只有 fundamental + event 在工作").
+#: 当前启用的策略集合 (weight>0). 此集合不是额外开关，只是
+#: DEFAULT_STRATEGY_WEIGHTS 的派生诊断视图。
 ENABLED_STRATEGIES: frozenset[str] = frozenset(
     name for name, weight in DEFAULT_STRATEGY_WEIGHTS.items() if weight > 0.0
 )

@@ -368,6 +368,264 @@ def test_e2e_compute_pipeline_respects_selected_strategies_before_top_n_slice(tm
     assert payload["recommendations"][0]["ticker"] == "600001"
 
 
+def test_e2e_selected_strategy_unavailable_is_not_reranked_by_old_composite(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """A selected-strategy ranking must not consume an old all-strategy model."""
+    from src.screening.composite_score import CompositeEntry, CompositeReport
+    from src.screening.expected_return import ExpectedReturnReport
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("USE_BATCH_FETCHER", "true")
+    monkeypatch.setenv("TUSHARE_TOKEN", "test_token")
+    monkeypatch.setenv("INVESTABILITY_PROFIT_AWARE", "false")
+    report_dir = tmp_path / "data" / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("src.main._save_json_report", lambda *_a, **_kw: report_dir / "stub.json")
+    monkeypatch.setattr(
+        "src.screening.scoring_feature_refresh.refresh_scoring_features",
+        lambda *_args, **_kwargs: {"status": "test"},
+    )
+    monkeypatch.setattr(
+        "src.main._inject_recommended_prices",
+        lambda recommendations, _trade_date: recommendations,
+    )
+
+    candidates = _make_candidates(2)
+    market_state = _make_market_state()
+    unavailable_event = StrategySignal(
+        direction=0,
+        confidence=0.0,
+        completeness=0.0,
+    )
+    fused = [
+        FusedScore(
+            ticker=candidate.ticker,
+            name=candidate.name,
+            industry_sw=candidate.industry_sw,
+            score_b=original_score,
+            strategy_signals={
+                "trend": StrategySignal(
+                    direction=trend_direction,
+                    confidence=100.0,
+                    completeness=1.0,
+                ),
+                "mean_reversion": StrategySignal(direction=0, confidence=0.0, completeness=0.0),
+                "fundamental": StrategySignal(direction=0, confidence=0.0, completeness=0.0),
+                "event_sentiment": unavailable_event,
+            },
+            metrics={"close": 10.0},
+            arbitration_applied=[],
+            market_state=market_state,
+            weights_used={
+                "trend": 1.0,
+                "mean_reversion": 0.0,
+                "fundamental": 0.0,
+                "event_sentiment": 0.0,
+            },
+            decision="buy",
+        )
+        for candidate, original_score, trend_direction in zip(
+            candidates,
+            (0.9, 0.1),
+            (1, -1),
+        )
+    ]
+    patches = _patch_pipeline_layers(candidates, fused=fused)
+
+    # This report belongs to the old all-strategy scoring generation and ranks
+    # the two zero-score event-only candidates in the opposite order.
+    monkeypatch.setattr(
+        "src.screening.composite_score.compute_composite_scores_for_recommendations",
+        lambda **_kwargs: CompositeReport(
+            trade_date="20260607",
+            items=[
+                CompositeEntry(ticker=candidates[0].ticker, composite_score=0.1),
+                CompositeEntry(ticker=candidates[1].ticker, composite_score=0.9),
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        "src.screening.expected_return.compute_expected_returns",
+        lambda **_kwargs: ExpectedReturnReport(
+            trade_date="20260607",
+            lookback_days=60,
+            total_samples=0,
+        ),
+    )
+
+    from src.main import compute_auto_screening_results
+
+    with (
+        patches["build_candidate_pool"],
+        patches["score_batch"],
+        patches["fuse_batch"],
+        patches["detect_market_state"],
+    ):
+        payload = compute_auto_screening_results(
+            "20260607",
+            top_n=2,
+            selected_strategies=["event_sentiment"],
+        )
+
+    assert payload["recommendations"] == []
+
+
+def test_e2e_selected_strategy_excludes_forced_avoid_from_top_n(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """A selected score cannot promote a production hard-veto candidate."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("USE_BATCH_FETCHER", "true")
+    monkeypatch.setenv("TUSHARE_TOKEN", "test_token")
+    report_dir = tmp_path / "data" / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        "src.screening.scoring_feature_refresh.refresh_scoring_features",
+        lambda *_args, **_kwargs: {"status": "test"},
+    )
+    monkeypatch.setattr(
+        "src.main._inject_recommended_prices",
+        lambda recommendations, _trade_date: recommendations,
+    )
+
+    candidates = _make_candidates(2)
+    market_state = _make_market_state()
+    fused = [
+        FusedScore(
+            ticker=candidates[0].ticker,
+            name=candidates[0].name,
+            industry_sw=candidates[0].industry_sw,
+            score_b=-1.0,
+            strategy_signals={
+                "trend": StrategySignal(direction=1, confidence=100.0, completeness=1.0),
+                "mean_reversion": StrategySignal(direction=0, confidence=0.0, completeness=0.0),
+                "fundamental": StrategySignal(direction=-1, confidence=100.0, completeness=1.0),
+                "event_sentiment": StrategySignal(direction=0, confidence=0.0, completeness=0.0),
+            },
+            metrics={"close": 10.0},
+            arbitration_applied=["avoid"],
+            market_state=market_state,
+            weights_used={
+                "trend": 0.5,
+                "mean_reversion": 0.0,
+                "fundamental": 0.5,
+                "event_sentiment": 0.0,
+            },
+            decision="strong_sell",
+        ),
+        FusedScore(
+            ticker=candidates[1].ticker,
+            name=candidates[1].name,
+            industry_sw=candidates[1].industry_sw,
+            score_b=0.4,
+            strategy_signals={
+                "trend": StrategySignal(direction=1, confidence=40.0, completeness=1.0),
+                "mean_reversion": StrategySignal(direction=0, confidence=0.0, completeness=0.0),
+                "fundamental": StrategySignal(direction=0, confidence=0.0, completeness=0.0),
+                "event_sentiment": StrategySignal(direction=0, confidence=0.0, completeness=0.0),
+            },
+            metrics={"close": 10.0},
+            arbitration_applied=[],
+            market_state=market_state,
+            weights_used={
+                "trend": 1.0,
+                "mean_reversion": 0.0,
+                "fundamental": 0.0,
+                "event_sentiment": 0.0,
+            },
+            decision="watch",
+        ),
+    ]
+    patches = _patch_pipeline_layers(candidates, fused=fused)
+
+    from src.main import compute_auto_screening_results
+
+    with (
+        patches["build_candidate_pool"],
+        patches["score_batch"],
+        patches["fuse_batch"],
+        patches["detect_market_state"],
+    ):
+        payload = compute_auto_screening_results(
+            "20260607",
+            top_n=2,
+            selected_strategies=["trend"],
+        )
+
+    assert [rec["ticker"] for rec in payload["recommendations"]] == [
+        candidates[1].ticker,
+    ]
+    assert payload["recommendations"][0]["decision"] == "watch"
+
+
+def test_selected_policy_constraints_do_not_backfill_ineligible_candidates(
+    monkeypatch,
+) -> None:
+    """Selected-policy attention and sector limits remain admission constraints."""
+    from src.main import _select_top_n_with_constraints
+
+    monkeypatch.setenv("AUTO_ATT_EXCLUSION_THRESHOLD", "0.7")
+    monkeypatch.setenv("AUTO_MAX_PER_SECTOR", "1")
+    ranked = [
+        {
+            "ticker": "HIGH_ATT",
+            "industry_sw": "电子",
+            "score_decomposition": {
+                "diagnostics": {"attention_composite": 0.9},
+            },
+        },
+        {
+            "ticker": "ELIGIBLE",
+            "industry_sw": "电子",
+            "score_decomposition": {
+                "diagnostics": {"attention_composite": 0.2},
+            },
+        },
+        {
+            "ticker": "SECTOR_OVERFLOW",
+            "industry_sw": "电子",
+            "score_decomposition": {
+                "diagnostics": {"attention_composite": 0.1},
+            },
+        },
+    ]
+
+    selected = _select_top_n_with_constraints(
+        ranked,
+        top_n=3,
+        relax_constraints=False,
+    )
+
+    assert [rec["ticker"] for rec in selected] == ["ELIGIBLE"]
+
+
+def test_default_policy_constraints_keep_legacy_backfill_behavior(monkeypatch) -> None:
+    """The default production path retains its existing soft-constraint behavior."""
+    from src.main import _select_top_n_with_constraints
+
+    monkeypatch.setenv("AUTO_ATT_EXCLUSION_THRESHOLD", "0.7")
+    monkeypatch.setenv("AUTO_MAX_PER_SECTOR", "1")
+    ranked = [
+        {
+            "ticker": "HIGH_ATT",
+            "industry_sw": "电子",
+            "score_decomposition": {"attention_contribution": 0.9},
+        },
+        {
+            "ticker": "ELIGIBLE",
+            "industry_sw": "电子",
+            "score_decomposition": {"attention_contribution": 0.2},
+        },
+    ]
+
+    selected = _select_top_n_with_constraints(ranked, top_n=2)
+
+    assert [rec["ticker"] for rec in selected] == ["HIGH_ATT", "ELIGIBLE"]
+
+
 # ---------------------------------------------------------------------------
 # 3. 报告 JSON 中无 NaN/Inf 泄漏
 # ---------------------------------------------------------------------------

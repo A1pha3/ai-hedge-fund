@@ -168,7 +168,28 @@ created_at / artifact_hash
 
 ### 5.3 `ForwardPairedTrialRunner`
 
-runner 只负责编排：读取 sealed Trial/SAP/SessionSpine，冻结共享输入与一次 trusted-clock observation，读取两臂资本 checkpoint，各运行一次 shadow kernel，原子提交 pair，并以稳定 ID 推进 shadow proxy lifecycle。两个 kernel 调用必须消费同一个冻结时间，不能因调用先后得到不同 deadline 结果。
+runner 只负责编排：读取 sealed Trial/SAP/SessionSpine，冻结共享输入与一次 trusted-clock observation，分别读取两臂资本 checkpoint，各运行一次 shadow kernel，原子提交 pair，并以稳定 ID 推进 shadow proxy lifecycle。两个 kernel 调用必须消费同一个冻结时间，不能因调用先后得到不同 deadline 结果。`ShadowCapitalCheckpoint` 必须绑定 trial、arm、隔离 portfolio、`DAILY_BAR_PROXY` mode、capital store identity、sealed genesis manifest hash、该臂 capital genesis root，以及 embedded `CapitalRiskSnapshot` 的 hash；shared trial/arm/portfolio/mode 任一不一致即拒绝。纯 builder 只接受 Champion/Challenger 两个独立 checkpoint，禁止读取一次 snapshot 后复制给两臂；pair record 分别从对应完整 checkpoint 计算 `arm_capital_checkpoint_hash`，不接受 caller 传入裸 hash。两臂经济状态可以相同，但 provenance 仍各自独立；cash、gross exposure 或 drawdown 不同则各自进入对应 kernel 决策。
+
+runner 的 producer 输入必须是 exact `VerifiedDailyActionSnapshot`（或由
+verified snapshot reader 按 session 返回）；未接线、类型不符或 session
+不一致均在 producer/kernel 前 fail-closed。SELECTED 信号必须再经 producer
+Evidence Store 的 store-owned raw-candidate reader 读取，并冻结为严格的
+`CommittedBtstCandidate(record, payload)`。组合输入只能从 raw payload 取得
+exchange-qualified security、整数 price micros、industry typed state 和原始
+target-weight ppm；禁止解析 evidence id 猜交易所，禁止价格/行业/权重 fallback。
+该 DTO 自身不是权限：current-cost replay 必须再次以原 cutoff 的 active signal
+record 和 store-owned raw blob 逐字验证，缺 signal store 或 raw payload 即拒绝。
+更关键的是，单个 verified snapshot / signal record 不能证明 session 输出的
+完备集合。当前 Evidence Store 尚无 store-owned snapshot receipt、绑定 count 与
+ordered record/candidate roots 的 session batch manifest，也无 Trial/Stage 绑定的
+exchange decision-window seal。因此 official runner 与 current-cost/2×-slippage
+replay 当前都必须在 producer、kernel、target directory 与 capital 写之前以
+`forward_input_authority_unavailable` 拒绝；不得用内存 DTO、bool 或 caller 自签
+witness 绕开。当前 disabled runner/replay 是零 capability 对象：decision、market
+advance、missed-session finalization 和 replay 均在读取 request/clock/bundle/spine/
+pair/target path 前无条件拒绝。exact pair + terminal status 也不能 crash-resume，
+因为旧 pair 未绑定上述 batch/window authority；当前入口不得写 `NO_RUN`。纯构造
+函数只供隔离测试，不构成官方 runner 能力。
 
 两个隔离 proxy portfolio 由同一 fenced single-writer lease 管理；correction/lifecycle 也经该 writer 排序。它不把两库冒充一个事务，但防止 decision 与 reserve 之间出现并发 writer 漂移。
 
@@ -327,13 +348,20 @@ Revision 2 删除原设计中的：
 
 在完整时间窗、增长、尾部、容量、覆盖与完整性门全部通过前，regime gate 保持 shadow。即使全部通过，也只产生 `DAILY_BAR_PROXY` 同模式的 inactive candidate；`BROKER_CONFIRMED` 必须使用新的、不复用的真实前向 Trial。
 
-## 12. 实现完成声明 (Task 1–14, 2026-08-10)
+## 12. 当前实现边界（2026-08-13 对抗性复审修订）
 
-全部 14 个任务已实现并通过 v3 全套回归。Task 14 收尾交付：
+Task 1–14 留下了契约、存储、纯构造器、fixture 驱动的生命周期/故障注入测试和静态权限边界，但这不等于可运行的官方 forward Trial。官方 forward Trial 尚未启动；历史测试只证明受控 fixture 内的组件不变式，不能证明真实 producer input、完整 session batch、两臂资本路径或 replay 已权威接通。
 
-- **Shadow CLI 入口** (`src/cli/v3_regime_trial.py` + `scripts/v3_regime_trial.py`)：四个子命令 `validate` / `decide-session` / `advance-session` / `assess`。根目录守卫拒绝 path-traversal / symlink / 缺失根；CLI 不识别任何 policy/regime/cap/mode/cutoff override flag、不读环境开关、不 auto-create/auto-seal Trial。`validate` 只读、`assess` 只把可删除报告写入显式 `--output`。`decide-session` / `advance-session` 加载验证 sealed trial 后 fail-closed —— 前向决策所需的 BTST producer Ed25519 trust chain 与 PIT capital baseline 由 privileged worker (Plan 06+) 注入，standalone CLI 无法在不过 `shadow_trust` 边界的前提下合成（与 `_GracefulCapitalReader` 同一哲学）。
-- **对抗性 fault campaign** (`tests/offensive/v3/orchestration/test_regime_trial_fault_campaign.py`)：orchestration 级别的 adversarial 输入层 —— 一臂 ladder 中段崩溃后重放两臂均 finalize、跌停/停牌日保留持仓与 mandate 下一交易日补卖（不超卖）、长期一字板至 run-out 仍持有完整 ITT 行与可 claim 的 exit 义务、writer-lease takeover 阻断 entry 写但 exit 存活、divergent pair 重 commit 永久 latch。与 Task 9/10 组件级崩溃套件互补。
-- **import 边界守卫** (`tests/offensive/v3/orchestration/test_regime_trial_import_boundary.py`)：trial path（runner/replay/proxy/lifecycle/CLI）的 AST 扫描，永不 import broker / outbox / `shadow_trust` / `CapitalAuthorizationEnvelope` / `ExecutionPermit` / authority 写面 / 激活方法 / legacy court-backtest；`gateway.exits`（authority-free exit obligation store）是唯一允许的 gateway 子模块。
-- **权威文档**：本节 + migration (`docs/superpowers/migrations/2026-08-10-policy-v2-shadow-decision-v3.md`) + runbook (`docs/runbooks/v3-btst-regime-forward-trial.md`) + `AGENTS.md`。
+当前 `ForwardPairedTrialRunner` 与 `ForwardTrialReplayEngine` 都是零 capability 对象。runner/replay public entry point 在观察 request、clock、store、pair、target path 或任何外部状态之前统一以 `forward_input_authority_unavailable` 拒绝。此前仍可被直接 import 的 temporary-ledger fixture helpers 不能靠“未导出”构成安全边界：`ShadowProxyAdapter`、`ShadowProxyLifecycle` 及 replay 的 reserve/lifecycle/corporate-action/restatement 写 facade 现全部在读取 lease、pair、bar、evidence、exit lane 或 capital store 前以 `shadow_capital_fence_authority_unavailable` 拒绝。内部纯 resolver、read-only lot-origin 与 originating-lot 修正保留为未来实现材料，但 public 路径不可达资本写。
 
-最终静态证明：trial path 没有任何真实发单路径。经济算法全部下沉到共享 `settle_proxy_open` core 与 capital kernel；shadow adapter 与授权 proxy 共用同一经济学。`runtime_mode "off"` + 全 0 caps + `execution_authority "NONE"` 三重 fail-closed 基线，无 broker 连接、无 authority flip、无真实资本激活。
+这是一项对**从未启动、无权威持仓**的隔离 shadow temporary-ledger namespace 的整体撤回，不是 entry kill switch，也不改变 Gateway `ExitLane` 或 generic `AccountCapitalTruth` 的真实退出、公司行动、对账与 correction API。恢复 shadow 写能力前，必须在每臂 capital DB 内实现单调 fencing epoch，并让每个经济写在同一 local transaction 中验证/消费当前 writer ownership；decision-store lease 的 check-then-capital-write 不能替代该证明，也不得用跨库镜像伪造原子性。迁移说明见 `docs/superpowers/migrations/2026-08-13-shadow-capital-mutation-withdrawal.md`。
+
+四个 CLI 子命令都只检查路径形状后 fail-closed，不打开 SQLite、不读取 Trial 内容，也不绑定 frozen policy/regime/capital/Stage/session 值：
+
+- `validate` 返回 `validation_inputs_unavailable`；
+- `decide-session` 与 `advance-session` 返回 `privileged_context_required`；
+- `assess` 返回 `assessment_inputs_unavailable`，不创建、替换或修改 output。
+
+官方路径保持 unavailable，直到 Evidence Store 提供原 cutoff 的 committed snapshot receipt、绑定 count 与 ordered record/candidate roots 的完整 session batch manifest，以及 Trial/Stage 绑定的签名 exchange decision-window artifact。独立两臂 PIT capital、权威交易所 calendar、originating-lot lifecycle、official current-cost/2×-slippage replay 与 consumption ledger 也必须全部接通并重验。
+
+现有 import/AST 边界仍证明 trial path 没有 broker、outbox、Gateway entry authority、activation 或真实发单面；`runtime_mode "off"` + 全 0 caps + `execution_authority "NONE"` 继续三重 fail-closed。当前状态不可验证、不可评估、不可产生晋级候选，更不可授权资本。

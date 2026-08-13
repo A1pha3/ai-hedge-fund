@@ -119,6 +119,36 @@
       "numerator": 2
     }
   },
+  "src.screening.offensive.v3.contracts.btst_candidate.BtstRawCandidatePayload": {
+    "canonical_payload_sha256": "6ce09f2d20e94cb5b2acd9d53f07dfd60fdb26f48bb779d367420c48cb9573dd",
+    "content_hash": "6ce09f2d20e94cb5b2acd9d53f07dfd60fdb26f48bb779d367420c48cb9573dd",
+    "json_payload_sha256": "6ce09f2d20e94cb5b2acd9d53f07dfd60fdb26f48bb779d367420c48cb9573dd",
+    "model_module": "src.screening.offensive.v3.contracts.btst_candidate",
+    "model_name": "BtstRawCandidatePayload",
+    "payload": {
+      "behavior_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "candidate_id": "btst:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:600000:btst_breakout",
+      "cost_version": "cn-a-share-costs.v1",
+      "entry_price_micros": 5000000,
+      "execution_version": "btst.funnel.v1",
+      "industry": "software",
+      "industry_state": "KNOWN",
+      "payload_kind": "btst_raw_candidate",
+      "priority": 1,
+      "producer_namespace": "btst",
+      "schema_major": 1,
+      "security_id": "600000.SH",
+      "setup": "btst_breakout",
+      "setup_consumed_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "setup_version": "v2",
+      "signal_session": "2026-08-11",
+      "signal_stage": "selected",
+      "snapshot_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "strategy_semver": "0.2.0",
+      "target_weight_ppm": 90000,
+      "trigger_strength_ppm": 900000
+    }
+  },
   "src.screening.offensive.v3.contracts.capital.AuthoritySnapshot": {
     "canonical_payload_sha256": "3550a9af6f86a2ec95504a1760fa50ee92acb83e864b9d434b411a3e918eb053",
     "content_hash": "3550a9af6f86a2ec95504a1760fa50ee92acb83e864b9d434b411a3e918eb053",
@@ -889,6 +919,103 @@
       "trial_id": "auto-shadow-trial"
     }
   },
+  "src.screening.offensive.v3.contracts.compatibility.LegacyShadowDecisionV3": {
+    "artifact_hash": {
+      "domain": "ai-hedge-fund.v3.decision.shadow-decision.v2",
+      "schema_major": 3,
+      "sha256": "f60a10d03d54651f78dac3071243b7a19667016d7264fe9b4dcd652b258c6861"
+    },
+    "canonical_payload_sha256": "56a4d33128f7682d7ba36f30d3864f742c2932007483c5aa20a84983dc0e7706",
+    "content_hash": "56a4d33128f7682d7ba36f30d3864f742c2932007483c5aa20a84983dc0e7706",
+    "json_payload_sha256": "56a4d33128f7682d7ba36f30d3864f742c2932007483c5aa20a84983dc0e7706",
+    "model_module": "src.screening.offensive.v3.contracts.compatibility",
+    "model_name": "LegacyShadowDecisionV3",
+    "payload": {
+      "artifact_kind": "shadow_decision",
+      "artifact_namespace": "growth-kernel.shadow.v2",
+      "available_at": "2026-07-29T08:00:00Z",
+      "cost_assumption_version": "cn-a-share-30bps-tax.v2",
+      "counterfactual_key": {
+        "counterfactual_cycle_id": "auto-shadow-daily-v1",
+        "portfolio_id": "portfolio-v3",
+        "signal_session": "2026-07-29"
+      },
+      "counterfactual_lines": [
+        {
+          "cost_assumption_version": "cn-a-share-30bps-tax.v2",
+          "economic_lineage_id": "auto-lineage",
+          "estimated_cash_reserve_cents": 105050,
+          "estimated_fee_cents": 50,
+          "evidence_artifact_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "evidence_id": "shadow-evidence-1",
+          "evidence_payload_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "execution_assumption_version": "t1-open-t10-open-slippage.v2",
+          "exit_session_ordinal": 10,
+          "family_id": "auto-family",
+          "limit_price_cents": 1050,
+          "lot_rule_version": "cn-a-share-lot.v1",
+          "lot_size_units": 100,
+          "order_type": "LIMIT",
+          "price_boundary_version": "cn-price-limit.v1",
+          "producer_namespace": "auto.shadow",
+          "research_program_id": "auto-program",
+          "security_id": "600000.SH",
+          "shadow_line_id": "shadow-line-1",
+          "stage_id": "auto-shadow-stage",
+          "stage_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "target_exit_session": "2026-08-08",
+          "target_quantity_units": 100,
+          "time_in_force": "OPEN_AUCTION",
+          "trial_id": "auto-shadow-trial",
+          "worst_case_price_cents": 1050
+        }
+      ],
+      "created_at": "2026-07-29T08:00:00Z",
+      "economic_lineage_id": "auto-lineage",
+      "evidence_set_merkle_root": "2222222222222222222222222222222222222222222222222222222222222222",
+      "execution_assumption_version": "t1-open-t10-open-slippage.v2",
+      "execution_authority": "NONE",
+      "family_id": "auto-family",
+      "issuer_binding": {
+        "capability_artifact_kind": "shadow_decision",
+        "capability_mode": "broker_confirmed",
+        "capability_namespace": "growth-kernel.shadow.v2",
+        "capability_schema_major": 3,
+        "capability_scope": "portfolio:portfolio-v3",
+        "capability_version": "growth-kernel-shadow.v2",
+        "issuer_id": "growth-kernel.shadow.service",
+        "key_id": "shadow-key-1",
+        "registry_epoch": 7,
+        "trust_bundle_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "valid_until": "2026-07-29T08:04:00Z",
+        "verification_result": "VALID",
+        "verified_at": "2026-07-29T07:59:00Z"
+      },
+      "mode": "broker_confirmed",
+      "policy_epoch": 4,
+      "portfolio_id": "portfolio-v3",
+      "producer_namespace": "auto.shadow",
+      "research_program_id": "auto-program",
+      "schema_major": 3,
+      "shadow_decision_id": "shadow-decision-1",
+      "shadow_policy_binding": {
+        "baseline_policy_activation_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "policy_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+        "policy_snapshot_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "source_kind": "BASELINE_POLICY_ACTIVATION"
+      },
+      "shadow_stage_binding": {
+        "economic_lineage_id": "auto-lineage",
+        "research_program_id": "auto-program",
+        "stage_id": "auto-shadow-stage",
+        "stage_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "trial_id": "auto-shadow-trial"
+      },
+      "stage_id": "auto-shadow-stage",
+      "target_entry_session": "2026-07-30",
+      "trial_id": "auto-shadow-trial"
+    }
+  },
   "src.screening.offensive.v3.contracts.compatibility.LegacyShadowOrderLine": {
     "canonical_payload_sha256": "331390a6eba80b66aaa449dd42b4b134eac25710a153aefd5216b5ae1bbed23b",
     "content_hash": "331390a6eba80b66aaa449dd42b4b134eac25710a153aefd5216b5ae1bbed23b",
@@ -917,6 +1044,41 @@
       "shadow_line_id": "shadow-line-1",
       "stage_id": "auto-shadow-stage",
       "stage_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "target_quantity_units": 100,
+      "time_in_force": "OPEN_AUCTION",
+      "trial_id": "auto-shadow-trial",
+      "worst_case_price_cents": 1050
+    }
+  },
+  "src.screening.offensive.v3.contracts.compatibility.LegacyShadowOrderLineV3": {
+    "canonical_payload_sha256": "b4acf788bd69743d3427b0c39c63256aef496a25044f4ba9b5ef65a3e74e30de",
+    "content_hash": "b4acf788bd69743d3427b0c39c63256aef496a25044f4ba9b5ef65a3e74e30de",
+    "json_payload_sha256": "b4acf788bd69743d3427b0c39c63256aef496a25044f4ba9b5ef65a3e74e30de",
+    "model_module": "src.screening.offensive.v3.contracts.compatibility",
+    "model_name": "LegacyShadowOrderLineV3",
+    "payload": {
+      "cost_assumption_version": "cn-a-share-30bps-tax.v2",
+      "economic_lineage_id": "auto-lineage",
+      "estimated_cash_reserve_cents": 105050,
+      "estimated_fee_cents": 50,
+      "evidence_artifact_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "evidence_id": "shadow-evidence-1",
+      "evidence_payload_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "execution_assumption_version": "t1-open-t10-open-slippage.v2",
+      "exit_session_ordinal": 10,
+      "family_id": "auto-family",
+      "limit_price_cents": 1050,
+      "lot_rule_version": "cn-a-share-lot.v1",
+      "lot_size_units": 100,
+      "order_type": "LIMIT",
+      "price_boundary_version": "cn-price-limit.v1",
+      "producer_namespace": "auto.shadow",
+      "research_program_id": "auto-program",
+      "security_id": "600000.SH",
+      "shadow_line_id": "shadow-line-1",
+      "stage_id": "auto-shadow-stage",
+      "stage_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "target_exit_session": "2026-08-08",
       "target_quantity_units": 100,
       "time_in_force": "OPEN_AUCTION",
       "trial_id": "auto-shadow-trial",
@@ -1717,18 +1879,18 @@
   },
   "src.screening.offensive.v3.contracts.decision.ShadowDecision": {
     "artifact_hash": {
-      "domain": "ai-hedge-fund.v3.decision.shadow-decision.v2",
-      "schema_major": 3,
-      "sha256": "5aab361743b455592aed78d0378be7c723f7962e01c2504938680da9e1a7c446"
+      "domain": "ai-hedge-fund.v3.decision.shadow-decision.v3",
+      "schema_major": 4,
+      "sha256": "6d1ed8f50f9b36c3e694e262bb690463dce3a6a97d7cef570435c1bca96df791"
     },
-    "canonical_payload_sha256": "07e355206ffe89ab3833a00022a2cb3f04d79464bc2d58dee89609a638564dee",
-    "content_hash": "07e355206ffe89ab3833a00022a2cb3f04d79464bc2d58dee89609a638564dee",
-    "json_payload_sha256": "07e355206ffe89ab3833a00022a2cb3f04d79464bc2d58dee89609a638564dee",
+    "canonical_payload_sha256": "a99f5a9df436fc45267813cc782c080a689fafd1f58bdc1a26630320e46e8588",
+    "content_hash": "a99f5a9df436fc45267813cc782c080a689fafd1f58bdc1a26630320e46e8588",
+    "json_payload_sha256": "a99f5a9df436fc45267813cc782c080a689fafd1f58bdc1a26630320e46e8588",
     "model_module": "src.screening.offensive.v3.contracts.decision",
     "model_name": "ShadowDecision",
     "payload": {
       "artifact_kind": "shadow_decision",
-      "artifact_namespace": "growth-kernel.shadow.v2",
+      "artifact_namespace": "growth-kernel.shadow.v3",
       "available_at": "2026-07-29T08:00:00Z",
       "cost_assumption_version": "cn-a-share-30bps-tax.v2",
       "counterfactual_key": {
@@ -1759,7 +1921,7 @@
           "shadow_line_id": "shadow-line-1",
           "stage_id": "auto-shadow-stage",
           "stage_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-          "target_exit_session": "2026-08-08",
+          "target_exit_session": "2026-08-12",
           "target_quantity_units": 100,
           "time_in_force": "OPEN_AUCTION",
           "trial_id": "auto-shadow-trial",
@@ -1787,7 +1949,7 @@
           "shadow_line_id": "shadow-line-2",
           "stage_id": "auto-shadow-stage",
           "stage_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-          "target_exit_session": "2026-08-08",
+          "target_exit_session": "2026-08-12",
           "target_quantity_units": 200,
           "time_in_force": "OPEN_AUCTION",
           "trial_id": "auto-shadow-trial",
@@ -1803,10 +1965,10 @@
       "issuer_binding": {
         "capability_artifact_kind": "shadow_decision",
         "capability_mode": "broker_confirmed",
-        "capability_namespace": "growth-kernel.shadow.v2",
-        "capability_schema_major": 3,
+        "capability_namespace": "growth-kernel.shadow.v3",
+        "capability_schema_major": 4,
         "capability_scope": "portfolio:portfolio-v3",
-        "capability_version": "growth-kernel-shadow.v2",
+        "capability_version": "growth-kernel-shadow.v3",
         "issuer_id": "growth-kernel.shadow.service",
         "key_id": "shadow-key-1",
         "registry_epoch": 7,
@@ -1815,12 +1977,13 @@
         "verification_result": "VALID",
         "verified_at": "2026-07-29T07:59:00Z"
       },
+      "kernel_input_hash": "1111111111111111111111111111111111111111111111111111111111111111",
       "mode": "broker_confirmed",
       "policy_epoch": 4,
       "portfolio_id": "portfolio-v3",
       "producer_namespace": "auto.shadow",
       "research_program_id": "auto-program",
-      "schema_major": 3,
+      "schema_major": 4,
       "shadow_decision_id": "shadow-decision-1",
       "shadow_policy_binding": {
         "baseline_policy_activation_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -1837,6 +2000,26 @@
       },
       "stage_id": "auto-shadow-stage",
       "target_entry_session": "2026-07-30",
+      "trading_session_schedule_binding": {
+        "available_at": "2026-07-29T07:59:00Z",
+        "calendar_artifact_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "calendar_id": "sse-szse",
+        "calendar_version": "sse-szse-official-sessions.v1",
+        "following_sessions": [
+          "2026-07-30",
+          "2026-07-31",
+          "2026-08-03",
+          "2026-08-04",
+          "2026-08-05",
+          "2026-08-06",
+          "2026-08-07",
+          "2026-08-10",
+          "2026-08-11",
+          "2026-08-12"
+        ],
+        "schedule_hash": "507ff12da013f93b8b04d5b80b88973e51e3628734227c786903b3a1ad170246",
+        "signal_session": "2026-07-29"
+      },
       "trial_id": "auto-shadow-trial"
     }
   },
@@ -1909,6 +2092,33 @@
       "stage_id": "auto-shadow-stage",
       "stage_manifest_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "trial_id": "auto-shadow-trial"
+    }
+  },
+  "src.screening.offensive.v3.contracts.decision.ShadowTradingScheduleBinding": {
+    "canonical_payload_sha256": "c8d34d5e5fae1019a597154ac1bc20a833dac285f9553e797ad8629b1e158eef",
+    "content_hash": "c8d34d5e5fae1019a597154ac1bc20a833dac285f9553e797ad8629b1e158eef",
+    "json_payload_sha256": "c8d34d5e5fae1019a597154ac1bc20a833dac285f9553e797ad8629b1e158eef",
+    "model_module": "src.screening.offensive.v3.contracts.decision",
+    "model_name": "ShadowTradingScheduleBinding",
+    "payload": {
+      "available_at": "2026-07-29T07:59:00Z",
+      "calendar_artifact_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "calendar_id": "sse-szse",
+      "calendar_version": "sse-szse-official-sessions.v1",
+      "following_sessions": [
+        "2026-07-30",
+        "2026-07-31",
+        "2026-08-03",
+        "2026-08-04",
+        "2026-08-05",
+        "2026-08-06",
+        "2026-08-07",
+        "2026-08-10",
+        "2026-08-11",
+        "2026-08-12"
+      ],
+      "schedule_hash": "507ff12da013f93b8b04d5b80b88973e51e3628734227c786903b3a1ad170246",
+      "signal_session": "2026-07-29"
     }
   },
   "src.screening.offensive.v3.contracts.decision.StageAdmissionBinding": {

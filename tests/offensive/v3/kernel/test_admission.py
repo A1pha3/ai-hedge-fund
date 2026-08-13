@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from src.screening.offensive.v3.contracts import ExecutionMode
 from src.screening.offensive.v3.contracts.authorization import (
@@ -26,6 +27,7 @@ from src.screening.offensive.v3.kernel.admission import (
 )
 from src.screening.offensive.v3.kernel.models import (
     BlockReason,
+    PortfolioDecisionLine,
     RawCandidate,
 )
 from src.screening.offensive.v3.kernel.sizing import (
@@ -314,6 +316,69 @@ def test_sizing_floors_to_integer_lots_and_reserves_worst_case() -> None:
     assert line.worst_case_reserve_cents == (
         gross + worst_case_fee_cents(gross, 3_000)
     )
+    assert line.worst_case_fee_reserve_cents == worst_case_fee_cents(gross, 3_000)
+
+
+def test_non_cent_price_is_typed_price_boundary_block() -> None:
+    (line,) = size_portfolio(
+        ranked_candidates=(_candidate(),),
+        adjusted_target_gross_by_lineage={"eline-1": 500_000},
+        price_micros_by_candidate={"cand-1": 10_000_001},
+        industry_by_candidate={"cand-1": "electronics"},
+        available_cash_cents=1_000_000,
+        config=_config(),
+    )
+    assert line.status == "BLOCKED"
+    assert line.block_reason is BlockReason.PRICE_BOUNDARY_INVALID
+    assert line.worst_case_fee_reserve_cents == 0
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("quantity_units", 100),
+        ("limit_price_micros", 10_000_000),
+        ("worst_case_fee_reserve_cents", 1),
+        ("worst_case_reserve_cents", 1),
+    ],
+)
+def test_blocked_decision_line_requires_zero_economics(field: str, value: int) -> None:
+    values = {
+        "candidate_id": "cand-1",
+        "security_id": "600000.SH",
+        "economic_lineage_id": "eline-1",
+        "research_program_id": "program-1",
+        "stage_id": "stage-1",
+        "direction": "ENTRY",
+        "quantity_units": 0,
+        "limit_price_micros": 0,
+        "worst_case_fee_reserve_cents": 0,
+        "worst_case_reserve_cents": 0,
+        "status": "BLOCKED",
+        "block_reason": BlockReason.CAPACITY_EXHAUSTED,
+    }
+    values[field] = value
+    with pytest.raises(ValidationError, match="blocked decision line"):
+        PortfolioDecisionLine(**values)
+
+
+def test_decision_line_status_is_closed_and_reason_matches_status() -> None:
+    base = {
+        "candidate_id": "cand-1",
+        "security_id": "600000.SH",
+        "economic_lineage_id": "eline-1",
+        "research_program_id": "program-1",
+        "stage_id": "stage-1",
+        "direction": "ENTRY",
+        "quantity_units": 0,
+        "limit_price_micros": 0,
+        "worst_case_fee_reserve_cents": 0,
+        "worst_case_reserve_cents": 0,
+        "status": "UNKNOWN",
+        "block_reason": BlockReason.CAPACITY_EXHAUSTED,
+    }
+    with pytest.raises(ValidationError):
+        PortfolioDecisionLine(**base)
 
 
 def test_high_price_zero_lot_is_blocked_not_filled() -> None:

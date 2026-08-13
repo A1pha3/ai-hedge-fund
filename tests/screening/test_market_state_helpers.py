@@ -6,6 +6,8 @@ market regime gates, position scaling, and BTST trading profiles.
 
 from __future__ import annotations
 
+import pytest
+
 from src.screening.market_state_helpers import (
     _compute_regime_flip_risk,
     _compute_style_dispersion,
@@ -392,3 +394,100 @@ class TestBuildMarketStateFromMetrics:
             normalize_weights=lambda w: w,
         )
         assert state.position_scale <= 0.5  # Low volume should reduce scale
+
+    @pytest.mark.parametrize(
+        ("metrics", "expected_type", "expected_weights"),
+        [
+            (
+                _metrics(
+                    daily_return=-0.06,
+                    breadth_ratio=0.50,
+                    limit_up_count=1,
+                    limit_down_count=1,
+                ),
+                "crisis",
+                {
+                    "trend": 0.30,
+                    "mean_reversion": 0.25,
+                    "fundamental": 0.25,
+                    "event_sentiment": 0.0,
+                },
+            ),
+            (
+                _metrics(
+                    adx=35.0,
+                    atr_ratio=0.01,
+                    breadth_ratio=0.55,
+                    limit_up_count=1,
+                    limit_down_count=1,
+                ),
+                "trend",
+                {
+                    "trend": 0.52,
+                    "mean_reversion": 0.12,
+                    "fundamental": 0.15,
+                    "event_sentiment": 0.01,
+                },
+            ),
+            (
+                _metrics(
+                    adx=20.0,
+                    atr_ratio=0.01,
+                    breadth_ratio=0.50,
+                    limit_up_count=1,
+                    limit_down_count=1,
+                ),
+                "range",
+                {
+                    "trend": 0.32,
+                    "mean_reversion": 0.32,
+                    "fundamental": 0.11,
+                    "event_sentiment": 0.05,
+                },
+            ),
+            (
+                _metrics(
+                    breadth_ratio=0.40,
+                    limit_up_count=1,
+                    limit_down_count=1,
+                ),
+                "mixed",
+                {
+                    "trend": 0.34,
+                    "mean_reversion": 0.24,
+                    "fundamental": 0.21,
+                    "event_sentiment": 0.01,
+                },
+            ),
+            (
+                _metrics(
+                    breadth_ratio=0.50,
+                    northbound_flow_days=3,
+                    limit_up_count=1,
+                    limit_down_count=1,
+                ),
+                "mixed",
+                {
+                    "trend": 0.42,
+                    "mean_reversion": 0.13,
+                    "fundamental": 0.20,
+                    "event_sentiment": 0.05,
+                },
+            ),
+        ],
+    )
+    def test_preserves_pre_research_additive_regime_adjustments(
+        self,
+        metrics: MarketStateMetrics,
+        expected_type: str,
+        expected_weights: dict[str, float],
+    ) -> None:
+        """A regime branch must keep the last accepted additive weight contract."""
+
+        state = build_market_state_from_metrics(
+            metrics=metrics,
+            normalize_weights=lambda weights: weights,
+        )
+
+        assert state.state_type.value == expected_type
+        assert state.adjusted_weights == pytest.approx(expected_weights)

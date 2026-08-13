@@ -188,7 +188,7 @@ class GrowthKernel:
         and the same ``decide_core`` as the executable path.
         """
 
-        return decide_shadow(shadow_input, config=self._config)
+        return decide_shadow(shadow_input)
 
 
 def _portfolio_cap_cents(kernel_input: KernelInput) -> int:

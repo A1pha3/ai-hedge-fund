@@ -188,6 +188,14 @@ schema_major
 
 `SignalEvidence` 另有 typed `stage = candidate | data_eligible | selected`。`SnapshotEvidence`、`SignalEvidence`、`OutcomeEvidence` 的 schema **禁止**出现 `execution_authorized`；producer 自报的授权字段没有任何效力。Evidence Store 还会追加自身控制的 `ingested_at`、`commit_sequence` 与 active revision，见 §14。
 
+BTST 的 current `SignalEvidence.payload_content_hash` 必须绑定独立、严格且
+canonical 的 raw-candidate payload，而不是由候选 ID 拼接出的替代摘要。该
+payload 保存 candidate identity、交易所限定 security ID、整数 price micros、
+producer 原始 target-weight/trigger-strength ppm、typed industry presence、PIT
+snapshot/setup fingerprint、signal session 与 producer/version provenance；raw
+blob 必须先于信封 durable。它仍只是 producer evidence：组合/NAV/capacity/risk
+clamp 留在后续内核，缺失 industry 为 `UNKNOWN`，未知交易所不得猜测。
+
 ### 6.3 控制面契约
 
 以下对象不是 producer evidence，必须由独立 issuer capability 签发，并在对应 authority store 中单调激活：
@@ -796,6 +804,7 @@ current executable `PlanEvidence` 另要求 `created_at <= observed_at`；结合
 ### 14.2 payload 与缓存
 
 - 保存实际消费的内容寻址 payload/blob、解析器版本和 source metadata；只存 hash 不足以重验。
+- BTST raw candidate 使用独立 payload schema 世代；Evidence Store 先 fsync content-addressed canonical bytes，再允许发布引用同一 SHA-256 的 `SignalEvidence`。读取时须重算 bytes hash、strict decode，并交叉验证 candidate identity、session、stage 和版本。缺失、篡改或跨会话/候选绑定一律 fail-closed；安全 orphan blob 可接受，指向缺失 blob 的信封不可接受。
 - 所有 hash/Merkle leaf 必须使用版本化 domain tag、规范编码和明确字段顺序；父对象引用子 payload hash，禁止把待计算的最终 hash 自身放进 preimage。
 - fingerprint 验证内容一致，issuer/gateway 权限由独立签发边界保证。
 - 缓存只是性能层。cache hit 必须重新校验 dependency、schema、behavior、source status、time cutoff 与 payload hash。
@@ -1084,3 +1093,4 @@ DISCOVERED
 - Revision 1（2026-07-19）：批准 evidence-gated growth kernel 的长期目标、不变量和初始迁移路线。
 - Revision 2（2026-07-26，已批准；修订完成于 2026-07-23）：经对抗性复审，补齐 Governance Control Plane、Trust/Policy activation、组合级 `CapitalAuthorizationEnvelope`、CapitalRiskSnapshot、`SEND_CLAIMED` 线性化、独立 ExitMandate、双键样本消费、不可回补 stage loss、PIT revision、broker correction/reopen、迁移/credential fencing 与灾备契约；不表示这些能力已经实现。
 - Revision 2 后续（2026-08-10）：本架构的 **BTST regime 前向配对影子试验**（shadow-only 测量系统）已按 `2026-08-09-btst-regime-gate-forward-paired-shadow-trial-design.md` Tasks 1–14 全部实现。两臂共享冻结 trusted clock / regime observation / producer / capital snapshot，各自落入守恒 `DAILY_BAR_PROXY` ledger；契约切变 `PolicySnapshot` schema-major 2 + `ShadowDecision` schema-major 3（`execution_authority="NONE"`），经济算法下沉共享 `settle_proxy_open` core。shadow CLI（`scripts/v3_regime_trial.py`）+ 可删除评估投影（headline 最多 `INACTIVE_PROMOTION_CANDIDATE`）。详见该设计 spec §12、migration `2026-08-10-policy-v2-shadow-decision-v3.md`、runbook `v3-btst-regime-forward-trial.md`。**仍无任何真实资本激活路径；本试验不构成部署批准。**
+- Revision 2 后续（2026-08-12）：BTST producer evidence 新增独立 `BtstRawCandidatePayload` schema-major 1，`SignalEvidence` schema-major 2 保持不变但其 `payload_content_hash` 改为精确绑定先行 durable 的 canonical raw bytes；producer semver 升至 `0.2.0`，behavior baseline 改为 `sha256("btst-raw-candidate-payload-v1")`。这只修复 shadow evidence 可重验性，不改变 runner、组合经济学或任何资本权限。迁移语义见 `docs/superpowers/migrations/2026-08-12-btst-raw-candidate-payload-v1.md`。

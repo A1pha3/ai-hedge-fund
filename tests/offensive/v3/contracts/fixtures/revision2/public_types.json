@@ -1292,6 +1292,19 @@
       ],
       "value_type": "builtins.str"
     },
+    "src.screening.offensive.v3.contracts.btst_candidate.BtstCandidateIndustryState": {
+      "members": [
+        {
+          "name": "KNOWN",
+          "value": "KNOWN"
+        },
+        {
+          "name": "UNKNOWN",
+          "value": "UNKNOWN"
+        }
+      ],
+      "value_type": "builtins.str"
+    },
     "src.screening.offensive.v3.contracts.capital.AuthorityState": {
       "members": [
         {

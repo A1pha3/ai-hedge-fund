@@ -16,6 +16,7 @@ from src.screening.custom_weights import (
     StrategyWeights,
     WEIGHT_SUM_TOLERANCE,
 )
+from src.screening.models import StrategySignal
 
 # ---------------------------------------------------------------------------
 # StrategyWeights
@@ -26,9 +27,8 @@ class TestStrategyWeights:
     def test_default_weights_from_authority(self) -> None:
         """默认权重从 DEFAULT_STRATEGY_WEIGHTS 派生 (2026-08-12 重构后不再 0.25 等分).
 
-        旧测试断言 0.25 等分 + sum=1, 但权威源在 trend/MR 降权后 sum=0.20 —
-        旧的"0.25 等分"是 stale 硬编码, 与 --auto 生产路径用两套冲突的默认权重.
-        现在默认值从权威源派生, sum 可以 < 1 (disabled 策略 weight=0).
+        旧测试断言 0.25 等分 + sum=1，但这会让 --auto 与重算路径拥有两套默认值。
+        当前默认值直接从权威源派生，权威源变化时两条路径同步。
         """
         from src.screening.models import DEFAULT_STRATEGY_WEIGHTS
 
@@ -55,8 +55,7 @@ class TestStrategyWeights:
     def test_reject_all_zero(self) -> None:
         """全 0 权重被拒 (无法归一化, 会污染排序).
 
-        2026-08-12: 校验从 sum==1 放宽为 sum>0 — 权威源在策略降权时 sum 可以 < 1
-        (当前 sum=0.20: trend/MR weight=0). 但全 0 仍然非法.
+        校验允许任意正的相对权重和，但全 0 仍然非法。
         """
         with pytest.raises(ValueError, match="权重之和必须 > 0"):
             StrategyWeights(trend=0.0, mean_reversion=0.0, fundamental=0.0, event_sentiment=0.0)
@@ -190,11 +189,168 @@ class TestComputeWeightedScoreB:
         score = _compute_weighted_score_b(rec, w)
         assert score == pytest.approx(0.5)
 
-    def test_no_signals_falls_back_to_score_b(self) -> None:
+    def test_no_signals_matches_production_zero_score(self) -> None:
         rec = {"ticker": "000001", "score_b": 0.6}
         w = StrategyWeights()
         score = _compute_weighted_score_b(rec, w)
-        assert score == pytest.approx(0.6)
+        assert score == 0.0
+
+    @pytest.mark.parametrize(
+        ("raw_signals", "production_signals", "expected"),
+        [
+            (
+                {
+                    "trend": {
+                        "direction": 1,
+                        "confidence": 70.0,
+                        "completeness": 1.0,
+                    }
+                },
+                {
+                    "trend": StrategySignal(
+                        direction=1,
+                        confidence=70.0,
+                        completeness=1.0,
+                    )
+                },
+                0.70,
+            ),
+            (
+                {
+                    "fundamental": {
+                        "direction": 1,
+                        "confidence": 80.0,
+                        "completeness": 0.5,
+                    },
+                    "event_sentiment": {
+                        "direction": -1,
+                        "confidence": 100.0,
+                        "completeness": 0.0,
+                    },
+                },
+                {
+                    "fundamental": StrategySignal(
+                        direction=1,
+                        confidence=80.0,
+                        completeness=0.5,
+                    ),
+                    "event_sentiment": StrategySignal(
+                        direction=-1,
+                        confidence=100.0,
+                        completeness=0.0,
+                    ),
+                },
+                0.40,
+            ),
+            (
+                {
+                    "trend": {
+                        "direction": 1,
+                        "confidence": 70.0,
+                        "completeness": 0.0,
+                    }
+                },
+                {
+                    "trend": StrategySignal(
+                        direction=1,
+                        confidence=70.0,
+                        completeness=0.0,
+                    )
+                },
+                0.0,
+            ),
+        ],
+    )
+    def test_default_reweight_math_matches_production_fusion(
+        self,
+        raw_signals: dict,
+        production_signals: dict,
+        expected: float,
+    ) -> None:
+        """Default web reweighting must reproduce production's active-signal math."""
+        from src.screening.models import DEFAULT_STRATEGY_WEIGHTS
+        from src.screening.signal_fusion import compute_score_b
+
+        custom_score = _compute_weighted_score_b(
+            {"strategy_signals": raw_signals},
+            StrategyWeights(),
+        )
+        production_score = compute_score_b(
+            production_signals,
+            DEFAULT_STRATEGY_WEIGHTS,
+            [],
+        )
+
+        assert custom_score == pytest.approx(expected)
+        assert production_score == pytest.approx(expected)
+
+    def test_raw_reweight_fields_are_bounded_by_production_model_ranges(self) -> None:
+        """Malformed report fields must not outweigh a valid opposing signal."""
+        rec = {
+            "strategy_signals": {
+                "trend": {
+                    "direction": 1,
+                    "confidence": 200.0,
+                    "completeness": 2.0,
+                },
+                "fundamental": {
+                    "direction": -1,
+                    "confidence": 100.0,
+                    "completeness": 1.0,
+                },
+            }
+        }
+        weights = StrategyWeights(
+            trend=0.5,
+            mean_reversion=0.0,
+            fundamental=0.5,
+            event_sentiment=0.0,
+        )
+
+        assert _compute_weighted_score_b(rec, weights) == 0.0
+
+    def test_selected_unavailable_strategy_does_not_fallback_to_unselected_signal(self) -> None:
+        """A valid user subset remains authoritative when its evidence is unavailable."""
+        rec = {
+            "strategy_signals": {
+                "trend": {
+                    "direction": 1,
+                    "confidence": 100.0,
+                    "completeness": 1.0,
+                },
+                "event_sentiment": {
+                    "direction": 1,
+                    "confidence": 100.0,
+                    "completeness": 0.0,
+                },
+            }
+        }
+        event_only = StrategyWeights(
+            trend=0.0,
+            mean_reversion=0.0,
+            fundamental=0.0,
+            event_sentiment=1.0,
+        )
+
+        assert _compute_weighted_score_b(rec, event_only) == 0.0
+
+    @pytest.mark.parametrize("raw_direction", [float("inf"), 2, 1.9, True])
+    def test_malformed_raw_direction_fails_closed(
+        self,
+        raw_direction: object,
+    ) -> None:
+        """Only exact non-boolean {-1, 0, 1} direction values are admissible."""
+        rec = {
+            "strategy_signals": {
+                "trend": {
+                    "direction": raw_direction,
+                    "confidence": 100.0,
+                    "completeness": 1.0,
+                }
+            }
+        }
+
+        assert _compute_weighted_score_b(rec, StrategyWeights()) == 0.0
 
     def test_mixed_signals(self) -> None:
         """Trend bullish 80, fundamental bearish 60 → net depends on weights."""

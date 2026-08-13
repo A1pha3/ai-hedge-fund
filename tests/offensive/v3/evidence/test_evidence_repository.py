@@ -11,6 +11,7 @@ namespace separation.
 from __future__ import annotations
 
 from base64 import b64encode
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -418,6 +419,65 @@ def test_duplicate_same_id_same_content_converges(world: _World) -> None:
     assert second.artifact_hash() == first.artifact_hash()
 
 
+def test_publish_uses_clock_after_durable_io_for_store_owned_timeline(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    envelope = world.snapshot_envelope()
+    signed, payload = world.sign_snapshot(envelope)
+    original_put = world.blob_store.put_durable
+
+    def delayed_put(value: bytes) -> str:
+        result = original_put(value)
+        world.clock.advance(minutes=20)
+        return result
+
+    monkeypatch.setattr(world.blob_store, "put_durable", delayed_put)
+    record = world.repository.publish(signed, payload)
+
+    assert record.ingested_at == NOW + timedelta(minutes=20)
+    with pytest.raises(EvidenceStoreError) as rejected:
+        world.repository.active_revision(
+            envelope.evidence_id,
+            NOW + timedelta(minutes=10),
+        )
+    assert rejected.value.code == "evidence_not_committed_before_cutoff"
+
+
+def test_publish_rejects_clock_rollback_after_signature_verification(
+    world: _World
+) -> None:
+    envelope = world.snapshot_envelope()
+    signed, payload = world.sign_snapshot(envelope)
+    moments = iter((NOW + timedelta(minutes=1), NOW))
+    world.repository._clock = lambda: next(moments)
+
+    with pytest.raises(EvidenceStoreError) as rejected:
+        world.repository.publish(signed, payload)
+
+    assert rejected.value.code == "trusted_clock_rollback"
+    assert world.repository.commit_sequence() == 0
+
+
+def test_idempotent_publish_does_not_manufacture_a_new_store_timestamp(
+    world: _World
+) -> None:
+    envelope = world.snapshot_envelope()
+    signed, payload = world.sign_snapshot(envelope)
+    first = world.repository.publish(signed, payload)
+    calls = 0
+
+    def verification_clock() -> datetime:
+        nonlocal calls
+        calls += 1
+        return NOW + timedelta(minutes=30)
+
+    world.repository._clock = verification_clock
+    retried = world.repository.publish(signed, payload)
+
+    assert calls == 1
+    assert retried.canonical_bytes() == first.canonical_bytes()
+
+
 def test_duplicate_same_id_different_content_conflicts(
     world: _World,
 ) -> None:
@@ -497,6 +557,72 @@ def test_revision_chain_and_cutoff_active_projection(world: _World) -> None:
     assert publish_time < activation_time
 
 
+def test_prepare_and_activate_stamp_time_after_delays(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = world.snapshot_envelope(payload_content_hash="a" * 64)
+    signed, payload = world.sign_snapshot(original)
+    world.repository.publish(signed, payload)
+    revised = world.snapshot_envelope(payload_content_hash="b" * 64)
+    signed_revision, revision_payload = world.sign_snapshot(revised)
+    original_put = world.blob_store.put_durable
+
+    def delayed_put(value: bytes) -> str:
+        result = original_put(value)
+        world.clock.advance(minutes=10)
+        return result
+
+    monkeypatch.setattr(world.blob_store, "put_durable", delayed_put)
+    prepared = world.repository.prepare_revision(
+        signed_revision,
+        revision_payload,
+    )
+    assert prepared.ingested_at == NOW + timedelta(minutes=10)
+
+    original_writer = world.repository._writer_transaction
+
+    @contextmanager
+    def delayed_writer():
+        world.clock.advance(minutes=20)
+        with original_writer() as conn:
+            yield conn
+
+    monkeypatch.setattr(world.repository, "_writer_transaction", delayed_writer)
+    activated = world.repository.activate_revision(original.evidence_id, 2)
+
+    assert activated.ingested_at == NOW + timedelta(minutes=10)
+    assert world.repository.active_revision(
+        original.evidence_id,
+        NOW + timedelta(minutes=15),
+    ).revision == 1
+    assert world.repository.active_revision(
+        original.evidence_id,
+        NOW + timedelta(minutes=31),
+    ).revision == 2
+
+
+def test_activation_rejects_trusted_clock_rollback(world: _World) -> None:
+    original = world.snapshot_envelope(payload_content_hash="a" * 64)
+    signed, payload = world.sign_snapshot(original)
+    world.repository.publish(signed, payload)
+    world.clock.advance(minutes=10)
+    revised = world.snapshot_envelope(
+        payload_content_hash="b" * 64,
+        effective_at=NOW + timedelta(minutes=1),
+        provider_published_at=NOW + timedelta(minutes=1),
+        observed_at=NOW + timedelta(minutes=1),
+    )
+    signed_revision, revision_payload = world.sign_snapshot(revised)
+    world.repository.prepare_revision(signed_revision, revision_payload)
+    world.clock.now_value = NOW
+
+    with pytest.raises(EvidenceStoreError) as rejected:
+        world.repository.activate_revision(original.evidence_id, 2)
+
+    assert rejected.value.code == "trusted_clock_rollback"
+    assert world.repository.get(original.evidence_id).revision == 1
+
+
 def test_activate_retry_converges_and_backwards_activation_is_rejected(
     world: _World,
 ) -> None:
@@ -509,6 +635,166 @@ def test_activate_retry_converges_and_backwards_activation_is_rejected(
     first = world.repository.activate_revision("snap-1", 2)
     again = world.repository.activate_revision("snap-1", 2)
     assert again.artifact_hash() == first.artifact_hash()
+
+
+def test_activation_cannot_skip_a_prepared_revision(world: _World) -> None:
+    envelope = world.snapshot_envelope(payload_content_hash="a" * 64)
+    signed, payload = world.sign_snapshot(envelope)
+    world.repository.publish(signed, payload)
+
+    for content_hash in ("b" * 64, "c" * 64):
+        revised = world.snapshot_envelope(payload_content_hash=content_hash)
+        signed_revision, revision_payload = world.sign_snapshot(revised)
+        world.repository.prepare_revision(signed_revision, revision_payload)
+
+    with pytest.raises(EvidenceStoreError) as rejected:
+        world.repository.activate_revision("snap-1", 3)
+
+    assert rejected.value.code == "activation_revision_gap"
+    assert world.repository.get("snap-1").revision == 1
+    with pytest.raises(EvidenceStoreError) as uncommitted:
+        world.repository.get("snap-1", revision=3)
+    assert uncommitted.value.code == "evidence_unknown"
+
+
+def test_retrying_superseded_activation_never_returns_false_active_projection(
+    world: _World,
+) -> None:
+    envelope = world.snapshot_envelope(payload_content_hash="a" * 64)
+    signed, payload = world.sign_snapshot(envelope)
+    world.repository.publish(signed, payload)
+
+    for revision, content_hash in enumerate(("b" * 64, "c" * 64), start=2):
+        revised = world.snapshot_envelope(payload_content_hash=content_hash)
+        signed_revision, revision_payload = world.sign_snapshot(revised)
+        world.repository.prepare_revision(signed_revision, revision_payload)
+        world.repository.activate_revision("snap-1", revision)
+
+    with pytest.raises(EvidenceStoreError) as rejected:
+        world.repository.activate_revision("snap-1", 2)
+
+    assert rejected.value.code == "activation_not_current"
+    current = world.repository.get("snap-1")
+    assert current.revision == current.active_revision == 3
+
+
+def test_preparing_an_already_committed_correction_is_idempotent(
+    world: _World,
+) -> None:
+    original = world.snapshot_envelope(payload_content_hash="a" * 64)
+    signed, payload = world.sign_snapshot(original)
+    world.repository.publish(signed, payload)
+    correction = world.snapshot_envelope(payload_content_hash="b" * 64)
+    signed_correction, correction_payload = world.sign_snapshot(correction)
+    prepared = world.repository.prepare_revision(
+        signed_correction, correction_payload
+    )
+    world.repository.activate_revision("snap-1", 2)
+    before_sequence = world.repository.commit_sequence()
+
+    retried = world.repository.prepare_revision(
+        signed_correction, correction_payload
+    )
+
+    assert retried.revision == retried.active_revision == prepared.revision
+    assert world.repository.commit_sequence() == before_sequence
+    with pytest.raises(EvidenceStoreError) as absent:
+        world.repository.get("snap-1", revision=3)
+    assert absent.value.code == "evidence_unknown"
+
+
+@pytest.mark.parametrize(
+    "revision_factory",
+    (
+        lambda world, original: world.snapshot_envelope(
+            evidence_id=original.evidence_id,
+            source_authority="other.market.publisher",
+        ),
+        lambda world, original: world.snapshot_envelope(
+            evidence_id=original.evidence_id,
+            subject_producer="other.market.test",
+        ),
+        lambda world, original: original.model_copy(
+            update={
+                "subject_scope": EvidenceScope.STRATEGY_LINEAGE,
+                "family_id": "other.market.family",
+            }
+        ),
+        lambda world, original: original.model_copy(
+            update={"strategy_semver": "4.0.0"}
+        ),
+        lambda world, original: original.model_copy(
+            update={"behavior_fingerprint": "f" * 64}
+        ),
+        lambda world, original: original.model_copy(
+            update={"policy_epoch": 2}
+        ),
+        lambda world, original: original.model_copy(
+            update={"execution_version": "t1-open-t10-open.v2"}
+        ),
+        lambda world, original: original.model_copy(
+            update={"cost_version": "cn-a-share-costs.v2"}
+        ),
+        lambda world, original: SignalEvidence(
+            **(
+                original.model_dump()
+                | {
+                    "evidence_kind": "signal",
+                    "stage": SignalStage.CANDIDATE,
+                }
+            )
+        ),
+    ),
+    ids=(
+        "source-authority",
+        "subject-producer",
+        "subject-scope-and-family",
+        "strategy-semver",
+        "behavior-fingerprint",
+        "policy-epoch",
+        "execution-version",
+        "cost-version",
+        "evidence-kind",
+    ),
+)
+def test_revision_cannot_change_source_lineage_or_behavior_generation(
+    world: _World,
+    revision_factory,
+) -> None:
+    original = world.snapshot_envelope(payload_content_hash="a" * 64)
+    signed, payload = world.sign_snapshot(original)
+    world.repository.publish(signed, payload)
+    revised = revision_factory(world, original)
+    if type(revised) is SignalEvidence:
+        revision_payload = revised.model_dump_json().encode("utf-8")
+        signed_revision = _signed(
+            world.signal_key,
+            world.signal_capability,
+            issuer_id="signal.producer",
+            key_id="signal-key-1",
+            payload=revision_payload,
+        )
+    else:
+        signed_revision, revision_payload = world.sign_snapshot(revised)
+
+    with pytest.raises(EvidenceStoreError) as rejected:
+        world.repository.prepare_revision(signed_revision, revision_payload)
+
+    assert rejected.value.code == "revision_lineage_mismatch"
+    assert world.repository.commit_sequence() == 1
+
+
+def test_signed_mode_must_match_payload_mode(world: _World) -> None:
+    envelope = world.snapshot_envelope(payload_content_hash="a" * 64).model_copy(
+        update={"mode": ExecutionMode.DAILY_BAR_PROXY}
+    )
+    signed, payload = world.sign_snapshot(envelope)
+
+    with pytest.raises(EvidenceStoreError) as rejected:
+        world.repository.publish(signed, payload)
+
+    assert rejected.value.code == "envelope_context_mismatch"
+    assert world.repository.commit_sequence() == 0
 
 
 def test_legal_empty_snapshot_supersedes_stale_active(world: _World) -> None:

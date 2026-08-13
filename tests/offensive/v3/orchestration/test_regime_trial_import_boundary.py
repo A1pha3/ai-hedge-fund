@@ -20,7 +20,11 @@ old bytes); the production trial path itself must stay clean.
 from __future__ import annotations
 
 import ast
+import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -179,3 +183,81 @@ def test_trial_modules_exist() -> None:
     """The boundary scan guards real files; a renamed module must fail RED."""
     for module in _TRIAL_MODULES:
         assert (_REPO_ROOT / module).is_file(), f"missing module: {module}"
+
+
+@pytest.mark.parametrize(
+    "module",
+    (
+        "src.screening.offensive.v3.orchestration.paired_trial",
+        "src.screening.offensive.v3.orchestration.replay",
+    ),
+)
+def test_disabled_entry_module_import_has_no_external_side_effects(
+    module: str,
+) -> None:
+    """A zero-capability entry module must be inert in a fresh process."""
+
+    probe = r"""
+import json
+import os
+import sys
+
+events = []
+
+def audit(event, args):
+    if event == "socket.connect":
+        events.append(event)
+        raise RuntimeError("blocked import-time network")
+    if event == "open" and len(args) >= 2 and isinstance(args[1], int):
+        flags = args[1]
+        if flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
+            events.append(event)
+            raise RuntimeError("blocked import-time write")
+
+sys.addaudithook(audit)
+__import__(sys.argv[1])
+print(json.dumps(events))
+"""
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    completed = subprocess.run(
+        [sys.executable, "-c", probe, module],
+        cwd=_REPO_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(completed.stdout.strip().splitlines()[-1]) == []
+
+
+def test_disabled_replay_does_not_publicly_export_capital_writers() -> None:
+    import src.screening.offensive.v3.orchestration as orchestration
+    import src.screening.offensive.v3.orchestration.replay as replay
+
+    write_helpers = {
+        "apply_corporate_action",
+        "apply_restatement",
+        "drive_session_lifecycle",
+        "reserve_pair",
+    }
+    assert write_helpers.isdisjoint(replay.__all__)
+    assert write_helpers.isdisjoint(orchestration.__all__)
+
+
+def test_authoritative_design_does_not_claim_disabled_path_is_complete() -> None:
+    design = (
+        _REPO_ROOT
+        / "docs/superpowers/specs/"
+        "2026-08-09-btst-regime-gate-forward-paired-shadow-trial-design.md"
+    ).read_text(encoding="utf-8")
+
+    stale_claims = (
+        "全部 14 个任务已实现并通过 v3 全套回归",
+        "`assess` 只把可删除报告写入显式 `--output`",
+        "`decide-session` / `advance-session` 加载验证 sealed trial 后",
+    )
+    assert not [claim for claim in stale_claims if claim in design]
+    assert "官方 forward Trial 尚未启动" in design
+    assert "四个 CLI 子命令都只检查路径形状后 fail-closed" in design

@@ -73,6 +73,17 @@ T_CLOSE = datetime(2026, 8, 5, 15, 0, tzinfo=timezone.utc)  # 收盘
 CLOCK_AT = datetime(2026, 8, 5, 15, 5, tzinfo=timezone.utc)  # 收盘后 5min (新鲜度窗口内)
 PORTFOLIO = "paper-v3"
 
+# The shadow-decision pipeline fails closed with
+# ``economic_input_authority_unavailable`` until a store-owned exchange schedule
+# and complete ``ShadowKernelInput`` are wired to ``decide_shadow``
+# (daily_action_flow.py module docstring). End-to-end tests that require the
+# composed services to actually publish a ``ShadowDecision`` are retained as
+# future specifications and skipped; the fail-closed boundary itself is locked
+# by test_daily_action_flow.py.
+_REQUIRES_ECONOMIC_INPUT_AUTHORITY = pytest.mark.skip(
+    reason="target behavior requires the store-owned economic input authority"
+)
+
 
 def _shadow_config(
     tmp_path: Path, *, capital_ledger: Path, portfolio_id: str = PORTFOLIO
@@ -190,6 +201,7 @@ def _write_toml_config(tmp_path: Path, *, runtime_mode: str, capital_ledger: Pat
 # ===========================================================================
 
 
+@_REQUIRES_ECONOMIC_INPUT_AUTHORITY
 def test_flow_end_to_end_produces_shadow_decision(tmp_path, monkeypatch):
     """真实服务组合 + genesis 资本 + 注入快照 → ShadowDecision 产出。
 
