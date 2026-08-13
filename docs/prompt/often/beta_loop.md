@@ -32,6 +32,7 @@ uv run python src/main.py --daily-action
 
 ## 第一性原理 
 
+- 从第一性原理出发，实现后验证功能和设计，并不断迭代和验证，直到达到生产就绪状态。
 
 ### find bugs
 
