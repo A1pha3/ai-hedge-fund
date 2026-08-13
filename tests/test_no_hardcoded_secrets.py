@@ -104,6 +104,10 @@ def test_btst_factor_ic_analysis_raises_without_token(monkeypatch, tmp_path) -> 
 
     # 确保 TUSHARE_TOKEN 未设置
     monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    # Hermetic: 屏蔽 .env 文件回退 (operator 的真实 token 会让 delenv 失效,
+    # _get_pro 返回真实 pro, 脚本不 raise)。脚本在 exec 时
+    # ``from src.tools.tushare_api import _get_pro`` 取当前模块属性。
+    monkeypatch.setattr("src.tools.tushare_api._get_pro", lambda: None)
 
     script_path = Path(__file__).resolve().parent.parent / "scripts" / "btst_factor_ic_analysis.py"
     assert script_path.exists(), f"script not found: {script_path}"

@@ -68,6 +68,9 @@ class TestTushareInitFailureObservability:
         # 重置 class state — 避免先前测试 / import 缓存的 _pro 污染
         ashare_data_sources.TushareDataSource._pro = None
         ashare_data_sources.TushareDataSource.available = False
+        # Hermetic: 屏蔽 .env 文件回退 (operator 的真实 token 会让 delenv 失效),
+        # 使 "TUSHARE_TOKEN 缺失" 路径必然触发。
+        monkeypatch.setattr("src.tools.tushare_api.get_tushare_token", lambda: "")
 
         with caplog.at_level(logging.WARNING, logger="src.tools.ashare_data_sources"):
             result = ashare_data_sources.TushareDataSource._init_tushare()

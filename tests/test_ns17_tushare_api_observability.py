@@ -106,6 +106,9 @@ class TestGetAsharePricesWithTushareObservability:
         monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
         # 重置 module-level _pro 缓存
         tushare_api._pro = None
+        # Hermetic: 屏蔽 .env 文件回退 (operator 的真实 token 会让 delenv 失效),
+        # 使 "未初始化" 路径必然触发。
+        monkeypatch.setattr(tushare_api, "get_tushare_token", lambda: "")
 
         with caplog.at_level(logging.WARNING, logger="src.tools.tushare_api"):
             prices = tushare_api.get_ashare_prices_with_tushare("000001", "2026-01-01", "2026-01-02")
@@ -132,6 +135,16 @@ class TestGetAsharePricesWithTushareObservability:
 
         monkeypatch.setenv("TUSHARE_TOKEN", "fake-token-for-test")
         monkeypatch.setattr(tushare_api, "_pro", _FakePro())
+        # Isolate from the real runtime persistent cache: a cached empty df for
+        # this exact ts_code/date window (a real backtest run persists empties,
+        # cache_empty=True) would short-circuit the fetch and prevent the fake
+        # from being called, so the retry/observation path would never run.
+        tushare_api._tushare_df_cache.clear()
+        monkeypatch.setattr(
+            tushare_api,
+            "_get_persisted_tushare_cached_df",
+            lambda _key: None,
+        )
 
         with caplog.at_level(logging.WARNING, logger="src.tools.tushare_api"):
             prices = tushare_api.get_ashare_prices_with_tushare("000001", "2026-01-01", "2026-01-02")
