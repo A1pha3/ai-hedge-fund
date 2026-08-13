@@ -994,7 +994,7 @@ def test_receipt_rejects_rollback_or_same_version_fork(changes, reason) -> None:
 
 def test_busted_exit_reopens_positive_position_and_exit_mandate() -> None:
     from tests.offensive.v3.contracts.test_capital import _exit_mandate_payload
-    from tests.offensive.v3.contracts.test_execution import (
+    from tests.offensive.v3.contracts.test_execution_revision_lifecycle import (
         NOW,
         _execution,
         _revision_payload,

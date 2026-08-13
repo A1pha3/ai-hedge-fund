@@ -542,7 +542,7 @@ def test_receipt_fact_integrity_cancel_closes_monotonic_post_permit_drift(
 
 
 def test_positive_to_positive_cannot_claim_reopened_projection() -> None:
-    from tests.offensive.v3.contracts.test_execution import (
+    from tests.offensive.v3.contracts.test_execution_revision_lifecycle import (
         NOW,
         _execution,
         _revision_payload,
@@ -576,7 +576,7 @@ def test_positive_to_positive_cannot_claim_reopened_projection() -> None:
 
 
 def test_first_reopened_exit_mandate_revision_must_exceed_initial_revision() -> None:
-    from tests.offensive.v3.contracts.test_execution import (
+    from tests.offensive.v3.contracts.test_execution_revision_lifecycle import (
         NOW,
         _execution,
         _revision_payload,

@@ -12,7 +12,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Callable, Final, Literal
+from typing import TYPE_CHECKING, Callable, Final, Literal
 
 import sqlalchemy as sa
 
@@ -27,6 +27,9 @@ from src.screening.offensive.v3.evidence.repository import (
     EvidenceRepository,
 )
 from src.screening.offensive.v3.evidence.session_spine import SessionSpine
+
+if TYPE_CHECKING:
+    from src.screening.offensive.v3.evidence.dependency_fix import ActivationGate
 
 _SCHEMA_DDL: Final[tuple[str, ...]] = (
     """

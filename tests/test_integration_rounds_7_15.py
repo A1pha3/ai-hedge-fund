@@ -829,7 +829,7 @@ class TestCrossModuleEdgeCases:
         assert isinstance(actions, list)
 
     def test_all_strategy_signals_none(self) -> None:
-        """所有 strategy_signals 为 None/dict 缺失时, reweight 回退到原 score_b。"""
+        """所有 strategy_signals 为 None/dict 缺失时, 新 score_b 为 0 (R5 生产融合语义)。"""
         from src.screening.custom_weights import (
             reweight_recommendations,
             StrategyWeights,
@@ -841,9 +841,13 @@ class TestCrossModuleEdgeCases:
         ]
         result = reweight_recommendations(recs, StrategyWeights())
         assert len(result) == 2
-        # 无信号时回退到原 score_b
-        assert result[0]["score_b"] == 0.50
-        assert result[1]["score_b"] == 0.30
+        # R5 生产融合语义: 缺失 strategy_signals/缺失策略的 rec, 新 score_b 为 0
+        # (与生产纯融合函数逐字一致, 不回退到原值); 原 score_b 保留在
+        # original_score_b provenance 中, 供调用方区分.
+        assert result[0]["score_b"] == 0.0
+        assert result[1]["score_b"] == 0.0
+        assert result[0]["original_score_b"] == 0.50
+        assert result[1]["original_score_b"] == 0.30
 
     def test_recommendation_tracker_corrupt_history(self, tmp_reports: Path) -> None:
         """tracking_history.json 损坏时, 应优雅降级而非崩溃。"""

@@ -166,7 +166,7 @@ def test_seal_accepts_older_authorization_issuance_under_newer_current_trust() -
 def test_exit_history_flat_to_positive_requires_reopened_projection(
     revision_kind,
 ) -> None:
-    from tests.offensive.v3.contracts.test_execution import (
+    from tests.offensive.v3.contracts.test_execution_revision_lifecycle import (
         NOW,
         _execution,
         _revision_payload,
@@ -212,7 +212,7 @@ def test_exit_history_flat_to_positive_requires_reopened_projection(
 
 
 def test_reopened_exit_mandate_revision_exceeds_every_prior_seen_revision() -> None:
-    from tests.offensive.v3.contracts.test_execution import (
+    from tests.offensive.v3.contracts.test_execution_revision_lifecycle import (
         NOW,
         _execution,
         _revision_payload,

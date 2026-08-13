@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
+from src.screening.offensive.v3.contracts.base import CanonicalModel
 from src.screening.offensive.v3.kernel.config import SizingConfig
 from src.screening.offensive.v3.kernel.models import (
     BlockReason,
@@ -21,9 +22,6 @@ from src.screening.offensive.v3.kernel.models import (
 MICROS_PER_CENT: int = 10_000
 LOT_UNITS: int = 100
 FEE_PPM_SCALE: int = 1_000_000
-
-
-from src.screening.offensive.v3.contracts.base import CanonicalModel
 
 
 class SizedCandidate(CanonicalModel):

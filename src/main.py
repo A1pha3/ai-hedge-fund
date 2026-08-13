@@ -1581,6 +1581,7 @@ def _daily_readiness_counts(
     daily_readiness: dict | None,
 ) -> dict[str, int | None]:
     source = dict(daily_readiness or {})
+
     def optional_count(key: str) -> int | None:
         value = source.get(key)
         return value if type(value) is int and value >= 0 else None
