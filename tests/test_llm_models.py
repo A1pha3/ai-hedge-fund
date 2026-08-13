@@ -521,6 +521,8 @@ def test_front_door_importable_when_one_langchain_provider_missing(
         if mod == "langchain_xai" or mod.startswith("langchain_xai."):
             monkeypatch.delitem(sys.modules, mod, raising=False)
     # Force re-import of the polluted chain.
+    import src as _src_pkg
+    _orig_src_main = sys.modules.get("src.main")
     for mod in list(sys.modules):
         if mod in ("src.main", "src.llm.models", "src.llm.defaults") or mod.startswith("src.llm."):
             monkeypatch.delitem(sys.modules, mod, raising=False)
@@ -530,6 +532,16 @@ def test_front_door_importable_when_one_langchain_provider_missing(
     assert hasattr(fresh_main, "run_custom_weights")
     fresh_top_picks = importlib.import_module("src.screening.top_picks")
     assert hasattr(fresh_top_picks, "run_top_picks")
+
+    # Isolation fix: the forced re-import replaced ``sys.modules["src.main"]``
+    # with a fresh module, and ``monkeypatch.delitem`` only restores the
+    # ``sys.modules`` entry on teardown — leaving the ``src`` package's ``main``
+    # attribute pointing at the fresh (no-longer-registered) module. Downstream
+    # tests that then ``monkeypatch.setattr("src.main.<attr>", ...)`` would
+    # patch that stale attribute and silently miss. Re-point the package
+    # attribute to the original module now so sys.modules and the package agree
+    # again after teardown.
+    _src_pkg.main = _orig_src_main
 
 
 def test_front_doors_do_not_pull_agent_modules_at_import(
@@ -549,12 +561,19 @@ def test_front_doors_do_not_pull_agent_modules_at_import(
     import importlib
     import sys
 
+    import src as _src_pkg
+    _orig_src_main = sys.modules.get("src.main")
     for mod in list(sys.modules):
         if mod.startswith("src.main") or mod.startswith("src.screening.top_picks") or mod.startswith("src.agents") or mod.startswith("src.graph"):
             monkeypatch.delitem(sys.modules, mod, raising=False)
 
     fresh_main = importlib.import_module("src.main")
     importlib.import_module("src.screening.top_picks")
+
+    # Isolation fix: same as the sibling front-door test — re-point the ``src``
+    # package attribute to the original module so ``sys.modules`` and the
+    # package agree again after monkeypatch teardown.
+    _src_pkg.main = _orig_src_main
 
     pulled = [m for m in sys.modules if m.startswith("src.agents") or m == "src.graph.state"]
     # Tolerate src.agents package __init__ if it's a pure namespace, but the

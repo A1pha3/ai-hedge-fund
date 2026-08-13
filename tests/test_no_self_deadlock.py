@@ -34,9 +34,12 @@ from pathlib import Path
 import pytest
 
 
-def _is_lock_call(value: ast.AST) -> bool:
-    """表达式是否为 threading.Lock()/Lock()/RLock() 构造."""
-    # threading.Lock() / threading.RLock()
+def _lock_kind(value: ast.AST) -> str | None:
+    """返回 ``threading.Lock()``/``Lock()``/``RLock()`` 构造的锁种类, 否则 None.
+
+    ``RLock`` 可重入: 同线程在持锁路径内再次获取同一把锁不会死锁, 不属于
+    R20.25 bug 类 (非重入锁自死锁), 扫描时须排除。
+    """
     if isinstance(value, ast.Call):
         f = value.func
         name = None
@@ -44,8 +47,14 @@ def _is_lock_call(value: ast.AST) -> bool:
             name = f.attr
         elif isinstance(f, ast.Name):
             name = f.id
-        return name in {"Lock", "RLock"}
-    return False
+        if name in {"Lock", "RLock"}:
+            return name
+    return None
+
+
+def _is_lock_call(value: ast.AST) -> bool:
+    """表达式是否为 threading.Lock()/Lock()/RLock() 构造."""
+    return _lock_kind(value) is not None
 
 
 def _lock_name_of(ctx: ast.AST, known_locks: set[str]) -> str | None:
@@ -84,6 +93,8 @@ def _scan_self_deadlocks(src_root: Path) -> list[str]:
     """扫描 src_root 下所有 .py, 返回自死锁描述列表 (空 = 干净)."""
     held_locks: dict[tuple[str | None, str], set[str]] = collections.defaultdict(set)
     calls_under_lock: dict[tuple[str | None, str], list[tuple[str, str]]] = collections.defaultdict(list)
+    # 所有被推断为 ``RLock`` 的锁名: 可重入, 同线程重取同锁不死锁, 检测时排除。
+    reentrant_locks: set[str] = set()
 
     for py in src_root.rglob("*.py"):
         try:
@@ -91,16 +102,21 @@ def _scan_self_deadlocks(src_root: Path) -> list[str]:
         except (SyntaxError, UnicodeDecodeError):
             continue
 
-        # 推断本文件的锁变量名 (= threading.Lock() / Lock() / RLock()),
-        # 不依赖 ``_lock`` 命名约定, 防止漏报。
-        known_locks: set[str] = set()
+        # 推断本文件的锁变量名与种类 (= threading.Lock() / Lock() / RLock()),
+        # 不依赖 ``_lock`` 命名约定, 防止漏报; 记录 RLock 供检测时排除。
+        known_locks: dict[str, str] = {}
         for n in ast.walk(tree):
             if isinstance(n, ast.Assign) and _is_lock_call(n.value):
+                kind = _lock_kind(n.value)
                 for t in n.targets:
                     if isinstance(t, ast.Name):
-                        known_locks.add(t.id)
+                        known_locks[t.id] = kind
+                        if kind == "RLock":
+                            reentrant_locks.add(t.id)
                     elif isinstance(t, ast.Attribute):
-                        known_locks.add(t.attr)
+                        known_locks[t.attr] = kind
+                        if kind == "RLock":
+                            reentrant_locks.add(t.attr)
 
         # 建立 parent 指针
         for n in ast.walk(tree):
@@ -148,6 +164,9 @@ def _scan_self_deadlocks(src_root: Path) -> list[str]:
     for (cls, meth), call_list in calls_under_lock.items():
         owner = f"{cls}." if cls else ""
         for callee, lock in call_list:
+            # RLock 可重入: 同线程持锁路径内再次获取同锁是安全重入, 非死锁.
+            if lock in reentrant_locks:
+                continue
             if lock in held_locks.get((cls, callee), set()):
                 deadlocks.append(f"{owner}{meth}() 持 [{lock}] 调用 {owner}{callee}() 也获取 [{lock}]  ←  非重入锁自死锁")
     return deadlocks
