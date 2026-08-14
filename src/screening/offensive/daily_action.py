@@ -915,7 +915,14 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     else:
         lines.append("  无")
 
-    synthetic_trades = [t for t in run.open_positions if t.fill_source is FillSource.SYNTHETIC_OPEN]
+    # 只显示当日实际成交的 synthetic 持仓, 而非全部 synthetic 持仓 — 否则把
+    # 数日前入场的仓位误显示为"当日模拟成交", 误导操作员判断当日是否开新仓。
+    as_of = run.service_run.trade_date
+    synthetic_trades = [
+        t
+        for t in run.open_positions
+        if t.fill_source is FillSource.SYNTHETIC_OPEN and t.entry_date == as_of
+    ]
     lines.append("模拟成交（synthetic_open）:")
     if synthetic_trades:
         for trade in synthetic_trades:
@@ -923,7 +930,12 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     else:
         lines.append("  无")
 
-    confirmed_trades = [t for t in run.open_positions if t.fill_source in {FillSource.MANUAL_CONFIRMATION, FillSource.BROKER_IMPORT}]
+    confirmed_trades = [
+        t
+        for t in run.open_positions
+        if t.fill_source in {FillSource.MANUAL_CONFIRMATION, FillSource.BROKER_IMPORT}
+        and t.entry_date == as_of
+    ]
     lines.append("确认成交（broker_confirmed）:")
     if confirmed_trades:
         for trade in confirmed_trades:

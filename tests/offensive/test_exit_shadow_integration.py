@@ -391,6 +391,45 @@ def test_session_nine_exit_pending_is_omitted_from_shadow_rows(shadow_case):
     assert "000777 shadow_exit_line" not in text
 
 
+def test_exit_pending_position_remains_visible_until_settled(shadow_case):
+    """Regression: a position marked EXIT_PENDING must stay in the 退出计划
+    (exit_plans) on every subsequent run until it settles, not just on the day
+    it was first marked — otherwise a still-held position awaiting settlement
+    vanishes from the daily report entirely."""
+    service, open_trade, prices, _as_of = shadow_case
+    session_nine = service.calendar.nth_holding_session(open_trade.entry_date, 9)
+    # First run marks it EXIT_PENDING.
+    service.run(session_nine, candidates=(), shadow_prices=prices)
+    assert (
+        service.repository.get_trade(open_trade.trade_id).state
+        is TradeState.EXIT_PENDING
+    )
+    # A later run on the same pending day (still before forced_exit_target_date)
+    # must keep the position visible in exit_plans.
+    run = service.run(session_nine, candidates=(), shadow_prices=prices)
+    assert any(
+        item.reason == "pending_exit" and item.ticker == open_trade.ticker
+        for item in run.exit_plans
+    )
+    # It stays out of the shadow rows by design.
+    assert run.open_positions == ()
+
+
+def test_render_does_not_list_prior_day_entry_as_todays_synthetic_fill(shadow_case):
+    """Regression: the 模拟成交（synthetic_open）section must show only fills
+    settled on the signal day, not every synthetic-open position — otherwise a
+    position entered days ago is mislabeled as today's simulated fill."""
+    service, open_trade, prices, as_of = shadow_case
+    run = service.run(as_of, candidates=(), shadow_prices=prices)
+    text = render_daily_action_v2(DailyActionV2Run(run, (), run.open_positions, (), ()))
+    # entry_date (sessions[15]) != as_of → not a today fill → absent from 模拟成交.
+    synthetic_section = text.split("模拟成交")[1].split("确认成交")[0]
+    assert open_trade.ticker not in synthetic_section
+    # It is still held, so it appears in the exit-challenger section.
+    challenger_section = text.split("退出挑战者")[1]
+    assert open_trade.ticker in challenger_section
+
+
 @pytest.mark.parametrize("mode", ["duplicate", "normalized_duplicate", "out_of_order"])
 def test_duplicate_or_out_of_order_shadow_history_fails_closed(shadow_case, mode):
     service, _open_trade, prices, as_of = shadow_case

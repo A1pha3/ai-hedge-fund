@@ -852,7 +852,17 @@ class DailyActionService:
 
     def _evaluate_open_positions(self, as_of: date) -> None:
         for trade in self.repository.open_trades():
-            if trade.state is not TradeState.OPEN or trade.entry_date is None:
+            if trade.entry_date is None:
+                continue
+            if trade.state is TradeState.EXIT_PENDING:
+                # 已标记退出但尚未结算 (强制退出日未到, 或暂不可成交): 仍在持有,
+                # 必须在"退出计划"区**每天**可见 — 否则标记当日之后、结算之前
+                # 该持仓从日报完全消失 (模拟成交/退出挑战者/退出计划均无),
+                # 操作员无法看到即将退出的仓位。
+                if trade.forced_exit_target_date is None or as_of < trade.forced_exit_target_date:
+                    self._exit_plans.append(self._item(trade, "pending_exit"))
+                continue
+            if trade.state is not TradeState.OPEN:
                 continue
             try:
                 session_nine = self.calendar.nth_holding_session(trade.entry_date, 9)
