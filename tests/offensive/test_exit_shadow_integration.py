@@ -430,6 +430,35 @@ def test_render_does_not_list_prior_day_entry_as_todays_synthetic_fill(shadow_ca
     assert open_trade.ticker in challenger_section
 
 
+def test_deferred_exit_shows_in_deferred_not_exit_plans(shadow_case):
+    """Regression (A1): a position at its forced-exit date that cannot execute
+    must appear in 延迟退出 (deferred), not double-listed in 退出计划 (pending_exit)."""
+    service, open_trade, prices, _as_of = shadow_case
+    session_nine = service.calendar.nth_holding_session(open_trade.entry_date, 9)
+    forced = service.calendar.nth_holding_session(open_trade.entry_date, 10)
+    # Mark EXIT_PENDING at session 9.
+    service.run(session_nine, candidates=(), shadow_prices=prices)
+    assert (
+        service.repository.get_trade(open_trade.trade_id).state
+        is TradeState.EXIT_PENDING
+    )
+    # At the forced date, a suspended bar makes the exit unexecutable → deferred.
+    suspended = MarketBar(
+        open=10.0, close=10.0, limit_down=9.0, limit_up=11.0, suspended=True,
+        high=10.2, low=9.8,
+    )
+    prices[(open_trade.ticker, forced)] = suspended
+    run = service.run(forced, candidates=(), shadow_prices=prices)
+    assert any(
+        item.ticker == open_trade.ticker for item in run.deferred_exits
+    )
+    # Not double-listed under pending_exit in 退出计划.
+    assert not any(
+        item.ticker == open_trade.ticker and item.reason == "pending_exit"
+        for item in run.exit_plans
+    )
+
+
 @pytest.mark.parametrize("mode", ["duplicate", "normalized_duplicate", "out_of_order"])
 def test_duplicate_or_out_of_order_shadow_history_fails_closed(shadow_case, mode):
     service, _open_trade, prices, as_of = shadow_case

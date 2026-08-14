@@ -752,7 +752,19 @@ def _block_reason_zh(reason: str | None, *, verbose: bool = False) -> str:
     return f"{label}（{reason}）" if verbose else label
 
 
-def render_no_signal() -> str:
+def _format_drawdown(drawdown: float) -> str:
+    """回撤显示: 0 (含 -0.0) 时不带符号, 避免 '+0.0%' 误导; 否则带 +/- 符号."""
+    formatted = f"{drawdown:+.1%}"
+    return "0.0%" if formatted in ("+0.0%", "-0.0%") else formatted
+
+
+def render_no_signal(filled_count: int = 0) -> str:
+    """无新信号结论; 若当日已执行昨日计划 (填仓), 如实披露避免误导."""
+    if filled_count:
+        return (
+            f"结论：ℹ️ 系统健康，今日无新信号（已执行 {filled_count} 笔昨日计划）\n"
+            "影响：无新的次日买入计划；已有持仓生命周期仍正常处理"
+        )
     return "结论：ℹ️ 系统健康，今日无信号\n影响：无新的次日买入计划；已有持仓生命周期仍正常处理"
 
 
@@ -1008,7 +1020,7 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     valuation = run.service_run.valuation
     stale = f" 数据过期 {len(valuation.stale_tickers)} 只" if valuation.stale_tickers else ""
     lines.append(
-        f"台账：净值 {valuation.nav:,.0f}（峰值 {valuation.peak:,.0f}，回撤 {valuation.drawdown:+.1%}）{stale}"
+        f"台账：净值 {valuation.nav:,.0f}（峰值 {valuation.peak:,.0f}，回撤 {_format_drawdown(valuation.drawdown)}）{stale}"
     )
     return "\n".join(lines)
 
@@ -1823,7 +1835,7 @@ def render_daily_action(
     # 执行价口径 + 净值/回撤/持仓数 → --verbose (每次跑都一样的口径说明 + 初始状态无信息量).
     if explain:
         lines.append(f"  执行价口径: {buy_date_label} 开盘; 当前展示价为信号日收盘参考价")
-        lines.append(f"  组合净值: {state.nav:.3f}  回撤: {state.drawdown_pct:+.1%}  风控状态: {dd_tag}")
+        lines.append(f"  组合净值: {state.nav:.3f}  回撤: {_format_drawdown(state.drawdown_pct)}  风控状态: {dd_tag}")
         lines.append(f"  持仓数: {state.open_positions}  累计已实现: {state.realized_pnl_pct:+.2%} {realized_qualifier}")
     # C-PORTFOLIO-CAP: 若本次跳过新信号, 显式披露原因.
     # cap_blocked 可能由多种原因触发: 强度不足/价格过低/行业集中/敞口上限.

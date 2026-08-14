@@ -1262,7 +1262,22 @@ def _resolve_daily_action(
             if v2_run.blocked_candidates:
                 rendered = rendered + "\n" + render_degraded_only(len(v2_run.blocked_candidates))
             else:
-                rendered = rendered + "\n" + render_no_signal()
+                # 无新信号但当日可能已执行昨日计划 (填仓) — 如实披露, 避免
+                # "今日无信号" 误导为系统无动作。
+                from src.screening.offensive.trade_lifecycle import FillSource
+
+                filled_count = sum(
+                    1
+                    for trade in v2_run.open_positions
+                    if trade.fill_source
+                    in (
+                        FillSource.SYNTHETIC_OPEN,
+                        FillSource.MANUAL_CONFIRMATION,
+                        FillSource.BROKER_IMPORT,
+                    )
+                    and trade.entry_date == signal_date
+                )
+                rendered = rendered + "\n" + render_no_signal(filled_count)
         print(rendered)
         # Plan 05 Task 9: v3 shadow 编排 hook (v2 渲染后; 库层编排 + rc 保护)。
         # signal_date/reports_dir/data_dir/v2_run 均在作用域; with 块不引入新作用域。

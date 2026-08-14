@@ -288,6 +288,25 @@ def test_output_distinguishes_reference_synthetic_and_confirmed_prices(
     assert "确认成交" in rendered
 
 
+def test_drawdown_display_omits_sign_at_zero() -> None:
+    """回撤为 0 (含 -0.0) 时显示 '0.0%', 不带 '+' 号, 避免 '+0.0%' 误导。"""
+    from src.screening.offensive.daily_action import _format_drawdown
+
+    assert _format_drawdown(0.0) == "0.0%"
+    assert _format_drawdown(-0.0) == "0.0%"
+    assert _format_drawdown(-0.002) == "-0.2%"
+    assert _format_drawdown(0.005) == "+0.5%"
+
+
+def test_no_signal_conclusion_discloses_prior_plan_fills() -> None:
+    """无新信号但当日已执行昨日计划时, 结论须披露笔数而非干说'今日无信号'。"""
+    from src.screening.offensive.daily_action import render_no_signal
+
+    assert "已执行 2 笔昨日计划" in render_no_signal(2)
+    assert "今日无信号" in render_no_signal(0)
+    assert "已执行" not in render_no_signal(0)
+
+
 def test_authoritative_sessions_handle_weekend_and_exchange_holiday(monkeypatch):
     sessions = (date(2026, 9, 25), date(2026, 9, 28), date(2026, 10, 9))
     monkeypatch.setattr(
