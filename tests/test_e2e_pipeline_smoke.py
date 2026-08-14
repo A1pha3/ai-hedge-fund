@@ -140,6 +140,14 @@ def _patch_pipeline_layers(
             "src.main.detect_market_state",
             return_value=market_state,
         ),
+        # compute_auto_screening_results 在 score_batch 前局部 import 并调用
+        # refresh_scoring_features (src/main.py:949) — 不 patch 会真打 tushare/akshare
+        # (fake token → 重试退避 → 冒烟 55s+ 且轰炸线上 API). 局部 import 在调用时
+        # 解析, patch 源模块属性即可生效 (R90 局部 import 模式).
+        "refresh_scoring_features": patch(
+            "src.screening.scoring_feature_refresh.refresh_scoring_features",
+            return_value={"status": "mocked"},
+        ),
         "update_tracking_history": patch(
             "src.main.update_tracking_history",
             return_value=0,
@@ -191,7 +199,7 @@ def test_e2e_compute_pipeline_does_not_crash(tmp_path, monkeypatch) -> None:
 
     from src.main import compute_auto_screening_results
 
-    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"]:
+    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"], patches["refresh_scoring_features"]:
         payload = compute_auto_screening_results("20260607", top_n=10)
 
     # 必须字段都存在
@@ -237,7 +245,7 @@ def test_e2e_report_payload_contains_all_new_fields(tmp_path, monkeypatch) -> No
 
     from src.main import compute_auto_screening_results
 
-    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"]:
+    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"], patches["refresh_scoring_features"]:
         payload = compute_auto_screening_results("20260607", top_n=10)
 
     # 1) signal_decay_summary (P0-3)
@@ -287,7 +295,7 @@ def test_e2e_compute_pipeline_uses_investability_ranking(tmp_path, monkeypatch) 
         raising=False,
     )
 
-    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"]:
+    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"], patches["refresh_scoring_features"]:
         payload = compute_auto_screening_results("20260607", top_n=2)
 
     assert [rec["ticker"] for rec in payload["recommendations"]] == [fused[2].ticker, fused[1].ticker]
@@ -361,7 +369,7 @@ def test_e2e_compute_pipeline_respects_selected_strategies_before_top_n_slice(tm
 
     from src.main import compute_auto_screening_results
 
-    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"]:
+    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"], patches["refresh_scoring_features"]:
         payload = compute_auto_screening_results("20260607", top_n=1, selected_strategies=["fundamental"])
 
     assert payload["top_n"] == 1
@@ -644,7 +652,7 @@ def test_e2e_report_payload_has_no_nan_or_inf(tmp_path, monkeypatch) -> None:
 
     from src.main import compute_auto_screening_results
 
-    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"]:
+    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"], patches["refresh_scoring_features"]:
         payload = compute_auto_screening_results("20260607", top_n=10)
 
     # 验证 1: 递归扫描 dict 内任何 float
@@ -712,7 +720,7 @@ def test_e2e_pipeline_runs_under_30_seconds(tmp_path, monkeypatch) -> None:
     from src.main import compute_auto_screening_results
 
     started = time.perf_counter()
-    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"]:
+    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"], patches["refresh_scoring_features"]:
         payload = compute_auto_screening_results("20260607", top_n=10)
     elapsed = time.perf_counter() - started
 
@@ -738,7 +746,7 @@ def test_e2e_industry_rotation_and_decay_shape(tmp_path, monkeypatch) -> None:
 
     from src.main import compute_auto_screening_results
 
-    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"]:
+    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"], patches["refresh_scoring_features"]:
         payload = compute_auto_screening_results("20260607", top_n=10)
 
     # industry_rotation: 至少有一条 (16 只标的有 4 个行业, 满足 min_candidates=3 即可)
@@ -775,7 +783,7 @@ def test_e2e_top_n_truncation_and_sort(tmp_path, monkeypatch) -> None:
 
     from src.main import compute_auto_screening_results
 
-    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"]:
+    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"], patches["refresh_scoring_features"]:
         payload = compute_auto_screening_results("20260607", top_n=3)
 
     assert len(payload["recommendations"]) == 3
@@ -812,7 +820,7 @@ def test_e2e_selected_strategies_branch_injects_score_decomposition(tmp_path, mo
 
     from src.main import compute_auto_screening_results
 
-    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"]:
+    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"], patches["refresh_scoring_features"]:
         payload = compute_auto_screening_results("20260607", top_n=3, selected_strategies=["fundamental"])
 
     assert len(payload["recommendations"]) == 3
@@ -838,7 +846,7 @@ def test_e2e_default_branch_still_injects_score_decomposition(tmp_path, monkeypa
 
     from src.main import compute_auto_screening_results
 
-    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"]:
+    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"], patches["refresh_scoring_features"]:
         payload = compute_auto_screening_results("20260607", top_n=3)
 
     assert len(payload["recommendations"]) == 3

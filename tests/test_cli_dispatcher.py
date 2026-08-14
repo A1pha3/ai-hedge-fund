@@ -260,7 +260,12 @@ class TestDispatchEarlyFlags(unittest.TestCase):
 
     def test_daily_action_renders_actual_scan_trade_date(self) -> None:
         """--daily-action resolves the signal date via the lightweight resolver."""
-        from datetime import date
+        from datetime import date, datetime
+
+        from src.screening.offensive.daily_action import _CN_TZ
+
+        # R90: 硬编码历史日期必须同时冻结时钟, 否则入场窗口护栏随日历漂移
+        # 把"当前"钉在信号日当晚 (已过收盘、未到 T+1 09:30), 窗口保持开放.
         with tempfile.TemporaryDirectory() as tmp:
             with (
                 patch(
@@ -270,6 +275,10 @@ class TestDispatchEarlyFlags(unittest.TestCase):
                 patch(
                     "src.screening.offensive.daily_action.scan_daily_action_candidates"
                 ) as legacy_scan,
+                patch(
+                    "src.screening.offensive.daily_action._current_cn_datetime",
+                    return_value=datetime(2026, 7, 10, 21, 0, tzinfo=_CN_TZ),
+                ),
                 patch("builtins.print") as output,
             ):
                 rc = dispatcher._resolve_daily_action(
@@ -279,7 +288,7 @@ class TestDispatchEarlyFlags(unittest.TestCase):
                 )
 
         self.assertEqual(rc, 0)
-        self.assertIn("模拟台账", output.call_args.args[0])
+        self.assertIn("每日动作 · 信号日 2026-07-10", output.call_args.args[0])
         # Task 8: the production path must NOT run the legacy full-market scan
         # that reopens cache files just to derive the signal date.
         legacy_scan.assert_not_called()

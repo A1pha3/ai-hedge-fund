@@ -9,12 +9,17 @@ restores the module — so a LATER test (e.g. btst_full_report's fake tushare)
 gets the cached fake instead of its own, silently using the wrong universe.
 
 Resetting ``_pro`` and the circuit state around every test keeps them from
-crossing test boundaries.  The process-local DataFrame LRU
+crossing test boundaries.  ``_stock_basic_cache`` (the process-global
+"fetch once" memo inside ``get_all_stock_basic``) is reset for the same
+reason: readiness tests inject 3-column stock_basic frames (no ``list_date``)
+via mocked providers, the frame survives ``monkeypatch`` teardown inside the
+memo, and a LATER test calling the real function (e.g. the btst recall
+dossier script test) reads the reduced frame and dies on
+``KeyError: 'list_date'``.  The process-local DataFrame LRU
 ``_tushare_df_cache`` is deliberately NOT cleared: it is a legitimate cache
 that several analyzers rely on across the run, and clearing it forces real
-re-fetches that fail in a no-credential environment (regressing e.g.
-test_analyze_btst_candidate_pool_recall_dossier).  The persistent disk cache is
-isolated separately by tests/offensive/conftest.py.
+re-fetches that fail in a no-credential environment.  The persistent disk
+cache is isolated separately by tests/offensive/conftest.py.
 """
 
 from __future__ import annotations
@@ -30,6 +35,8 @@ def _reset_network_layer_singletons() -> None:
         import src.tools.tushare_api as tushare_api
 
         tushare_api._pro = None
+        with tushare_api._stock_basic_cache_lock:
+            tushare_api._stock_basic_cache = None
     except Exception:
         pass
     try:
