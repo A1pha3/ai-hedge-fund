@@ -1727,109 +1727,24 @@ def _run_daily_action_under_regime(tmp_path, monkeypatch, regime_gate_level: str
     return actions, tracker
 
 
-def test_regime_size_factor_btst_crisis_increases_position(tmp_path, monkeypatch):
-    """BTST + crisis regime 下仓位应放大 (2026 回测 E[r]=+16.93% 支持加仓).
+def test_regime_does_not_change_position_size(tmp_path, monkeypatch):
+    """回归守卫 (2026-08-14 对抗性审查 P1a): regime 不影响仓位 — 危机加仓表已删除.
 
-    注意: 2026-07-18 起 regime 加仓受 _REGIME_SIZING_EVIDENCE_BOUND 门控 —
-    证据未绑定时不实际加仓. 本测试显式绑定以验证加仓机制本身."""
-    from src.screening.offensive import daily_action as daily_action_module
-
-    monkeypatch.setattr(daily_action_module, "_REGIME_SIZING_EVIDENCE_BOUND", True)
-    monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
-    actions_crisis, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
-    assert len(actions_crisis) == 1
-    crisis_pct = actions_crisis[0].kelly_pct
-
-    actions_normal, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "normal", "btst_breakout")
-    assert len(actions_normal) == 1
-    normal_pct = actions_normal[0].kelly_pct
-
-    # BTST crisis 应放大 1.2×: normal=0.10 (per-setup cap), crisis=0.12 (regime cap)
-    assert crisis_pct > normal_pct, f"crisis {crisis_pct} should exceed normal {normal_pct}"
-    assert abs(crisis_pct - 0.12) < 1e-6, f"crisis expected 0.12, got {crisis_pct}"
-    assert abs(normal_pct - 0.10) < 1e-6, f"normal expected 0.10, got {normal_pct}"
-
-
-def test_regime_uplift_disabled_before_evidence_binding(tmp_path, monkeypatch):
-    """证据未绑定前 (默认): crisis 与 normal 仓位一致, 不实际加仓."""
-    monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
-    actions_crisis, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
-    actions_normal, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "normal", "btst_breakout")
-    assert len(actions_crisis) == 1 and len(actions_normal) == 1
-    assert actions_crisis[0].kelly_pct == actions_normal[0].kelly_pct
-
-
-def test_regime_size_factor_oversold_crisis_no_increase():
-    """OversoldBounce + crisis 不加仓 (2026 实测 crisis E[r]=-1.15% 亏钱).
-
-    单元测试 _regime_size_factor: OversoldBounce 在所有 regime 都返回 1.0.
-    (端到端测试需 31 行跌幅数据满足 OversoldBounce 预过滤, 此处用单元测试隔离 regime 逻辑.)
+    原 _REGIME_SIZE_FACTORS_BY_SETUP (crisis=1.2×/risk_off=1.1×) 依据的是
+    paper_trading_backtest 192 笔成交 (crisis 76%/+16.93%), 该口径有双重缺陷:
+    (a) 非诚实执行 (信号日 close 入场无滑点), (b) 成交宇宙选择偏差.
+    诚实 court (T+1开盘+滑点, 全候选, 同窗口) 证伪: crisis 9%/-8.98% (n=11),
+    risk_off 8%/-16.12% (n=13) — 灾难 regime 该阻断而非加仓.
+    见 data/reports/regime_gate_decision_pack_2026-08-09.md.
+    守卫目的: 防止方向相反的加仓系数表被加回来.
     """
-    from src.screening.offensive.daily_action import _regime_size_factor
-
-    assert _regime_size_factor("crisis", "oversold_bounce") == 1.0
-    assert _regime_size_factor("risk_off", "oversold_bounce") == 1.0
-    assert _regime_size_factor("normal", "oversold_bounce") == 1.0
-
-
-def test_regime_size_factor_normal_no_change(tmp_path, monkeypatch):
-    """normal regime 下仓位不放大, 等于 BTST per-setup cap (0.10)."""
     monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
-    actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "normal", "btst_breakout")
-    assert len(actions) == 1
-    assert abs(actions[0].kelly_pct - 0.10) < 1e-6  # BTST per-setup cap, no regime boost
-
-
-def test_regime_sizing_disabled_via_env(tmp_path, monkeypatch):
-    """DAILY_ACTION_REGIME_SIZING=false 时, BTST crisis regime 也不放大仓位."""
-    monkeypatch.setenv("DAILY_ACTION_REGIME_SIZING", "false")
-    actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
-    assert len(actions) == 1
-    # env 关闭 → regime_factor=1.0 → 仓位退回 BTST per-setup cap (0.10), 不放大到 0.12
-    assert abs(actions[0].kelly_pct - 0.10) < 1e-6, f"expected 0.10, got {actions[0].kelly_pct}"
-
-
-def test_regime_factor_capped_at_hard_limit(tmp_path, monkeypatch):
-    """regime 放大不超 BTST per-setup cap × 1.2 硬上限, 即使 factor 更大."""
-    from src.screening.offensive import daily_action as daily_action_module
-
-    monkeypatch.setattr(daily_action_module, "_REGIME_SIZING_EVIDENCE_BOUND", True)
-    monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
-    # BTST crisis factor=1.2 → 0.10×1.2=0.12, 正好等于硬上限, 不应突破
-    actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
-    assert len(actions) == 1
-    from src.screening.offensive.daily_action import _MAX_POSITION_PCT_BY_SETUP, _REGIME_POSITION_CAP_MULTIPLE
-
-    btst_cap = _MAX_POSITION_PCT_BY_SETUP.get("btst_breakout", _MAX_POSITION_PCT_BY_SETUP.get("btst_breakout", 0.10))
-    hard_cap = btst_cap * _REGIME_POSITION_CAP_MULTIPLE
-    assert actions[0].kelly_pct <= hard_cap + 1e-9
-    assert abs(actions[0].kelly_pct - hard_cap) < 1e-6
-
-
-def test_regime_size_factor_per_setup_and_unknown_defaults():
-    """按 setup 区分的 regime factor + 未知 setup/regime 默认 1.0."""
-    from src.screening.offensive.daily_action import _regime_size_factor
-
-    # BTST: crisis/risk_off 加仓
-    assert _regime_size_factor("crisis", "btst_breakout") == 1.2
-    assert _regime_size_factor("risk_off", "btst_breakout") == 1.1
-    assert _regime_size_factor("normal", "btst_breakout") == 1.0
-    # OversoldBounce: 全部 1.0 (实测无效)
-    assert _regime_size_factor("crisis", "oversold_bounce") == 1.0
-    assert _regime_size_factor("normal", "oversold_bounce") == 1.0
-    # 未知 setup → 1.0 (保守)
-    assert _regime_size_factor("crisis", "unknown_setup") == 1.0
-    assert _regime_size_factor("crisis", "") == 1.0
-    # 未知 regime → 1.0
-    assert _regime_size_factor("unknown", "btst_breakout") == 1.0
-
-
-def test_regime_sizing_recorded_in_buy_reasoning(tmp_path, monkeypatch):
-    """BUY reasoning 应标注 regime×factor, 供后续 edge 衰减监测追溯."""
-    monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
-    actions, tracker = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
-    assert len(actions) == 1
-    assert "regime=crisis×1.2" in actions[0].reasoning
+    for regime in ("normal", "risk_off", "crisis"):
+        actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, regime, "btst_breakout")
+        assert len(actions) == 1
+        assert abs(actions[0].kelly_pct - 0.10) < 1e-6, f"{regime}: expected 0.10, got {actions[0].kelly_pct}"
+        assert "×" not in actions[0].reasoning
+        assert f"regime={regime}" in actions[0].reasoning
 
 
 # ---- OversoldBounce 暂停 (DAILY_ACTION_DISABLED_SETUPS) ----

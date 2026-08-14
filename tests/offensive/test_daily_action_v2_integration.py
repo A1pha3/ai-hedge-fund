@@ -298,6 +298,18 @@ def test_drawdown_display_omits_sign_at_zero() -> None:
     assert _format_drawdown(0.005) == "+0.5%"
 
 
+def test_cjk_display_width_and_padding() -> None:
+    """中文标签按显示宽度对齐: 东亚全角字符计 2 列, 半角数字/空格计 1 列 —
+    否则「亨通光电」与「阿莱德」在终端上列不对齐。"""
+    from src.screening.offensive.daily_action import _disp_width, _pad_to
+
+    assert _disp_width("600487 亨通光电") == 6 + 1 + 8  # 6 数字 + 空格 + 4 中文
+    assert _disp_width("301419 阿莱德") == 6 + 1 + 6  # 6 数字 + 空格 + 3 中文
+    padded = _pad_to("301419 阿莱德", 16)
+    assert len(padded) == 10 + 3  # 10 字符 + 3 补齐空格
+    assert _disp_width(padded) == 16  # 显示宽度对齐到目标
+
+
 def test_no_signal_conclusion_discloses_prior_plan_fills() -> None:
     """无新信号但当日已执行昨日计划时, 结论须披露笔数而非干说'今日无信号'。"""
     from src.screening.offensive.daily_action import render_no_signal
@@ -357,6 +369,76 @@ def test_cached_market_bar_rejects_duplicate_civil_dates(tmp_path, dates):
     )
 
     assert _cached_daily_action_market_bar(cache, date(2026, 7, 13)) is None
+
+
+def test_render_plans_show_entry_date_and_weight(service, signal_date):
+    """Plan rows render the operator-facing entry date and weight — not just the
+    reference price and internal debug codes — so the operator sees when and at
+    what size a plan will enter."""
+    run = run_daily_action_v2(service, _scan(signal_date))
+    plan = run.plans[0]
+    assert plan.planned_entry_date is not None
+    assert plan.planned_weight is not None
+    rendered = render_daily_action_v2(run)
+    assert "计划 " in rendered and "入场" in rendered
+    assert f"权重 {plan.planned_weight:.1%}" in rendered
+    # Regression: service.render must mirror the dispatcher view, including new
+    # plans — it used to drop new_plans and always render 新计划（0 只）.
+    assert "新计划（1 只）" in DailyActionService.render(run.service_run)
+
+
+def test_verbose_appends_debug_section_without_changing_body(service, signal_date):
+    """Single-track rendering: --verbose keeps the exact same body as the default
+    view and only appends a debug appendage with the raw audit codes."""
+    run = run_daily_action_v2(service, _scan(signal_date))
+    default_text = render_daily_action_v2(run)
+    verbose_text = render_daily_action_v2(run, verbose=True)
+    verbose_lines = verbose_text.splitlines()
+    idx = next(
+        i for i, line in enumerate(verbose_lines) if "调试信息（--verbose）" in line
+    )
+    body = "\n".join(verbose_lines[:idx]).rstrip()
+    assert body == default_text
+    assert "调试信息（--verbose）" in verbose_text
+    assert "reason=entry_planned" in verbose_text
+    assert "execution=pending" in verbose_text
+    assert "source=pending" in verbose_text
+
+
+def test_summary_lists_nonzero_events_only(service, signal_date):
+    """摘要行只列非零事件 (新计划/当日成交/退出/完成/不可计划), 全零退化为
+    「今日无新计划」, block 场景整段让位给 dispatcher 结论 (无「今日摘要」)."""
+    valuation = DailyValuation(signal_date, 100_000, 0, 100_000, 100_000, 0, ())
+
+    def summary_of(text: str) -> str:
+        return next(line for line in text.splitlines() if "今日摘要" in line)
+
+    # 有计划 → 只列新计划, 当日成交 0 笔不进摘要.
+    run = run_daily_action_v2(service, _scan(signal_date))
+    assert summary_of(render_daily_action_v2(run)) == "今日摘要：新计划 1 只"
+
+    # 有退出计划 → 摘要披露退出计数, 默认视图 lifecycle 节也显示持仓.
+    exit_item = ActionItem("t", "000001", "pending_exit", "paper", "synthetic_open")
+    exit_view = DailyActionRun(
+        signal_date, valuation, (), (), (), (exit_item,), (), (), 0, 0
+    )
+    exit_text = render_daily_action_v2(DailyActionV2Run(exit_view, (), (), (), ()))
+    assert summary_of(exit_text) == "今日摘要：退出计划 1 只"
+    assert "退出计划（1）" in exit_text and "000001" in exit_text
+
+    # 全零 → 退化「今日无新计划」.
+    empty_text = render_daily_action_v2(
+        DailyActionV2Run(DailyActionRun(signal_date, valuation, (), (), (), (), (), (), 0, 0), (), (), (), ())
+    )
+    assert summary_of(empty_text) == "今日摘要：今日无新计划"
+
+    # block 场景 → 摘要消失, 结论由 dispatcher 追加.
+    blocked_view = DailyActionRun(
+        signal_date, valuation, (), (), (), (), (), (), 0, 0,
+        block_reasons=("calendar_unavailable",),
+    )
+    blocked_text = render_daily_action_v2(DailyActionV2Run(blocked_view, (), (), (), ()))
+    assert "今日摘要" not in blocked_text
 
 
 def test_renderer_includes_real_lifecycle_reasons(service, signal_date):

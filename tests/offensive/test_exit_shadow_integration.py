@@ -140,12 +140,12 @@ def test_render_labels_shadow_as_non_executable_advice(shadow_case):
     text = render_daily_action_v2(view)
     verbose_text = render_daily_action_v2(view, verbose=True)
 
-    # Default operator view keeps the SHADOW ONLY framing but hides raw fields.
-    assert "shadow only" in text.lower()
+    # Default operator view keeps the non-executable shadow framing but hides raw fields.
     assert "不改变默认退出" in text
+    assert "影子建议" in text
     assert "shadow_exit_line=" not in text
     assert "close_below_trailing_line" not in text
-    # Verbose exposes the raw shadow evidence for auditing.
+    # Verbose exposes the raw shadow evidence in the debug appendage.
     assert "close_below_trailing_line" in verbose_text
     assert "shadow_exit_line=" in verbose_text
     # service.render mirrors the default (non-verbose) operator view.
@@ -416,17 +416,17 @@ def test_exit_pending_position_remains_visible_until_settled(shadow_case):
 
 
 def test_render_does_not_list_prior_day_entry_as_todays_synthetic_fill(shadow_case):
-    """Regression: the 模拟成交（synthetic_open）section must show only fills
-    settled on the signal day, not every synthetic-open position — otherwise a
-    position entered days ago is mislabeled as today's simulated fill."""
+    """Regression: the 当日成交·模拟成交 section must show only fills settled on
+    the signal day, not every synthetic-open position — otherwise a position
+    entered days ago is mislabeled as today's simulated fill."""
     service, open_trade, prices, as_of = shadow_case
     run = service.run(as_of, candidates=(), shadow_prices=prices)
     text = render_daily_action_v2(DailyActionV2Run(run, (), run.open_positions, (), ()))
     # entry_date (sessions[15]) != as_of → not a today fill → absent from 模拟成交.
     synthetic_section = text.split("模拟成交")[1].split("确认成交")[0]
     assert open_trade.ticker not in synthetic_section
-    # It is still held, so it appears in the exit-challenger section.
-    challenger_section = text.split("退出挑战者")[1]
+    # It is still held, so it appears in the exit-advice section.
+    challenger_section = text.split("持仓退出建议")[1]
     assert open_trade.ticker in challenger_section
 
 

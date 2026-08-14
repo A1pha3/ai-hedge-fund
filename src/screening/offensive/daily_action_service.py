@@ -145,6 +145,10 @@ class ActionItem:
     reason: str
     execution_label: str
     source_label: str
+    # 业务展示字段: 渲染层 (render_daily_action_v2) 用它们向操作员呈现
+    # "计划哪天入场 / 权重多少", 而非仅给出内部调试码. 可选字段兼容旧构造点.
+    planned_entry_date: date | None = None
+    planned_weight: float | None = None
 
 
 @dataclass(frozen=True)
@@ -575,7 +579,7 @@ class DailyActionService:
         )
 
         return render_daily_action_v2(
-            DailyActionV2Run(run, (), run.open_positions, (), ())
+            DailyActionV2Run(run, run.new_plans, run.open_positions, (), ())
         )
 
     def _manifest_eligible_candidates(
@@ -1337,7 +1341,15 @@ class DailyActionService:
     def _item(trade: LedgerTrade, reason: str) -> ActionItem:
         execution = trade.execution_mode.value if trade.execution_mode else "pending"
         source = trade.fill_source.value if trade.fill_source else "pending"
-        return ActionItem(trade.trade_id, trade.ticker, reason, execution, source)
+        return ActionItem(
+            trade.trade_id,
+            trade.ticker,
+            reason,
+            execution,
+            source,
+            planned_entry_date=trade.planned_entry_date,
+            planned_weight=trade.planned_weight,
+        )
 
     @staticmethod
     def _status(bar: MarketBar | None) -> ExecutionStatus:
