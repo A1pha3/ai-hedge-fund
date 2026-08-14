@@ -674,12 +674,15 @@ def test_daily_board_includes_p0a_board_provenance(tmp_path: Path, monkeypatch) 
         ),
     }
     _write_snapshot(report_dir, "20260323", selection_targets, market_state=market_state)
+    # 直接 patch 分析器自身的绑定名 (模块级 from...import 使 tushare_api 源模块
+    # 的 monkeypatch 不生效); 否则本测试依赖真实 universe, 无凭证环境经多测试
+    # 积累后真实拉取失败 → daily_boards 为空。
     monkeypatch.setattr(
-        "src.tools.tushare_api.get_all_stock_basic",
+        early_runner, "get_all_stock_basic",
         lambda *_args, **_kwargs: _stock_basic_frame(),
     )
     monkeypatch.setattr(
-        "src.tools.tushare_api.get_daily_basic_batch",
+        early_runner, "get_daily_basic_batch",
         lambda *_args, **_kwargs: _daily_basic_frame(),
     )
 
