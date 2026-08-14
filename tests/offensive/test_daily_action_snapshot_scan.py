@@ -176,7 +176,7 @@ def _flows() -> tuple[FrozenFlowRow, ...]:
     )
 
 
-def _snapshot(ticker: str = "300001", *, capability: SetupCapability | None = None, ticker_blocks: dict[str, tuple[str, ...]] | None = None) -> VerifiedDailyActionSnapshot:
+def _snapshot(ticker: str = "300001", *, capability: SetupCapability | None = None, ticker_blocks: dict[str, tuple[str, ...]] | None = None, regime: str = "normal") -> VerifiedDailyActionSnapshot:
     manifest = _manifest(ticker, capability=capability)
     return VerifiedDailyActionSnapshot(
         signal_date=SIGNAL_DATE,
@@ -186,7 +186,7 @@ def _snapshot(ticker: str = "300001", *, capability: SetupCapability | None = No
         prices_by_ticker=MappingProxyType({ticker: _prices()}),
         fund_flow_by_ticker=MappingProxyType({ticker: _flows()}),
         industry_day_pct_by_ticker=MappingProxyType({ticker: 3.2}),
-        regime="normal",
+        regime=regime,
         board_rule_version=BOARD_RULE_VERSION,
         normalization_version=NORMALIZATION_VERSION,
         setup_requirements_version=SETUP_REQUIREMENTS_VERSION,
@@ -241,6 +241,34 @@ def test_detector_degraded_hit_is_display_only(monkeypatch) -> None:
     assert scan.candidates == ()
     assert len(scan.blocked_candidates) == 1
     assert scan.blocked_candidates[0].reason == "detector_degraded"
+
+
+def test_regime_gate_blocks_new_entries_on_crisis_and_risk_off(monkeypatch) -> None:
+    """regime gate 守卫 (2026-08-14 R-5.F 接线): 信号日 crisis/risk_off 不开新仓.
+
+    证据: 诚实 court (2026H1) crisis/risk_off 胜率 8-9% 灾难, gated BTST-only
+    NAV 1.430 vs ungated 1.133; 跨期 2025H2 gated 51.4%/+3.97% vs ungated
+    50.0%/+3.71% (牛市零成本). 被闸票进 blocked (带 trigger_strength),
+    面板继续积累危机日对照组.
+    """
+    monkeypatch.setattr(BtstBreakoutSetup, "detect", lambda self, ticker, trade_date, context: hit_result())
+
+    for regime in ("crisis", "risk_off"):
+        scan = scan_from_verified_snapshot(_snapshot(regime=regime))
+        assert scan.candidates == (), f"{regime}: 不应产生候选"
+        assert len(scan.blocked_candidates) == 1
+        assert scan.blocked_candidates[0].reason == "regime_gate_halt"
+        assert scan.blocked_candidates[0].trigger_strength == 0.90
+
+
+def test_regime_gate_passes_normal_regime(monkeypatch) -> None:
+    """normal regime 不受 gate 影响 — 候选正常产出."""
+    monkeypatch.setattr(BtstBreakoutSetup, "detect", lambda self, ticker, trade_date, context: hit_result())
+
+    scan = scan_from_verified_snapshot(_snapshot(regime="normal"))
+
+    assert len(scan.candidates) == 1
+    assert scan.blocked_candidates == ()
 
 
 def test_candidate_carries_structured_snapshot_provenance(monkeypatch) -> None:

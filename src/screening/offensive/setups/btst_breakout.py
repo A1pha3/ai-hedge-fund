@@ -452,24 +452,25 @@ class BtstBreakoutSetup(Setup):
             degradation_reason = f"条件2 跳过: 历史不足 ({len(historical)}<{_MAIN_FLOW_MIN_HISTORY_DAYS}日)"
 
         # 条件 3: 行业板块效应
-        # Bug fix (2026-07-12): industry_day_pct=None 表示行业数据管道断裂 (缓存缺失/import 失败).
-        # 旧实现: daily_action 把加载失败映射为 industry_pct=0.0 → 0.0 < 2.0 → 全部 BTST miss.
-        # 用户看到"今日无信号", 实际是数据管道断了. 修正: None 时跳过行业过滤但标 degraded,
-        # 与资金流浅数据降级同模式. 有行业数据 (含 0.0) 时正常过滤.
+        # 2026-08-14 严格化 (对抗性审查 P2, 实证反转 2026-07-12 的降级放行):
+        # 全池 A/B (n=7097, 2025-07→2026-08, 条件1+4 池) 证明:
+        #   行业≥2% vs <2%: T+5 胜率 53.5% vs 48.7% (CI 分离) — 条件3 是有效 gate;
+        #   行业数据缺失组: T+10 42.1%/−0.75% (CI 显著为负, n=2838) — 缺失即差票,
+        #   "降级放行"放进来的正是统计上最该砍的组. 故缺失=miss, 与 capability 层
+        #   (industry_data_missing → plan_eligible=False) 语义对齐, 消除两层矛盾.
+        # 管道断裂可见性由 snapshot capability 层保留 (readiness block 披露),
+        # 不依赖 detect 的 degraded 通道. 同时统一 legacy/backtest 口径 (两者本就
+        # 把缺失映射为 miss). 见 data/reports/gate_cond2_cond3_ab_20260814.json.
         industry_pct: float | None = None
         industry_pct_raw = context.get("industry_day_pct")
         if industry_pct_raw is None:
-            # 数据缺失: 不过滤但标记残缺, 让 operator 知道行业条件未验证
-            if not degraded:
-                degraded = True
-                degradation_reason = "条件3 (行业涨幅≥2%) 跳过: 行业数据未加载"
-        else:
-            try:
-                industry_pct = float(industry_pct_raw)
-            except (TypeError, ValueError):
-                industry_pct = float("nan")
-            if industry_pct != industry_pct or industry_pct < _INDUSTRY_PCT_MIN:  # NaN guard
-                return self._miss(ticker, trade_date)
+            return self._miss(ticker, trade_date)  # 行业数据缺失: 实证支持砍 (见上)
+        try:
+            industry_pct = float(industry_pct_raw)
+        except (TypeError, ValueError):
+            industry_pct = float("nan")
+        if industry_pct != industry_pct or industry_pct < _INDUSTRY_PCT_MIN:  # NaN guard
+            return self._miss(ticker, trade_date)
 
         # 条件 4: 涨停前窗口累计涨幅 ≤ 8% (防追高, close[T-1]/close[T-5]).
         # 收益用 pct_change 链式复合 (price_returns.chained_return_pct): 原始价比值

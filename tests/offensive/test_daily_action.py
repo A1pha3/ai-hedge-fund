@@ -1728,23 +1728,26 @@ def _run_daily_action_under_regime(tmp_path, monkeypatch, regime_gate_level: str
 
 
 def test_regime_does_not_change_position_size(tmp_path, monkeypatch):
-    """回归守卫 (2026-08-14 对抗性审查 P1a): regime 不影响仓位 — 危机加仓表已删除.
+    """回归守卫: regime 不影响仓位大小 (P1a) + 灾难 regime 不开新仓 (P1b).
 
-    原 _REGIME_SIZE_FACTORS_BY_SETUP (crisis=1.2×/risk_off=1.1×) 依据的是
-    paper_trading_backtest 192 笔成交 (crisis 76%/+16.93%), 该口径有双重缺陷:
-    (a) 非诚实执行 (信号日 close 入场无滑点), (b) 成交宇宙选择偏差.
-    诚实 court (T+1开盘+滑点, 全候选, 同窗口) 证伪: crisis 9%/-8.98% (n=11),
-    risk_off 8%/-16.12% (n=13) — 灾难 regime 该阻断而非加仓.
-    见 data/reports/regime_gate_decision_pack_2026-08-09.md.
-    守卫目的: 防止方向相反的加仓系数表被加回来.
+    P1a (2026-08-14): 原 _REGIME_SIZE_FACTORS_BY_SETUP (crisis=1.2×/risk_off=1.1×)
+    依据非诚实口径 + 成交宇宙选择偏差, 被诚实 court 证伪 (crisis 9%/-8.98%,
+    risk_off 8%/-16.12%) — 删除. 仓位 = setup_max_pct × strength_factor, regime
+    不参与 sizing.
+
+    P1b (2026-08-14): regime gate 接线 — 信号日 crisis/risk_off 不开新仓
+    (gated BTST-only 2026H1 NAV 1.430 vs ungated 1.133; 2025H2 跨期零成本).
+    守卫: 任何 regime 下 sizing 不变; crisis/risk_off 下候选被闸 (0 新仓).
     """
     monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
-    for regime in ("normal", "risk_off", "crisis"):
+    actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "normal", "btst_breakout")
+    assert len(actions) == 1
+    assert abs(actions[0].kelly_pct - 0.10) < 1e-6, f"normal: expected 0.10, got {actions[0].kelly_pct}"
+    assert "×" not in actions[0].reasoning
+    assert "regime=normal" in actions[0].reasoning
+    for regime in ("risk_off", "crisis"):
         actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, regime, "btst_breakout")
-        assert len(actions) == 1
-        assert abs(actions[0].kelly_pct - 0.10) < 1e-6, f"{regime}: expected 0.10, got {actions[0].kelly_pct}"
-        assert "×" not in actions[0].reasoning
-        assert f"regime={regime}" in actions[0].reasoning
+        assert actions == [], f"{regime}: regime gate 应阻断新仓"
 
 
 # ---- OversoldBounce 暂停 (DAILY_ACTION_DISABLED_SETUPS) ----

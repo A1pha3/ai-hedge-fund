@@ -177,8 +177,11 @@ def test_ob_misses_phantom_oversold_across_ex_dividend():
 
 
 def test_regime_uplift_not_applied_before_evidence_binding(monkeypatch) -> None:
-    """crisis + strength 0.8: 证据未绑定前 weight = 10%×0.8 = 8%, 不得泄漏到 9.6%;
-    候选仍带 authorization 标记用于披露."""
+    """regime sizing 已删除 (P1a) + regime gate 已接线 (P1b), 2026-08-14.
+
+    normal: strength 0.8 → weight = 10%×0.8 = 8% (sizing 只看 strength, regime 不参与);
+    crisis: 候选被 regime_gate_halt 阻断 (court: crisis 9%/risk_off 8% 胜率灾难).
+    """
     from src.screening.offensive.daily_action_service import RegimeAuthorization
 
     monkeypatch.setattr(
@@ -188,14 +191,17 @@ def test_regime_uplift_not_applied_before_evidence_binding(monkeypatch) -> None:
             hit_result(), trigger_strength=0.8
         ),
     )
-    snapshot = dataclasses.replace(_snapshot(), regime="crisis")
 
-    scan = scan_from_verified_snapshot(snapshot)
+    scan_normal = scan_from_verified_snapshot(dataclasses.replace(_snapshot(), regime="normal"))
+    assert len(scan_normal.candidates) == 1
+    candidate = scan_normal.candidates[0]
+    assert candidate.target_weight == pytest.approx(0.08)  # 10%×0.8, regime 不参与 sizing
+    assert candidate.authorization is RegimeAuthorization.NORMAL
 
-    assert len(scan.candidates) == 1
-    candidate = scan.candidates[0]
-    assert candidate.target_weight == pytest.approx(0.08)  # 10%×0.8, 无 regime 泄漏
-    assert candidate.authorization is RegimeAuthorization.BTST_CRISIS
+    scan_crisis = scan_from_verified_snapshot(dataclasses.replace(_snapshot(), regime="crisis"))
+    assert scan_crisis.candidates == ()
+    assert len(scan_crisis.blocked_candidates) == 1
+    assert scan_crisis.blocked_candidates[0].reason == "regime_gate_halt"
 
 
 def test_non_ledger_setup_is_blocked_not_raised(monkeypatch) -> None:

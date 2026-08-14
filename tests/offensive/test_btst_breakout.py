@@ -267,14 +267,15 @@ def test_not_degraded_when_fund_flow_history_sufficient():
     assert result.degraded is False
 
 
-def test_industry_data_none_degrades_not_kills():
-    """Bug fix: industry_day_pct=None (数据管道断裂) 时应 degraded, 不应静默 miss.
+def test_industry_data_none_misses():
+    """2026-08-14 严格化 (对抗性审查 P2): industry_day_pct=None (数据缺失) 应 miss.
 
-    旧实现: daily_action 把加载失败映射为 industry_pct=0.0 → 0.0 < 2.0 → 全部 BTST miss.
-    用户看到"今日无信号", 实际是行业缓存缺失/import 失败. 修正后: None 时跳过行业
-    过滤但标 degraded=True, 让 operator 知道行业条件未验证.
-
-    场景: 涨停 + 主力强 + 前5日涨幅 OK, 但行业数据未加载 (industry_day_pct=None).
+    实证反转 2026-07-12 的降级放行: 全池 A/B (n=7097, 2025-07→2026-08, 条件1+4 池)
+    显示行业数据缺失组 T+10 胜率 42.1%/均值 −0.75% (CI 显著为负, n=2838) —
+    缺失即差票, 放行放进来的正是统计上最该砍的组. 与 capability 层
+    (industry_data_missing → plan_eligible=False) 语义对齐.
+    管道断裂可见性由 snapshot capability 层的 readiness block 披露保留.
+    见 data/reports/gate_cond2_cond3_ab_20260814.json.
     """
     prices = _prices_with_limit_up_today()
     today = prices.iloc[-1]["date"].strftime("%Y%m%d")
@@ -283,19 +284,16 @@ def test_industry_data_none_degrades_not_kills():
     for i in range(1, 21):
         d = (prices.iloc[-1 - i]["date"]).strftime("%Y%m%d")
         old_recs.append(FundFlowRecord(ticker="X", date=d, close=10.0, pct_change=0.0, main_net_inflow=100_000, main_net_pct=0.5))
-    # industry_day_pct=None: 模拟 _load_industry_day_pct_by_ticker 返回空字典
     ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=None)
     result = BtstBreakoutSetup().detect("X", today, ctx)
-    assert result.hit is True, "行业数据缺失时 BTST 仍应命中 (降级, 不静默全杀)"
-    assert result.degraded is True, "行业数据缺失应标 degraded"
-    assert "行业" in result.degradation_reason or "条件3" in result.degradation_reason
+    assert result.hit is False, "行业数据缺失应 miss (no_data 组 T+10 −0.75% 显著为负)"
 
 
 def test_industry_data_zero_still_misses():
     """有行业数据但涨幅为 0.0 → 正常 miss (行业未涨 = 无板块效应).
 
-    区分: industry_day_pct=0.0 (有数据, 行业没涨) vs industry_day_pct=None (无数据).
-    前者应正常 miss, 后者应 degraded hit. 这保证降级只发生在数据缺失时, 不放宽过滤.
+    2026-08-14 起 industry_day_pct=0.0 (有数据没涨) 与 None (无数据) 同为 miss —
+    前者因 <2.0 阈值, 后者因缺失组实证显著为负 (见 test_industry_data_none_misses).
     """
     prices = _prices_with_limit_up_today()
     today = prices.iloc[-1]["date"].strftime("%Y%m%d")
@@ -306,7 +304,7 @@ def test_industry_data_zero_still_misses():
         old_recs.append(FundFlowRecord(ticker="X", date=d, close=10.0, pct_change=0.0, main_net_inflow=100_000, main_net_pct=0.5))
     ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=0.0)
     result = BtstBreakoutSetup().detect("X", today, ctx)
-    assert result.hit is False, "行业涨幅 0.0 < 2.0 应正常 miss (非降级)"
+    assert result.hit is False, "行业涨幅 0.0 < 2.0 应正常 miss"
 
 
 def test_strength_components_exported_to_metadata():

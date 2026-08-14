@@ -89,6 +89,20 @@ _VERIFIED_SETUPS = [
 # (_REGIME_SIZING_EVIDENCE_BOUND 恒 False), 留着只是挂着引信的错误开关.
 # 见 data/reports/regime_gate_decision_pack_2026-08-09.md.
 
+# regime gate (2026-08-14 接线, R-5.F 收口): 信号日 regime ∈ {crisis, risk_off} 不开新仓.
+# 证据链:
+#   1. 诚实 court (T+1开盘+滑点, 全候选, 2026H1): crisis 9%/-8.98% (n=11), risk_off
+#      8%/-16.12% (n=13) 灾难; gated BTST-only NAV 1.430 vs ungated 1.133 (+26pp).
+#   2. 跨期复现 (2025H2, fund_flow 可得的唯一独立窗口): gated 159 笔 51.4%/+3.97%
+#      vs ungated 173 笔 50.0%/+3.71% — 牛市段零成本 (NAV 1.587 vs 1.594), 方向为正.
+#   3. 止损×gate 联合网格 (两窗 × {ungated,gated} × {none,fixed8}): fixed8 止损在全部
+#      4 组合降收益 (胜率 -9~12pp), gated+无止损 两窗 per-trade 全优 — gate 替代止损.
+#   数据局限: 2022/2024 跨期被 fund_flow 缓存阻塞 (2025-07 起), 无法验证.
+# detect 照跑 (面板继续积累危机日对照组), 仅在仓位/计划层阻断.
+# 见 data/reports/regime_gate_decision_pack_2026-08-09.md,
+#     data/reports/stop_loss_x_regime_gate_court_20260814.json.
+_REGIME_GATE_BLOCK_REGIMES = frozenset({"crisis", "risk_off"})
+
 # v2 ledger 可承接的 setup 白名单. PlanCandidate.__post_init__ 硬拒白名单外 setup —
 # scan 层必须先拦截, 否则按文档恢复 OB (DAILY_ACTION_DISABLED_SETUPS=none) 后,
 # OB 命中会在构造 PlanCandidate 时抛异常 → 当日全部新计划 (含 BTST) 被 fail-closed.
@@ -705,6 +719,7 @@ _BLOCK_REASON_ZH = {
     "drawdown_circuit_breaker": "组合回撤熔断",
     "entry_window_missed": "入场窗口已过（当前已过入场日 09:30，新计划将按不可执行的开盘价记账）",
     "detector_degraded": "检测器降级",
+    "regime_gate_halt": "regime 闸（危机/避险日不开新仓）",
     "regime_authorization_evidence_unavailable": "regime 加仓证据暂不可验，按 10% 单票上限披露",
     "trigger_strength_below_threshold": "触发强度不足",
     "stale_price_cache": "价格缓存过期",
@@ -1368,6 +1383,13 @@ def generate_daily_action(
                     tracker.record_skip(trade_date, ticker, setup_name, horizon, reasoning=f"未触发 (pct={pct:.1f}%)")
                 continue
 
+            # regime gate: 信号日 crisis/risk_off 不开新仓 (与 snapshot 路径同语义).
+            # 放在仓位计算前 — 被闸票不进 ranked, render 的 blocked 由门循环统一披露.
+            if regime in _REGIME_GATE_BLOCK_REGIMES:
+                if scan_mode == "report":
+                    tracker.record_skip(trade_date, ticker, setup_name, horizon, reasoning=f"regime 闸阻断 ({regime})")
+                continue
+
             # 仓位计算: per-setup 上限 × drawdown 降仓 × trigger_strength 调节.
             # 简化: BTST Kelly f*=5.35 永远触顶 → 直接用 setup_max_pct, 去掉装饰性 Kelly 计算.
             # trigger_strength (新 alpha ranker: weekday+board+depth) 调节强弱信号仓位.
@@ -1637,6 +1659,11 @@ def scan_from_verified_snapshot(
                 continue
             if bool(getattr(result, "degraded", False)):
                 blocked.append(BlockedCandidate(ticker, "detector_degraded", entry_price, setup_name, float(result.trigger_strength or 0.0)))
+                continue
+            # regime gate: 信号日 crisis/risk_off 不开新仓. detect 照跑,
+            # blocked 带完整 trigger_strength 诊断 — 面板继续积累危机日对照组.
+            if regime in _REGIME_GATE_BLOCK_REGIMES:
+                blocked.append(BlockedCandidate(ticker, "regime_gate_halt", entry_price, setup_name, float(result.trigger_strength or 0.0)))
                 continue
 
             setup_max_pct = _MAX_POSITION_PCT_BY_SETUP.get(setup_name, _MAX_POSITION_PCT)
