@@ -52,6 +52,7 @@ echo "[$(date -Iseconds)] [daily_auto] start (top_n=$TOP_N trade_date=${TRADE_DA
 # Sets env then os.execvp replaces this process with src/main.py --auto.
 DATE_ARG=""; [[ -n "$TRADE_DATE" ]] && DATE_ARG="--end-date=$TRADE_DATE"
 
+AUTO_RC=0
 "$PYTHON" -E -c "
 import os, sys
 from dotenv import load_dotenv
@@ -66,7 +67,7 @@ date_arg = '$DATE_ARG'
 if date_arg:
     argv += ['--end-date', date_arg]
 os.execvp(sys.executable, argv)
-" ; AUTO_RC=$?
+" || AUTO_RC=$?
 if [[ $AUTO_RC -ne 0 ]]; then
   echo "[$(date -Iseconds)] [daily_auto] --auto FAILED (rc=$AUTO_RC)" >&2
   exit 11
@@ -105,5 +106,31 @@ for k,v in dotenv_values('$REPO/.env').items():
 from src.screening.flywheel_health import run_daily_regime_refresh
 print('[daily_auto] regime_refresh:', json.dumps(run_daily_regime_refresh(), ensure_ascii=False))
 PYEOF
+
+# Step 5: --daily-action — BTST 扫描 + 计划创建 + v2 台账生命周期推进 (入场结算/
+# 退出/估值). 消费 Step 1 --auto 刚发布的 verified snapshot; 快照缺失/过期时
+# dispatcher fail-closed (阻断新计划但生命周期照常推进并渲染阻断原因).
+# 此前此步骤只能靠手动运行 — 漏跑一晚 = 次日入场窗口作废 + 在仓无人结算.
+# 失败用独立 rc=12 暴露 (launchctl list 首列可见), 与 --auto 的 rc=11 区分.
+DA_RC=0
+"$PYTHON" -E -c "
+import os, sys
+from dotenv import load_dotenv
+load_dotenv('$REPO/.env')
+from dotenv import dotenv_values
+for k, v in dotenv_values('$REPO/.env').items():
+    if v is not None:
+        os.environ.setdefault(k, v)
+argv = [sys.executable, 'src/main.py', '--daily-action']
+date_arg = '$DATE_ARG'
+if date_arg:
+    argv += ['--end-date', date_arg]
+os.execvp(sys.executable, argv)
+" || DA_RC=$?
+if [[ $DA_RC -ne 0 ]]; then
+  echo "[$(date -Iseconds)] [daily_auto] --daily-action FAILED (rc=$DA_RC)" >&2
+  exit 12
+fi
+echo "[$(date -Iseconds)] [daily_auto] --daily-action OK"
 
 echo "[$(date -Iseconds)] [daily_auto] done"

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# scripts/run_daily_auto.sh — nightly auto_screening + realized-returns backfill.
+# scripts/run_daily_auto.sh — nightly auto_screening + realized-returns backfill
+# + --daily-action (BTST 计划/台账).
 #
 # Solves system problem #2 (no daily scheduling): without a daily cron, the
 # pipeline doesn't accumulate tracking_history, so records never reach the
@@ -73,8 +74,10 @@ if [[ -n "$TRADE_DATE" ]]; then
   DATE_ARG="--end-date=$END_DATE"
 fi
 
-if ! "$PYTHON" src/main.py --auto --top-n="$TOP_N" $DATE_ARG >>"$LOG_FILE" 2>&1; then
-  echo "[$(date -Iseconds)] [daily_auto] --auto FAILED (rc=$?) — see $LOG_FILE" | tee -a "$LOG_FILE" >&2
+AUTO_RC=0
+"$PYTHON" src/main.py --auto --top-n="$TOP_N" $DATE_ARG >>"$LOG_FILE" 2>&1 || AUTO_RC=$?
+if [[ $AUTO_RC -ne 0 ]]; then
+  echo "[$(date -Iseconds)] [daily_auto] --auto FAILED (rc=$AUTO_RC) — see $LOG_FILE" | tee -a "$LOG_FILE" >&2
   exit 11
 fi
 echo "[$(date -Iseconds)] [daily_auto] --auto OK" | tee -a "$LOG_FILE"
@@ -97,5 +100,17 @@ print(f'[daily_auto] backfill pass updated {n} records')
 " >>"$LOG_FILE" 2>&1; then
   echo "[$(date -Iseconds)] [daily_auto] backfill pass FAILED (non-fatal — --auto already ran its own Phase 2)" | tee -a "$LOG_FILE" >&2
 fi
+
+# Step 3: --daily-action — BTST 扫描 + 计划创建 + v2 台账生命周期推进 (入场结算/
+# 退出/估值). 消费 Step 1 刚发布的 verified snapshot; 快照缺失/过期时 dispatcher
+# fail-closed (阻断新计划但生命周期照常推进并渲染阻断原因). 节假日解析到上一
+# 交易日, 计划幂等去重 (create_plan_if_absent), 可安全重复运行.
+DA_RC=0
+"$PYTHON" src/main.py --daily-action $DATE_ARG >>"$LOG_FILE" 2>&1 || DA_RC=$?
+if [[ $DA_RC -ne 0 ]]; then
+  echo "[$(date -Iseconds)] [daily_auto] --daily-action FAILED (rc=$DA_RC) — see $LOG_FILE" | tee -a "$LOG_FILE" >&2
+  exit 12
+fi
+echo "[$(date -Iseconds)] [daily_auto] --daily-action OK" | tee -a "$LOG_FILE"
 
 echo "[$(date -Iseconds)] [daily_auto] done" | tee -a "$LOG_FILE"
