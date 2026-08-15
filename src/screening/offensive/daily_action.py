@@ -851,6 +851,15 @@ def _finite_float(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
+def _fmt_ref_price(value: Any) -> str:
+    """参考价展示守卫: 非正/非有限数值 (None/0/NaN/inf) 显式报缺失.
+
+    NaN 是 truthy — `if ref` 会把 NaN 渲染成 "参考价 ~nan" (falsy/NaN 家族).
+    """
+    finite = _finite_float(value)
+    return f"参考价 ~{finite:.2f}" if finite is not None and finite > 0 else "参考价缺失"
+
+
 def _format_plan_detail_rows(
     detail: PlanDetail,
     *,
@@ -1092,17 +1101,49 @@ _LABEL_WIDTH = 16
 
 def render_no_signal(filled_count: int = 0) -> str:
     """无新信号结论; 若当日已执行昨日计划 (填仓), 如实披露避免误导."""
+    from colorama import Fore, Style
+
     if filled_count:
-        return (
-            f"结论：ℹ️ 系统健康，今日无新信号（已执行 {filled_count} 笔昨日计划）\n"
-            "影响：无新的次日买入计划；已有持仓生命周期仍正常处理"
-        )
-    return "结论：ℹ️ 系统健康，今日无信号\n影响：无新的次日买入计划；已有持仓生命周期仍正常处理"
+        head = f"结论：ℹ️ 系统健康，今日无新信号（已执行 {filled_count} 笔昨日计划）"
+    else:
+        head = "结论：ℹ️ 系统健康，今日无信号"
+    return (
+        f"{Fore.GREEN}{head}{Style.RESET_ALL}\n"
+        "影响：无新的次日买入计划；已有持仓生命周期仍正常处理"
+    )
 
 
 def render_degraded_only(count: int | None = None) -> str:
-    suffix = f"（{count} 个）" if count is not None else ""
-    return f"结论：ℹ️ 仅供诊断的残缺 setup{suffix}，未生成可交易计划\n影响：残缺/降级命中不进入 BUY 计划，仅用于样本外诊断"
+    """有候选被拦截但无一可计划的结论.
+
+    措辞覆盖全部拦截原因 (强度门禁/regime 闸/数据过期/残缺降级) — 此前统称
+    "残缺 setup", 把强度不足被挡的正常候选误标为数据残缺 (处置路径完全不同).
+    """
+    from colorama import Fore, Style
+
+    suffix = f"（{count} 只）" if count is not None else ""
+    return (
+        f"{Fore.YELLOW}结论：ℹ️ 今日有候选被拦截{suffix}，未生成可交易计划{Style.RESET_ALL}\n"
+        "影响：被拦截候选不进入 BUY 计划；拦截原因见下方「不可计划候选」区"
+    )
+
+
+def render_run_block(reasons: tuple[str, ...]) -> str:
+    """运行级护栏阻断结论 (service 层: 回撤熔断/日历不可用等).
+
+    与 render_readiness_block 区分: 这类阻断与就绪清单无关, 不给"重跑 --auto"
+    的误导性建议; 影响句对日历类阻断同样成立 (不承诺退出已正常结算).
+    """
+    from colorama import Fore, Style
+
+    reasons_text = "；".join(_block_reason_zh(code) for code in reasons) or "未知数据护栏"
+    return "\n".join(
+        [
+            f"{Fore.RED}结论：⛔ 运行护栏阻断新计划{Style.RESET_ALL}",
+            f"原因：{reasons_text}",
+            "影响：今日无新计划；持仓/成交/估值明细见下方分区",
+        ]
+    )
 
 
 def render_readiness_block(
@@ -1111,9 +1152,11 @@ def render_readiness_block(
     verbose: bool = False,
     attempt_reasons: tuple[str, ...] = (),
 ) -> str:
+    from colorama import Fore, Style
+
     detail = _block_reason_zh(reason, verbose=verbose)
     lines = [
-        "结论：⛔ 数据护栏阻断新计划",
+        f"{Fore.RED}结论：⛔ 数据护栏阻断新计划{Style.RESET_ALL}",
         f"原因：{detail}",
         "影响：新候选无法进入计划，但已有持仓的估值和退出仍正常执行",
     ]
@@ -1294,6 +1337,17 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     references = dict(run.reference_prices)
     debug: list[str] = []
 
+    # candidate_not_plan_eligible 是 detect 前的数据契约拒票 (未触发; 数据事故日
+    # 量级可达数百, 0715 曾 263/267) — 与 panel 日志同例折叠为一行计数, 不让
+    # 契约噪声淹没可操作的拦截 (强度不足/数据过期等), 并保持漏斗算术一致
+    # (命中 = 可计划 + 不可计划 中的"不可计划"必须只计触发后被拦的票).
+    actionable_blocked = tuple(
+        candidate
+        for candidate in run.blocked_candidates
+        if candidate.reason != "candidate_not_plan_eligible"
+    )
+    ineligible_count = len(run.blocked_candidates) - len(actionable_blocked)
+
     # 当日成交: 只列 signal 日当天结算的 fills — 数日前入场的仓位不误标为当日开仓.
     synthetic_trades = [
         t
@@ -1308,10 +1362,10 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     ]
 
     # ---- 摘要行: 结论先行 ----
-    # 数据护栏阻断 (block_reasons) 的完整结论由 dispatcher 的 render_readiness_block
-    # 在渲染后追加 (原因/影响/建议); 摘要若再输出「⛔ + 原因」会与结论重复, 所以
-    # 摘要只服务正常扫描的事件概览 (只列非零事件, 全零退化为「今日无新计划」),
-    # block 场景整段让位给 dispatcher 结论.
+    # 阻断 (block_reasons) 的完整结论由 dispatcher 前置到正文之前
+    # (render_readiness_block / render_run_block, 原因/影响); 摘要若再输出
+    # 「⛔ + 原因」会与结论重复, 所以摘要只服务正常扫描的事件概览 (只列非零
+    # 事件, 全零退化为「今日无新计划」), block 场景整段让位给 dispatcher 结论.
     summary = None
     if not run.service_run.block_reasons:
         parts: list[str] = []
@@ -1323,8 +1377,8 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
             parts.append(f"退出计划 {len(run.service_run.exit_plans)} 只")
         if run.service_run.completed_exits:
             parts.append(f"完成退出 {len(run.service_run.completed_exits)} 只")
-        if run.blocked_candidates:
-            parts.append(f"不可计划 {len(run.blocked_candidates)} 只")
+        if actionable_blocked:
+            parts.append(f"不可计划 {len(actionable_blocked)} 只")
         summary = " · ".join(parts) or "今日无新计划"
 
     lines = [f"━━━ 每日动作 · 信号日 {as_of.isoformat()}（周{_weekday_zh(as_of)}）━━━", ""]
@@ -1352,7 +1406,7 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         if plan.planned_weight is not None:
             weight = f"权重 {plan.planned_weight:.1%}"
         ref = references.get(plan.ticker)
-        ref_text = f"参考价 ~{ref:.2f}" if ref else "参考价缺失"
+        ref_text = _fmt_ref_price(ref)
         plan_rows.append(
             "  ".join(
                 part
@@ -1389,7 +1443,8 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
 
     # ---- 当日成交 ----
     # raw_entry_price 类型是 Optional — 正常成交行恒有价, 但一行坏数据不该崩掉
-    # 整个操作员视图: 缺价显式标注, 不编造也不抛 TypeError.
+    # 整个操作员视图: 缺价显式标注, 不编造也不抛 TypeError. 两渠道行恒在 (回归
+    # 测试钉住的契约: 渠道标签空也显示 = "两通道都结算过且皆无", 不是冗余).
     def _fill_row(t: Any) -> str:
         price_text = f"@{t.raw_entry_price:.2f}" if t.raw_entry_price is not None else "成交价缺失"
         return f"{_pad_to(_label(t.ticker), _LABEL_WIDTH)} {price_text}"
@@ -1423,7 +1478,7 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     # 强度不足的候选附分量下钻行 (哪个维度拖累了强度); 其他原因中文表已够
     # 清楚, 保持单行. 节后的扫描漏斗行回答"为什么只有这几只".
     blocked_rows: list[str] = []
-    for candidate in run.blocked_candidates:
+    for candidate in actionable_blocked:
         label = _pad_to(_label(candidate.ticker), _LABEL_WIDTH)
         if candidate.reason == "trigger_strength_below_threshold":
             gap = max(0.0, _MIN_TRIGGER_STRENGTH - candidate.trigger_strength)
@@ -1434,7 +1489,7 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         else:
             reason_text = _block_reason_zh(candidate.reason)
         blocked_rows.append(
-            f"{label} 参考价 ~{candidate.reference_price:.2f}  原因：{reason_text}"
+            f"{label} {_fmt_ref_price(candidate.reference_price)}  原因：{reason_text}"
         )
         if candidate.reason == "trigger_strength_below_threshold":
             breakdown = _format_strength_breakdown(candidate.metadata)
@@ -1446,15 +1501,17 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
                 f"[block_reason={candidate.reason}]"
             )
     lines.extend(
-        _render_section(f"不可计划候选（{len(run.blocked_candidates)} 只）", blocked_rows)
+        _render_section(f"不可计划候选（{len(actionable_blocked)} 只）", blocked_rows)
     )
+    if ineligible_count:
+        lines.append(f"  另：{ineligible_count} 只不具备计划资格（数据契约拒票，未触发信号，已从明细折叠）")
     lines.append("")
 
     # ---- 扫描漏斗: 未命中票从来不是候选, 漏斗把沉默的大多数变成数字 ----
     if run.funnel is not None:
         lines.append(
             f"扫描漏斗：扫描 {run.funnel.scannable} 只 → 涨幅≥9.5% {run.funnel.prefilter_passed} 只 → "
-            f"命中 {run.funnel.hits} 只 → 可计划 {len(run.plans)} 只 · 不可计划 {len(run.blocked_candidates)} 只"
+            f"命中 {run.funnel.hits} 只 → 可计划 {len(run.plans)} 只 · 不可计划 {len(actionable_blocked)} 只"
         )
         lines.append("")
 

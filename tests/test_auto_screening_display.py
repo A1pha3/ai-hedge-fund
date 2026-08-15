@@ -126,3 +126,106 @@ def test_daily_action_fill_row_survives_missing_price(monkeypatch) -> None:
     rendered = render_daily_action_v2(run)
     assert "成交价缺失" in rendered
     assert "模拟成交：1 笔" in rendered
+
+
+def test_daily_action_blocked_candidate_nan_price_shows_missing(monkeypatch) -> None:
+    """G4: reference_price=NaN 的不可计划候选渲染「参考价缺失」, 不出现 ~nan."""
+    from src.screening.offensive.daily_action import (
+        BlockedCandidate,
+        DailyActionV2Run,
+        render_daily_action_v2,
+    )
+    from src.screening.offensive.ledger_repository import DailyValuation
+
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda ticker: ticker)
+
+    signal_date = date(2026, 8, 14)
+    candidate = BlockedCandidate("002594", "stale_price_cache", float("nan"))
+    service_run = SimpleNamespace(
+        trade_date=signal_date,
+        block_reason=None,
+        block_reasons=(),
+        blocked_tickers=(),
+        ticker_gate_blocks=(),
+        exit_plans=(),
+        completed_exits=(),
+        skipped_plans=(),
+        deferred_exits=(),
+        valuation=DailyValuation(signal_date, 1_000_000, 0, 1_000_000, 1_000_000, 0.0, ()),
+    )
+    run = DailyActionV2Run(service_run, (), (), (candidate,), ())
+    rendered = render_daily_action_v2(run)
+    blocked_line = next(line for line in rendered.splitlines() if "002594" in line)
+    assert "参考价缺失" in blocked_line
+    assert "nan" not in blocked_line.lower()
+
+
+def test_daily_action_contract_rejects_folded_not_flooded(monkeypatch) -> None:
+    """G11: candidate_not_plan_eligible (detect 前契约拒票, 未触发; 数据事故日
+    可达数百只) 折叠为一行计数 — 不淹没可操作拦截, 且漏斗算术一致
+    (命中 = 可计划 + 不可计划)."""
+    from src.screening.offensive.daily_action import (
+        BlockedCandidate,
+        DailyActionV2Run,
+        ScanFunnel,
+        render_daily_action_v2,
+    )
+    from src.screening.offensive.ledger_repository import DailyValuation
+
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda ticker: ticker)
+
+    signal_date = date(2026, 8, 14)
+    actionable = BlockedCandidate("002594", "stale_price_cache", 105.3)
+    rejects = tuple(
+        BlockedCandidate(f"6000{i:02d}", "candidate_not_plan_eligible", 10.0)
+        for i in range(74)
+    )
+    service_run = SimpleNamespace(
+        trade_date=signal_date,
+        block_reason=None,
+        block_reasons=(),
+        blocked_tickers=(),
+        ticker_gate_blocks=(),
+        exit_plans=(),
+        completed_exits=(),
+        skipped_plans=(),
+        deferred_exits=(),
+        valuation=DailyValuation(signal_date, 1_000_000, 0, 1_000_000, 1_000_000, 0.0, ()),
+    )
+    funnel = ScanFunnel(scannable=1523, prefilter_passed=5, hits=1)
+    run = DailyActionV2Run(service_run, (), (), (actionable,) + rejects, (), funnel=funnel)
+    rendered = render_daily_action_v2(run)
+    # 只有可操作拦截入区, 74 只契约拒票折叠为一行
+    assert "不可计划候选（1 只）" in rendered
+    assert "另：74 只不具备计划资格" in rendered
+    assert "600010" not in rendered
+    # 漏斗算术: 命中 1 = 可计划 0 + 不可计划 1
+    assert "命中 1 只 → 可计划 0 只 · 不可计划 1 只" in rendered
+    assert "不可计划 75" not in rendered
+
+
+def test_daily_action_empty_fills_keep_channel_lines(monkeypatch) -> None:
+    """两渠道皆空时仍各显示一行"无" — 渠道标签恒在是回归测试钉住的契约
+    (渠道空也显示 = "两通道都结算过且皆无", 与整节静默区分)."""
+    from src.screening.offensive.daily_action import DailyActionV2Run, render_daily_action_v2
+    from src.screening.offensive.ledger_repository import DailyValuation
+
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda ticker: ticker)
+
+    signal_date = date(2026, 8, 14)
+    service_run = SimpleNamespace(
+        trade_date=signal_date,
+        block_reason=None,
+        block_reasons=(),
+        blocked_tickers=(),
+        ticker_gate_blocks=(),
+        exit_plans=(),
+        completed_exits=(),
+        skipped_plans=(),
+        deferred_exits=(),
+        valuation=DailyValuation(signal_date, 1_000_000, 0, 1_000_000, 1_000_000, 0.0, ()),
+    )
+    run = DailyActionV2Run(service_run, (), (), (), ())
+    rendered = render_daily_action_v2(run)
+    assert "模拟成交：无" in rendered
+    assert "确认成交：无" in rendered

@@ -138,6 +138,36 @@ class TestRunTop:
         output = capsys.readouterr().out
         assert "缓存命中:" in output
 
+    def test_top_table_is_chinese_and_shows_bucket_winrate(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+        """G3: --top 表格与 --auto 同一展示契约 — 中文表头/决策标签 + 池胜率列
+        (profit_aware 排序主键; 缺失时显示 "—")."""
+        recs = [{
+            "ticker": "300750", "name": "宁德时代", "industry_sw": "电力设备",
+            "score_b": 0.55, "decision": "watch", "consecutive_days": 1,
+            "decay": {"level": "none"},
+            "win_rates": {"t5": 0.4825, "t10": 0.4701}, "bucket_sample_count": 428,
+        }]
+        report_dir = tmp_path / "reports"
+        report_dir.mkdir(parents=True)
+        report_path = report_dir / "auto_screening_20260608.json"
+        payload = {
+            "date": "20260608",
+            "market_state": {"state_type": "mixed"},
+            "layer_a_count": 50,
+            "recommendations": recs,
+        }
+        report_path.write_text(json.dumps(payload), encoding="utf-8")
+        with patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=report_dir):
+            with patch("src.reporting.pdf_exporter.find_latest_report", return_value=report_path):
+                rc = run_top()
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "池胜率" in output
+        assert "48%·428" in output
+        assert "关注" in output
+        assert "Front Door" not in output
+        assert "watch" not in output
+
     def test_malformed_score_b_does_not_crash(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
         """score_b 越界或缺字段时不崩溃，优雅降级。"""
         # score_b > 1 violates FusedScore field constraint — must be caught

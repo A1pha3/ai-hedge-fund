@@ -6,8 +6,27 @@ from src.main import render_auto_daily_domain_summary
 
 def test_default_output_distinguishes_three_no_plan_states():
     assert "系统健康，今日无信号" in render_no_signal()
-    assert "仅供诊断的残缺 setup" in render_degraded_only()
+    # 拦截结论覆盖全部拦截原因, 不把强度门禁误标为"残缺 setup"
+    assert "今日有候选被拦截" in render_degraded_only()
+    assert "残缺" not in render_degraded_only()
     assert "数据护栏阻断新计划" in render_readiness_block()
+
+
+def test_run_block_renders_runlevel_guard_conclusion():
+    """运行级护栏 (回撤熔断/日历不可用) 有专属结论块: 无误导性"重跑 --auto"建议."""
+    from src.screening.offensive.daily_action import render_run_block
+
+    text = render_run_block(("drawdown_circuit_breaker",))
+    assert "运行护栏阻断新计划" in text
+    assert "组合回撤熔断" in text
+    assert "--auto" not in text  # 运行级阻断与就绪清单无关, 不给误导性建议
+
+
+def test_conclusion_blocks_carry_terminal_colors():
+    """TTY 可扫读性: ⛔ 红 / ℹ️ 按严重度着色 (管道下由 dispatch 层剥离, 日志干净)."""
+    assert "\x1b[31m" in render_readiness_block()  # RED
+    assert "\x1b[33m" in render_degraded_only(1)  # YELLOW
+    assert "\x1b[32m" in render_no_signal()  # GREEN
 
 
 def test_auto_default_output_separates_auto_and_daily_readiness_and_treats_regime_auth_as_disclosure():

@@ -450,6 +450,55 @@ def test_daily_action_blocked_conclusion_comes_first(tmp_path, monkeypatch):
     assert rendered.find("结论：⛔") < rendered.find("每日动作 · 信号日")
 
 
+def test_daily_action_runlevel_block_gets_conclusion(tmp_path, monkeypatch):
+    """G1: service 层阻断 (回撤熔断等) 无快照阻断时也要有结论 — 此前默认视图
+    对"为何无计划"只字不提, 甚至落到"系统健康，今日无信号"的误报."""
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from src.screening.offensive.daily_action import _CN_TZ
+
+    monkeypatch.chdir(tmp_path)
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir(parents=True)
+    signal_date = date(2026, 7, 13)
+    run = SimpleNamespace(
+        plans=(),
+        blocked_candidates=(),
+        open_positions=(),
+        service_run=SimpleNamespace(block_reasons=("drawdown_circuit_breaker",)),
+    )
+    with (
+        patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=reports_dir),
+        patch("src.screening.offensive.daily_action.resolve_daily_action_signal", return_value=(signal_date, "normal")),
+        # 入场窗口护栏: 固定"当前时刻"为信号日 21:00 (次日入场窗口未过),
+        # 否则真实时钟 > 入场日 09:30 会先触发 entry_window_missed 快照阻断.
+        patch(
+            "src.screening.offensive.daily_action._current_cn_datetime",
+            return_value=datetime(2026, 7, 13, 21, 0, tzinfo=_CN_TZ),
+        ),
+        patch(
+            "src.screening.offensive.daily_action_snapshot.load_verified_daily_action_snapshot",
+            return_value=SimpleNamespace(snapshot=SimpleNamespace(regime="normal", signal_date=signal_date), global_reason=None),
+        ),
+        patch("src.screening.offensive.daily_action.scan_from_verified_snapshot", return_value=SimpleNamespace(signal_date=signal_date, candidates=(), blocked_candidates=(), reference_prices=())),
+        patch("src.screening.offensive.daily_action.complete_daily_action_v2", return_value=run),
+        patch("src.screening.offensive.daily_action.render_daily_action_v2", return_value="正文"),
+        patch("builtins.print") as output,
+    ):
+        rc = dispatcher._resolve_daily_action(
+            ["--daily-action"],
+            open_sessions=(signal_date, signal_date + timedelta(days=1), signal_date + timedelta(days=7)),
+            ledger_path=tmp_path / "ledger.sqlite3",
+        )
+    assert rc == 0
+    rendered = output.call_args.args[0]
+    assert "结论：⛔ 运行护栏阻断新计划" in rendered
+    assert "组合回撤熔断" in rendered
+    assert "系统健康" not in rendered
+    assert rendered.find("结论：⛔") < rendered.find("正文")
+
+
 class _FakeStream:
     """Minimal non-TTY (or TTY) stream for color-init tests."""
 

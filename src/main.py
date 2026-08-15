@@ -2018,6 +2018,13 @@ def _handle_post_screening_tasks(
         logger.warning("[Auto] P2-3 推送异常: %s", exc)
 
 
+def _bucket_stat_text(winrate: float | None, sample_count: int) -> str:
+    """池胜率单元格: "48%·428" (胜率·样本数); 无证据 → "—" (未知不编造)."""
+    if winrate is None:
+        return "—"
+    return f"{winrate:.0%}·{sample_count}"
+
+
 def _extract_bucket_stats(recommendations: list[dict]) -> dict[str, tuple[float | None, int]]:
     """ticker → (池胜率, 样本数) — profit_aware 排序的真实主键 (2026-07-18 起默认).
 
@@ -2058,8 +2065,8 @@ def _print_table_block(
         fetcher_stats.get("single_ticker_calls", 0),
         fetcher_stats.get("cache_hits", 0),
     )
-    # O-1: 缓存命中率可观测性 — CLI 表格底部增加一行摘要
-    _print_cache_hit_summary(fetcher_stats)
+    # O-1: 缓存命中率摘要移至表格块末尾 (见函数尾部) — 操作员的第一屏应是
+    # 结论与表格, 不是管线 plumbing.
     quality = report_payload.get("quality_decision") or {}
     auto_status = str(quality.get("status") or report_payload.get("status") or "healthy")
     print(
@@ -2086,6 +2093,9 @@ def _print_table_block(
         composite_by_ticker=composite_by_ticker,
         bucket_stats=_extract_bucket_stats(report_payload.get("recommendations") or ()),
     )
+
+    # O-1: 缓存命中率可观测性 — 表格块底部一行摘要 (原 O-1 设计意图即"底部").
+    _print_cache_hit_summary(fetcher_stats)
 
 
 def _apply_top_filters(recs: list[dict], filters: dict) -> tuple[list[dict], str]:
@@ -2167,6 +2177,7 @@ def _build_top_table_row(*, idx: int, rec: dict, market_regime: str = "normal") 
 
     score_b = _safe_float(rec.get("score_b"), 0.0)
     decision = rec.get("decision", "neutral")
+    decision_label = _DECISION_LABELS.get(decision, decision)
     try:
         from src.screening.investability import build_front_door_verdict
 
@@ -2179,21 +2190,31 @@ def _build_top_table_row(*, idx: int, rec: dict, market_regime: str = "normal") 
 
     if score_b >= SCORE_B_GREEN_FLOOR:
         score_colored = f"{Fore.GREEN}{score_b:+.4f}{Style.RESET_ALL}"
-        decision_colored = f"{Fore.GREEN}{decision}{Style.RESET_ALL}"
+        decision_colored = f"{Fore.GREEN}{decision_label}{Style.RESET_ALL}"
     elif score_b >= SCORE_B_YELLOW_FLOOR:
         score_colored = f"{Fore.YELLOW}{score_b:+.4f}{Style.RESET_ALL}"
-        decision_colored = f"{Fore.YELLOW}{decision}{Style.RESET_ALL}"
+        decision_colored = f"{Fore.YELLOW}{decision_label}{Style.RESET_ALL}"
     else:
         score_colored = f"{Fore.RED}{score_b:+.4f}{Style.RESET_ALL}"
-        decision_colored = f"{Fore.RED}{decision}{Style.RESET_ALL}"
+        decision_colored = f"{Fore.RED}{decision_label}{Style.RESET_ALL}"
+    _front_door_label = {"BUY": "买入", "HOLD": "持有", "AVOID": "回避"}.get(front_door_action, front_door_action)
     if front_door_action == "BUY":
-        front_door_colored = f"{Fore.GREEN}{front_door_action}{Style.RESET_ALL}"
+        front_door_colored = f"{Fore.GREEN}{_front_door_label}{Style.RESET_ALL}"
     elif front_door_action == "HOLD":
-        front_door_colored = f"{Fore.YELLOW}{front_door_action}{Style.RESET_ALL}"
+        front_door_colored = f"{Fore.YELLOW}{_front_door_label}{Style.RESET_ALL}"
     elif front_door_action == "AVOID":
-        front_door_colored = f"{Fore.RED}{front_door_action}{Style.RESET_ALL}"
+        front_door_colored = f"{Fore.RED}{_front_door_label}{Style.RESET_ALL}"
     else:
-        front_door_colored = f"{Fore.YELLOW}{front_door_action}{Style.RESET_ALL}"
+        front_door_colored = f"{Fore.YELLOW}{_front_door_label}{Style.RESET_ALL}"
+
+    # 池胜率 (排序主键) — 与 --auto 表格同口径, 缺证据显示 "—".
+    from src.screening.investability import _max_short_horizon_metric
+
+    win_rates = rec.get("win_rates")
+    bucket_str = _bucket_stat_text(
+        _max_short_horizon_metric(win_rates if isinstance(win_rates, dict) else None),
+        _safe_int(rec.get("bucket_sample_count"), 0),
+    )
 
     ticker = rec.get("ticker", "—")
     name = rec.get("name", "")
@@ -2230,7 +2251,7 @@ def _build_top_table_row(*, idx: int, rec: dict, market_regime: str = "normal") 
         days_tag = f"({days_since_peak}d)" if days_since_peak > 0 else ""
         decay_str = f"{Fore.YELLOW}↓{decay_pct:.0f}%{days_tag}{Style.RESET_ALL}"
 
-    return [idx, ticker_label, industry, score_colored, decision_colored, front_door_colored, cons_str, decay_str]
+    return [idx, ticker_label, industry, score_colored, bucket_str, decision_colored, front_door_colored, cons_str, decay_str]
 
 
 def _print_top_score_enhancements(
@@ -2387,9 +2408,10 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
 
     table_data = [_build_top_table_row(idx=idx, rec=rec, market_regime=market_regime) for idx, rec in enumerate(recs, 1)]
 
-    headers = [f"{Fore.WHITE}#", "Ticker", "Industry", "Score B", "Decision", "Front Door", "Consec", "Decay"]
+    headers = [f"{Fore.WHITE}#", "代码 名称", "行业", "信号分", "池胜率", "决策", "前门", "连续", "衰减"]
     # disable_numparse: 行构造器已显式格式化 ("+0.3570"), 防止 tabulate 重解析吃格式.
-    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center", "center"), disable_numparse=True))
+    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center", "center", "center"), disable_numparse=True))
+    print(f"  {Fore.WHITE}· 「前门」= 可投资性准入判决 (买入/持有/回避); 「池胜率」与「信号分」等其余列含义同 --auto 表格{Style.RESET_ALL}")
 
     # Score decomposition + waterfall + expected returns for top 5 (skip on validation failure)
     from src.screening.consecutive_recommendation import load_tracking_history
@@ -2641,10 +2663,7 @@ def _build_auto_screening_table_row(
 
     # 池胜率 (profit_aware 排序主键, 2026-07-18 起) — 同评分桶近 60 日 T+5/T+10
     # 经验胜率 + 样本数. 不着色: 它是事实性排序键, 不发明未经验证的决策色语义.
-    if bucket_stat is not None and bucket_stat[0] is not None:
-        bucket_str = f"{bucket_stat[0]:.0%}·{bucket_stat[1]}"
-    else:
-        bucket_str = "—"
+    bucket_str = _bucket_stat_text(*bucket_stat) if bucket_stat is not None else "—"
 
     # Signal summary: direction + confidence per strategy; direction==0 (无信号)
     # 只显示 "—" — 中性信心数 ("—60") 对操作员是自相矛盾的零信息噪声.
@@ -2840,15 +2859,15 @@ def _print_auto_screening_table(
 
     print(f"\n  详细报告已保存: {Fore.CYAN}{report_path}{Style.RESET_ALL}")
 
+    # 行业集中度警告是风险信息 — 紧随表格, 不埋在评分明细之后.
+    if sector_warnings:
+        for w in sector_warnings:
+            print(f"  {Fore.YELLOW}⚠️  {w}{Style.RESET_ALL}")
+
     # O-2: 推荐排序策略透明化 — 在表格下方打印 Top 5 的评分构成摘要
     _print_score_decomposition(top_results[:5], consecutive_lookup)
     # R20.5 P1-3 扩展: 因子瀑布 — 完整调整项明细
     _print_score_waterfall(top_results[:5], consecutive_lookup)
-
-    # Sector concentration warnings
-    if sector_warnings:
-        for w in sector_warnings:
-            print(f"  {Fore.YELLOW}⚠️  {w}{Style.RESET_ALL}")
 
     # P1-2 行业轮动信号块
     if industry_signals:

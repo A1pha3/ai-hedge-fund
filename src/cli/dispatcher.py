@@ -1092,6 +1092,7 @@ def _resolve_daily_action(
         render_degraded_only,
         render_no_signal,
         render_readiness_block,
+        render_run_block,
         resolve_daily_action_signal,
         scan_from_verified_snapshot,
     )
@@ -1240,16 +1241,28 @@ def _resolve_daily_action(
                 )
         verbose = "--verbose" in argv
         rendered = render_daily_action_v2(v2_run, verbose=verbose)
-        # 结论先行: 三类结论块 (阻断/仅诊断/无信号) 一律置于正文之前 — 操作员
-        # 第一眼看到当天最重要的事实, 明细分区随后. 此前 append 在末尾, 阻断日
-        # 要翻完整屏才能看到 ⛔.
+        # 结论先行: 结论块一律置于正文之前 — 操作员第一眼看到当天最重要的事实.
+        # 三级阻断/无信号各有专属结论: 就绪类 (含排查建议) / 运行级护栏 (回撤熔断、
+        # 日历不可用等 service 层阻断 — 摘要已被渲染层抑制, 此处必须补结论, 否则
+        # 默认视图对"为何无计划"只字不提甚至误报"系统健康") / 拦截与无信号.
+        run_blocks = tuple(
+            code for code in (v2_run.service_run.block_reasons or ())
+            if code != snapshot_block_reason
+        )
         if snapshot_block_reason:
             rendered = render_readiness_block(
                 snapshot_block_reason, verbose=verbose, attempt_reasons=attempt_reasons
             ) + "\n\n" + rendered
+        elif run_blocks:
+            rendered = render_run_block(run_blocks) + "\n\n" + rendered
         elif not v2_run.plans:
-            if v2_run.blocked_candidates:
-                rendered = render_degraded_only(len(v2_run.blocked_candidates)) + "\n\n" + rendered
+            # candidate_not_plan_eligible (detect 前契约拒票, 未触发) 不计入拦截
+            # 结论 — 渲染层已折叠为一行计数; 结论计数必须与可操作拦截同口径.
+            actionable = [
+                b for b in v2_run.blocked_candidates if b.reason != "candidate_not_plan_eligible"
+            ]
+            if actionable:
+                rendered = render_degraded_only(len(actionable)) + "\n\n" + rendered
             else:
                 # 无新信号但当日可能已执行昨日计划 (填仓) — 如实披露, 避免
                 # "今日无信号" 误导为系统无动作。

@@ -56,11 +56,11 @@ def test_decay_none_shows_dash() -> None:
 
 
 def test_top_table_row_surfaces_front_door_verdict() -> None:
-    """The legacy --top row must show the front-door BUY/HOLD/AVOID verdict."""
+    """The legacy --top row must show the front-door verdict (中文标签: 买入/持有/回避)."""
     rec = _make_rec(score_b=0.8, decision="bullish")
     row = _build_top_table_row(idx=1, rec=rec)
 
-    assert any("AVOID" in str(cell) for cell in row)
+    assert any("回避" in str(cell) for cell in row)
 
 
 def test_top_table_row_resilient_to_null_score_b() -> None:
