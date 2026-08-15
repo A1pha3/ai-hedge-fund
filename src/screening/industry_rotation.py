@@ -475,4 +475,9 @@ def format_rotation_block(
             else:
                 lines.append(base_info)
 
+    if lines:
+        # 口径注解: "强势行业 avg score_b +0.00" 类读感的解药 — 两个分数口径独立.
+        lines.append("")
+        lines.append("(动量分=行业价格相对强度; avg score_b=池内候选平均信号分, 两者口径独立)")
+
     return "\n".join(lines) + "\n"

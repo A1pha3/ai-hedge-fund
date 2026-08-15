@@ -1617,17 +1617,34 @@ def render_auto_daily_domain_summary(
     }.get(auto_status, auto_status)
     daily_label = "健康" if status == "healthy" else "未就绪"
 
-    def display_count(value: int | None) -> str:
-        return "未知" if value is None else str(value)
+    # 计数全缺时五个「未知」是纯噪声 (8/14 实证); 折叠为一处声明. 部分缺失
+    # 仍逐字段显示 (缺失字段本身携带"哪个环节没产出计数"的信息).
+    count_fields = (
+        ("全域", counts["universe"]),
+        ("可扫描", counts["scannable"]),
+        ("可计划", counts["plan_eligible"]),
+        ("残缺诊断", counts["degraded"]),
+        ("失败", counts["failed"]),
+    )
+    if all(value is None for _label, value in count_fields):
+        counts_text = "计数不可用"
+    else:
+        counts_text = "，".join(f"{label}={'未知' if value is None else value}" for label, value in count_fields)
 
     lines = [
         f"Auto 评分状态：{auto_label}（候选池={_safe_int(layer_a_count, 0)}，推荐={_safe_int(recommendation_count, 0)}）",
-        f"Daily Action 就绪状态：{daily_label}（全域={display_count(counts['universe'])}，可扫描={display_count(counts['scannable'])}，可计划={display_count(counts['plan_eligible'])}，残缺诊断={display_count(counts['degraded'])}，失败={display_count(counts['failed'])}）",
+        f"Daily Action 就绪状态：{daily_label}（{counts_text}）",
     ]
     if disclosures:
         lines.append("Daily Action 仓位披露：regime 加仓证据暂不可验，单票按 10% 仓位披露，非阻断")
     if fatal_reasons:
-        lines.append("Daily Action：数据护栏阻断新计划")
+        # 阻断必须给出可操作信息: 中文原因 (未知码 fail-closed 回退) + 原始码 +
+        # 后果与排查入口. 此前只有一句"阻断新计划", 操作员无从处置.
+        from src.screening.offensive.daily_action import _block_reason_zh
+
+        reasons_text = "；".join(_block_reason_zh(reason, verbose=True) for reason in fatal_reasons)
+        lines.append(f"Daily Action：数据护栏阻断新计划 — {reasons_text}")
+        lines.append("Daily Action 处置：今日 --daily-action 将无法生成新计划；排查见 logs/ 与 data/reports/daily_action_readiness_attempt_*.json")
     if verbose and raw_reasons:
         lines.append("Daily Action raw reasons: " + ",".join(raw_reasons))
     return "\n".join(lines)
@@ -1832,6 +1849,10 @@ def run_auto_screening(
     finally:
         try:
             progress.stop()
+            if not sys.stdout.isatty():
+                # rich Live 在非 TTY 下延迟到 stop 才冲刷最终帧, 且无尾随换行 —
+                # 不补换行, 下一条日志 (launcher echo) 会拼接到进度行尾 (日志实证).
+                print()
         finally:
             _close_auto_lock()
 
@@ -1997,6 +2018,26 @@ def _handle_post_screening_tasks(
         logger.warning("[Auto] P2-3 推送异常: %s", exc)
 
 
+def _extract_bucket_stats(recommendations: list[dict]) -> dict[str, tuple[float | None, int]]:
+    """ticker → (池胜率, 样本数) — profit_aware 排序的真实主键 (2026-07-18 起默认).
+
+    ``rank_recommendations_by_investability`` (profit_aware=True) 以同评分桶近 60 日
+    T+5/T+10 经验胜率为主键、composite 仅为 tie-break; 表格必须把主键显示出来,
+    否则综合分列非单调看起来像 bug (8/14 实证: 第 8 行综合分 0.58 高于第 1 行 0.47).
+    胜率口径与排序键同源: ``_max_short_horizon_metric`` (max of T+5/T+10).
+    """
+    from src.screening.investability import _max_short_horizon_metric
+
+    stats: dict[str, tuple[float | None, int]] = {}
+    for rec in recommendations:
+        ticker = str(rec.get("ticker", "") or "")
+        if not ticker:
+            continue
+        winrate = _max_short_horizon_metric(rec.get("win_rates"))
+        stats[ticker] = (winrate, _safe_int(rec.get("bucket_sample_count"), 0))
+    return stats
+
+
 def _print_table_block(
     report_payload: dict,
     trade_date: str,
@@ -2043,6 +2084,7 @@ def _print_table_block(
         decay_map=decay_map,
         industry_signals=industry_signals,
         composite_by_ticker=composite_by_ticker,
+        bucket_stats=_extract_bucket_stats(report_payload.get("recommendations") or ()),
     )
 
 
@@ -2327,7 +2369,7 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
 
     print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}{Style.BRIGHT}[Top] 最近推荐{Style.RESET_ALL}")
-    print(f"  报告日期: {trade_date}  |  市场状态: {state_type}  |  候选池: {pool_size}")
+    print(f"  报告日期: {_format_trade_date_display(trade_date)}  |  市场状态: {_market_state_display(state_type)}  |  候选池: {pool_size}")
     print(f"  报告路径: {Fore.CYAN}{report_path}{Style.RESET_ALL}")
 
     # autodev-29 loop 146: 报告时效性披露. 过时报 (≥2天) 提示操作者
@@ -2346,7 +2388,8 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
     table_data = [_build_top_table_row(idx=idx, rec=rec, market_regime=market_regime) for idx, rec in enumerate(recs, 1)]
 
     headers = [f"{Fore.WHITE}#", "Ticker", "Industry", "Score B", "Decision", "Front Door", "Consec", "Decay"]
-    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center", "center")))
+    # disable_numparse: 行构造器已显式格式化 ("+0.3570"), 防止 tabulate 重解析吃格式.
+    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center", "center"), disable_numparse=True))
 
     # Score decomposition + waterfall + expected returns for top 5 (skip on validation failure)
     from src.screening.consecutive_recommendation import load_tracking_history
@@ -2413,13 +2456,13 @@ def _print_score_decomposition(
         signals = item.strategy_signals or {}
 
         # 各策略贡献值 = weight * direction * (confidence/100) * completeness
+        # direction==0 (无信号) 的策略整段省略 — "MR:—0.000" 是每日刷屏的零信息噪声.
         parts: list[str] = []
         strategy_labels = ("T", "MR", "F", "E")
         for sname, slabel in zip(STRATEGY_KEYS, strategy_labels):
             w = weights.get(sname, 0.0)
             sig = signals.get(sname)
-            if sig is None or w == 0.0:
-                parts.append(f"{slabel}:—")
+            if sig is None or w == 0.0 or sig.direction == 0:
                 continue
             contribution = w * sig.direction * (sig.confidence / 100.0) * sig.completeness
             arrow = "↑" if contribution > 0 else "↓" if contribution < 0 else "—"
@@ -2457,16 +2500,14 @@ def _print_score_waterfall(
 ) -> None:
     """R20.5 P1-3 扩展: 因子级瀑布 (factor-level waterfall)。
 
-    显示每个推荐的 score_b 构成:
+    显示每个推荐的 score_b 构成 (严格加性, 行行之和 = score_b):
       score_b = clamp(base 各策略贡献 + consensus_bonus, -1, +1)
       other = score_b - (base + consensus)  [仅 clamp 截断时有非零残差]
 
     ``att`` (attention_composite) 和 ``stab`` (stability_bonus) 是正交元数据,
-    **不参与 score_b 求和** (非加性上下文), 仅作展示。这修正了此前把它们当
-    加性分量导致 other 被迫用 -stab 抵消的伪分解。
-
-    让用户精确理解"为什么 A 排在 B 前面"——不仅看 4 个策略贡献, 还能看
-    共识加成等真实调整项 + 非加性的注意力/连续推荐上下文。
+    **不参与 score_b 求和** — 量纲与加性行差一个数量级以上 (stab +10.0 vs 总分
+    +0.33), 混进瀑布会破坏"行之和=总分"的视觉契约, 故收进标题行的方括号附注,
+    瀑布体只留真加性分量.
     """
     from colorama import Fore, Style
 
@@ -2482,7 +2523,15 @@ def _print_score_waterfall(
         consecutive_info = consecutive_lookup.get(item.ticker, {})
         decomp = compute_score_decomposition(item, consecutive_info)
 
-        print(f"  {Fore.CYAN}{item.ticker:<8s}{Style.RESET_ALL} {Fore.WHITE}{item.name}{Style.RESET_ALL}")
+        # 非加性上下文收进标题行附注 (无颜色, 不伪装成加性分量).
+        context_bits: list[str] = []
+        if abs(decomp["attention_contribution"]) > 1e-6:
+            context_bits.append(f"att {decomp['attention_contribution']:.2f} (>0.7 自动剔除)")
+        if abs(decomp["stability_bonus"]) > 1e-6:
+            consec_days = int(consecutive_info.get("consecutive_days", 0) or 0)
+            context_bits.append(f"连续 {consec_days} 天")
+        context_suffix = f"  [{' · '.join(context_bits)}]" if context_bits else ""
+        print(f"  {Fore.CYAN}{item.ticker:<8s}{Style.RESET_ALL} {Fore.WHITE}{item.name}{Style.RESET_ALL}{Fore.WHITE}{context_suffix}{Style.RESET_ALL}")
 
         # Base contributions
         for sname, contrib in decomp["base_contributions"].items():
@@ -2491,16 +2540,6 @@ def _print_score_waterfall(
                 continue
             color = Fore.GREEN if contrib > 0 else Fore.RED
             print(f"    {Fore.WHITE}{label:<6s}{Style.RESET_ALL} {color}{contrib:+.4f}{Style.RESET_ALL}")
-
-        # Attention — non-additive metadata (not part of score_b)
-        if abs(decomp["attention_contribution"]) > 1e-6:
-            color = Fore.GREEN if decomp["attention_contribution"] > 0 else Fore.RED
-            print(f"    {Fore.WHITE}att   {Style.RESET_ALL} {color}{decomp['attention_contribution']:+.4f}{Style.RESET_ALL}  (non-additive: cross-sectional attention)")
-
-        # Stability bonus — non-additive metadata (not part of score_b)
-        if abs(decomp["stability_bonus"]) > 1e-6:
-            consec_days = int(consecutive_info.get("consecutive_days", 0) or 0)
-            print(f"    {Fore.WHITE}stab  {Style.RESET_ALL} {Fore.GREEN}+{decomp['stability_bonus']:.4f}{Style.RESET_ALL}  (non-additive: consecutive={consec_days}d)")
 
         # Consensus bonus — additive component of score_b (±0.05)
         if abs(decomp["consensus_bonus"]) > 1e-6:
@@ -2526,7 +2565,7 @@ def _print_score_waterfall(
         print(f"    {Fore.WHITE}score_b{Style.RESET_ALL}  {total_color}{total:+.4f}{Style.RESET_ALL}\n")
 
     print(f"{Fore.WHITE}{'━' * 64}{Style.RESET_ALL}")
-    print(f"  {Fore.WHITE}score_b = base(T+MR+F+E) + consensus ± other(clamp残差); att/stab 为非加性上下文{Style.RESET_ALL}\n")
+    print(f"  {Fore.WHITE}score_b = base(T+MR+F+E) + consensus ± other(clamp残差); att/连续天数为非加性上下文 (见标题行){Style.RESET_ALL}\n")
 
 
 def _print_cache_hit_summary(fetcher_stats: dict[str, int]) -> None:
@@ -2549,7 +2588,7 @@ def _print_cache_hit_summary(fetcher_stats: dict[str, int]) -> None:
     else:
         effective_hit_rate = 0.0
     colour = Fore.GREEN if effective_hit_rate >= 50 else Fore.YELLOW if effective_hit_rate >= 20 else Fore.RED
-    print(f"  {colour}Cache: {effective_hit_rate:.0f}% hit " f"({total_served_from_cache} cached / {total_requests} requests)" f" | Batch: {batch_calls} calls ({batch_failures} failures)" f"{Style.RESET_ALL}")
+    print(f"  {colour}缓存命中: {effective_hit_rate:.0f}%（{total_served_from_cache}/{total_requests} 请求）· 批量调用 {batch_calls} 次（{batch_failures} 失败）{Style.RESET_ALL}")
 
 
 def _build_auto_screening_table_row(
@@ -2559,6 +2598,7 @@ def _build_auto_screening_table_row(
     consecutive_lookup: dict[str, dict],
     decay_map: dict | None,
     composite_score: float | None = None,
+    bucket_stat: tuple[float | None, int] | None = None,
 ) -> list[str]:
     """Build one row of the ``--auto`` screening table.
 
@@ -2586,9 +2626,9 @@ def _build_auto_screening_table_row(
         decision_colored = f"{Fore.RED}{decision_label}{Style.RESET_ALL}"
         score_colored = f"{Fore.RED}{score_b:+.4f}{Style.RESET_ALL}"
 
-    # Composite score (主排序键) — 用 score_b 同款色阶, 让排序自解释。
-    # composite_score 是 investability 排序的第一级键, 而 score_b 只是第 5 级
-    # tie-breaker; 不显示 composite 会让 score_b 非降序显得像 bug。
+    # Composite score — 用 score_b 同款色阶。注意: profit_aware (2026-07-18 起默认)
+    # 的排序主键是池胜率 (见「池胜率」列), composite 只是同档内的 tie-break;
+    # 两列都显示, 排序才自解释。
     if composite_score is not None:
         if composite_score >= SCORE_B_GREEN_FLOOR:
             composite_colored = f"{Fore.GREEN}{composite_score:+.4f}{Style.RESET_ALL}"
@@ -2599,15 +2639,23 @@ def _build_auto_screening_table_row(
     else:
         composite_colored = f"{Fore.WHITE}—{Style.RESET_ALL}"
 
-    # Signal summary: direction + confidence per strategy
+    # 池胜率 (profit_aware 排序主键, 2026-07-18 起) — 同评分桶近 60 日 T+5/T+10
+    # 经验胜率 + 样本数. 不着色: 它是事实性排序键, 不发明未经验证的决策色语义.
+    if bucket_stat is not None and bucket_stat[0] is not None:
+        bucket_str = f"{bucket_stat[0]:.0%}·{bucket_stat[1]}"
+    else:
+        bucket_str = "—"
+
+    # Signal summary: direction + confidence per strategy; direction==0 (无信号)
+    # 只显示 "—" — 中性信心数 ("—60") 对操作员是自相矛盾的零信息噪声.
     signals = item.strategy_signals
     signal_parts = []
     for strategy_name in STRATEGY_KEYS:
         sig = signals.get(strategy_name)
-        if sig is None:
+        if sig is None or sig.direction == 0:
             signal_parts.append("—")
             continue
-        arrow = "↑" if sig.direction > 0 else "↓" if sig.direction < 0 else "—"
+        arrow = "↑" if sig.direction > 0 else "↓"
         signal_parts.append(f"{arrow}{sig.confidence:.0f}")
     signal_summary = " ".join(signal_parts)
 
@@ -2655,6 +2703,7 @@ def _build_auto_screening_table_row(
         ticker_label,
         item.industry_sw or "—",
         score_colored,
+        bucket_str,
         composite_colored,
         decision_colored,
         signal_summary,
@@ -2670,7 +2719,7 @@ def _print_table_legend() -> None:
 
     lines = [
         "怎么看这张表:",
-        "  · 排序看「综合分」, 信号强度看「信号分」(=报告中的 score_b); 绿=强, 黄=中, 红=弱",
+        "  · 排序看「池胜率」(同评分桶近 60 日 T+5/T+10 经验胜率, ·后为样本数), 同档内再看「综合分」; 信号强度看「信号分」(=报告中的 score_b); 绿=强, 黄=中, 红=弱",
         "  · 「信号」= 趋势/均值回归/基本面/事件情绪四个策略的投票: ↑看多 ↓看空 —无信号, 数字=信心(0-100)",
         "  · 「连续」= 连续上榜天数, ≥3天(绿)说明信号持续稳定; 「衰减」= 信号分较近期峰值的跌幅, 红色=严重",
         "  · 「提示」= 策略冲突或市场环境触发的自动调整: 弱势降权/短线持有/信趋势/信均值回归/共识加分★",
@@ -2678,6 +2727,31 @@ def _print_table_legend() -> None:
     ]
     for line in lines:
         print(f"  {Fore.WHITE}{line}{Style.RESET_ALL}")
+
+
+def _format_trade_date_display(trade_date: object) -> str:
+    """``YYYYMMDD`` → ``2026-08-14（周五）``; 解析失败原样返回 (展示层不因日期崩溃)."""
+    raw = str(trade_date or "")
+    try:
+        d = datetime.strptime(raw.replace("-", "")[:8], "%Y%m%d").date()
+    except ValueError:
+        return raw
+    return f"{d.isoformat()}（周{'一二三四五六日'[d.weekday()]}）"
+
+
+# 市场状态枚举 (MarketStateType) → 操作员中文标签; 原始枚举随附供日志对照.
+_MARKET_STATE_ZH = {
+    "trend": "趋势市",
+    "range": "震荡市",
+    "mixed": "混合市",
+    "crisis": "危机市",
+}
+
+
+def _market_state_display(state_type: object) -> str:
+    raw = str(state_type or "mixed")
+    zh = _MARKET_STATE_ZH.get(raw)
+    return f"{zh}（{raw}）" if zh else raw
 
 
 def _print_auto_screening_table(
@@ -2692,6 +2766,7 @@ def _print_auto_screening_table(
     decay_map: dict | None = None,
     industry_signals: list[IndustrySignal] | None = None,
     composite_by_ticker: dict[str, float] | None = None,
+    bucket_stats: dict[str, tuple[float | None, int]] | None = None,
 ) -> None:
     """打印格式化的自动筛选推荐表格。
 
@@ -2700,8 +2775,10 @@ def _print_auto_screening_table(
             (每个 dict 包含 ``consecutive_days`` / ``stability_bonus`` 等字段)。
         decay_map: P0-3 信号衰减映射 ``{ticker: DecayInfo}``，用于显示 Decay 列。
         industry_signals: P1-2 行业轮动信号列表 (已按 momentum_score 降序)。
-        composite_by_ticker: ticker→composite_score 映射 (主排序键), 用于显示
-            Composite 列让排序自解释。FusedScore 模型无此字段, 故从 rec dict 透传。
+        composite_by_ticker: ticker→composite_score 映射 (profit_aware 下同档
+            tie-break 键), 用于显示 Composite 列。
+        bucket_stats: ticker→(池胜率, 样本数) 映射 — profit_aware 排序的真实主键
+            (2026-07-18 起默认), 必须显示否则表格顺序不可解释。
     """
     from colorama import Fore, Style
     from tabulate import tabulate
@@ -2718,7 +2795,7 @@ def _print_auto_screening_table(
 
     print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}{Style.BRIGHT}[Auto Screening] 一键全流程{Style.RESET_ALL}")
-    print(f"  日期: {trade_date}  |  市场状态: {state_type}  |  仓位系数: {position_scale:.2f}")
+    print(f"  日期: {_format_trade_date_display(trade_date)}  |  市场状态: {_market_state_display(state_type)}  |  仓位系数: {position_scale:.2f}")
     print(f"  Layer A 候选池: {pool_size} 只  |  Top {top_n} 推荐")
     print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
 
@@ -2728,6 +2805,7 @@ def _print_auto_screening_table(
 
     table_data = []
     composite_by_ticker = composite_by_ticker or {}
+    bucket_stats = bucket_stats or {}
     for idx, item in enumerate(top_results, 1):
         table_data.append(
             _build_auto_screening_table_row(
@@ -2736,6 +2814,7 @@ def _print_auto_screening_table(
                 consecutive_lookup=consecutive_lookup,
                 decay_map=decay_map,
                 composite_score=composite_by_ticker.get(item.ticker),
+                bucket_stat=bucket_stats.get(item.ticker),
             )
         )
 
@@ -2744,14 +2823,18 @@ def _print_auto_screening_table(
         "代码 名称",
         "行业",
         "信号分",
-        "综合分(排序)",
+        "池胜率",
+        "综合分",
         "决策",
         "信号(趋 均 基 情)",
         "连续",
         "衰减",
         "提示",
     ]
-    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "right", "center", "center", "center", "center", "left")))
+    # disable_numparse: 行构造器已显式格式化 ("+0.3570"), tabulate 默认会把
+    # 数字样字符串重解析成 float 再 %g 输出 — "+"号与尾零被静默吃掉
+    # (实证: "0.357" vs 评分构成块的 "+0.3570" 同表两副面孔).
+    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "right", "center", "center", "center", "center", "left"), disable_numparse=True))
 
     _print_table_legend()
 

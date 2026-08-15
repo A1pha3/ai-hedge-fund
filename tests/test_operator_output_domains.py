@@ -52,11 +52,14 @@ def test_auto_attempt_output_is_clear_chinese_and_does_not_infer_cache_counts():
 
     assert "Auto 评分状态：健康" in text
     assert "Daily Action 就绪状态：未就绪" in text
+    # 计数全缺 → 折叠声明, 而非五连「未知」噪声
+    assert "计数不可用" in text
+    assert "未知" not in text
+    # 阻断必须给出可操作信息: 中文原因 + 原始码 (供日志对照) + 排查入口
     assert "数据护栏阻断新计划" in text
-    assert "全域=未知" in text
-    assert "可扫描=未知" in text
-    assert "readiness_attempt" not in text
-    assert "未知" in text
+    assert "就绪清单未发布" in text
+    assert "readiness_attempt" in text
+    assert "处置" in text
 
 
 def test_auto_verbose_output_may_include_raw_readiness_codes():
@@ -125,3 +128,64 @@ def test_latest_daily_action_attempt_reasons_never_raises(tmp_path):
     )
 
     assert _latest_daily_action_attempt_reasons(tmp_path, date(2026, 7, 17)) == ()
+
+
+def test_auto_partial_missing_counts_keep_per_field_display():
+    """部分计数缺失时逐字段显示 (缺失位置本身携带"哪个环节没产出"的信息)."""
+    text = render_auto_daily_domain_summary(
+        auto_status="healthy",
+        layer_a_count=300,
+        recommendation_count=10,
+        daily_readiness={
+            "status": "healthy",
+            "universe_count": 626,
+            "scannable_count": 81,
+        },
+    )
+    assert "全域=626" in text
+    assert "可扫描=81" in text
+    assert "可计划=未知" in text
+    assert "计数不可用" not in text
+
+
+def test_block_reason_zh_covers_all_pipeline_emitted_codes():
+    """渲染词汇表必须覆盖管线能发出的全部运行级阻断码 — fail-closed 回退
+    ("数据护栏未通过") 让缺口静默, 此测试把缺口变成红灯.
+
+    码源: dispatcher._resolve_daily_action 的 new_entry_block 赋值点 +
+    daily_action_snapshot._load_manifest 的 global_reason 返回值 +
+    auto_pipeline._daily_readiness_publication_payload 的 block_reasons.
+    """
+    from src.screening.offensive.daily_action import _block_reason_zh
+
+    pipeline_codes = (
+        # dispatcher._resolve_daily_action
+        "entry_window_missed",
+        "readiness_snapshot_load_failed",
+        "readiness_scan_failed",
+        "daily_action_readiness_missing",
+        # daily_action_snapshot._load_manifest
+        "readiness_manifest_invalid",
+        "readiness_schema_unsupported",
+        "readiness_date_mismatch",
+        "readiness_manifest_not_healthy",
+        # auto_pipeline._daily_readiness_publication_payload
+        "readiness_attempt",
+        # service 层运行级阻断 (drawdown/regime)
+        "drawdown_circuit_breaker",
+        "regime_gate_halt",
+        "regime_authorization_evidence_unavailable",
+    )
+    for code in pipeline_codes:
+        label = _block_reason_zh(code)
+        assert label != "数据护栏未通过", f"阻断码 {code} 缺中文标签"
+        assert code not in label or "（" in label  # 非 verbose 不泄漏原始码
+
+
+def test_block_reason_zh_delegates_to_gate_table():
+    """manifest 门控码偶经 global_reason 通道到达运行级渲染 — 查找须穿透
+    门控表, 不能回退无信息泛化文案."""
+    from src.screening.offensive.daily_action import _block_reason_zh
+
+    assert _block_reason_zh("manifest_invalid") == "就绪清单无效"
+    assert _block_reason_zh("totally_unknown_code") == "数据护栏未通过"

@@ -773,13 +773,20 @@ _BLOCK_REASON_ZH = {
     "stale_price_cache": "价格缓存过期",
     "candidate_not_plan_eligible": "候选不具备计划资格",
     "entry_price_below_minimum": "入场价低于最低门槛",
+    # auto_pipeline 的就绪发布未达 healthy 时, --auto 报告 payload 携带此码
+    # (canonical manifest 缺位, 只有降级 attempt 记录) — 8/14 实证它曾以原始
+    # snake_case 漏到 --auto 摘要, 操作员无法读.
+    "readiness_attempt": "就绪清单未发布，仅有降级尝试记录",
 }
 
 
 def _block_reason_zh(reason: str | None, *, verbose: bool = False) -> str:
     if not reason:
         return "未知数据护栏"
-    label = _BLOCK_REASON_ZH.get(str(reason), "数据护栏未通过")
+    # 运行级阻断码与 manifest 门控码共用一张渲染词汇表 (与 _run_block_reason_zh
+    # 同序): 门控码偶会经 global_reason 通道到达运行级渲染, 缺表时不能只回退
+    # "数据护栏未通过" 这种无信息泛化文案.
+    label = _BLOCK_REASON_ZH.get(str(reason)) or _DEBUG_GATE_REASON_ZH.get(str(reason), "数据护栏未通过")
     return f"{label}（{reason}）" if verbose else label
 
 
@@ -1381,19 +1388,21 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     lines.append("")
 
     # ---- 当日成交 ----
+    # raw_entry_price 类型是 Optional — 正常成交行恒有价, 但一行坏数据不该崩掉
+    # 整个操作员视图: 缺价显式标注, 不编造也不抛 TypeError.
+    def _fill_row(t: Any) -> str:
+        price_text = f"@{t.raw_entry_price:.2f}" if t.raw_entry_price is not None else "成交价缺失"
+        return f"{_pad_to(_label(t.ticker), _LABEL_WIDTH)} {price_text}"
+
     fill_rows: list[str] = []
     if synthetic_trades:
         fill_rows.append(f"模拟成交：{len(synthetic_trades)} 笔")
-        fill_rows.extend(
-            f"{_pad_to(_label(t.ticker), _LABEL_WIDTH)} @{t.raw_entry_price:.2f}" for t in synthetic_trades
-        )
+        fill_rows.extend(_fill_row(t) for t in synthetic_trades)
     else:
         fill_rows.append("模拟成交：无")
     if confirmed_trades:
         fill_rows.append(f"确认成交：{len(confirmed_trades)} 笔")
-        fill_rows.extend(
-            f"{_pad_to(_label(t.ticker), _LABEL_WIDTH)} @{t.raw_entry_price:.2f}" for t in confirmed_trades
-        )
+        fill_rows.extend(_fill_row(t) for t in confirmed_trades)
     else:
         fill_rows.append("确认成交：无")
     lines.extend(_render_section("当日成交", fill_rows))

@@ -427,5 +427,102 @@ def test_cli_test_fixture_never_writes_workspace_reports(tmp_path, monkeypatch):
     assert not Path("data/reports").exists()
 
 
+def test_daily_action_blocked_conclusion_comes_first(tmp_path, monkeypatch):
+    """阻断日的 ⛔ 结论必须在正文标题之前 (结论先行) — 此前 append 在末尾,
+    操作员要翻完整屏才看到当天最重要的事实."""
+    monkeypatch.chdir(tmp_path)
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir(parents=True)
+    signal_date = date(2026, 7, 13)
+    with (
+        patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=reports_dir),
+        patch("src.screening.offensive.daily_action.resolve_daily_action_signal", return_value=(signal_date, "normal")),
+        patch("builtins.print") as output,
+    ):
+        rc = dispatcher._resolve_daily_action(
+            ["--daily-action"],
+            open_sessions=(signal_date, signal_date + timedelta(days=1)),
+            ledger_path=tmp_path / "ledger.sqlite3",
+        )
+    assert rc == 0
+    rendered = output.call_args.args[0]
+    assert "结论：⛔ 数据护栏阻断新计划" in rendered
+    assert rendered.find("结论：⛔") < rendered.find("每日动作 · 信号日")
+
+
+class _FakeStream:
+    """Minimal non-TTY (or TTY) stream for color-init tests."""
+
+    def __init__(self, *, tty: bool):
+        self.buf = ""
+        self._tty = tty
+        self.closed = False
+
+    def isatty(self):
+        return self._tty
+
+    def write(self, s):
+        self.buf += s
+        return len(s)
+
+    def flush(self):
+        pass
+
+
+def test_init_color_strips_ansi_when_piped(monkeypatch):
+    """非 TTY (launchd/cron 日志) 下 ANSI 色码必须被剥离 — 日志可读性."""
+    import colorama
+
+    from src.cli.dispatcher import _init_color_for_stream
+
+    fake = _FakeStream(tty=False)
+    monkeypatch.setattr(sys, "stdout", fake)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    try:
+        _init_color_for_stream()
+        print("\x1b[32mgreen\x1b[0m")
+        assert "\x1b" not in fake.buf
+        assert "green" in fake.buf
+    finally:
+        colorama.deinit()
+
+
+def test_init_color_force_color_keeps_ansi_when_piped(monkeypatch):
+    """FORCE_COLOR 在管道中强制保留色码 (如 `| less -R`)."""
+    import colorama
+
+    from src.cli.dispatcher import _init_color_for_stream
+
+    fake = _FakeStream(tty=False)
+    monkeypatch.setattr(sys, "stdout", fake)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    try:
+        _init_color_for_stream()
+        print("\x1b[32mgreen\x1b[0m")
+        assert "\x1b[32m" in fake.buf
+    finally:
+        colorama.deinit()
+
+
+def test_init_color_no_color_strips_even_on_tty(monkeypatch):
+    """NO_COLOR 显式关色, 即使是 TTY."""
+    import colorama
+
+    from src.cli.dispatcher import _init_color_for_stream
+
+    fake = _FakeStream(tty=True)
+    monkeypatch.setattr(sys, "stdout", fake)
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    try:
+        _init_color_for_stream()
+        print("\x1b[32mgreen\x1b[0m")
+        assert "\x1b" not in fake.buf
+    finally:
+        colorama.deinit()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -136,7 +136,7 @@ class TestRunTop:
                 rc = run_top()
         assert rc == 0
         output = capsys.readouterr().out
-        assert "Cache:" in output
+        assert "缓存命中:" in output
 
     def test_malformed_score_b_does_not_crash(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
         """score_b 越界或缺字段时不崩溃，优雅降级。"""

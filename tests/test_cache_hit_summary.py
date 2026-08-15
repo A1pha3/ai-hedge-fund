@@ -24,11 +24,10 @@ class TestPrintCacheHitSummary:
         }
         _print_cache_hit_summary(stats)
         output = capsys.readouterr().out
-        assert "Cache:" in output
+        assert "缓存命中:" in output
         # effective_hit_rate = 80 / (2 + 100) * 100 ≈ 78%
-        assert "78% hit" in output
-        assert "80 cached" in output
-        assert "102 requests" in output
+        assert "78%" in output
+        assert "（80/102 请求）" in output
 
     def test_zero_requests_no_division_by_zero(self, capsys: pytest.CaptureFixture[str]) -> None:
         """total_requests = 0 时不崩溃，输出 0%。"""
@@ -40,8 +39,8 @@ class TestPrintCacheHitSummary:
         }
         _print_cache_hit_summary(stats)
         output = capsys.readouterr().out
-        assert "0% hit" in output
-        assert "0 cached / 0 requests" in output
+        assert "0%" in output
+        assert "（0/0 请求）" in output
 
     def test_no_cache_hits_shows_zero_percent(self, capsys: pytest.CaptureFixture[str]) -> None:
         """无缓存命中时显示 0%。"""
@@ -53,15 +52,15 @@ class TestPrintCacheHitSummary:
         }
         _print_cache_hit_summary(stats)
         output = capsys.readouterr().out
-        assert "0% hit" in output
-        assert "0 cached / 205 requests" in output
-        assert "5 calls (1 failures)" in output
+        assert "0%" in output
+        assert "（0/205 请求）" in output
+        assert "批量调用 5 次（1 失败）" in output
 
     def test_missing_keys_default_to_zero(self, capsys: pytest.CaptureFixture[str]) -> None:
         """缺少 key 时不崩溃，使用默认值 0。"""
         _print_cache_hit_summary({})
         output = capsys.readouterr().out
-        assert "0% hit" in output
+        assert "0%" in output
 
     def test_batch_failure_count_shown(self, capsys: pytest.CaptureFixture[str]) -> None:
         """有 batch failure 时应在输出中显示。"""
@@ -73,8 +72,8 @@ class TestPrintCacheHitSummary:
         }
         _print_cache_hit_summary(stats)
         output = capsys.readouterr().out
-        assert "1 failures" in output
-        assert "3 calls" in output
+        assert "1 失败" in output
+        assert "批量调用 3 次" in output
 
     def test_all_from_cache_shows_100_percent(self, capsys: pytest.CaptureFixture[str]) -> None:
         """所有 single ticker 请求都命中缓存。"""
@@ -87,4 +86,4 @@ class TestPrintCacheHitSummary:
         _print_cache_hit_summary(stats)
         output = capsys.readouterr().out
         assert "99%" in output  # 100 / 101 * 100 ≈ 99%
-        assert "100 cached / 101 requests" in output
+        assert "（100/101 请求）" in output

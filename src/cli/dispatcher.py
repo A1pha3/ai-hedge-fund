@@ -1011,20 +1011,6 @@ def _cached_daily_action_market_bar(cache, trade_date):
     )
 
 
-# Task 9: Chinese operator-readable reason codes for daily action blocks.
-# Maps internal reason strings to human-readable Chinese explanations.
-# Unknown codes get a fail-closed fallback that remains visible under --verbose.
-_DAILY_ACTION_BLOCK_REASONS_ZH = {
-    "daily_action_readiness_missing": "就绪清单缺失：未找到当日 Daily Action 就绪清单，无法验证扫描数据完整性",
-    "readiness_manifest_invalid": "就绪清单无效：清单格式损坏或校验失败",
-    "readiness_date_mismatch": "日期不匹配：就绪清单的交易日期与请求的信号日不一致",
-    "readiness_manifest_not_healthy": "就绪清单不健康：清单结构验证未通过",
-    "readiness_identity_mismatch": "身份不匹配：就绪清单的宇宙指纹与缓存数据不一致",
-    "snapshot_fingerprint_mismatch": "指纹不匹配：缓存数据与就绪清单记录的指纹不符",
-    "calendar_unavailable": "交易日历不可用：无法确定信号日或下一交易日",
-}
-
-
 def _entry_window_block_reason(signal_date, open_sessions) -> str | None:
     """入场窗口护栏: 计划按入场日开盘价成交, 当前时刻走过入场日 09:30 后,
     再创建的计划会按"现实不可执行"的今日开盘记账 — 返回阻断原因, 否则 None."""
@@ -1254,13 +1240,16 @@ def _resolve_daily_action(
                 )
         verbose = "--verbose" in argv
         rendered = render_daily_action_v2(v2_run, verbose=verbose)
+        # 结论先行: 三类结论块 (阻断/仅诊断/无信号) 一律置于正文之前 — 操作员
+        # 第一眼看到当天最重要的事实, 明细分区随后. 此前 append 在末尾, 阻断日
+        # 要翻完整屏才能看到 ⛔.
         if snapshot_block_reason:
-            rendered = rendered + "\n" + render_readiness_block(
+            rendered = render_readiness_block(
                 snapshot_block_reason, verbose=verbose, attempt_reasons=attempt_reasons
-            )
+            ) + "\n\n" + rendered
         elif not v2_run.plans:
             if v2_run.blocked_candidates:
-                rendered = rendered + "\n" + render_degraded_only(len(v2_run.blocked_candidates))
+                rendered = render_degraded_only(len(v2_run.blocked_candidates)) + "\n\n" + rendered
             else:
                 # 无新信号但当日可能已执行昨日计划 (填仓) — 如实披露, 避免
                 # "今日无信号" 误导为系统无动作。
@@ -1277,7 +1266,7 @@ def _resolve_daily_action(
                     )
                     and trade.entry_date == signal_date
                 )
-                rendered = rendered + "\n" + render_no_signal(filled_count)
+                rendered = render_no_signal(filled_count) + "\n\n" + rendered
         print(rendered)
         # Plan 05 Task 9: v3 shadow 编排 hook (v2 渲染后; 库层编排 + rc 保护)。
         # signal_date/reports_dir/data_dir/v2_run 均在作用域; with 块不引入新作用域。
@@ -1430,6 +1419,21 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
 ]
 
 
+def _init_color_for_stream() -> None:
+    """非 TTY 场景剥离 ANSI 色码 (launchd/cron 日志可读性), TTY 行为不变.
+
+    colorama.init 在 strip=False 且 convert=False 时不包装流 (字节级零变化);
+    strip=True 时给 stdout/stderr 套一层剥离代理. NO_COLOR 显式关色;
+    FORCE_COLOR 在管道中强制保留色码 (如 `| less -R`).
+    """
+    import colorama
+
+    if os.environ.get("FORCE_COLOR"):
+        return
+    strip = ("NO_COLOR" in os.environ) or not sys.stdout.isatty()
+    colorama.init(strip=strip, convert=False)
+
+
 def dispatch(sys_argv: list[str] | None = None) -> int | None:
     """检查 sys.argv 并分发到对应 early-dispatch handler。
 
@@ -1437,6 +1441,7 @@ def dispatch(sys_argv: list[str] | None = None) -> int | None:
     - ``None``: 没有匹配的早期命令, 让主 parser 继续
     - ``int``: 已执行命令的退出码, 调用方应 ``SystemExit(rc)``
     """
+    _init_color_for_stream()
     argv = sys_argv if sys_argv is not None else sys.argv[1:]
 
     for _flag, handler in COMMAND_REGISTRY:
