@@ -23,7 +23,7 @@ launchd 工作日 21:30 (com.a1pha3.ai-hedge-fund.daily-auto)
 
 | 检查 | 位置 | 正常状态 |
 |---|---|---|
-| 上次退出码 | `launchctl list \| grep a1pha3` 首列 | `0`；`11`=--auto 失败，`12`=--daily-action 失败 |
+| 上次退出码 | `launchctl list \| grep a1pha3` 首列 | `0`；`11`=--auto 失败，`12`=--daily-action 执行失败，`13`=--daily-action **数据护栏阻断**（需排查：logs/ + readiness attempt）；策略性停手（入场窗口/回撤熔断/regime 全闸）退出码为 `0`，日志标 `HALT-POLICY (rc=14)`——设计内行为，无需处置 |
 | 运行日志 | `~/Library/Logs/ai-hedge-fund/daily_auto.out.log`（launchd）<br>`logs/auto_cron_YYYYMMDD.log`（交互运行） | 末尾 `--daily-action OK` + `done` |
 | 当日计划 | 每晚日志尾部渲染 / 手动重跑 `--daily-action` | 新计划数 + 阻断原因可读 |
 | 数据飞轮 | 日志中 `flywheel: {"status": "healthy" ...}` | `stale: false` |
@@ -40,6 +40,11 @@ launchd 工作日 21:30 (com.a1pha3.ai-hedge-fund.daily-auto)
 | `regime_gate_halt` | 信号日 regime ∈ {crisis, risk_off}，不开新仓 | **预期行为**，无需处置；被挡候选进面板对照组 |
 | `触发强度不足` | trigger_strength < 0.50 gate | 预期行为 |
 | 行业/资金流条件 miss | 条件 2/3 数据缺失即 miss（2026-08-14 起严格化） | 单日数据事故会表现为当日 0 信号，次日自愈；连续多日 → 查 tushare 缓存 |
+
+**退出码映射**（2026-08-15 起，`dispatcher._daily_action_exit_code`）：
+`13` = 数据护栏阻断（就绪清单/快照/日历类，上表前两类 + readiness 发布失败）——launcher
+原样透出，`launchctl` 首列可见；`14` = 策略性停手（`入场窗口已过` / `regime_gate_halt` 全闸
+/ `组合回撤熔断`）——日志标 `HALT-POLICY`，launcher 退出 `0`；强度不足等日常拦截退出码 `0`。
 
 ## 手动操作
 
@@ -63,6 +68,24 @@ launchd 只认 boot 卷副本（/Volumes 路径会被沙箱拦截）。改完 re
 cp scripts/run_daily_auto_launcher.sh ~/.local/bin/run_daily_auto_launcher.sh
 diff scripts/run_daily_auto_launcher.sh ~/.local/bin/run_daily_auto_launcher.sh   # 须无输出
 ```
+
+## 新档首次正式复查（2026-08-14 重置后，建议 9 月上旬）
+
+攒够 ~15 个信号日后运行（read-only，可随时提前跑，样本不足会显式声明）：
+
+```bash
+.venv/bin/python scripts/review_v2_forward_evidence.py
+```
+
+四节输出 + 判据：
+1. **前向成交 vs 冻结先验**（BTST T+10：胜率 59%、期望 +6.6%、CI +5.3%~+7.8%）——
+   前向期望连续落在 CI 内 = edge 未衰减；越出 CI → 立案复查。
+2. **被挡候选对照组**——被挡组期望显著为负 = 闸在赚钱（反事实验证）。
+3. **⭐双信号子集**——n≥10 且方向一致后才考虑调整展示层的"未达显著"措辞。
+4. **台账健康**——NAV/回撤/状态分布。
+
+注意口径差异：台账前向 = T+1 开盘→T+10 开盘（含全部费用）；panel 对照组 =
+T+1 开盘→T+10 收盘（无费用）——两组比较时记住这一腿差异。
 
 ## 已知残留风险（2026-08-14 基线）
 

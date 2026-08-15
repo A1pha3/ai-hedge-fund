@@ -111,7 +111,10 @@ PYEOF
 # 退出/估值). 消费 Step 1 --auto 刚发布的 verified snapshot; 快照缺失/过期时
 # dispatcher fail-closed (阻断新计划但生命周期照常推进并渲染阻断原因).
 # 此前此步骤只能靠手动运行 — 漏跑一晚 = 次日入场窗口作废 + 在仓无人结算.
-# 失败用独立 rc=12 暴露 (launchctl list 首列可见), 与 --auto 的 rc=11 区分.
+# rc 语义 (dispatcher._daily_action_exit_code): 0 正常; 13 数据护栏阻断 (需排查,
+# 直接作为 launcher 退出码透出 → launchctl 可见, 不再静默); 14 策略性停手
+# (入场窗口/回撤熔断/regime 全闸, 设计内行为 — 记 HALT-POLICY 日志, 退出 0);
+# 其他非 0 = 执行失败, 退出 12 (与 --auto 的 rc=11 区分).
 DA_RC=0
 "$PYTHON" -E -c "
 import os, sys
@@ -127,10 +130,17 @@ if date_arg:
     argv += ['--end-date', date_arg]
 os.execvp(sys.executable, argv)
 " || DA_RC=$?
-if [[ $DA_RC -ne 0 ]]; then
+if [[ $DA_RC -eq 13 ]]; then
+  echo "[$(date -Iseconds)] [daily_auto] --daily-action BLOCKED-DATA (rc=13) — 数据护栏阻断, 需排查 (logs/ + data/reports/daily_action_readiness_attempt_*.json)" >&2
+  exit 13
+fi
+if [[ $DA_RC -eq 14 ]]; then
+  echo "[$(date -Iseconds)] [daily_auto] --daily-action HALT-POLICY (rc=14) — 策略性停手 (设计内行为)"
+elif [[ $DA_RC -ne 0 ]]; then
   echo "[$(date -Iseconds)] [daily_auto] --daily-action FAILED (rc=$DA_RC)" >&2
   exit 12
+else
+  echo "[$(date -Iseconds)] [daily_auto] --daily-action OK"
 fi
-echo "[$(date -Iseconds)] [daily_auto] --daily-action OK"
 
 echo "[$(date -Iseconds)] [daily_auto] done"

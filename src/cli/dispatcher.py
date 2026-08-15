@@ -1281,10 +1281,20 @@ def _resolve_daily_action(
                 )
                 rendered = render_no_signal(filled_count) + "\n\n" + rendered
         print(rendered)
+        # 退出码: 阻断夜必须在 launchctl 可见 (13 数据护栏 / 14 策略性停手),
+        # 正常日 (含日常强度门禁拦截) 为 0.
+        exit_code = _daily_action_exit_code(
+            snapshot_block_reason=snapshot_block_reason,
+            run_block_reasons=run_blocks,
+            actionable_blocked_reasons=tuple(
+                b.reason for b in v2_run.blocked_candidates if b.reason != "candidate_not_plan_eligible"
+            ),
+            has_plans=bool(v2_run.plans),
+        )
         # Plan 05 Task 9: v3 shadow 编排 hook (v2 渲染后; 库层编排 + rc 保护)。
         # signal_date/reports_dir/data_dir/v2_run 均在作用域; with 块不引入新作用域。
         # v2_plans_reader 闭包 v2_run.plans (元素有 .ticker); v2 退出码由本函数
-        # return 0 决定, v3 失败在 run_v3_shadow_daily_action 内被吞, 绝不改写 rc。
+        # return 决定, v3 失败在 run_v3_shadow_daily_action 内被吞, 绝不改写 rc。
         from src.cli.v3_shadow import run_v3_shadow_daily_action
 
         run_v3_shadow_daily_action(
@@ -1293,7 +1303,7 @@ def _resolve_daily_action(
             data_dir=data_dir,
             v2_plans_reader=lambda _date: tuple(v2_run.plans),
         )
-    return 0
+    return exit_code
 
 
 def _resolve_reconcile(argv: list[str]) -> int | None:
@@ -1430,6 +1440,45 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--reconcile", _resolve_reconcile),
     ("--refresh-regime-winrates", _resolve_refresh_regime_winrates),
 ]
+
+
+# --daily-action 退出码语义 (launchd 监控): 阻断夜此前与正常夜同为 0,
+# launchctl 首列不可区分 — readiness 连续发布失败会静默多日 (c256 静默stall家族).
+DATA_GUARD_BLOCK_EXIT_CODE = 13  # 数据护栏阻断 (就绪清单/快照/日历) — 需排查
+POLICY_HALT_EXIT_CODE = 14  # 策略性停手 (入场窗口/回撤熔断/regime 全闸) — 设计内行为
+
+_TIMING_GUARD_REASONS = frozenset({"entry_window_missed"})
+_RUNLEVEL_POLICY_HALT_REASONS = frozenset({"drawdown_circuit_breaker"})
+
+
+def _daily_action_exit_code(
+    *,
+    snapshot_block_reason: str | None,
+    run_block_reasons: tuple[str, ...],
+    actionable_blocked_reasons: tuple[str, ...],
+    has_plans: bool,
+) -> int:
+    """--daily-action 退出码: 0 正常 / 13 数据护栏阻断 / 14 策略性停手.
+
+    策略性停手 = 设计内行为 (时机守卫、回撤熔断、危机日 regime 全闸 — detect 照跑、
+    面板继续积累对照组), 无需处置; 数据护栏 = 就绪/快照/日历事故, 需要排查.
+    强度门禁等日常拦截返回 0 (健康无信号日, 不算异常).
+    """
+    if snapshot_block_reason:
+        if snapshot_block_reason in _TIMING_GUARD_REASONS:
+            return POLICY_HALT_EXIT_CODE
+        return DATA_GUARD_BLOCK_EXIT_CODE
+    if any(code in _RUNLEVEL_POLICY_HALT_REASONS for code in run_block_reasons):
+        return POLICY_HALT_EXIT_CODE
+    if run_block_reasons:
+        return DATA_GUARD_BLOCK_EXIT_CODE
+    if (
+        not has_plans
+        and actionable_blocked_reasons
+        and all(reason == "regime_gate_halt" for reason in actionable_blocked_reasons)
+    ):
+        return POLICY_HALT_EXIT_CODE
+    return 0
 
 
 def _init_color_for_stream() -> None:

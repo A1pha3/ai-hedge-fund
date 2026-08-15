@@ -287,7 +287,8 @@ class TestDispatchEarlyFlags(unittest.TestCase):
                     ledger_path=Path(tmp) / "v2.sqlite3",
                 )
 
-        self.assertEqual(rc, 0)
+        # 时钟冻结在信号日当晚 → 入场窗口开放; tmp 目录无就绪清单 → 数据护栏阻断 rc=13
+        self.assertEqual(rc, 13)
         self.assertIn("每日动作 · 信号日 2026-07-10", output.call_args.args[0])
         # Task 8: the production path must NOT run the legacy full-market scan
         # that reopens cache files just to derive the signal date.
@@ -307,7 +308,8 @@ class TestDispatchEarlyFlags(unittest.TestCase):
                 ledger_path=Path(tmp) / "v2.sqlite3",
             )
 
-        self.assertEqual(rc, 0)
+        # 历史日期 + 真实时钟 → 已过入场日 09:30, 入场窗口守卫触发 (策略性停手 rc=14)
+        self.assertEqual(rc, 14)
         # 带横线的 YYYY-MM-DD 应规范化成 YYYYMMDD
         self.assertEqual(resolver.call_args.kwargs.get("end_date"), "20260706")
 
@@ -325,7 +327,7 @@ class TestDispatchEarlyFlags(unittest.TestCase):
                 ledger_path=Path(tmp) / "v2.sqlite3",
             )
 
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 14)  # 入场窗口守卫 (历史日期 + 真实时钟)
         # YYYYMMDD (无横线) 保持不变
         self.assertEqual(resolver.call_args.kwargs.get("end_date"), "20260706")
 
@@ -343,7 +345,7 @@ class TestDispatchEarlyFlags(unittest.TestCase):
                 ledger_path=Path(tmp) / "v2.sqlite3",
             )
 
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 14)  # 入场窗口守卫 (历史日期 + 真实时钟)
         self.assertIsNone(resolver.call_args.kwargs.get("end_date"))
         self.assertEqual(
             resolver.call_args.kwargs.get("open_sessions"),
@@ -423,7 +425,8 @@ class TestDispatchEarlyFlags(unittest.TestCase):
 def test_cli_test_fixture_never_writes_workspace_reports(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     reports_dir = tmp_path / "reports"
-    assert run_daily_action_cli_fixture(reports_dir=reports_dir) == 0
+    # 真实时钟下历史信号日触发入场窗口守卫 → 策略性停手 rc=14
+    assert run_daily_action_cli_fixture(reports_dir=reports_dir) == 14
     assert not Path("data/reports").exists()
 
 
@@ -444,7 +447,7 @@ def test_daily_action_blocked_conclusion_comes_first(tmp_path, monkeypatch):
             open_sessions=(signal_date, signal_date + timedelta(days=1)),
             ledger_path=tmp_path / "ledger.sqlite3",
         )
-    assert rc == 0
+    assert rc == 14  # 入场窗口守卫 (历史信号日 + 真实时钟) → 策略性停手
     rendered = output.call_args.args[0]
     assert "结论：⛔ 数据护栏阻断新计划" in rendered
     assert rendered.find("结论：⛔") < rendered.find("每日动作 · 信号日")
@@ -491,7 +494,7 @@ def test_daily_action_runlevel_block_gets_conclusion(tmp_path, monkeypatch):
             open_sessions=(signal_date, signal_date + timedelta(days=1), signal_date + timedelta(days=7)),
             ledger_path=tmp_path / "ledger.sqlite3",
         )
-    assert rc == 0
+    assert rc == 14  # 回撤熔断 → 策略性停手
     rendered = output.call_args.args[0]
     assert "结论：⛔ 运行护栏阻断新计划" in rendered
     assert "组合回撤熔断" in rendered
@@ -575,3 +578,51 @@ def test_init_color_no_color_strips_even_on_tty(monkeypatch):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDailyActionExitCode:
+    """--daily-action 退出码语义: 0 正常 / 13 数据护栏阻断 / 14 策略性停手.
+
+    阻断夜与正常夜同为 0 曾是 launchd 监控盲区 (静默事故不可见).
+    """
+
+    def _code(self, **kw) -> int:
+        from src.cli.dispatcher import _daily_action_exit_code
+
+        defaults = dict(
+            snapshot_block_reason=None,
+            run_block_reasons=(),
+            actionable_blocked_reasons=(),
+            has_plans=False,
+        )
+        defaults.update(kw)
+        return _daily_action_exit_code(**defaults)
+
+    def test_normal_days_are_zero(self):
+        assert self._code(has_plans=True) == 0
+        # 健康无信号日
+        assert self._code() == 0
+        # 日常强度门禁拦截是健康过滤, 不是异常
+        assert self._code(actionable_blocked_reasons=("trigger_strength_below_threshold",)) == 0
+        # 混合拦截 (含 regime 闸但不全是) 不算全闸日
+        assert self._code(actionable_blocked_reasons=("regime_gate_halt", "stale_price_cache")) == 0
+
+    def test_data_guard_blocks_are_13(self):
+        assert self._code(snapshot_block_reason="daily_action_readiness_missing") == 13
+        assert self._code(snapshot_block_reason="readiness_scan_failed") == 13
+        assert self._code(snapshot_block_reason="snapshot_fingerprint_mismatch") == 13
+        assert self._code(run_block_reasons=("calendar_unavailable",)) == 13
+
+    def test_policy_halts_are_14(self):
+        # 入场窗口时机守卫
+        assert self._code(snapshot_block_reason="entry_window_missed") == 14
+        # 组合回撤熔断
+        assert self._code(run_block_reasons=("drawdown_circuit_breaker",)) == 14
+        # 危机日 regime 全闸 (无计划且全部可操作拦截都是 regime_gate_halt)
+        assert self._code(actionable_blocked_reasons=("regime_gate_halt", "regime_gate_halt")) == 14
+
+    def test_snapshot_block_takes_precedence_over_run_blocks(self):
+        assert self._code(
+            snapshot_block_reason="daily_action_readiness_missing",
+            run_block_reasons=("drawdown_circuit_breaker",),
+        ) == 13

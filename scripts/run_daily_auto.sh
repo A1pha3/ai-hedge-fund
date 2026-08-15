@@ -105,12 +105,21 @@ fi
 # 退出/估值). 消费 Step 1 刚发布的 verified snapshot; 快照缺失/过期时 dispatcher
 # fail-closed (阻断新计划但生命周期照常推进并渲染阻断原因). 节假日解析到上一
 # 交易日, 计划幂等去重 (create_plan_if_absent), 可安全重复运行.
+# rc 语义: 0 正常; 13 数据护栏阻断 (需排查, 透出为脚本退出码); 14 策略性停手
+# (入场窗口/回撤熔断/regime 全闸, 设计内行为, 记日志继续); 其他非 0 = 失败 exit 12.
 DA_RC=0
 "$PYTHON" src/main.py --daily-action $DATE_ARG >>"$LOG_FILE" 2>&1 || DA_RC=$?
-if [[ $DA_RC -ne 0 ]]; then
+if [[ $DA_RC -eq 13 ]]; then
+  echo "[$(date -Iseconds)] [daily_auto] --daily-action BLOCKED-DATA (rc=13) — 数据护栏阻断, 需排查 — see $LOG_FILE" | tee -a "$LOG_FILE" >&2
+  exit 13
+fi
+if [[ $DA_RC -eq 14 ]]; then
+  echo "[$(date -Iseconds)] [daily_auto] --daily-action HALT-POLICY (rc=14) — 策略性停手 (设计内行为)" | tee -a "$LOG_FILE"
+elif [[ $DA_RC -ne 0 ]]; then
   echo "[$(date -Iseconds)] [daily_auto] --daily-action FAILED (rc=$DA_RC) — see $LOG_FILE" | tee -a "$LOG_FILE" >&2
   exit 12
+else
+  echo "[$(date -Iseconds)] [daily_auto] --daily-action OK" | tee -a "$LOG_FILE"
 fi
-echo "[$(date -Iseconds)] [daily_auto] --daily-action OK" | tee -a "$LOG_FILE"
 
 echo "[$(date -Iseconds)] [daily_auto] done" | tee -a "$LOG_FILE"
