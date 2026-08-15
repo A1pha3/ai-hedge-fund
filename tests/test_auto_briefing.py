@@ -203,14 +203,14 @@ def test_quiet_day_card_shape(tmp_path: Path) -> None:
     assert "仓位系数 1.00" in card
     assert "regime_gate=normal" in card
     # 判据: 结论附可证伪输入
-    assert "宽度 0.42" in card
+    assert "上涨占比 0.42" in card
     assert "涨/跌停 96/30" in card
     assert "ADX 28.3" in card
     assert "北向连续 2 日流出" in card
     assert "翻转风险" in card
     # BTST 前向 + 基线
-    assert "前向 panel" in card and "成熟" in card
-    assert "基线 normal +4.2%/59% · n=103" in card
+    assert "前向 panel 信号" in card and "已到期" in card
+    assert "基线 normal 期望+4.2%·胜率59%·n=103" in card
     # 口径披露 (trap: recorded vs corrected)
     assert "T0收盘/零成本" in card
     assert "牛市样本" in card
@@ -224,6 +224,8 @@ def test_quiet_day_card_shape(tmp_path: Path) -> None:
     assert "失败 62/全域 1585" in card
     # 心跳 (H6)
     assert "▲异常: 无（6/6 检查通过）" in card
+    # 图例恒在 — 前向符号不自明, 卡片必须自我解释 (清晰度审查 2026-08-16)
+    assert "说明" in card and "⏳样本未足" in card and "全过滤" in card
     # 池/推荐
     assert "Layer A 候选池 300 只" in card
     assert "Top 10 推荐" in card
@@ -309,7 +311,7 @@ def test_panel_adverse_triggers_only_when_testable(tmp_path: Path) -> None:
     codes = [e["code"] for e in adverse["exceptions"]]
     assert "panel_adverse" in codes
     card = render_briefing_card(adverse)
-    assert "反向" in card and "p=" in card
+    assert "反向" in card and "p<0.001" in card  # p≈0 必须写成不等式, 不写 p=0.000
 
     small = _build(tmp_path, panel_rows=_panel_rows(3, 3, -2.0, 2.0))
     assert "panel_adverse" not in [e["code"] for e in small["exceptions"]]
@@ -606,7 +608,7 @@ def test_cli_table_card_mode_replaces_legacy_header(tmp_path, capsys) -> None:
     # 卡片标记在场, legacy header 的重复池行只出现一次 (卡片自带)
     assert "▲异常: 无（6/6 检查通过）" in out
     assert out.count("Layer A 候选池 300 只") == 1
-    assert "基线 normal +4.2%/59% · n=103" in out
+    assert "基线 normal 期望+4.2%·胜率59%·n=103" in out
 
 
 def test_cli_table_legacy_fallback_without_briefing(capsys) -> None:

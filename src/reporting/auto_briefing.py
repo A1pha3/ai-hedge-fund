@@ -165,6 +165,11 @@ def _win_lb(win_rate: float, n: int) -> float:
     return win_rate - ONE_SIDED_Z_95 * se
 
 
+def _p_text(p: float) -> str:
+    """p 值显示: <0.001 写成不等式 — "p=0.000" 是统计上不诚实的写法."""
+    return "p<0.001" if p < 0.001 else f"p={p:.3f}"
+
+
 # ---------------------------------------------------------------------------
 # 事实子构建器 (全部 best-effort: 失败 → available=False + reason, 绝不抛)
 # ---------------------------------------------------------------------------
@@ -449,7 +454,7 @@ def _evaluate_exceptions(
                 {
                     "code": "panel_adverse",
                     "title": (
-                        f"panel 前向证据反向（T+{horizon}: p={stat['p']:.3f}, "
+                        f"panel 前向证据反向（T+{horizon}: {_p_text(stat['p'])}, "
                         f"Δ={stat['delta_mean']:+.1f}%）"
                     ),
                     "detail": "filtered 组显著优于 plan_eligible — 全过滤可能有害，需复核过滤逻辑",
@@ -642,12 +647,19 @@ def _baseline_segment(baseline: Mapping[str, Any]) -> str:
     if baseline.get("reliable"):
         return (
             f"基线 {baseline['bucket']} "
-            f"+{baseline['mean_pct']:.1f}%/{baseline['win_rate']:.0%} · n={baseline['n']}"
+            f"期望{baseline['mean_pct']:+.1f}%·胜率{baseline['win_rate']:.0%}·n={baseline['n']}"
         )
     return (
         f"基线 {baseline['bucket']} 样本不足（n={baseline['n']}<{BASELINE_MIN_N}）"
         f"不展示数值 — {CROSS_CYCLE_WARNING}"
     )
+
+
+#: 卡片图例 — 唯一不自明的簇是前向检验符号; 每日固定一行, 结构恒定利于扫读.
+_CARD_LEGEND = (
+    "前向=「--daily-action 全过滤」vs「被过滤」的T+N收益检验: "
+    "✅有效 ⚠️反向(过滤有害) ◻️不显著 ⏳样本未足"
+)
 
 
 def _panel_segment(panel: Mapping[str, Any]) -> str:
@@ -661,10 +673,10 @@ def _panel_segment(panel: Mapping[str, Any]) -> str:
             p = stat["p"]
             delta = stat["delta_mean"]
             mark = "✅" if (p < PANEL_ALPHA and delta > 0) else ("⚠️" if (p < PANEL_ALPHA and delta < 0) else "◻️")
-            tags.append(f"T+{horizon}:{mark}p={p:.3f}")
+            tags.append(f"T+{horizon}:{mark}{_p_text(p)}")
         else:
             tags.append(f"T+{horizon}:⏳")
-    return f"前向 panel {panel['rows']}条/成熟 {panel['realized']} · {' '.join(tags)}"
+    return f"前向 panel 信号{panel['rows']}·已到期{panel['realized']} · {' '.join(tags)}"
 
 
 def _format_drawdown(dd: float) -> str:
@@ -755,7 +767,9 @@ def _evidence_segment(market: Mapping[str, Any]) -> str:
         "低" if flip is not None and flip <= _FLIP_LOW
         else ("高" if flip is not None and flip > _FLIP_HIGH else "中")
     )
-    breadth_seg = f"宽度 {breadth:.2f}({breadth_label})" if breadth is not None else "宽度 ?"
+    breadth_seg = (
+        f"上涨占比 {breadth:.2f}({breadth_label})" if breadth is not None else "上涨占比 ?"
+    )
     adx_seg = f"ADX {adx:.1f}({adx_label})" if adx is not None else "ADX ?"
     flip_seg = f"翻转风险 {flip:.2f}({flip_label})" if flip is not None else "翻转风险 ?"
     nb_days = market.get("northbound_flow_days")
@@ -805,6 +819,7 @@ def render_briefing_card(briefing: Mapping[str, Any]) -> str:
     lines.append(f"        {_provenance_segment(baseline)}")
     lines.append(f"        {_ledger_segment(ledger)}")
     lines.append(f" 数据   {_data_segment(health)}")
+    lines.append(f" 说明   {_CARD_LEGEND}")
     lines.append("=" * 70)
     lines.append(f"  {pool_seg} | {top_seg}    {_heartbeat(exceptions, checks)}")
     lines.append("=" * 70)
