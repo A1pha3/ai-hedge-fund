@@ -19,6 +19,8 @@ from numbers import Integral, Real
 import numpy as np
 import pandas as pd
 
+from src.screening.offensive.price_returns import chained_return_pct
+
 # A 股涨跌停阈值 (主板 ±10%, 创业板/科创板 ±20%; 本期统一用 +9.5% 判定避免浮点)
 _LIMIT_UP_PCT_THRESHOLD = 9.5
 _A_SHARE_TICK = 0.01
@@ -297,6 +299,17 @@ def adjust_returns(
             or raw_exit_price <= 0
         ):
             continue
+        # 除权免疫 (AGENTS.md 陷阱 15): exit 腿 = 入场日收盘 × pct_change 链,
+        # 不复权原始价跨除权日的机械跳变不再被读成真实亏损; 链不可用 (缺列/
+        # 非有限/入场日收盘异常) 时诚实回退原始比值 (与旧口径逐位一致)。
+        chain = chained_return_pct(prices, entry_idx, exit_idx)
+        if chain is not None:
+            try:
+                entry_day_close = float(prices.iloc[entry_idx]["close"])
+            except (TypeError, ValueError):
+                entry_day_close = float("nan")
+            if math.isfinite(entry_day_close) and entry_day_close > 0:
+                raw_exit_price = entry_day_close * (1.0 + chain / 100.0)
         entry_fill = apply_execution_costs(raw_entry_price, 1, "buy", costs)
         entry_date = pd.Timestamp(prices.iloc[entry_idx]["date"]).date()
         exit_date = pd.Timestamp(prices.iloc[exit_idx]["date"]).date()

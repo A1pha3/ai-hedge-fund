@@ -685,15 +685,26 @@ class PaperTracker:
 
         try:
             entry_open = float(df.iloc[entry_idx]["open"])
+            entry_close = float(df.iloc[entry_idx]["close"])
             exit_close = float(df.iloc[exit_idx]["close"])
         except (TypeError, ValueError):
             return None
-        if entry_open <= 0 or exit_close <= 0:
+        if entry_open <= 0 or entry_close <= 0 or exit_close <= 0:
             return None
 
         slippage = ExecutionConfig().slippage_bps / 10_000.0
         entry_price = entry_open * (1 + slippage)
-        exit_price = exit_close * (1 - slippage)
+        # 除权免疫 (AGENTS.md 陷阱 15): exit 腿 = 入场日收盘 × pct_change 链,
+        # 不复权原始价跨除权日的机械跳变不再被读成真实亏损 (分红方向一律低估);
+        # pct_change 不可用时诚实回退原始比值 (与旧口径逐位一致)。
+        # exit_price 为入场日基准的等效退出价 (与 realized_pnl 同口径自洽)。
+        from src.screening.offensive.price_returns import chained_return_pct
+
+        chain = chained_return_pct(df, entry_idx, exit_idx)
+        effective_exit_close = (
+            entry_close * (1.0 + chain / 100.0) if chain is not None else exit_close
+        )
+        exit_price = effective_exit_close * (1 - slippage)
         if entry_price <= 0:
             return None
         return (exit_price / entry_price) - 1.0, exit_price
@@ -736,6 +747,15 @@ class PaperTracker:
             return None
         if entry_close <= 0 or exit_close <= 0:
             return None
+        # 除权免疫 (AGENTS.md 陷阱 15): close[buy_date] → close[buy_date+N] 用
+        # pct_change 链复合, 跨除权日的机械跳变不再被读成真实亏损; 链不可用
+        # (缺列/非有限) 时诚实回退原始比值 (与旧口径逐位一致)。
+        from src.screening.offensive.price_returns import chained_return_pct
+
+        chain = chained_return_pct(df, trigger_idx, exit_idx)
+        if chain is not None:
+            effective_exit_close = entry_close * (1.0 + chain / 100.0)
+            return (effective_exit_close / entry_close) - 1.0, effective_exit_close
         return (exit_close / entry_close) - 1.0, exit_close
 
     @staticmethod

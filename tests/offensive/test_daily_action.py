@@ -484,14 +484,17 @@ def test_close_matured_uses_execution_adjusted_return_when_ohlc_available(tmp_pa
 
     base_dt = datetime.strptime("20260601", "%Y%m%d")
     rows = []
+    # pct_change 与 close 序列保持一致 (真实 price_cache 语义): 除权免疫 P&L 链
+    # 以 pct_change 为权威日涨幅, 占位符 0.0 会把 close 涨幅谎报成 0%。
+    closes = [100.0 + i if i < 10 else 121.0 for i in range(11)]
     for i in range(11):
         rows.append(
             {
                 "date": base_dt + timedelta(days=i),
                 "open": 110.0 if i == 1 else 100.0 + i,
-                "close": 121.0 if i == 10 else 100.0 + i,
+                "close": closes[i],
                 "low": 99.0 + i,
-                "pct_change": 0.0,
+                "pct_change": (closes[i] / closes[i - 1] - 1.0) * 100.0 if i else 0.0,
             }
         )
     prices_df = pd.DataFrame(rows)
@@ -540,16 +543,18 @@ def test_close_matured_default_no_stop_execution(tmp_path):
 
     base_dt = datetime.strptime("20260601", "%Y%m%d")
     rows = []
+    # pct_change 与 close 序列保持一致 (见上方 fixture 注释)
+    closes = [121.0 if i == 10 else 100.0 for i in range(11)]
     for i in range(11):
         # T+3 low=90 触硬止损 92, 但 T+10 回到 121
         rows.append(
             {
                 "date": base_dt + timedelta(days=i),
                 "open": 110.0 if i == 1 else 100.0,
-                "close": 121.0 if i == 10 else 100.0,
+                "close": closes[i],
                 "high": 101.0,
                 "low": 90.0 if i == 3 else 99.0,
-                "pct_change": 0.0,
+                "pct_change": (closes[i] / closes[i - 1] - 1.0) * 100.0 if i else 0.0,
             }
         )
     prices_df = pd.DataFrame(rows)
@@ -766,14 +771,16 @@ def test_generate_daily_action_uses_default_price_loader_for_matured_pnl(tmp_pat
 
     base_dt = datetime.strptime("20260601", "%Y%m%d")
     rows = []
+    # pct_change 与 close 序列保持一致 (见上方 fixture 注释)
+    closes = [100.0 + i if i < 10 else 121.0 for i in range(11)]
     for i in range(11):
         rows.append(
             {
                 "date": base_dt + timedelta(days=i),
                 "open": 110.0 if i == 1 else 100.0 + i,
-                "close": 121.0 if i == 10 else 100.0 + i,
+                "close": closes[i],
                 "low": 99.0 + i,
-                "pct_change": 0.0,
+                "pct_change": (closes[i] / closes[i - 1] - 1.0) * 100.0 if i else 0.0,
             }
         )
     prices_df = pd.DataFrame(rows)
