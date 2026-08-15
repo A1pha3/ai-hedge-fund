@@ -11,6 +11,7 @@ from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
 from src.screening.offensive.daily_action import (
     DailyActionScan,
     BlockedCandidate,
+    ScanFunnel,
     render_daily_action_v2,
     run_daily_action_v2,
     _resolve_next_trade_date,
@@ -472,6 +473,57 @@ def test_plan_details_absent_falls_back_to_single_line(service, signal_date):
     assert "新计划（1 只）" in mirrored
     assert "买入：" not in mirrored
     assert "理由：" not in mirrored
+
+
+def test_blocked_strength_candidate_shows_component_breakdown_and_funnel(service, signal_date):
+    """强度不足的不可计划候选: 展示阈值差距 + 5 分量短板下钻 (哪个维度拖累了
+    强度). 扫描漏斗披露 扫描→预筛→命中→计划 计数, 回答"为什么只有这一只" —
+    未命中票从来不是候选, 不可见≠不存在."""
+    blocked = BlockedCandidate(
+        "003031",
+        "trigger_strength_below_threshold",
+        130.08,
+        "btst_breakout",
+        0.42,
+        metadata={
+            "board_score": 0.0,
+            "low_vol_score": 0.20,
+            "squeeze_score": 0.50,
+            "volume_score": 0.30,
+            "range_score": 1.00,
+            "energy_bonus": 0.0,
+        },
+    )
+    scan = DailyActionScan(
+        signal_date,
+        (),
+        (blocked,),
+        (("003031", 130.08),),
+        funnel=ScanFunnel(scannable=777, prefilter_passed=47, hits=2),
+    )
+    rendered = render_daily_action_v2(run_daily_action_v2(service, scan))
+    assert "触发强度不足（0.42 < 0.50 阈值，差 0.08）" in rendered
+    assert "强度分量：板块 0.00 · 低波 0.20 · 压缩 0.50 · 量能 0.30 · 振幅 1.00" in rendered
+    assert "短板：板块 0.00" in rendered
+    assert "扫描漏斗：扫描 777 只 → 涨幅≥9.5% 47 只 → 命中 2 只 → 可计划 0 只 · 不可计划 1 只" in rendered
+
+
+def test_non_strength_blocked_reason_stays_single_line(service, signal_date):
+    """非强度类阻断 (regime 闸等) 保持单行中文原因, 不画蛇添足补分量行."""
+    blocked = BlockedCandidate(
+        "003031", "regime_gate_halt", 130.08, "btst_breakout", 0.90,
+        metadata={"board_score": 1.0},
+    )
+    scan = DailyActionScan(signal_date, (), (blocked,), (("003031", 130.08),))
+    rendered = render_daily_action_v2(run_daily_action_v2(service, scan))
+    assert "原因：regime 闸（危机/避险日不开新仓）" in rendered
+    assert "强度分量" not in rendered
+
+
+def test_funnel_line_omitted_when_scan_has_no_funnel(service, signal_date):
+    """legacy 扫描路径不带漏斗计数 → 整行省略 (优雅降级, 不编造计数)."""
+    run = run_daily_action_v2(service, _scan(signal_date))
+    assert "扫描漏斗" not in render_daily_action_v2(run)
 
 
 def test_clamped_stop_discloses_floor_instead_of_fake_range_low(service, signal_date):

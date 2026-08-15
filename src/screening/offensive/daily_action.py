@@ -676,6 +676,9 @@ class BlockedCandidate:
     # 全部退化为空壳. 默认空值兼容旧构造.
     setup: str = ""
     trigger_strength: float = 0.0
+    # metadata: detect 诊断 (强度分量等), 供"触发强度不足"等阻断原因下钻到
+    # 具体维度. compare=False: dict 不可哈希, 且诊断不影响候选身份.
+    metadata: dict = field(default_factory=dict, compare=False)
 
     @property
     def block_reason(self) -> str:
@@ -687,12 +690,29 @@ class BlockedCandidate:
 
 
 @dataclass(frozen=True)
+class ScanFunnel:
+    """扫描漏斗计数 (snapshot 路径): 回答"为什么只有这几只候选".
+
+    未命中票从来不是"候选", 只在计数里可见 — 漏斗把沉默的大多数变成数字.
+    prefilter 阶段标签 "涨幅≥9.5%" 是全板块公共下限的宽松预筛: 20%/30% 板的
+    大涨非涨停日也计入, detect 内部才按板块自适应阈值精确判定涨停.
+    多 setup 同时启用时计数按 ticker×setup 评估次数计 (当前仅 btst 启用,
+    评估次数 = 票数).
+    """
+
+    scannable: int
+    prefilter_passed: int
+    hits: int
+
+
+@dataclass(frozen=True)
 class DailyActionScan:
     signal_date: date
     candidates: tuple[PlanCandidate, ...]
     blocked_candidates: tuple[BlockedCandidate, ...]
     reference_prices: tuple[tuple[str, float], ...] = ()
     snapshot_id: str | None = None
+    funnel: ScanFunnel | None = None
 
 
 @dataclass(frozen=True)
@@ -726,6 +746,8 @@ class DailyActionV2Run:
     # plan_details: 新计划区的完整交易计划 (买入/理由/先验/退出). 可选 —
     # DailyActionService.render 等旧构造点不传, 渲染退化为单行格式.
     plan_details: tuple[PlanDetail, ...] = ()
+    # funnel: 扫描漏斗计数 (snapshot 路径产出); None 时渲染省略漏斗行.
+    funnel: ScanFunnel | None = None
 
 
 _BLOCK_REASON_ZH = {
@@ -999,6 +1021,29 @@ def _run_block_reason_zh(code: str) -> str:
     return _BLOCK_REASON_ZH.get(code) or _DEBUG_GATE_REASON_ZH.get(code) or code
 
 
+def _format_strength_breakdown(metadata: dict) -> str:
+    """强度不足候选的分量下钻行: 5 个等权分量 (满分各 0.20) + 短板定位.
+
+    回答"哪些因素导致强度不足" — 短板 = 得分最低的分量 (同分并列全列).
+    metadata 缺分量时返回空串 (调用方整行省略, 不编造).
+    """
+    md = metadata or {}
+    components = [
+        (label, score)
+        for key, label in _STRENGTH_COMPONENT_LABELS
+        if (score := _finite_float(md.get(key))) is not None
+    ]
+    if not components:
+        return ""
+    text = "  强度分量：" + " · ".join(f"{label} {score:.2f}" for label, score in components)
+    energy_bonus = _finite_float(md.get("energy_bonus"))
+    if energy_bonus:
+        text += f" + 能量耦合 {energy_bonus:.2f}"
+    floor = min(score for _label, score in components)
+    laggards = [f"{label} {score:.2f}" for label, score in components if score == floor]
+    return f"{text} — 短板：{'、'.join(laggards)}"
+
+
 def _debug_action_item_line(item: ActionItem) -> str:
     """诊断行: ticker + 中文含义 + 状态 + [原始审计码附录].
 
@@ -1212,7 +1257,8 @@ def complete_daily_action_v2(
         service_run.open_positions,
         scan.blocked_candidates,
         scan.reference_prices,
-        _build_plan_details(service, scan, persisted),
+        plan_details=_build_plan_details(service, scan, persisted),
+        funnel=scan.funnel,
     )
 
 
@@ -1365,12 +1411,26 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     lines.append("")
 
     # ---- 不可计划候选 ----
+    # 强度不足的候选附分量下钻行 (哪个维度拖累了强度); 其他原因中文表已够
+    # 清楚, 保持单行. 节后的扫描漏斗行回答"为什么只有这几只".
     blocked_rows: list[str] = []
     for candidate in run.blocked_candidates:
         label = _pad_to(_label(candidate.ticker), _LABEL_WIDTH)
+        if candidate.reason == "trigger_strength_below_threshold":
+            gap = max(0.0, _MIN_TRIGGER_STRENGTH - candidate.trigger_strength)
+            reason_text = (
+                f"触发强度不足（{candidate.trigger_strength:.2f} < "
+                f"{_MIN_TRIGGER_STRENGTH:.2f} 阈值，差 {gap:.2f}）"
+            )
+        else:
+            reason_text = _block_reason_zh(candidate.reason)
         blocked_rows.append(
-            f"{label} 参考价 ~{candidate.reference_price:.2f}  原因：{_block_reason_zh(candidate.reason)}"
+            f"{label} 参考价 ~{candidate.reference_price:.2f}  原因：{reason_text}"
         )
+        if candidate.reason == "trigger_strength_below_threshold":
+            breakdown = _format_strength_breakdown(candidate.metadata)
+            if breakdown:
+                blocked_rows.append(breakdown)
         if verbose:
             debug.append(
                 f"{candidate.ticker}  不可计划：{_block_reason_zh(candidate.reason)}  "
@@ -1380,6 +1440,14 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         _render_section(f"不可计划候选（{len(run.blocked_candidates)} 只）", blocked_rows)
     )
     lines.append("")
+
+    # ---- 扫描漏斗: 未命中票从来不是候选, 漏斗把沉默的大多数变成数字 ----
+    if run.funnel is not None:
+        lines.append(
+            f"扫描漏斗：扫描 {run.funnel.scannable} 只 → 涨幅≥9.5% {run.funnel.prefilter_passed} 只 → "
+            f"命中 {run.funnel.hits} 只 → 可计划 {len(run.plans)} 只 · 不可计划 {len(run.blocked_candidates)} 只"
+        )
+        lines.append("")
 
     # ---- 生命周期事件 ----
     lifecycle_sections = (
@@ -1904,6 +1972,11 @@ def scan_from_verified_snapshot(
     ranked: list[tuple[float, int, str, str, float, RegimeAuthorization]] = []
     blocked: list[BlockedCandidate] = []
     reference_prices: dict[str, float] = {}
+    # 扫描漏斗计数: 预筛/命中在 detect 前中后各打一点, 让"沉默的大多数"
+    # (未命中票) 在渲染层变成可见数字. 仅 btst 启用时 评估次数 = 票数.
+    evaluated_count = 0
+    prefilter_passed = 0
+    hit_count = 0
 
     def price_frame(rows: Sequence[Any]) -> pd.DataFrame:
         return pd.DataFrame(
@@ -1962,8 +2035,11 @@ def scan_from_verified_snapshot(
             last_row = prices.iloc[-1]
             pct = float(last_row.get("pct_change", 0.0) or 0.0)
 
-            if setup_name == "btst_breakout" and pct < 9.5:
-                continue
+            if setup_name == "btst_breakout":
+                evaluated_count += 1
+                if pct < 9.5:
+                    continue  # BTST 只看涨停日
+                prefilter_passed += 1
             if setup_name == "oversold_bounce":
                 # 与 detect 同口径: pct_change 链式复合 (除权免疫); 链条断裂放行给 detect.
                 if len(prices) < 31:
@@ -1982,13 +2058,14 @@ def scan_from_verified_snapshot(
             result = setup_obj.detect(ticker, trade_date, detect_ctx)
             if not result.hit:
                 continue
+            hit_count += 1
             if bool(getattr(result, "degraded", False)):
-                blocked.append(BlockedCandidate(ticker, "detector_degraded", entry_price, setup_name, float(result.trigger_strength or 0.0)))
+                blocked.append(BlockedCandidate(ticker, "detector_degraded", entry_price, setup_name, float(result.trigger_strength or 0.0), metadata=dict(result.metadata or {})))
                 continue
             # regime gate: 信号日 crisis/risk_off 不开新仓. detect 照跑,
             # blocked 带完整 trigger_strength 诊断 — 面板继续积累危机日对照组.
             if regime in _REGIME_GATE_BLOCK_REGIMES:
-                blocked.append(BlockedCandidate(ticker, "regime_gate_halt", entry_price, setup_name, float(result.trigger_strength or 0.0)))
+                blocked.append(BlockedCandidate(ticker, "regime_gate_halt", entry_price, setup_name, float(result.trigger_strength or 0.0), metadata=dict(result.metadata or {})))
                 continue
 
             setup_max_pct = _MAX_POSITION_PCT_BY_SETUP.get(setup_name, _MAX_POSITION_PCT)
@@ -2033,10 +2110,10 @@ def scan_from_verified_snapshot(
         ts = trigger_strength
         entry_price = reference_prices[ticker]
         if math.isnan(ts) or ts < _MIN_TRIGGER_STRENGTH:
-            blocked.append(BlockedCandidate(ticker, "trigger_strength_below_threshold", entry_price, setup_name, float(ts) if not math.isnan(ts) else 0.0))
+            blocked.append(BlockedCandidate(ticker, "trigger_strength_below_threshold", entry_price, setup_name, float(ts) if not math.isnan(ts) else 0.0, metadata=dict(metadata)))
             continue
         if entry_price < _MIN_ENTRY_PRICE:
-            blocked.append(BlockedCandidate(ticker, "entry_price_below_minimum", entry_price, setup_name, float(ts)))
+            blocked.append(BlockedCandidate(ticker, "entry_price_below_minimum", entry_price, setup_name, float(ts), metadata=dict(metadata)))
             continue
         ctx = snapshot.setup_context(ticker, setup_name)
         if ctx is None:
@@ -2071,6 +2148,11 @@ def scan_from_verified_snapshot(
         tuple(blocked),
         tuple(sorted(reference_prices.items())),
         snapshot.snapshot_id,
+        funnel=ScanFunnel(
+            scannable=evaluated_count,
+            prefilter_passed=prefilter_passed,
+            hits=hit_count,
+        ),
     )
 
 
