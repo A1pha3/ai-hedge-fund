@@ -6,7 +6,7 @@
 - H3 n<30 的基线桶不显示数值, 空槽由跨周期警示填补 (crisis 日不失明);
 - H4 [AUTO] 推荐前向是弱证据, 只作触发器, 不占稳态席位;
 - H5 触发器阈值预注册 (模块常量), 渲染层不得改判;
-- H6 心跳是断言式 (无（5/5 检查通过）), 区分「无异常」与「检测器哑了」;
+- H6 心跳是断言式 (无（6/6 检查通过）), 区分「无异常」与「检测器哑了」;
 - H7 失败构成未命名占比超阈必须点名;
 - H9 每个比率带 n 或 ⏳; 降级路径输出固定标记; 无未计算的因果断言.
 """
@@ -223,7 +223,7 @@ def test_quiet_day_card_shape(tmp_path: Path) -> None:
     # 数据行: 失败率 + 构成
     assert "失败 62/全域 1585" in card
     # 心跳 (H6)
-    assert "▲异常: 无（5/5 检查通过）" in card
+    assert "▲异常: 无（6/6 检查通过）" in card
     # 池/推荐
     assert "Layer A 候选池 300 只" in card
     assert "Top 10 推荐" in card
@@ -239,7 +239,7 @@ def test_steady_state_line_cap(tmp_path: Path) -> None:
 
 def test_heartbeat_counts_total_checks(tmp_path: Path) -> None:
     card = render_briefing_card(_build(tmp_path))
-    assert "5/5" in card
+    assert "6/6" in card
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +390,50 @@ def test_failure_rate_under_threshold_is_quiet(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# ⑥ DA 运行级阻断 (2026-08-16 真实降级运行暴露的缺口)
+# ---------------------------------------------------------------------------
+
+
+def test_da_run_level_block_fires_sixth_check(tmp_path: Path) -> None:
+    """fatal 原因在场 → 必须进异常账本; 「明日无法生成新计划」是当天最大的
+    可行动事实, 不允许只活在上方的 domain summary 里而心跳全绿."""
+    payload = _build(
+        tmp_path,
+        readiness={
+            "status": "blocked",
+            "block_reasons": ("readiness_attempt_only",),
+        },
+    )
+    codes = [e["code"] for e in payload["exceptions"]]
+    assert "da_blocked" in codes
+    card = render_briefing_card(payload)
+    assert "DA 就绪阻断" in card
+    assert "无法生成新计划" in card
+    assert "readiness_attempt_only" in card  # 原始码必须可见 (排查入口)
+    assert "6/6 检查" in card
+
+
+def test_da_disclosure_only_reason_does_not_fire(tmp_path: Path) -> None:
+    """披露-only 原因 (regime 加仓证据不可验) 不是阻断 — 分类与 domain summary 一致."""
+    payload = _build(
+        tmp_path,
+        readiness={
+            "status": "healthy",
+            "universe_count": 1585,
+            "failed_count": 62,
+            "block_reasons": ("regime_authorization_evidence_unavailable",),
+        },
+    )
+    assert "da_blocked" not in [e["code"] for e in payload["exceptions"]]
+
+
+def test_da_unknown_status_is_not_anomaly(tmp_path: Path) -> None:
+    """状态缺失/未知不触发 (未知≠异常); 计数缺失已由「计数不可用」披露."""
+    payload = _build(tmp_path, readiness={})
+    assert "da_blocked" not in [e["code"] for e in payload["exceptions"]]
+
+
+# ---------------------------------------------------------------------------
 # 降级契约
 # ---------------------------------------------------------------------------
 
@@ -423,7 +467,7 @@ def test_degradation_panel_file_missing(tmp_path: Path) -> None:
     card = render_briefing_card(payload2)
     assert "未累积" in card
     assert "台账 不可用" in card
-    assert "▲异常: 无（5/5 检查通过）" in card
+    assert "▲异常: 无（6/6 检查通过）" in card
 
 
 def test_degradation_readiness_counts_missing(tmp_path: Path) -> None:
@@ -447,7 +491,7 @@ def test_build_never_raises_on_total_absence(tmp_path: Path) -> None:
     )
     assert payload["schema_version"] == BRIEFING_SCHEMA_VERSION
     card = render_briefing_card(payload)
-    assert "▲异常: 无（5/5 检查通过）" in card  # 检测器仍心跳, 不因缺数据静默
+    assert "▲异常: 无（6/6 检查通过）" in card  # 检测器仍心跳, 不因缺数据静默
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +511,7 @@ def test_push_lines_share_card_facts(tmp_path: Path) -> None:
     # push 无 ANSI 转义
     assert "\x1b" not in push
     # 心跳结论一致
-    assert ("无（5/5" in push) == ("▲异常: 无" in card)
+    assert ("无（6/6" in push) == ("▲异常: 无" in card)
 
 
 def test_push_lines_carry_exceptions(tmp_path: Path) -> None:
@@ -560,7 +604,7 @@ def test_cli_table_card_mode_replaces_legacy_header(tmp_path, capsys) -> None:
     )
     out = capsys.readouterr().out
     # 卡片标记在场, legacy header 的重复池行只出现一次 (卡片自带)
-    assert "▲异常: 无（5/5 检查通过）" in out
+    assert "▲异常: 无（6/6 检查通过）" in out
     assert out.count("Layer A 候选池 300 只") == 1
     assert "基线 normal +4.2%/59% · n=103" in out
 

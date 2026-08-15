@@ -64,6 +64,10 @@ DA_FAILURE_RATE_TRIGGER = 0.10
 #: 失败构成折叠桶 («其他») 占比超过 50% 时必须点名首位被折叠原因 (H7).
 DA_OTHER_SHARE_TRIGGER = 0.50
 
+#: 披露-only 的 readiness 原因 — 不是异常, 不得计入阻断检查
+#: (与 render_auto_daily_domain_summary 的 fatal/disclosure 分类一致).
+_DISCLOSURE_ONLY_REASONS = frozenset({"regime_authorization_evidence_unavailable"})
+
 #: [AUTO] 前向的世代起点: profit_aware 排序语义生效日 (2026-07-18 校准池
 #: 修复)。行为变化开启新证据世代 — 跨世代的混合胜率不是合法证据.
 AUTO_FORWARD_GENERATION_SINCE = "20260718"
@@ -289,12 +293,16 @@ def _health_facts(report_payload: Mapping[str, Any] | None) -> dict:
 
     universe = _count("universe_count")
     failed = _count("failed_count")
+    readiness = payload.get("daily_action_readiness") or {}
     composition = (
         payload.get("daily_action_cache_refresh", {}).get("failure_composition") or {}
     )
     composition = {
         str(k): int(v) for k, v in composition.items() if isinstance(v, int) and v > 0
     }
+    raw_reasons = tuple(
+        str(reason) for reason in readiness.get("block_reasons", ()) if reason
+    )
     facts: dict[str, Any] = {
         "universe": universe,
         "failed": failed,
@@ -302,6 +310,10 @@ def _health_facts(report_payload: Mapping[str, Any] | None) -> dict:
             failed / universe if universe and failed is not None else None
         ),
         "composition": composition,
+        "da_status": str(readiness.get("status") or ""),
+        "da_fatal_reasons": tuple(
+            reason for reason in raw_reasons if reason not in _DISCLOSURE_ONLY_REASONS
+        ),
     }
     return facts
 
@@ -527,10 +539,27 @@ def _evaluate_exceptions(
                 }
             )
 
+    # ⑥ DA 运行级阻断 — 当天最大的可行动事实必须在异常账本里 (2026-08-16
+    # 真实降级运行暴露的缺口: 心跳 5/5 全绿, 而"明日 --daily-action 无法生成
+    # 新计划"只在上方的 domain summary 里)。触发证据 = fatal 原因或显式非
+    # healthy 状态; 计数缺失/未知状态不触发 (未知≠异常, H5 纪律)。
+    fatal_reasons = tuple(health.get("da_fatal_reasons") or ())
+    da_status = str(health.get("da_status") or "")
+    if fatal_reasons or (da_status and da_status not in ("healthy",)):
+        title_reasons = "；".join(fatal_reasons) if fatal_reasons else da_status
+        exceptions.append(
+            {
+                "code": "da_blocked",
+                "title": f"DA 就绪阻断 — 明日 --daily-action 将无法生成新计划（{title_reasons}）",
+                "detail": "就绪清单未发布或校验失败；生命周期结算（退出/估值）不受此阻断影响",
+                "optional_action": "排查见 logs/ 与 data/reports/daily_action_readiness_attempt_*.json",
+            }
+        )
+
     return exceptions
 
 
-BRIEFING_CHECK_COUNT = 5  # 心跳分母: ①翻转 ②panel反向 ③熔断 ④DA异常 ⑤AUTO前向
+BRIEFING_CHECK_COUNT = 6  # 心跳分母: ①翻转 ②panel反向 ③熔断 ④DA异常 ⑤AUTO前向 ⑥DA阻断
 
 
 # ---------------------------------------------------------------------------
