@@ -89,9 +89,13 @@ T+1 开盘→T+10 收盘（无费用）——两组比较时记住这一腿差�
 
 ## 已知残留风险（2026-08-14 基线）
 
-1. **2022/2024 跨期未验证**：fund_flow 缓存只覆盖 2025-07+，regime gate 在熊市段（2022）
-   的效果只有先验支持（灾难集中 crisis/risk_off），无实证。数据回填后重跑
-   `scripts/run_regime_gate_cross_period_court.py` 验证。
+1. ~~**2022/2024 跨期未验证**~~ **已闭环（2026-08-15）**：fund_flow 2022-01→2025-07 段已回填
+   （`scripts/backfill_fund_flow_history.py`，43 个月 847 交易日零失败日，宇宙覆盖
+   2022=100%/2024=99.9%），跨期 court 重跑完毕
+   （`data/reports/regime_gate_cross_period_court_20260815.json`）：
+   2022 熊市 gated −1.12%/DD−13.2% vs ungated −2.19%/DD−14.8%（gate +1.1pp 且回撤更浅）；
+   2024 gated +20.17% vs ungated +21.58%（gate 成本 −1.4pp）；叠加 2025H2（+0.26pp）——
+   gate 在熊市显著加分、在强 tape 付小额成本，跨期结论：**保留**（无灾难性区间）。
 2. **资金流条件 2 留待 owner 决策**：A/B 显示微弱正向不显著（被挡组 T+10 +0.78% vs
    通过组 +1.26%，CI 重叠），删除与否是真实取舍。重跑 `scripts/run_gate_cond_ab.py`。
 3. **样本外面板仍小**：gate 接线后真实前向样本需时间累积；面板（被挡候选对照组）

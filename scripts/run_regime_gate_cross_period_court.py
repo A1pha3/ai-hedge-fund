@@ -13,9 +13,12 @@ import json
 from scripts.backtest_paper_loop import backtest_paper_loop as bt
 
 PERIODS = {
-    # 2022/2024 被 fund_flow 数据阻塞 (缓存仅从 2025-07 起, 条件2 全 miss → 0 交易).
-    # 2025H2 是 court 原窗口 (2026-01→07) 之外、数据可得的最长独立窗口.
-    "2025H2": ("20250701", "20251231"),
+    # 2022/2024 曾被 fund_flow 数据阻塞 (缓存仅从 2025-07 起, 条件2 全 miss → 0 交易).
+    # 2026-08-15: scripts/backfill_fund_flow_history.py 已补齐 2022-01→2025-07 段
+    # (tushare 批量端点实证可得), 两个跨期窗口解锁. 2025H2 不重跑 (8/14 证据不变:
+    # 回填与该窗口数据不相交).
+    "2022熊市": ("20220104", "20221230"),
+    "2024": ("20240102", "20241231"),
 }
 
 results: dict[str, dict] = {}
@@ -30,7 +33,7 @@ for period, (start, end) in PERIODS.items():
             only_setups=("btst_breakout",),
         )
 
-out = "data/reports/regime_gate_cross_period_court_20260814.json"
+out = "data/reports/regime_gate_cross_period_court_20260815.json"
 with open(out, "w", encoding="utf-8") as fh:
     json.dump(results, fh, ensure_ascii=False, indent=2)
 print(f"written: {out}")
