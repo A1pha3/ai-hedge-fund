@@ -412,7 +412,8 @@ def test_da_run_level_block_fires_sixth_check(tmp_path: Path) -> None:
     assert "DA 就绪阻断" in card
     assert "无法生成新计划" in card
     assert "readiness_attempt_only" in card  # 原始码必须可见 (排查入口)
-    assert "6/6 检查" in card
+    # 阻断 payload 带不了计数 → ④ 未评估, 心跳必须如实区分 (H6)
+    assert "5/6 检查" in card and "数据不可用: DA 计数" in card
 
 
 def test_da_disclosure_only_reason_does_not_fire(tmp_path: Path) -> None:
@@ -469,7 +470,9 @@ def test_degradation_panel_file_missing(tmp_path: Path) -> None:
     card = render_briefing_card(payload2)
     assert "未累积" in card
     assert "台账 不可用" in card
-    assert "▲异常: 无（6/6 检查通过）" in card
+    # 全源缺失 → 0/6 执行, 但心跳仍在场且点名未评估项 — 不是静默, 也不是谎报全绿
+    assert "0/6 检查通过" in card
+    assert "6 项数据不可用" in card
 
 
 def test_degradation_readiness_counts_missing(tmp_path: Path) -> None:
@@ -486,14 +489,20 @@ def test_degradation_market_state_none(tmp_path: Path) -> None:
 
 
 def test_build_never_raises_on_total_absence(tmp_path: Path) -> None:
+    # 显式 nope 路径: 不显式传参会落到生产默认台账路径 (DEFAULT_LEDGER_PATH),
+    # 测试结果依赖机器状态 — 违反测试隔离规则 (AGENTS.md), 诚实记账把它暴露了.
     payload = build_auto_briefing(
         trade_date="20260814",
         market_state=None,
         report_payload={},
+        panel_path=tmp_path / "nope.jsonl",
+        regime_history_path=tmp_path / "nope.json",
+        tracking_history_path=tmp_path / "nope.json",
+        ledger_path=tmp_path / "nope.sqlite3",
     )
     assert payload["schema_version"] == BRIEFING_SCHEMA_VERSION
     card = render_briefing_card(payload)
-    assert "▲异常: 无（6/6 检查通过）" in card  # 检测器仍心跳, 不因缺数据静默
+    assert "▲异常: 无（0/6 检查通过，6 项数据不可用" in card  # 检测器仍心跳, 缺数据不谎报全绿
 
 
 # ---------------------------------------------------------------------------

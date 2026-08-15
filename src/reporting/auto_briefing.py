@@ -160,9 +160,12 @@ def _northbound_text(days: int) -> str:
 
 
 def _win_lb(win_rate: float, n: int) -> float:
-    """单侧 95% 正态下界."""
-    se = math.sqrt(win_rate * (1.0 - win_rate) / n)
-    return win_rate - ONE_SIDED_Z_95 * se
+    """Wilson 单侧 95% 下界 — 小样本下比正态近似保守, 且天然落在 [0, 1]."""
+    z = ONE_SIDED_Z_95
+    denom = 1.0 + z * z / n
+    center = win_rate + z * z / (2.0 * n)
+    margin = z * math.sqrt(win_rate * (1.0 - win_rate) / n + z * z / (4.0 * n * n))
+    return max(0.0, (center - margin) / denom)
 
 
 def _p_text(p: float) -> str:
@@ -291,17 +294,19 @@ def _ledger_facts(ledger_path: Path | None) -> dict:
 
 def _health_facts(report_payload: Mapping[str, Any] | None) -> dict:
     payload = dict(report_payload or {})
+    readiness_raw = payload.get("daily_action_readiness")
+    # 防御: 异形 payload 只降级对应字段, 绝不拖垮整卡 (第四轮对抗审查 F7).
+    readiness = readiness_raw if isinstance(readiness_raw, Mapping) else {}
+    refresh_raw = payload.get("daily_action_cache_refresh")
+    refresh = refresh_raw if isinstance(refresh_raw, Mapping) else {}
 
     def _count(key: str) -> int | None:
-        value = (payload.get("daily_action_readiness") or {}).get(key)
+        value = readiness.get(key)
         return value if type(value) is int and value >= 0 else None
 
     universe = _count("universe_count")
     failed = _count("failed_count")
-    readiness = payload.get("daily_action_readiness") or {}
-    composition = (
-        payload.get("daily_action_cache_refresh", {}).get("failure_composition") or {}
-    )
+    composition = refresh.get("failure_composition") or {}
     composition = {
         str(k): int(v) for k, v in composition.items() if isinstance(v, int) and v > 0
     }
@@ -419,17 +424,25 @@ def _evaluate_exceptions(
     auto_forward: Mapping[str, Any],
     prev_regime: tuple[str | None, str | None],
     trade_date: str,
-) -> list[dict]:
+) -> tuple[list[dict], list[str]]:
+    """返回 (异常列表, 因数据缺失而未评估的检查名单).
+
+    心跳纪律 (H6): 「N/N 检查通过」只能声称真正执行过的检查 — 数据不可用
+    导致没跑的检查必须从通过数里区分出来, 否则是「传感器哑了却报健康」.
+    """
     exceptions: list[dict] = []
+    skipped: list[str] = []
 
     # ① regime 翻转 (vs 昨日 regime_history) — 未知 gate 不是翻转 (缺数据≠变化)
     prev_gate, prev_date = prev_regime
     cur_gate = str(market.get("regime_gate") or "")
     if (
-        prev_gate
-        and cur_gate in ("normal", "risk_off", "crisis")
-        and prev_gate != cur_gate
+        not market.get("available")
+        or cur_gate not in ("normal", "risk_off", "crisis")
+        or not prev_gate
     ):
+        skipped.append("regime 对照")
+    elif prev_gate != cur_gate:
         scale = market.get("position_scale")
         detail = "regime_gate 决定 BTST 前向基线档位与 --daily-action 的 regime 授权档"
         if scale is not None:
@@ -443,28 +456,34 @@ def _evaluate_exceptions(
             }
         )
 
-    # ② panel 前向反向 (Welch p<α 且 Δ<0)
-    for horizon, stat in sorted(
-        (panel.get("horizons") or {}).items(), key=lambda kv: int(kv[0])
-    ):
-        if not stat.get("testable"):
-            continue
-        if stat["p"] < PANEL_ALPHA and stat["delta_mean"] < 0:
-            exceptions.append(
-                {
-                    "code": "panel_adverse",
-                    "title": (
-                        f"panel 前向证据反向（T+{horizon}: {_p_text(stat['p'])}, "
-                        f"Δ={stat['delta_mean']:+.1f}%）"
-                    ),
-                    "detail": "filtered 组显著优于 plan_eligible — 全过滤可能有害，需复核过滤逻辑",
-                    "optional_action": "uv run python scripts/panel_health_check.py",
-                }
-            )
-            break  # 一个 horizon 显著反向即触发, 不重复计数
+    # ② panel 前向反向 (Welch p<α 且 Δ<0); 面板缺失/未累积 = 未评估
+    panel_runnable = panel.get("available") and int(panel.get("rows", 0)) > 0
+    if not panel_runnable:
+        skipped.append("panel")
+    else:
+        for horizon, stat in sorted(
+            (panel.get("horizons") or {}).items(), key=lambda kv: int(kv[0])
+        ):
+            if not stat.get("testable"):
+                continue
+            if stat["p"] < PANEL_ALPHA and stat["delta_mean"] < 0:
+                exceptions.append(
+                    {
+                        "code": "panel_adverse",
+                        "title": (
+                            f"panel 前向证据反向（T+{horizon}: {_p_text(stat['p'])}, "
+                            f"Δ={stat['delta_mean']:+.1f}%）"
+                        ),
+                        "detail": "filtered 组显著优于 plan_eligible — 全过滤可能有害，需复核过滤逻辑",
+                        "optional_action": "uv run python scripts/panel_health_check.py",
+                    }
+                )
+                break  # 一个 horizon 显著反向即触发, 不重复计数
 
-    # ③ 台账熔断逼近/触发
-    if ledger.get("available"):
+    # ③ 台账熔断逼近/触发; 台账不可读 = 未评估
+    if not ledger.get("available"):
+        skipped.append("台账")
+    else:
         dd = ledger.get("drawdown")
         state = ledger.get("breaker_state")
         if dd is not None and state in ("proximity", "halving", "stopped"):
@@ -486,10 +505,13 @@ def _evaluate_exceptions(
                 }
             )
 
-    # ④ DA 失败率 / 构成黑洞 (H7)
+    # ④ DA 失败率 / 构成黑洞 (H7); 计数与构成全缺 = 未评估
     rate = health.get("failure_rate")
+    comp = health.get("composition") or {}
     fired = False
-    if rate is not None and rate > DA_FAILURE_RATE_TRIGGER:
+    if rate is None and not comp:
+        skipped.append("DA 计数")
+    elif rate is not None and rate > DA_FAILURE_RATE_TRIGGER:
         exceptions.append(
             {
                 "code": "da_failure_anomaly",
@@ -502,11 +524,9 @@ def _evaluate_exceptions(
             }
         )
         fired = True
-    comp = health.get("composition") or {}
     comp_total = sum(comp.values())
     if comp_total > 0 and not fired:
         ordered = sorted(comp.items(), key=lambda kv: -kv[1])
-        named_top3 = ordered[:3]
         folded = ordered[3:]
         folded_n = sum(v for _k, v in folded)
         if folded_n / comp_total > DA_OTHER_SHARE_TRIGGER and folded:
@@ -523,8 +543,10 @@ def _evaluate_exceptions(
                 }
             )
 
-    # ⑤ [AUTO] 推荐前向崩塌 (世代内, 单侧下界判据)
-    if auto_forward.get("available"):
+    # ⑤ [AUTO] 推荐前向崩塌 (世代内, 单侧下界判据); 世代样本缺 = 未评估
+    if not auto_forward.get("available"):
+        skipped.append("AUTO 前向")
+    else:
         n = int(auto_forward["n"])
         lb = _safe_float(auto_forward.get("t5_lb"))
         wr = _safe_float(auto_forward.get("t5_win_rate"))
@@ -550,7 +572,9 @@ def _evaluate_exceptions(
     # healthy 状态; 计数缺失/未知状态不触发 (未知≠异常, H5 纪律)。
     fatal_reasons = tuple(health.get("da_fatal_reasons") or ())
     da_status = str(health.get("da_status") or "")
-    if fatal_reasons or (da_status and da_status not in ("healthy",)):
+    if not da_status and not fatal_reasons:
+        skipped.append("DA 状态")
+    elif fatal_reasons or (da_status and da_status not in ("healthy",)):
         title_reasons = "；".join(fatal_reasons) if fatal_reasons else da_status
         exceptions.append(
             {
@@ -561,7 +585,7 @@ def _evaluate_exceptions(
             }
         )
 
-    return exceptions
+    return exceptions, skipped
 
 
 BRIEFING_CHECK_COUNT = 6  # 心跳分母: ①翻转 ②panel反向 ③熔断 ④DA异常 ⑤AUTO前向 ⑥DA阻断
@@ -608,7 +632,7 @@ def build_auto_briefing(
     auto_forward = _auto_forward_facts(tracking_history_path)
     prev_regime = _previous_regime(regime_history_path, str(trade_date))
 
-    exceptions = _evaluate_exceptions(
+    exceptions, checks_skipped = _evaluate_exceptions(
         market=market,
         panel=panel,
         ledger=ledger,
@@ -633,6 +657,8 @@ def build_auto_briefing(
         "prev_regime": {"gate": prev_regime[0], "date": prev_regime[1]},
         "exceptions": exceptions,
         "checks_total": BRIEFING_CHECK_COUNT,
+        "checks_executed": BRIEFING_CHECK_COUNT - len(checks_skipped),
+        "checks_skipped": checks_skipped,
     }
 
 
@@ -662,9 +688,12 @@ _CARD_LEGEND = (
 )
 
 
-def _panel_segment(panel: Mapping[str, Any]) -> str:
+def _panel_segment(panel: Mapping[str, Any], *, words: bool = False) -> str:
+    """前向段. ``words=True`` 用中文词替代符号 — push 通道没有卡片「说明」行
+    上下文, 手机上符号不自解释 (F5); 卡片保持符号+图例."""
     if not panel.get("available") or int(panel.get("rows", 0)) == 0:
         return "前向 panel 未累积"
+    word_map = {"✅": "有效", "⚠️": "反向", "◻️": "不显著"}
     tags = []
     for horizon, stat in sorted(
         (panel.get("horizons") or {}).items(), key=lambda kv: int(kv[0])
@@ -673,9 +702,12 @@ def _panel_segment(panel: Mapping[str, Any]) -> str:
             p = stat["p"]
             delta = stat["delta_mean"]
             mark = "✅" if (p < PANEL_ALPHA and delta > 0) else ("⚠️" if (p < PANEL_ALPHA and delta < 0) else "◻️")
-            tags.append(f"T+{horizon}:{mark}{_p_text(p)}")
+            if words:
+                tags.append(f"T+{horizon}:{word_map[mark]}({_p_text(p)})")
+            else:
+                tags.append(f"T+{horizon}:{mark}{_p_text(p)}")
         else:
-            tags.append(f"T+{horizon}:⏳")
+            tags.append(f"T+{horizon}:样本未足" if words else f"T+{horizon}:⏳")
     return f"前向 panel 信号{panel['rows']}·已到期{panel['realized']} · {' '.join(tags)}"
 
 
@@ -712,17 +744,25 @@ def _ledger_segment(ledger: Mapping[str, Any]) -> str:
 def _data_segment(health: Mapping[str, Any]) -> str:
     universe = health.get("universe")
     failed = health.get("failed")
-    if universe is None and failed is None:
+    comp = health.get("composition") or {}
+    if universe is None and failed is None and not comp:
         return "计数不可用"
     parts = []
     if universe is not None and failed is not None:
         rate = health.get("failure_rate")
         rate_seg = f"（{rate:.1%}）" if rate is not None else ""
         parts.append(f"失败 {failed}/全域 {universe}{rate_seg}")
-    comp = health.get("composition") or {}
+    elif universe is not None:
+        # 已知信息不因另一半缺失而被丢掉 (F3)
+        parts.append(f"全域 {universe}（失败数未知）")
     if comp:
         ordered = sorted(comp.items(), key=lambda kv: -kv[1])
         total = sum(comp.values())
+        # F2: 构成来自刷新 outcome 口径, 与就绪 failed 计数是两个来源 —
+        # 合计不同时必须标出, 并置不得暗示是同一批票.
+        prefix = "构成"
+        if failed is not None and total != failed:
+            prefix = f"构成(刷新口径 合计{total})"
         if len(ordered) <= 4:
             shown = [f"{k} {v}" for k, v in ordered]
         else:
@@ -734,7 +774,7 @@ def _data_segment(health: Mapping[str, Any]) -> str:
             else:
                 shown = [f"{k} {v}" for k, v in ordered[:3]]
                 shown.append(f"其他 {folded_n}")
-        parts.append("构成: " + " · ".join(shown))
+        parts.append(f"{prefix}: " + " · ".join(shown))
     return " · ".join(parts) if parts else "计数不可用"
 
 
@@ -787,10 +827,34 @@ def _provenance_segment(baseline: Mapping[str, Any]) -> str:
     return f"基线口径: {basis} · {window} · 源 {generated}"
 
 
-def _heartbeat(exceptions: list[Mapping[str, Any]], total: int) -> str:
-    if not exceptions:
-        return f"▲异常: 无（{total}/{total} 检查通过）"
-    return f"▲异常: {len(exceptions)} 项（{total}/{total} 检查）"
+def _heartbeat(
+    exceptions: list[Mapping[str, Any]],
+    executed: int,
+    total: int,
+    skipped: list[str],
+) -> str:
+    """断言式心跳: 「N/N 通过」只声称真正执行过的检查 (H6 — 数据不可用
+    导致没跑的检查必须显式列出, 否则是「传感器哑了却报健康」)."""
+    if exceptions:
+        seg = f"{executed}/{total} 检查"
+        if skipped:
+            seg += f"，{len(skipped)} 项数据不可用: {'、'.join(skipped)}"
+        return f"▲异常: {len(exceptions)} 项（{seg}）"
+    if skipped:
+        return (
+            f"▲异常: 无（{executed}/{total} 检查通过，"
+            f"{len(skipped)} 项数据不可用: {'、'.join(skipped)}）"
+        )
+    return f"▲异常: 无（{total}/{total} 检查通过）"
+
+
+def _checks_accounting(briefing: Mapping[str, Any]) -> tuple[int, int, list[str]]:
+    """(executed, total, skipped) — executed=0 是合法值, 不得被 falsy-or 吞掉."""
+    total = int(briefing.get("checks_total") or BRIEFING_CHECK_COUNT)
+    executed_raw = briefing.get("checks_executed")
+    executed = int(executed_raw) if isinstance(executed_raw, int) else total
+    skipped = [str(s) for s in briefing.get("checks_skipped") or []]
+    return executed, total, skipped
 
 
 def render_briefing_card(briefing: Mapping[str, Any]) -> str:
@@ -801,7 +865,7 @@ def render_briefing_card(briefing: Mapping[str, Any]) -> str:
     ledger = briefing.get("ledger") or {}
     health = briefing.get("health") or {}
     exceptions = list(briefing.get("exceptions") or [])
-    checks = int(briefing.get("checks_total") or BRIEFING_CHECK_COUNT)
+    executed, checks, skipped = _checks_accounting(briefing)
 
     provenance = baseline.get("provenance") or {}
     pool = briefing.get("pool_size")
@@ -821,7 +885,7 @@ def render_briefing_card(briefing: Mapping[str, Any]) -> str:
     lines.append(f" 数据   {_data_segment(health)}")
     lines.append(f" 说明   {_CARD_LEGEND}")
     lines.append("=" * 70)
-    lines.append(f"  {pool_seg} | {top_seg}    {_heartbeat(exceptions, checks)}")
+    lines.append(f"  {pool_seg} | {top_seg}    {_heartbeat(exceptions, executed, checks, skipped)}")
     lines.append("=" * 70)
 
     for idx, exc in enumerate(exceptions, 1):
@@ -843,7 +907,7 @@ def render_briefing_push_lines(briefing: Mapping[str, Any]) -> list[str]:
     panel = briefing.get("btst_forward") or {}
     ledger = briefing.get("ledger") or {}
     exceptions = list(briefing.get("exceptions") or [])
-    checks = int(briefing.get("checks_total") or BRIEFING_CHECK_COUNT)
+    executed, checks, skipped = _checks_accounting(briefing)
 
     lines: list[str] = []
     if market.get("available"):
@@ -854,7 +918,7 @@ def render_briefing_push_lines(briefing: Mapping[str, Any]) -> list[str]:
         )
     else:
         lines.append("- 市场状态: 数据不可用")
-    lines.append(f"- BTST {_panel_segment(panel)} | {_baseline_segment(baseline)}")
+    lines.append(f"- BTST {_panel_segment(panel, words=True)} | {_baseline_segment(baseline)}")
     lines.append(f"- {_provenance_segment(baseline)}")
     if ledger.get("available"):
         lines.append(
@@ -864,9 +928,17 @@ def render_briefing_push_lines(briefing: Mapping[str, Any]) -> list[str]:
     else:
         lines.append("- 台账: 不可用")
     if exceptions:
-        lines.append(f"- ▲异常: {len(exceptions)} 项（{checks}/{checks} 检查）")
+        lines.append(f"- ▲异常: {len(exceptions)} 项（{executed}/{checks} 检查）")
         for exc in exceptions:
             lines.append(f"  - {exc.get('title', '')}")
+            if exc.get("optional_action"):
+                # 处置信息在手机上最要紧 — push 不只给诊断还要给动作 (F5)
+                lines.append(f"    可选处置: {exc['optional_action']}")
+    elif skipped:
+        lines.append(
+            f"- ▲异常: 无（{executed}/{checks} 检查通过，"
+            f"{len(skipped)} 项数据不可用: {'、'.join(skipped)}）"
+        )
     else:
         lines.append(f"- ▲异常: 无（{checks}/{checks} 检查通过）")
     return lines
