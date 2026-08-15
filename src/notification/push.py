@@ -228,11 +228,32 @@ def format_report_markdown(report_data: Mapping[str, Any], *, max_rows: int = 10
         position_scale = 1.0
         market_regime = "normal"
 
+    # H1 (briefing): 事实以 briefing payload 为单一来源 — market_state 原始 dict
+    # 仅作回退。渲染失败时 briefing_lines 为空, 输出形态与旧版一致。
+    briefing = report_data.get("auto_briefing")
+    briefing_lines: list[str] = []
+    if isinstance(briefing, Mapping):
+        try:
+            from src.reporting.auto_briefing import render_briefing_push_lines
+
+            briefing_lines = render_briefing_push_lines(briefing)
+            market_facts = briefing.get("market") or {}
+            if market_facts.get("available"):
+                market_regime = _safe_str(market_facts.get("regime_gate"), market_regime) or market_regime
+        except Exception as exc:  # noqa: BLE001 — push 渲染必须降级, 不得中断
+            logger.warning("[Push] briefing 渲染失败, 使用回退市场行: %s", exc)
+            briefing_lines = []
+
     lines: list[str] = []
     lines.append(f"# AI 选股日报 · {date}")
     lines.append("")
-    lines.append(f"- 市场状态: `{state_type}` · 仓位系数 `{position_scale:.2f}`")
+    if briefing_lines:
+        lines.append(briefing_lines[0])
+    else:
+        lines.append(f"- 市场状态: `{state_type}` · 仓位系数 `{position_scale:.2f}`")
     lines.append(f"- 推荐数量: {len(recs_raw)}")
+    if len(briefing_lines) > 1:
+        lines.extend(briefing_lines[1:])
     lines.append("")
 
     if not recs_raw:

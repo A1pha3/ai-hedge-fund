@@ -406,6 +406,26 @@ def _render_market_state(pdf: _ScreeningPDF, report_data: dict) -> None:
     pdf._kv_line("涨跌停比", f"{state.get('limit_up', 0)} / {state.get('limit_down', 0)}")
     pdf._kv_line("Regime Gate", str(state.get("regime_gate", "n/a")))
 
+    # H1 (briefing): 决策简报事实与 CLI/push 同源 (report_payload["auto_briefing"]),
+    # 此处只渲染不重算; payload 缺失时保持旧版形态。
+    briefing = report_data.get("auto_briefing")
+    if isinstance(briefing, dict):
+        try:
+            from src.reporting.auto_briefing import render_briefing_push_lines
+
+            pdf._section("决策简报 (briefing)")
+            for raw in render_briefing_push_lines(briefing):
+                body = raw.lstrip("- ").strip()
+                if not body:
+                    continue
+                label, sep, value = body.partition(": ")
+                if sep and len(label) <= 12:
+                    pdf._kv_line(label, value)
+                else:
+                    pdf._kv_line("", body)
+        except Exception:  # noqa: BLE001 — PDF 渲染必须降级, 不中断导出
+            pass
+
 
 def _render_industry_rotation(pdf: _ScreeningPDF, report_data: dict) -> None:
     if not pdf.config.include_industry_rotation:

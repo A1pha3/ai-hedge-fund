@@ -137,6 +137,37 @@ def check_horizon(rows: list[dict], horizon: int, min_n: int, min_group: int) ->
     return "\n".join(lines), bool(stat["p"] < 0.05 and stat["delta_mean"] > 0)
 
 
+def panel_health_status(panel: Path = PANEL, min_n: int = 30, min_group: int = 5) -> dict:
+    """Structured panel stats for the --auto briefing card (H1: compute once).
+
+    Same loaders/thresholds as :func:`panel_health_oneline`; returns per-horizon
+    testability + Welch stats instead of a rendered string so display layers can
+    consume the facts without re-deriving them. Strictly read-only.
+    """
+    rows = load_panel(panel)
+    realized = sum(1 for r in rows if r.get("realized"))
+    horizons: dict[str, dict] = {}
+    for horizon in HORIZONS:
+        stat = _test_horizon(rows, horizon, min_n, min_group)
+        if stat is None:
+            elig = _returns(rows, horizon, True)
+            filt = _returns(rows, horizon, False)
+            horizons[str(horizon)] = {
+                "testable": False,
+                "n_elig": len(elig),
+                "n_filt": len(filt),
+            }
+        else:
+            horizons[str(horizon)] = {
+                "testable": True,
+                "p": stat["p"],
+                "delta_mean": stat["delta_mean"],
+                "n_elig": stat["n_elig"],
+                "n_filt": stat["n_filt"],
+            }
+    return {"rows": len(rows), "realized": realized, "horizons": horizons}
+
+
 def panel_health_oneline(panel: Path = PANEL, min_n: int = 30, min_group: int = 5) -> str:
     """One-line panel-health summary for --auto logs (best-effort, read-only)."""
     rows = load_panel(panel)

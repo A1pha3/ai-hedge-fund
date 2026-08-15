@@ -1319,6 +1319,16 @@ def _refresh_daily_action_caches_for_auto(
             refresh_result = candidate
             summary = dict(candidate._refresh_counters)
             summary["conserved_stats"] = candidate.stats.to_dict()
+            # 失败构成 (H7): 从冻结 outcomes 聚合主因, 供 briefing 卡「数据」行
+            # 消费。best-effort — 聚合失败不阻断刷新。
+            try:
+                from src.reporting.auto_briefing import failure_composition_from_outcomes
+
+                summary["failure_composition"] = failure_composition_from_outcomes(
+                    candidate.outcomes
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[Auto] failure composition aggregation failed: %s", exc)
         else:
             # Compatibility for injected/legacy refresh implementations. Such a
             # flat summary is display-only and is never used for publication.
@@ -1801,6 +1811,23 @@ def run_auto_screening(
         if report_path is None:  # defensive: successful publication always returns a path
             return 1
 
+        # H1 (briefing): 简报事实只计算一次 — push/PDF/CLI 卡片消费同一 payload。
+        # 触发器⑤直接读 tracking_history.json (世代过滤在 briefing 模块内), 不依赖
+        # _enrich_recommendations_with_history 是否已跑。构建失败只回退 legacy header。
+        briefing_payload: dict | None = None
+        try:
+            from src.reporting.auto_briefing import build_auto_briefing
+
+            briefing_payload = build_auto_briefing(
+                trade_date=trade_date,
+                market_state=market_state,
+                report_payload=report_payload,
+                reports_dir=report_path.parent,
+            )
+            report_payload["auto_briefing"] = briefing_payload
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[Auto] auto briefing 构建失败, 回退 legacy header: %s", exc)
+
         if result.status is AutoRunStatus.HEALTHY:
             # Only canonical healthy output may feed watchlists, PDFs, rebalance,
             # or external push channels. A degraded attempt remains diagnostic.
@@ -1832,6 +1859,7 @@ def run_auto_screening(
             decay_map=decay_map,
             industry_signals=industry_signals,
             composite_by_ticker=composite_by_ticker,
+            briefing=briefing_payload,
         )
 
         # Plan 05 Task 9: v3 shadow 编排 hook (v2 渲染后; 库层编排 + rc 保护)。
@@ -2055,8 +2083,13 @@ def _print_table_block(
     decay_map: dict,
     industry_signals: list,
     composite_by_ticker: dict[str, float] | None = None,
+    briefing: dict | None = None,
 ) -> None:
-    """P0-1 + O-1: 输出 batch fetcher 统计 + CLI 表格。"""
+    """P0-1 + O-1: 输出 batch fetcher 统计 + CLI 表格。
+
+    ``briefing`` 是 :mod:`src.reporting.auto_briefing` 的事实 payload (H1: 计算
+    一次); 有则渲染决策简报卡替换 legacy header, 无则回退 legacy header。
+    """
     fetcher_stats = report_payload.get("batch_data_fetcher", {})
     logger.debug(
         "[Auto] P0-1 BatchDataFetcher stats: batch_calls=%d, batch_failures=%d, " "single_ticker_calls=%d, cache_hits=%d",
@@ -2078,6 +2111,16 @@ def _print_table_block(
         )
     )
 
+    briefing_text: str | None = None
+    if briefing is not None:
+        try:
+            from src.reporting.auto_briefing import render_briefing_card
+
+            briefing_text = render_briefing_card(briefing)
+        except Exception as exc:  # noqa: BLE001 — 渲染失败回退 legacy header
+            logger.warning("[Auto] briefing card 渲染失败, 回退 legacy header: %s", exc)
+            briefing_text = None
+
     # Print formatted table
     _print_auto_screening_table(
         trade_date,
@@ -2087,11 +2130,12 @@ def _print_table_block(
         top_n,
         report_path,
         report_payload.get("sector_concentration_warnings") or [],
-        consecutive_recommendations=report_payload["recommendations"],
+        consecutive_recommendations=report_payload.get("recommendations"),
         decay_map=decay_map,
         industry_signals=industry_signals,
         composite_by_ticker=composite_by_ticker,
         bucket_stats=_extract_bucket_stats(report_payload.get("recommendations") or ()),
+        briefing_text=briefing_text,
     )
 
     # O-1: 缓存命中率可观测性 — 表格块底部一行摘要 (原 O-1 设计意图即"底部").
@@ -2786,6 +2830,7 @@ def _print_auto_screening_table(
     industry_signals: list[IndustrySignal] | None = None,
     composite_by_ticker: dict[str, float] | None = None,
     bucket_stats: dict[str, tuple[float | None, int]] | None = None,
+    briefing_text: str | None = None,
 ) -> None:
     """打印格式化的自动筛选推荐表格。
 
@@ -2798,6 +2843,8 @@ def _print_auto_screening_table(
             tie-break 键), 用于显示 Composite 列。
         bucket_stats: ticker→(池胜率, 样本数) 映射 — profit_aware 排序的真实主键
             (2026-07-18 起默认), 必须显示否则表格顺序不可解释。
+        briefing_text: 预渲染决策简报卡 (H1)。提供时替换 legacy header; None
+            回退 legacy 两行 header (兼容旧调用方/测试)。
     """
     from colorama import Fore, Style
     from tabulate import tabulate
@@ -2812,11 +2859,15 @@ def _print_auto_screening_table(
             if ticker:
                 consecutive_lookup[ticker] = rec
 
-    print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}{Style.BRIGHT}[Auto Screening] 一键全流程{Style.RESET_ALL}")
-    print(f"  日期: {_format_trade_date_display(trade_date)}  |  市场状态: {_market_state_display(state_type)}  |  仓位系数: {position_scale:.2f}")
-    print(f"  Layer A 候选池: {pool_size} 只  |  Top {top_n} 推荐")
-    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
+    if briefing_text:
+        # 决策简报卡自带边框/日期/市场/池行 — legacy header 不再重复打印.
+        print(f"\n{briefing_text}\n")
+    else:
+        print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}{Style.BRIGHT}[Auto Screening] 一键全流程{Style.RESET_ALL}")
+        print(f"  日期: {_format_trade_date_display(trade_date)}  |  市场状态: {_market_state_display(state_type)}  |  仓位系数: {position_scale:.2f}")
+        print(f"  Layer A 候选池: {pool_size} 只  |  Top {top_n} 推荐")
+        print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
 
     if not top_results:
         print(f"{Fore.YELLOW}  无符合条件的推荐标的{Style.RESET_ALL}\n")
