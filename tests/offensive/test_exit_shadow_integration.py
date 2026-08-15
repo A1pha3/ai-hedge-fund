@@ -145,9 +145,12 @@ def test_render_labels_shadow_as_non_executable_advice(shadow_case):
     assert "影子建议" in text
     assert "shadow_exit_line=" not in text
     assert "close_below_trailing_line" not in text
-    # Verbose exposes the raw shadow evidence in the debug appendage.
+    # Verbose exposes the raw shadow evidence in the diagnostics appendage,
+    # with a Chinese-first explanation of what the shadow signal means.
     assert "close_below_trailing_line" in verbose_text
     assert "shadow_exit_line=" in verbose_text
+    assert "影子信号：次日开盘退出（收盘跌破移动退出线）" in verbose_text
+    assert "影子信号" not in text
     # service.render mirrors the default (non-verbose) operator view.
     assert text == service.render(run)
 

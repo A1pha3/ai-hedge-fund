@@ -387,22 +387,156 @@ def test_render_plans_show_entry_date_and_weight(service, signal_date):
     assert "新计划（1 只）" in DailyActionService.render(run.service_run)
 
 
+def test_new_plan_renders_full_trade_plan_details(service, signal_date):
+    """新计划区给出完整交易计划: 买入价位口径 / 买入理由 (强度分量+涨停结构) /
+    先验胜率赔率 / 退出合约 (T+10 时间退出 + 失效参考价仅披露).
+
+    止盈止损口径 = 策略真实合约: 默认退出只有 T+10 时间退出; 止损价仅披露参考
+    (止损×gate 联合网格证 fixed8 止损 4/4 组合降收益 → 止损执行不落地), 无止盈
+    规则 (凸性策略让利润奔跑到期). 渲染不得编造固定百分比止盈止损.
+    """
+    hit = PlanCandidate(
+        ticker="600487",
+        setup="btst_breakout",
+        setup_version="v2",
+        signal_date=signal_date,
+        target_weight=0.10,
+        priority=1,
+        snapshot_id="legacy_unverified",
+        setup_consumed_fingerprint="legacy_unverified",
+        detector_degraded=False,
+        authorization=RegimeAuthorization.NORMAL,
+        trigger_strength=0.79,
+        entry_price=62.98,
+        metadata={
+            "pct_change": 10.01,
+            "limit_up_streak": 1,
+            "main_net_inflow": 2.4829022e9,
+            "industry_pct": 1.2,
+            "pre_5d_runup_pct": 2.3,
+            "range_low": 58.20,
+            "range_based_stop_pct": -0.0758,
+            "board_score": 0.95,
+            "low_vol_score": 0.80,
+            "squeeze_score": 1.00,
+            "volume_score": 0.60,
+            "range_score": 0.40,
+            "energy_bonus": 0.08,
+        },
+    )
+    scan = DailyActionScan(signal_date, (hit,), (), (("600487", 62.98),))
+    run = run_daily_action_v2(service, scan)
+    rendered = render_daily_action_v2(run)
+
+    # 买入价位: 执行口径 = 次日开盘价; 参考价只是信号日收盘; 涨停/停牌自动跳过.
+    assert "买入：" in rendered and "开盘价执行" in rendered
+    assert "开盘涨停/停牌自动放弃" in rendered
+    # 买入理由: 强度 + 5 分量 + 能量耦合; 涨停结构 (幅度/连板/前5日/资金流/行业).
+    assert "理由：强度 0.79" in rendered
+    assert "板块 0.95" in rendered and "低波 0.80" in rendered
+    assert "压缩 1.00" in rendered and "量能 0.60" in rendered and "振幅 0.40" in rendered
+    assert "能量耦合 0.08" in rendered
+    assert "涨停 +10.0%（首板）" in rendered
+    assert "涨停前 5 日 +2.3%" in rendered
+    assert "主力净流入 24.8 亿" in rendered
+    assert "行业当日 +1.2%" in rendered
+    # 胜率赔率: 冻结先验分布 (BTST T+10: n=1458, 胜率 58.78%→59%, 盈亏比 1.8, E +6.6%).
+    assert "先验（T+10 全池回测 n=1458）" in rendered
+    assert "胜率 59%" in rendered
+    assert "盈亏比 1.8" in rendered
+    assert "期望 +6.6%" in rendered
+    # 退出合约: T+10 时间退出 (第 10 个持有交易日, entry 7/14 → 到期 7/23), 无条件卖出.
+    assert "退出：T+10" in rendered
+    assert "预计 7/23" in rendered
+    assert "无条件卖出" in rendered
+    # 失效参考价: 62.98 × (1 - 0.0758) = 58.21; 明确标注仅披露不执行.
+    assert "失效参考：跌破 58.21（盘整区底部 58.20，-7.6%）" in rendered
+    assert "仅披露" in rendered
+
+
+def test_plan_details_degrade_gracefully_without_metadata(service, signal_date):
+    """candidate 缺 metadata 时 (legacy 构造): setup 级冻结先验与 T+N 退出合约
+    仍然展示, 但涨停结构/失效参考价等逐票字段不编造."""
+    run = run_daily_action_v2(service, _scan(signal_date))
+    rendered = render_daily_action_v2(run)
+    assert "先验（T+10" in rendered
+    assert "退出：T+10" in rendered
+    assert "失效参考" not in rendered
+    assert "涨停前 5 日" not in rendered
+
+
+def test_plan_details_absent_falls_back_to_single_line(service, signal_date):
+    """无 plan_details 的构造点 (DailyActionService.render 等) 保持现有单行格式."""
+    run = run_daily_action_v2(service, _scan(signal_date))
+    mirrored = DailyActionService.render(run.service_run)
+    assert "新计划（1 只）" in mirrored
+    assert "买入：" not in mirrored
+    assert "理由：" not in mirrored
+
+
+def test_clamped_stop_discloses_floor_instead_of_fake_range_low(service, signal_date):
+    """盘整区底部过远被兜底 pct 截断时, 失效参考须明示"兜底" — 否则 operator 会把
+    兜底线误读成真实底部 (真实例: 600487 20260814 底部 45.60 vs 兜底线 57.94)."""
+    hit = PlanCandidate(
+        ticker="600487",
+        setup="btst_breakout",
+        setup_version="v2",
+        signal_date=signal_date,
+        target_weight=0.10,
+        priority=1,
+        snapshot_id="legacy_unverified",
+        setup_consumed_fingerprint="legacy_unverified",
+        detector_degraded=False,
+        authorization=RegimeAuthorization.NORMAL,
+        trigger_strength=0.79,
+        entry_price=62.98,
+        metadata={"range_low": 45.60, "range_based_stop_pct": -0.08},
+    )
+    scan = DailyActionScan(signal_date, (hit,), (), (("600487", 62.98),))
+    rendered = render_daily_action_v2(run_daily_action_v2(service, scan))
+    # 62.98 × (1 - 0.08) = 57.94; 底部 45.60 过远 → 明示兜底, 不把 45.60 当止损锚.
+    assert "失效参考：跌破 57.94（-8.0% 兜底，真实盘整区底部 45.60 过远）" in rendered
+
+
 def test_verbose_appends_debug_section_without_changing_body(service, signal_date):
     """Single-track rendering: --verbose keeps the exact same body as the default
-    view and only appends a debug appendage with the raw audit codes."""
+    view and only appends a diagnostics section with Chinese-first lines that
+    retain the raw audit codes in a bracketed appendix."""
     run = run_daily_action_v2(service, _scan(signal_date))
     default_text = render_daily_action_v2(run)
     verbose_text = render_daily_action_v2(run, verbose=True)
     verbose_lines = verbose_text.splitlines()
     idx = next(
-        i for i, line in enumerate(verbose_lines) if "调试信息（--verbose）" in line
+        i for i, line in enumerate(verbose_lines) if "诊断明细（--verbose）" in line
     )
     body = "\n".join(verbose_lines[:idx]).rstrip()
     assert body == default_text
-    assert "调试信息（--verbose）" in verbose_text
+    assert "诊断明细（--verbose）" in verbose_text
     assert "reason=entry_planned" in verbose_text
     assert "execution=pending" in verbose_text
     assert "source=pending" in verbose_text
+    # 中文含义只在诊断区出现, 不进正文 (单轨原则).
+    assert "新计划已登记" in verbose_text
+    assert "新计划已登记" not in default_text
+
+
+def test_verbose_diagnostics_are_chinese_first_with_raw_code_appendix(service, signal_date):
+    """诊断明细区: 每行 = 对象 + 中文含义 + [原始审计码附录] — 操作员先读懂
+    "发生了什么/为什么", 开发者仍可用方括号里的 key=value 对照日志/事件 payload.
+    未知码 fail-closed 回退为原文显示 (不崩溃、不吞信息)."""
+    run = run_daily_action_v2(service, _scan(signal_date))
+    text = render_daily_action_v2(run, verbose=True)
+    # entry_planned: signal 7/13 → 入场 7/14（周二）; pending/pending 去重为单次"待成交".
+    assert (
+        "000001  新计划已登记，等待 7/14（周二）开盘成交；当前待成交  "
+        "[reason=entry_planned execution=pending source=pending]"
+    ) in text
+
+    blocked_run = run_daily_action_v2(service, _scan(signal_date, degraded=True))
+    blocked_text = render_daily_action_v2(blocked_run, verbose=True)
+    assert (
+        "000001  不可计划：setup 数据不完整  [block_reason=incomplete_setup_data]"
+    ) in blocked_text
 
 
 def test_summary_lists_nonzero_events_only(service, signal_date):
