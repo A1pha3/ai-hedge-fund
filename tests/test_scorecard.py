@@ -195,6 +195,81 @@ class TestComputeScorecard:
 
 
 # ---------------------------------------------------------------------------
+# IC 稀薄窗口 — 样本不足分支 (2026-08-16 对抗审查: B1 崩溃 / B2 单日 IC t=inf)
+# ---------------------------------------------------------------------------
+
+
+class TestThinIcWindow:
+    """成熟稀薄期 (每日切片仅 1-2 只成熟, 部分回填缺失可达) 的诚实降级。
+
+    纪律: 展示增强失败不阻塞主流程 (--auto 渲染); 未知不编造 (单日 IC 无
+    标准误, 不宣称显著方向)。
+    """
+
+    @staticmethod
+    def _thin_records(two_mature_first_day: bool) -> list[dict]:
+        """12 个推荐日 × Top10 记录, 每日仅第 1 名成熟 (T+5 部分缺失形态)。
+
+        two_mature_first_day=True 时首日第 2 名也成熟 → daily_ics 恰 1 个
+        (首日分数高者收益高, IC=+1.0), 其余每日单只成熟不产生 IC。
+        """
+        records: list[dict] = []
+        for d in range(12):
+            date = f"202607{d + 1:02d}"
+            scores = [0.40 - 0.01 * i for i in range(10)]
+            t5s: list[float | None] = [None] * 10
+            t5s[0] = 2.0
+            if two_mature_first_day and d == 0:
+                t5s[1] = 1.0
+            records.extend(_day(date, scores, t5s))
+        return records
+
+    def test_none_mean_daily_ic_format_does_not_crash(self):
+        # B1: available=True 但 daily_ics 为空 → mean_daily_ic=None。
+        # 修复前 format_scorecard_lines 的 f"{None:+.2f}" 抛 TypeError
+        # (main.py --auto 主渲染路径无保护 → 主命令崩溃)。
+        report = compute_scorecard(self._thin_records(False), min_mature_dates=10)
+
+        assert report.available is True
+        assert report.n_mature == 12
+        assert report.mean_daily_ic is None
+        assert report.ic_t_stat is None
+        assert report.ic_dates == 0
+
+        lines = format_scorecard_lines(report)  # 修复前: TypeError
+        assert any("样本不足" in line for line in lines)
+
+    def test_single_ic_day_no_infinite_t(self):
+        # B2: 仅 1 个 IC 日 (ic_dates=1, IC=+1.0) → 无标准误可言。
+        # 修复前 ic_t_stat=±inf, verdict 直接 positive (单样本点宣称正向证据)。
+        report = compute_scorecard(self._thin_records(True), min_mature_dates=10)
+
+        assert report.available is True
+        assert report.ic_dates == 1
+        assert report.mean_daily_ic is not None and report.mean_daily_ic > 0
+        assert report.ic_t_stat is None  # 修复前: inf
+        assert report.verdict != "positive"  # 修复前: positive
+
+    def test_two_identical_ic_days_keep_zero_variance_inf_design(self):
+        # 保真: >=2 个 IC 日同号恒定 (方差 0) 保持既有 ±inf 设计 — docstring
+        # 声明的行为 (方向有 >=2 独立日确认), 本修复不推翻。
+        records: list[dict] = []
+        for d in range(12):
+            date = f"202607{d + 1:02d}"
+            scores = [0.40 - 0.01 * i for i in range(10)]
+            t5s: list[float | None] = [None] * 10
+            t5s[0] = 2.0
+            t5s[1] = 1.0 if d < 2 else None  # 恰 2 个 IC 日, 每日 IC=+1.0
+            records.extend(_day(date, scores, t5s))
+
+        report = compute_scorecard(records, min_mature_dates=10)
+
+        assert report.ic_dates == 2
+        assert math.isclose(report.mean_daily_ic, 1.0, abs_tol=1e-9)
+        assert report.ic_t_stat == math.inf
+
+
+# ---------------------------------------------------------------------------
 # compute_bucket_stats — 桶头钱数 (单一 T+5 口径)
 # ---------------------------------------------------------------------------
 

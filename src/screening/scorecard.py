@@ -14,7 +14,8 @@
 统计口径注意 (对抗审查 F4, 2026-08-16): 日 IC 的 t 统计按独立日假设计算,
 但 Top10 切片的 T+5 窗口互相重叠, 自相关使 t 偏乐观 — verdict 只是展示
 层标签 (有/无正向证据), 不是显著性证明, 更不构成任何授权; 引用 |t| 接近
-2 的边缘判定时应按更保守的阈值复核。
+2 的边缘判定时应按更保守的阈值复核。IC 日数 <2 (成熟稀薄窗口) 时 ic_t
+恒 None (样本不足) — 单日 IC 无标准误, 不宣称显著方向 (2026-08-16 收口)。
 
 返回单位: tracking_history 的收益字段是**百分比** (2.5989 = +2.6%), 本模块
 原样保留百分比口径, 由 formatter 决定展示形式。
@@ -243,14 +244,15 @@ def compute_scorecard(
             )
 
     mean_ic = statistics.fmean(daily_ics) if daily_ics else None
-    if mean_ic is None:
+    if mean_ic is None or len(daily_ics) < 2:
+        # IC 日数 <2 → 无标准误可言 (单样本点不宣称显著方向, 未知不编造)。
         ic_t: float | None = None
-    elif len(daily_ics) >= 2 and statistics.stdev(daily_ics) > 0:
+    elif statistics.stdev(daily_ics) > 0:
         ic_t = mean_ic / (statistics.stdev(daily_ics) / math.sqrt(len(daily_ics)))
     elif mean_ic == 0.0:
         ic_t = 0.0
     else:
-        # 全窗口 IC 恒同号 (方差 0) → 显著性方向确定, t 取有符号无穷。
+        # 全窗口 IC 恒同号 (方差 0, >=2 个独立日确认方向) → t 取有符号无穷。
         ic_t = math.copysign(math.inf, mean_ic)
 
     return ScorecardReport(
@@ -360,11 +362,16 @@ def format_scorecard_lines(report: ScorecardReport) -> list[str]:
             "无法评估排序有效性 — 本表按观察清单使用"
         ]
 
+    ic_seg = (
+        f"排序IC {report.mean_daily_ic:+.2f}(t={_fmt_ic_t(report.ic_t_stat)})"
+        if report.mean_daily_ic is not None
+        else "排序IC 样本不足"
+    )
     line1 = (
         f"排序记分牌 近{report.n_dates}个推荐日（{report.window_start}→{report.window_end}）: "
         f"Top10 切片 T+5 胜率 {_fmt_pct(report.slice_win_rate)} · "
         f"均值 {_fmt_pct(report.slice_mean_return, signed=True)}（未扣费） · "
-        f"排序IC {report.mean_daily_ic:+.2f}(t={_fmt_ic_t(report.ic_t_stat)}) · "
+        f"{ic_seg} · "
         f"前3 {_fmt_pct(report.head_win_rate)} vs 后7 {_fmt_pct(report.rest_win_rate)}"
     )
     if report.verdict == "positive":
