@@ -12,7 +12,7 @@ uv run python src/main.py --daily-action   # 读缓存, ~3 秒, 输出次日 BUY
 ```
 
 - **`--auto`**：四策略因子评分（trend/mean_reversion/fundamental/event_sentiment）→ score_b → investability 排序 → Top 10。存 `data/reports/auto_screening_YYYYMMDD.json`。
-- **`--daily-action`**：凸性 setup（BTST 涨停突破 T+10、OversoldBounce 超跌反弹 T+5）→ Kelly 仓位 → paper trading。**在当前 legacy 实现中与 `--auto` 是两套独立系统**，只共享缓存数据；目标态会共享不可变 Evidence Store/Outcome/Capital Truth 基础设施，但 producer namespace、edge 与评分永久独立。
+- **`--daily-action`**：凸性 setup（BTST 涨停突破 T+10、OversoldBounce 超跌反弹 T+5，默认暂停）→ Kelly 仓位 → paper trading。**在当前 legacy 实现中与 `--auto` 是两套独立系统**，只共享缓存数据；目标态会共享不可变 Evidence Store/Outcome/Capital Truth 基础设施，但 producer namespace、edge 与评分永久独立。
 - 入口在 `src/cli/dispatcher.py`（命令分发），核心逻辑在 `src/screening/offensive/`。
 
 ## 长期目标架构宪章（Revision 2 于 2026-07-26 已批准，尚未全部实现）
@@ -79,7 +79,7 @@ Plan 07（Broker Gateway 与 DR）primitive 已实现（2026-08-08，broker 套�
 
 - `journal.jsonl`：⚠️ **磁盘上的该文件自 2026-08-15 晚起是 2024 跨周期重放**（171 BUY，trap-15 修复验证工作用 `scripts/backtest_paper_loop.py` 重跑 2024 时覆盖了它）——**2026 原版（403 条 = 211 BUY + 192 EXIT，2026-01-15 → 2026-07-06）已从 git `0be66383` 恢复至 `outputs/journal_20260115_20260706_recovered.jsonl`**，本节全部 2026 结论以恢复副本为准。journal 自 commit `22cb6026` 起不被 git 跟踪，重放前先备份。
 - `portfolio_state.json`：legacy 记录为 nav=2.10、realized_pnl=+110%；该数值受下述锚定 bug 与零成本/T0 收盘口径污染，**不得继续作为有效业绩引用**（当前磁盘版本描述的是 2024 重放，同样不引用）。
-- **这是 legacy 回测的成交候选子集（研究重建用，非授权证据）**，但不是可直接引用的收益真相；验证 setup、regime 或止损前必须按本仓位锚点和目标执行合约重建。⚠️ **全候选评估用 `btst_court` 研究管道**（`data/research/btst_court/event_tables/event_table_v1.csv.gz`，2025-07→2026-08-15，全市场含退市者快照、生产 `BtstBreakoutSetup` 原样重放）——journal 成交子集与全候选月度口径可差 7.5pp（2026-06：+5.95% vs -1.60%），**任何月度/regime/止损评估优先用 court，不用 journal 子集**（陷阱 19）。
+- **这是 legacy 回测的成交候选子集（研究重建用，非授权证据）**，但不是可直接引用的收益真相；验证 setup、regime 或止损前必须按本仓位锚点和目标执行合约重建。⚠️ **全候选评估用 `btst_court` 研究管道**（`data/research/btst_court/event_tables/event_table_v1.csv.gz`，2025-07→2026-08-15，全市场含退市者快照、生产 `BtstBreakoutSetup` 原样重放）——journal 成交子集与全候选月度口径可差 7.5pp（2026-06：+5.95% vs -1.60%；journal 侧可由 `outputs/journal_execution_stats_20260816.json` 重验，court 侧为临时聚合、脚本未固化——复算以事件表按 signal_date 月份分组重建），**任何月度/regime/止损评估优先用 court，不用 journal 子集**（陷阱 19）。
 - ⚠️ **不要和 `data/paper_trading/`（运行时实例，0 笔 EXIT）混淆**。曾因此误判系统"0 笔成交"。
 - ⚠️ **journal 的 recorded P&L 存在锚定 bug（2026-07-18 对抗性审查定位，三方独立复现）**：生成它的回测以 `price_loader=None` 调用 `close_matured`（`scripts/backtest_paper_loop.py:134`），`fetch_actual_returns` 把每票收益锚到**本批次最早 buy_date** 而非本仓位 buy_date；且入场口径是 **T0 收盘**（不是文档声称的 T+1 开盘）、零成本。可复核 139 笔中 **42% 偏差 >0.5pp，最大 ±31.6pp**（300033 两笔不同仓位同记 -26.74%，精确复现锚定窗口）。**下表引述值因此系统性虚高**，修正后见"2026 实测表现"。另：**53/192 笔（28%）的 ticker 缓存文件已被删除，永久不可复核**——回测产物必须连同输入数据快照归档。
 - ⚠️ **journal 的 EXIT.date 与 BUY.date 相同**（回测把开仓/平仓都记在信号日），到期日必须从交易日历机械推导，不能拿 EXIT.date 当卖出日。
@@ -108,7 +108,7 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  →  executable -
 
 **位置：`data/price_cache/*.csv`**（每股一个文件，6 位代码命名）
 
-- **深度已补齐**（2026-08-17 实测：**1594 票**；2026-07-17 快照为 823 票/中位 1579 行，2020-01-02 起；07-08 时曾只有 6 个月 ~117 行/股）。
+- **深度已补齐且持续增长**（票数随涨停注入每日增加——2026-08-17 约 1600；2026-07-17 曾为 823 票/中位 1579 行，2020-01-02 起；07-08 时曾只有 6 个月 ~117 行/股）。⚠️ 文档不要写死当前票数——任何快照次日即过期，引用时用 `ls data/price_cache/*.csv | wc -l` 实测。
 - ⚠️ 把资金流深度当作历史回放瓶颈的旧叙述**已过期**——fund_flow 已补齐（见下表），历史评估的现行资产是 court 管道（见陷阱 9），旧 Phase 0 框架及其瓶颈叙述不再指导任何工作。
 - `data/reports/setup_research/phase0_report_20260708.md` 声称的 n=1762 **无法从本地数据复现**——它在别处（更深资金流历史）生成。
 - ⚠️ **引用 Phase 0 报告的结论前，先与修正后的 paper_trading_backtest 重建结果交叉验证。** 曾因盲信 Phase 0（声称 OB E=+3.42%/n=1113）对 OversoldBounce 统一加仓；全量修正后 OB 为 n=59/E=-0.13%/winrate=44%，没有可授权 alpha。
@@ -150,7 +150,7 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  →  executable -
 
 ### 样本外验证闭环（logger → backfill → panel）
 
-**为什么存在**：**2025-07 以前**完整 setup 无法重放（fund_flow PIT 下界 2025-07，court 的 `WINDOW_A_START` 即此）；**2025-07 起** `btst_court` 研究管道已能全保真重放生产 BTST（全候选、T+1 开盘+滑点、含退市者，见"研究重放资产"节）。跨周期 court 证据显示月度差异主要是 regime 差异（2026-04 +3.84% vs 2026-03 -1.62%，gate ON 口径）。⚠️ 旧文本把回放失败归因于 --auto composite 特征依赖、称"回放不出真实候选"，**已过期**：生产 BTST setup 不消费 composite（`btst_breakout.py` 无 scoring import），court 直接重放检测器。panel 前向累积仍是**样本外**（与 court 回放互补，不互相替代）。
+**为什么存在**：**2025-07 以前**没有全市场覆盖的完整重放（2025-07 是 fund_flow 的全市场覆盖下界——99% 文件自此起；2022–2024 仅约 28% 文件有数据，court `WINDOW_A_START` 按全保真口径取 2025-07 未前推，需要更早窗口须另行构建部分宇宙）；**2025-07 起** `btst_court` 研究管道已能全保真重放生产 BTST（全候选、T+1 开盘+滑点、含退市者，见"研究重放资产"节）。跨周期 court 证据显示月度差异主要是 regime 差异（gate ON 口径 2026-04 显著为正、2026-03 为负；临时聚合，复算方式见数据完整性节）。⚠️ 旧文本把回放失败归因于 --auto composite 特征依赖、称"回放不出真实候选"，**已过期**：生产 BTST setup 不消费 composite（`btst_breakout.py` 无 scoring import），court 直接重放检测器。panel 前向累积仍是**样本外**（与 court 回放互补，不互相替代）。
 
 **数据流**（两条命令天然衔接，无需人工干预）：
 
@@ -194,7 +194,7 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  →  executable -
 6. **BTST 涨停判定是板块自适应的**（2026-07-10 修复）：`limit_up_pct_for_ticker` 按前缀取阈值——主板 9.5%，科创/创业 19.5%，北交所 29.0%。旧固定 9.5% 会把 20% 板的非涨停大涨日误判为涨停。`execution_adjuster.is_limit_up_unbuyable_next_day` 也同步修复。
 7. **BTST 资金流条件在浅数据下降级**（2026-07-10 修复；2026-08-17 前提更新）：单票 `fund_flow` 历史 <5 天时「资金流 >20d 均值」无法判定 → `degraded=True`，渲染标 `⚠残缺`。fund_flow 已回填后全市场性浅数据的状况不再成立，触发面收窄为新上市/新注入票；降级机制与 operator 披露语义不变（`_MAIN_FLOW_MIN_HISTORY_DAYS=5`）。
 8. **setup-output panel 是样本外累积、不是回测**（2026-07-15 新增）：`data/reports/setup_output_panel.jsonl` 由 `--daily-action` 逐日记录 + `--auto` 回填前向收益生成，用于验证「全过滤挑 alpha」是否成立。别和 `data/paper_trading_backtest/` 的历史回测混淆。样本够大前**不要据此改策略参数**；刚上线多数 `realized=False` 属正常。跨周期裸信号已证明 2026 胜率是顺行情、非周期稳健。
-9. **完整 setup 2025-07 起可全保真重放（court），2020–2024 仍不可**（2026-08-16 更新）：旧"历史 fund_flow/industry 数据太浅 + 强度排序不可回放"（2026-07-15 记录）**已过期**——fund_flow 已补齐（99% ≥2025-07），生产 BTST 不依赖 composite（`btst_breakout.py` import 链无 scoring）。`data/research/btst_court/event_tables/event_table_v1.csv.gz`（2025-07→2026-08-15）即全候选跨周期重放产物。引用「跨周期回测」结论前仍先确认口径（裸信号 / court 全候选 / journal 成交子集）；2020–2024 全保真仍拿不到，跨周期结论以 2025-07 起 court 为准。
+9. **完整 setup 2025-07 起可全保真重放（court），2020–2024 仍不可**（2026-08-16 更新）：旧"历史 fund_flow/industry 数据太浅 + 强度排序不可回放"（2026-07-15 记录）**已过期**——fund_flow 已补齐（99% ≥2025-07），生产 BTST 不依赖 composite（`btst_breakout.py` import 链无 scoring）。`data/research/btst_court/event_tables/event_table_v1.csv.gz`（2025-07→2026-08-15）即全候选跨周期重放产物。引用「跨周期回测」结论前仍先确认口径（裸信号 / court 全候选 / journal 成交子集）；2025-07 以前的全市场全保真仍拿不到（部分票 2022 起有数据但非全宇宙），跨周期结论以 2025-07 起 court 为准。
 10. **东财 push2his 会按源 IP 行为封禁，ProxyError 有误导性**（2026-07-17 定位）：`--auto` 每日对 `push2his.eastmoney.com` 逐票数百次 fflow 请求（含 enrich 补全），东财 WAF 对本机 IP 的 `/api/qt/*` 100% 断连（TLS 正常、请求发出后 empty reply；根路径 404、push2 实时 API 200 → 定点封 API 路径，非网络故障）。报错显示 ProxyError 是因为 requests 走系统代理（Clash），**根因不在代理**。已加熔断器（`src/tools/akshare_fund_flow.py`：连续 5 次网络错误熔断 15 分钟、半开自动复位；enrich 路径同步跳过），熔断期 akshare 源由 tushare/ftshare 兜底。注意：`push2` 的 `fflow/kline/get` 只有当日实时数据，**不能**替代历史接口；分片主机 `N.push2his.*` 同被封。封禁期 ftshare 缺的日子 `close`/`main_net_pct` 补不上属预期代价，解封后（通常数小时~几天）自动恢复。
 11. **东财 `main_net_pct` 口径 ≠ 主力净流入/成交额**（2026-07-17 实测）：000504 2026-07-16 tushare 推导 -13.76%（net_mf/成交额，成交额与 daily amount 吻合）vs 东财缓存 -2.83%（分母疑为流通市值）。且 2026-07-16 批次东财行 pct 与 main_net_inflow **符号大量不一致**（如 000014 inflow=-2164万 却 pct=+26.45），该列数据质量存疑。**下游 setup（BTST/OB）只消费 `main_net_inflow` 金额，不消费 pct**，影响为零；但任何新逻辑引用 pct 前必须重新核对口径。资金流批量预取路径因此 pct 留 NaN（落盘补 0.0，同逐票 tushare 惯例）。
 12. **缓存目录不能放在 symlink 路径下**（2026-07-17 实测）：`atomic_write_csv` 的 `_open_parent` 用 `O_NOFOLLOW` 逐层打开目录组件，macOS 的 `/var`、`/tmp`（→ `/private/*`）会报 `[Errno 20] Not a directory: 'var'`。`tempfile.TemporaryDirectory()` 创建的目录就在其下——测试/bench 里构造缓存目录要用项目内路径或 pytest `tmp_path`（本仓库 basetemp 在工作区内）。生产 `data/` 用相对路径不受影响。
@@ -227,7 +227,7 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  →  executable -
 | 涨停板块判定 | `src/tools/ashare_board_utils.py`（`limit_up_pct_for_ticker`：主板9.5%/科创创业19.5%/北交所29%） |
 | 止损策略回测 | `scripts/backtest_exit_strategies.py`（对比 no_stop/固定/ATR 止损的 E[r]/Sharpe） |
 | 执行口径重放 | `scripts/rebuild_journal_execution_returns.py`（2026 journal 第三列：T+1 开盘买/T+N 开盘卖+真实成本+除权免疫；测试 `tests/test_execution_replay_core.py`；输入用 `outputs/journal_20260115_20260706_recovered.jsonl`，勿指向被 2024 重放覆盖的运行时 journal） |
-| 全候选 court 管道 | `scripts/btst_court_fetch.py` / `btst_court_build.py` / `btst_court_views.py` + `scripts/_btst_court_common.py`（全市场含退市者快照 → 生产 `BtstBreakoutSetup` 原样重放 → 执行口径事件表 `data/research/btst_court/event_tables/event_table_v1.csv.gz`，2025-07→今；**全候选月度/regime/止损评估一律用 court，不用 journal 成交子集**） |
+| 全候选 court 管道 | `scripts/btst_court_fetch.py` / `btst_court_build.py` / `btst_court_views.py` + `scripts/_btst_court_common.py`（全市场含退市者快照 → 生产 `BtstBreakoutSetup` 原样重放 → 执行口径事件表 `data/research/btst_court/event_tables/event_table_v1.csv.gz`，2025-07→2026-08-15 构建产物（不自动更新，跨期评估前先重建）；**全候选月度/regime/止损评估一律用 court，不用 journal 成交子集**） |
 | 回测框架 | `scripts/setup_research.py`（Phase 0，旧框架，已被 court 取代） |
 | 因子评分 | `src/screening/`（candidate_pool / strategy_scorer / signal_fusion / investability） |
 
