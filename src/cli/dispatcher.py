@@ -649,6 +649,13 @@ def _resolve_top(argv: list[str]) -> int | None:
     if "--exclude-st" in argv:
         filters["exclude_st"] = True
 
+    # v3 (2026-08-16): --legend 打印 --auto 候选表全量图例后退出 (日常输出只留一行提示)。
+    if "--legend" in argv:
+        from src.main import _print_table_legend_full
+
+        _print_table_legend_full()
+        return 0
+
     return run_top(top_n=top_n, filters=filters or None)
 
 

@@ -31,7 +31,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Mapping
 
-BRIEFING_SCHEMA_VERSION = 1
+BRIEFING_SCHEMA_VERSION = 2
 
 # ---------------------------------------------------------------------------
 # 预注册触发器阈值 (H5) — 改这里必须同步改 tests/test_auto_briefing.py
@@ -326,6 +326,53 @@ def _health_facts(report_payload: Mapping[str, Any] | None) -> dict:
         ),
     }
     return facts
+
+
+def _scorecard_facts(tracking_history_path: Path | None) -> dict:
+    """排序记分牌事实 (v3 展示层 2026-08-16): --auto Top10 切片自评, 绝不抛出.
+
+    与 ``auto_forward`` (全记录世代胜率, 只作触发器) 不同: scorecard 每日只取
+    分数前 10, 带切片内排序诊断 (日内 Spearman IC + 前3 vs 后7), 是 --auto
+    表格的常驻诚实先验 — 排序无正向证据时表格只能按观察清单读。
+
+    ``ic_t_str`` 存预格式化字符串 (±inf 不是合法 JSON 数值), 渲染层不得重算。
+    """
+    if tracking_history_path is None:
+        return {"available": False, "reason": "path_missing"}
+    path = Path(tracking_history_path)
+    if not path.exists():
+        return {"available": False, "reason": "tracking_missing"}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"available": False, "reason": "tracking_unreadable"}
+    records = [r for r in (raw if isinstance(raw, list) else raw.get("records", [])) if isinstance(r, Mapping)]
+    try:
+        from src.screening.scorecard import compute_scorecard, format_scorecard_lines
+
+        report = compute_scorecard(records)
+    except Exception:  # noqa: BLE001 — 事实构建绝不抛出, 降级为标记
+        return {"available": False, "reason": "scorecard_error"}
+    t = report.ic_t_stat
+    if t is None:
+        ic_t_str = "样本不足"
+    elif math.isinf(t):
+        ic_t_str = "∞" if t > 0 else "-∞"
+    else:
+        ic_t_str = f"{t:+.1f}"
+    return {
+        "available": report.available,
+        "reason": report.reason,
+        "verdict": report.verdict,
+        "n_dates": report.n_dates,
+        "window_start": report.window_start,
+        "window_end": report.window_end,
+        "win_rate": report.slice_win_rate,
+        "mean_pct": report.slice_mean_return,
+        "ic": report.mean_daily_ic,
+        "ic_t_str": ic_t_str,
+        "lines": format_scorecard_lines(report),
+    }
 
 
 def _auto_forward_facts(tracking_history_path: Path | None) -> dict:
@@ -630,6 +677,7 @@ def build_auto_briefing(
     ledger = _ledger_facts(ledger_path)
     health = _health_facts(report_payload)
     auto_forward = _auto_forward_facts(tracking_history_path)
+    ranking_scorecard = _scorecard_facts(tracking_history_path)
     prev_regime = _previous_regime(regime_history_path, str(trade_date))
 
     exceptions, checks_skipped = _evaluate_exceptions(
@@ -654,6 +702,7 @@ def build_auto_briefing(
         "ledger": ledger,
         "health": health,
         "auto_forward": auto_forward,
+        "ranking_scorecard": ranking_scorecard,
         "prev_regime": {"gate": prev_regime[0], "date": prev_regime[1]},
         "exceptions": exceptions,
         "checks_total": BRIEFING_CHECK_COUNT,
@@ -857,6 +906,21 @@ def _checks_accounting(briefing: Mapping[str, Any]) -> tuple[int, int, list[str]
     return executed, total, skipped
 
 
+def _scorecard_segment(sc: Mapping[str, Any] | None) -> str:
+    """卡片「排序」行 — 表格的常驻先验 (v3: 记分牌上移 header)。"""
+    if not isinstance(sc, Mapping) or not sc.get("available"):
+        return "自评不可用（样本不足）— 本表按观察清单使用"
+    verdict_zh = {
+        "positive": "有正向证据",
+        "negative": "⚠实测反向",
+    }.get(str(sc.get("verdict")), "无正向证据→观察清单")
+    return (
+        f"近{sc.get('n_dates')}推荐日 切片T+5 "
+        f"胜率{sc.get('win_rate'):.0%}·均值{sc.get('mean_pct'):+.1f}%·"
+        f"IC{sc.get('ic'):+.2f}(t={sc.get('ic_t_str')}) → {verdict_zh}"
+    )
+
+
 def render_briefing_card(briefing: Mapping[str, Any]) -> str:
     """渲染 CLI 决策简报卡 (纯文本, 无 ANSI — push/PDF 渲染器另走各自格式)."""
     market = briefing.get("market") or {}
@@ -864,6 +928,7 @@ def render_briefing_card(briefing: Mapping[str, Any]) -> str:
     panel = briefing.get("btst_forward") or {}
     ledger = briefing.get("ledger") or {}
     health = briefing.get("health") or {}
+    scorecard = briefing.get("ranking_scorecard") or {}
     exceptions = list(briefing.get("exceptions") or [])
     executed, checks, skipped = _checks_accounting(briefing)
 
@@ -879,6 +944,7 @@ def render_briefing_card(briefing: Mapping[str, Any]) -> str:
     lines.append("-" * 70)
     lines.append(f" 市场   {_market_segment(market)}")
     lines.append(f" 判据   {_evidence_segment(market)}")
+    lines.append(f" 排序   {_scorecard_segment(scorecard)}")
     lines.append(f" BTST   {_panel_segment(panel)} | {_baseline_segment(baseline)}")
     lines.append(f"        {_provenance_segment(baseline)}")
     lines.append(f"        {_ledger_segment(ledger)}")
@@ -918,6 +984,15 @@ def render_briefing_push_lines(briefing: Mapping[str, Any]) -> list[str]:
         )
     else:
         lines.append("- 市场状态: 数据不可用")
+    scorecard = briefing.get("ranking_scorecard") or {}
+    if scorecard.get("available"):
+        lines.append(
+            f"- 排序记分牌: 近`{scorecard.get('n_dates')}`推荐日 切片T+5 "
+            f"胜率 `{scorecard.get('win_rate'):.0%}`·均值 `{scorecard.get('mean_pct'):+.1f}%`·"
+            f"IC `{scorecard.get('ic'):+.2f}`(t=`{scorecard.get('ic_t_str')}`)"
+        )
+    else:
+        lines.append("- 排序记分牌: 样本不足，本表按观察清单使用")
     lines.append(f"- BTST {_panel_segment(panel, words=True)} | {_baseline_segment(baseline)}")
     lines.append(f"- {_provenance_segment(baseline)}")
     if ledger.get("available"):

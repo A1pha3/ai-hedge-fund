@@ -9,8 +9,12 @@ from pathlib import Path
 import pytest
 
 
-def test_check_sector_concentration_high_concentration_warns() -> None:
-    """When 5/10 of top picks are in the same sector, a warning should be emitted."""
+def test_check_sector_concentration_at_cap_warns() -> None:
+    """v3 (2026-08-16): 同行业 >= 3 只即警示 — 与选股 sector cap=3 对齐。
+
+    旧 ratio>0.4 语义在 cap=3 生效时永不触发 (4/10 才达阈值, cap 已挡在 3),
+    是死代码; 新语义在触及上限 (3/10 = 30% 单一行业敞口) 时即披露。
+    """
     from src.main import _check_sector_concentration
 
     class _MockItem:
@@ -21,22 +25,19 @@ def test_check_sector_concentration_high_concentration_warns() -> None:
         _MockItem("银行"),
         _MockItem("银行"),
         _MockItem("银行"),
-        _MockItem("银行"),
-        _MockItem("银行"),
-        _MockItem("电子"),
         _MockItem("电子"),
         _MockItem("医药"),
         _MockItem("汽车"),
         _MockItem("化工"),
     ]
-    warnings = _check_sector_concentration(top_results, threshold=0.4)
+    warnings = _check_sector_concentration(top_results)
     assert len(warnings) == 1
     assert "银行" in warnings[0]
-    assert "50%" in warnings[0]
+    assert "3/7" in warnings[0]
 
 
-def test_check_sector_concentration_no_warning_when_diverse() -> None:
-    """Diverse top picks should not trigger any warning."""
+def test_check_sector_concentration_below_threshold_silent() -> None:
+    """每行业 <3 只时不警示 (多样化组合)."""
     from src.main import _check_sector_concentration
 
     class _MockItem:
@@ -44,19 +45,29 @@ def test_check_sector_concentration_no_warning_when_diverse() -> None:
             self.industry_sw = industry_sw
 
     top_results = [
+        _MockItem("银行"),
         _MockItem("银行"),
         _MockItem("电子"),
         _MockItem("医药"),
         _MockItem("汽车"),
         _MockItem("化工"),
         _MockItem("地产"),
-        _MockItem("食品"),
-        _MockItem("能源"),
-        _MockItem("钢铁"),
-        _MockItem("传媒"),
     ]
-    warnings = _check_sector_concentration(top_results, threshold=0.4)
-    assert warnings == []
+    assert _check_sector_concentration(top_results) == []
+
+
+def test_check_sector_concentration_relaxed_cap_disclosed() -> None:
+    """pool 不足放宽 cap 时 >3 只同行业 → 计数如实入警示文案."""
+    from src.main import _check_sector_concentration
+
+    class _MockItem:
+        def __init__(self, industry_sw: str) -> None:
+            self.industry_sw = industry_sw
+
+    top_results = [_MockItem("银行") for _ in range(5)] + [_MockItem("电子")]
+    warnings = _check_sector_concentration(top_results)
+    assert len(warnings) == 1
+    assert "5/6" in warnings[0]
 
 
 def test_check_sector_concentration_empty_industry_skipped() -> None:
@@ -68,8 +79,7 @@ def test_check_sector_concentration_empty_industry_skipped() -> None:
             self.industry_sw = industry_sw
 
     top_results = [_MockItem(""), _MockItem(""), _MockItem(""), _MockItem("")]
-    warnings = _check_sector_concentration(top_results, threshold=0.4)
-    assert warnings == []
+    assert _check_sector_concentration(top_results) == []
 
 
 def test_run_explain_finds_ticker_in_latest_report(tmp_path: Path, capsys) -> None:

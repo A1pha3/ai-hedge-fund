@@ -204,6 +204,8 @@ def test_quiet_day_card_shape(tmp_path: Path) -> None:
     assert "regime_gate=normal" in card
     # 判据: 结论附可证伪输入
     assert "上涨占比 0.42" in card
+    assert "排序" in card  # v3: 记分牌常驻 header (fixture tracking 无分数 → 样本不足态)
+    assert "观察清单" in card
     assert "涨/跌停 96/30" in card
     assert "ADX 28.3" in card
     assert "北向连续 2 日流出" in card
@@ -232,11 +234,52 @@ def test_quiet_day_card_shape(tmp_path: Path) -> None:
 
 
 def test_steady_state_line_cap(tmp_path: Path) -> None:
-    """安静日卡片 ≤ 9 行内容 (含标题/不含边框), 异常详情行不计入稳态."""
+    """安静日卡片 ≤ 10 行内容 (含标题/不含边框), 异常详情行不计入稳态.
+
+    2026-08-16 v3: 9→10 — 「排序」记分牌行是刻意新增的稳态席位 (表格的
+    常驻先验), 不是回归。
+    """
     card = render_briefing_card(_build(tmp_path))
     lines = card.splitlines()
     content = [ln for ln in lines if ln.strip("=─- ") != ""]
-    assert len(content) <= 9, f"card too tall: {len(content)} content lines"
+    assert len(content) <= 10, f"card too tall: {len(content)} content lines"
+
+
+def test_scorecard_segment_states(tmp_path: Path) -> None:
+    """排序记分牌三种渲染态: 可用(带数字+verdict)、样本不足、payload 缺失。"""
+    # 可用态: 12 个推荐日 × 10 只, 分数与收益单调同向 → IC=+1 → 有正向证据
+    mono = [6.0, 5.0, 4.0, 3.0, 2.0, 1.0, -1.0, -2.0, -3.0, -4.0]
+    tracking: list[dict] = []
+    for d in range(12):
+        for i in range(10):
+            tracking.append(
+                {
+                    "recommended_date": f"202607{d + 1:02d}",
+                    "recommendation_score": 0.40 - 0.01 * i,
+                    "next_5day_return": mono[i],
+                }
+            )
+    payload = _build(tmp_path, tracking=tracking)
+    card = render_briefing_card(payload)
+    assert "排序" in card and "有正向证据" in card
+    assert "胜率60%" in card and "IC+1.00" in card
+    assert payload["ranking_scorecard"]["available"] is True
+    assert payload["ranking_scorecard"]["verdict"] == "positive"
+    # ic_t_str 是预格式化字符串 (±inf 不进 JSON 数值)
+    assert payload["ranking_scorecard"]["ic_t_str"] == "∞"
+    push = render_briefing_push_lines(payload)
+    assert any("排序记分牌" in ln and "胜率" in ln for ln in push)
+
+    # 样本不足态 (默认 fixture: tracking 无 recommendation_score)
+    insufficient = render_briefing_card(_build(tmp_path))
+    assert "样本不足" in insufficient
+    push_insufficient = render_briefing_push_lines(_build(tmp_path))
+    assert any("样本不足" in ln for ln in push_insufficient)
+
+    # payload 缺失 ranking_scorecard → 渲染降级, 不崩溃 (旧 payload 兼容)
+    legacy = _build(tmp_path, tracking=tracking)
+    legacy.pop("ranking_scorecard")
+    assert "观察清单" in render_briefing_card(legacy)
 
 
 def test_heartbeat_counts_total_checks(tmp_path: Path) -> None:

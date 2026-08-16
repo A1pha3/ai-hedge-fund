@@ -204,7 +204,7 @@ def test_main_top_display_uses_report_identity_and_supplied_tracking(
         "model_validate",
         lambda value: object(),
     )
-    monkeypatch.setattr(main, "_print_score_decomposition", lambda *args: None)
+    # v3 (2026-08-16): 评分构成块已删; 瀑布默认收起 (此 patch 防意外打印)
     monkeypatch.setattr(main, "_print_score_waterfall", lambda *args: None)
     monkeypatch.setattr(
         expected_return,

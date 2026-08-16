@@ -456,6 +456,10 @@ def format_rotation_block(
         for sig in strong:
             arrow = "↑"
             base_info = f"  {sig.rank:>2}. {sig.industry_name:<8s} {arrow} {sig.momentum_score:+6.1f}  ({sig.candidate_count}只候选, avg score_b: {sig.avg_score_b:+.2f})"
+            # v3 (2026-08-16): 确定性背离标记 — 价格动量强但自家信号为负,
+            # 两列口径独立时组合读法必须显式给出 (如 食品饮料 ↑16.1 / -0.05)。
+            if sig.momentum_score > 0 and sig.avg_score_b < 0:
+                base_info += " ⚠背离(价格强·信号弱)"
             if show_history and has_history and sig.history_bonus > 0:
                 history_info = f" [历史: 出现率{sig.history_presence_ratio:.0%}, 加分{sig.history_bonus:+.1f}]"
                 lines.append(base_info + history_info)
@@ -469,6 +473,8 @@ def format_rotation_block(
         for idx, sig in enumerate(weak, 1):
             arrow = "↓"
             base_info = f"  {idx:>2}. {sig.industry_name:<8s} {arrow} {sig.momentum_score:+6.1f} ({sig.candidate_count}只候选, avg score_b: {sig.avg_score_b:+.2f})"
+            if sig.momentum_score < 0 and sig.avg_score_b > 0:
+                base_info += " ⚠背离(价格弱·信号强)"
             if show_history and has_history and sig.history_bonus > 0:
                 history_info = f" [历史: 出现率{sig.history_presence_ratio:.0%}, 加分{sig.history_bonus:+.1f}]"
                 lines.append(base_info + history_info)
@@ -478,6 +484,6 @@ def format_rotation_block(
     if lines:
         # 口径注解: "强势行业 avg score_b +0.00" 类读感的解药 — 两个分数口径独立.
         lines.append("")
-        lines.append("(动量分=行业价格相对强度; avg score_b=池内候选平均信号分, 两者口径独立)")
+        lines.append("(动量分=行业价格相对强度; avg score_b=池内候选平均信号分, 两者口径独立; 标注⚠=两口径方向背离)")
 
     return "\n".join(lines) + "\n"

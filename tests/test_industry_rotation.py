@@ -805,3 +805,39 @@ def test_broad_input_differentiates_strong_and_weak_industries():
     # Strongest should be 电子 (highest momentum), weakest should include 房地产
     assert strong[0].industry_name == "电子"
     assert weak[0].industry_name == "房地产"
+
+
+class TestRotationDiscordanceFlag:
+    """v3 (2026-08-16): 确定性背离标记 — 动量与 avg score_b 方向相反时显式给出。"""
+
+    def _signal(self, name: str, momentum: float, avg_score_b: float) -> IndustrySignal:
+        return IndustrySignal(
+            industry_name=name,
+            momentum_score=momentum,
+            avg_score_b=avg_score_b,
+            candidate_count=5,
+            rank=1,
+        )
+
+    def test_strong_price_negative_signal_flags_discordance(self):
+        block = format_rotation_block(
+            [self._signal("食品饮料", 16.1, -0.05), self._signal("医药生物", 24.3, 0.20)],
+            show_history=False,
+        )
+        assert "⚠背离(价格强·信号弱)" in block
+        # 一致的行业不带标记
+        assert "医药生物" in block
+
+    def test_weak_price_positive_signal_flags_discordance(self):
+        block = format_rotation_block(
+            [self._signal("银行", -4.1, 0.12), self._signal("军工", -3.2, -0.10)],
+            show_history=False,
+        )
+        assert "⚠背离(价格弱·信号强)" in block
+
+    def test_concordant_no_flag(self):
+        block = format_rotation_block(
+            [self._signal("医药生物", 24.3, 0.20)], show_history=False
+        )
+        # 口径注解行含 "背离" 说明, 但一致的行业行不携带 ⚠ 标记
+        assert "⚠背离" not in block

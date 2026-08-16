@@ -1,8 +1,9 @@
-"""--auto 表格级展示契约测试 (F1 池胜率列 / F2 numparse / F8 日期与市场状态)
+"""--auto 表格级展示契约测试 (v3 桶分组版, 2026-08-16)
 + --daily-action 成交价缺失守卫 (F10).
 
-行级契约见 test_score_decomposition.py::TestAutoScreeningTableCompositeColumn;
-本文件钉住整张表的端到端渲染.
+行级契约见 test_score_decomposition.py::TestAutoScreeningTableRowV3;
+本文件钉住整张表的端到端渲染: 桶头钱数、记分牌常驻、numparse、
+无信号策略与 legacy header 形态.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from src.main import (
     _print_auto_screening_table,
 )
 from src.screening.models import FusedScore, StrategySignal
+from src.screening.scorecard import BucketStats
 
 
 def _item(ticker: str = "000001", score_b: float = 0.357) -> FusedScore:
@@ -36,6 +38,24 @@ def _item(ticker: str = "000001", score_b: float = 0.357) -> FusedScore:
     )
 
 
+def _bucket_stats() -> dict[str, BucketStats]:
+    # score_b=0.357 → 桶 较低 (0.3-0.4)
+    return {
+        "较低 (0.3-0.4)": BucketStats(
+            label="较低 (0.3-0.4)",
+            window_start="20260226",
+            window_end="20260814",
+            n_records=431,
+            n_mature=398,
+            win_rate=0.48,
+            mean_return=0.3,
+            avg_win=9.9,
+            avg_loss=-8.6,
+            payoff=1.1,
+        )
+    }
+
+
 def _render_table(capsys: pytest.CaptureFixture[str]) -> str:
     _print_auto_screening_table(
         "20260814",
@@ -46,24 +66,58 @@ def _render_table(capsys: pytest.CaptureFixture[str]) -> str:
         Path("data/reports/auto_screening_20260814.json"),
         consecutive_recommendations=[],
         composite_by_ticker={"000001": 0.457},
-        bucket_stats={"000001": (0.4825, 428)},
+        bucket_display_stats=_bucket_stats(),
+        scorecard_lines=[
+            "排序记分牌 近60个推荐日（20260226→20260807）: Top10 切片 T+5 胜率 48% · 均值 -0.5%",
+            "→ 排序近期无正向证据，本表按观察清单使用；实际 BUY 见 --daily-action",
+        ],
     )
     return capsys.readouterr().out
 
 
-def test_table_shows_bucket_winrate_as_primary_sort_key(capsys: pytest.CaptureFixture[str]) -> None:
-    """F1: 排序主键 (池胜率) 必须入表, 图例必须指向它 — 否则综合分非单调像 bug."""
+def test_table_bucket_header_carries_money_stats(capsys: pytest.CaptureFixture[str]) -> None:
+    """F1 (v3): 排序主键 (桶胜率) 上桶头 — 胜率/均值/盈亏笔均/赔率一次渲染,
+    图例指向桶头; 行内不再逐行重复桶级数字."""
     output = _render_table(capsys)
-    assert "池胜率" in output
-    assert "48%·428" in output
-    assert "排序看「池胜率」" in output
+    assert "较低 (0.3-0.4)" in output
+    assert "胜率 48%" in output
+    assert "赔率 1.1" in output
+    assert "盈笔均 +9.9%" in output and "亏笔均 -8.6%" in output
+    assert "桶头" in output  # 一行图例指向桶头语义
+
+
+def test_table_scorecard_lines_when_no_briefing(capsys: pytest.CaptureFixture[str]) -> None:
+    """v3: briefing 缺席 (legacy header 回退) 时记分牌仍常驻 — 它是整张表的先验."""
+    output = _render_table(capsys)
+    assert "排序记分牌" in output
+    assert "观察清单" in output
+
+
+def test_table_bucket_header_null_state(capsys: pytest.CaptureFixture[str]) -> None:
+    """空态矩阵: 桶无追踪数据 → 确定性披露行, 不编造数字."""
+    _print_auto_screening_table(
+        "20260814",
+        [_item()],
+        SimpleNamespace(state_type="mixed", position_scale=1.0),
+        300,
+        10,
+        Path("data/reports/auto_screening_20260814.json"),
+        consecutive_recommendations=[],
+        bucket_display_stats={},
+    )
+    output = capsys.readouterr().out
+    assert "较低 (0.3-0.4)" in output
+    assert "不提供估计" in output
+    # 桶头无点估计 ("T+5 胜率" 只在有钱数的桶头出现; 图例的 "T+5 实证" 不受影响)
+    assert "T+5 胜率" not in output
 
 
 def test_table_preserves_explicit_number_formatting(capsys: pytest.CaptureFixture[str]) -> None:
-    """F2: tabulate numparse 不得吃掉显式格式 — "+0.3570" 的符号与尾零保留."""
+    """F2 (v3): tabulate numparse 不得吃掉显式格式 — 综合分 "+0.46" 的符号保留;
+    同档 tie-break 用 2 位小数 (4 位是假精度)."""
     output = _render_table(capsys)
-    assert "+0.3570" in output
-    assert "0.357 " not in output  # 尾零被 %g 吃掉的旧形态
+    assert "+0.46" in output
+    assert "0.457" not in output
 
 
 def test_table_neutral_signal_has_no_confidence_number(capsys: pytest.CaptureFixture[str]) -> None:

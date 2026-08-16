@@ -1,8 +1,15 @@
-"""Tests for _print_score_decomposition (O-2: 推荐排序策略透明化)."""
+"""Tests for the --auto 表格行构造器与因子瀑布 (v3 桶分组版, 2026-08-16).
+
+v3 重构后行内不再有「信号分/池胜率/决策」列 — 桶级统计上桶头 (scorecard
+模块的 ``format_bucket_header``), 决策语义由 header 记分牌承担。本文件钉住:
+- 新 8 列契约与综合分 (同档 tie-break) 渲染;
+- gap_to_limit ≤ 1% 的次日可执行性提示;
+- 因子瀑布严格加性 (att/stab 收标题行)。
+"""
 
 import pytest
 
-from src.main import _build_auto_screening_table_row, _print_score_decomposition
+from src.main import _build_auto_screening_table_row
 from src.screening.models import FusedScore, StrategySignal
 
 
@@ -27,179 +34,6 @@ def _make_fused(
         weights_used=weights or {"trend": 0.4, "mean_reversion": 0.2, "fundamental": 0.3, "event_sentiment": 0.1},
         arbitration_applied=arbitration or [],
     )
-
-
-class TestPrintScoreDecomposition:
-    """O-2: --auto CLI 表格下方的评分构成摘要块。"""
-
-    def test_empty_results_no_crash(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """空结果不崩溃。"""
-        _print_score_decomposition([], {})
-        output = capsys.readouterr().out
-        assert output == ""
-
-    def test_single_result_prints_ticker_and_score(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """单个结果输出 ticker 和 score_b。"""
-        item = _make_fused(ticker="300750", score_b=0.55)
-        _print_score_decomposition([item], {})
-        output = capsys.readouterr().out
-        assert "300750" in output
-        assert "+0.5500" in output
-
-    def test_strategy_contributions_shown(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """各策略贡献值被计算并显示。"""
-        item = _make_fused(
-            ticker="000001",
-            weights={"trend": 0.5, "mean_reversion": 0.2, "fundamental": 0.2, "event_sentiment": 0.1},
-            signals={
-                "trend": StrategySignal(direction=1, confidence=80.0, completeness=1.0, sub_factors={}),
-                "fundamental": StrategySignal(direction=-1, confidence=50.0, completeness=1.0, sub_factors={}),
-            },
-        )
-        _print_score_decomposition([item], {})
-        output = capsys.readouterr().out
-        # trend contribution = 0.5 * 1 * 0.8 * 1.0 = 0.400
-        assert "T:↑0.400" in output
-        # fundamental contribution = 0.2 * (-1) * 0.5 * 1.0 = -0.100
-        assert "F:↓0.100" in output
-
-    def test_attention_composite_shown(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """attention_composite 从 metrics 中提取并显示。"""
-        item = _make_fused(ticker="000002", metrics={"attention_composite": 0.75})
-        _print_score_decomposition([item], {})
-        output = capsys.readouterr().out
-        assert "att:0.75" in output
-
-    def test_stability_bonus_from_consecutive_lookup(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """stability_bonus 从 consecutive_lookup 中提取。"""
-        item = _make_fused(ticker="000003")
-        lookup = {"000003": {"consecutive_days": 3, "stability_bonus": 10.0}}
-        _print_score_decomposition([item], lookup)
-        output = capsys.readouterr().out
-        assert "stab:10.0" in output
-
-    def test_consensus_bonus_star(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """consensus_bonus 标记为 ★。"""
-        item = _make_fused(ticker="000004", arbitration=["consensus_bonus"])
-        _print_score_decomposition([item], {})
-        output = capsys.readouterr().out
-        assert "★" in output
-
-    def test_no_consensus_no_star(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """无 consensus_bonus 不显示 ★。"""
-        item = _make_fused(ticker="000005", arbitration=["risk_off"])
-        _print_score_decomposition([item], {})
-        output = capsys.readouterr().out
-        # Should have space, not star
-        lines = [l for l in output.split("\n") if "000005" in l]  # noqa: E741
-        assert len(lines) == 1
-        assert "★" not in lines[0]
-
-    def test_missing_strategy_shows_dash(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """缺失的策略信号整段省略 (零信息噪声), 不再占位 "MR:—"."""
-        item = _make_fused(
-            ticker="000006",
-            weights={"trend": 0.5, "mean_reversion": 0.5},
-            signals={
-                "trend": StrategySignal(direction=1, confidence=60.0, completeness=1.0, sub_factors={}),
-            },
-        )
-        _print_score_decomposition([item], {})
-        output = capsys.readouterr().out
-        assert "T:↑" in output
-        assert "MR:" not in output
-        assert "F:" not in output
-        assert "E:" not in output
-
-    def test_neutral_strategy_omitted(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """direction==0 (无信号) 的策略省略 — "MR:—0.000" 是自相矛盾的每日噪声."""
-        item = _make_fused(
-            ticker="000009",
-            signals={
-                "trend": StrategySignal(direction=1, confidence=45.0, completeness=1.0, sub_factors={}),
-                "mean_reversion": StrategySignal(direction=0, confidence=59.8, completeness=1.0, sub_factors={}),
-            },
-        )
-        _print_score_decomposition([item], {})
-        output = capsys.readouterr().out
-        assert "T:↑" in output
-        assert "MR:" not in output
-
-    def test_score_color_high(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """score_b >= 0.35 时使用绿色（ANSI escape）。"""
-        item = _make_fused(ticker="000007", score_b=0.45)
-        _print_score_decomposition([item], {})
-        output = capsys.readouterr().out
-        # ANSI green escape sequence present
-        assert "\x1b[32m" in output
-
-    def test_score_color_negative(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """score_b < 0 时使用红色（ANSI escape）。"""
-        item = _make_fused(ticker="000008", score_b=-0.30)
-        _print_score_decomposition([item], {})
-        output = capsys.readouterr().out
-        assert "\x1b[31m" in output
-
-
-class TestAutoScreeningTableCompositeColumn:
-    """表格列契约: 「池胜率」(profit_aware 排序主键, 2026-07-18 起默认) 与
-    「综合分」(同档 tie-break) 都必须显示, 否则非单调的综合分列看起来像排序 bug
-    (8/14 实证: 第 8 行综合分 0.58 高于第 1 行 0.47, 主键池胜率不可见)."""
-
-    def test_row_has_composite_value(self):
-        """The row list includes a composite_score cell when provided."""
-        item = _make_fused(ticker="000001", score_b=0.50)
-        row = _build_auto_screening_table_row(
-            idx=1, item=item, consecutive_lookup={}, decay_map=None, composite_score=0.4823
-        )
-        # 11 columns: #, Ticker, Industry, Score B, 池胜率, Composite, ...
-        assert len(row) == 11
-        # Composite is the 6th element (index 5)
-        assert "0.4823" in row[5]
-
-    def test_row_shows_dash_when_composite_missing(self):
-        """When composite_score is None, the Composite cell shows a dash."""
-        item = _make_fused(ticker="000001", score_b=0.50)
-        row = _build_auto_screening_table_row(
-            idx=1, item=item, consecutive_lookup={}, decay_map=None, composite_score=None
-        )
-        assert "—" in row[5]
-
-    def test_row_has_bucket_winrate_value(self):
-        """池胜率单元格: 胜率百分比 + 样本数."""
-        item = _make_fused(ticker="000001", score_b=0.50)
-        row = _build_auto_screening_table_row(
-            idx=1, item=item, consecutive_lookup={}, decay_map=None,
-            composite_score=0.4823, bucket_stat=(0.4825, 428),
-        )
-        assert "48%·428" in row[4]
-
-    def test_row_shows_dash_when_bucket_winrate_missing(self):
-        """无桶证据时池胜率单元格显示 — (未知证据, 不编造)."""
-        item = _make_fused(ticker="000001", score_b=0.50)
-        row = _build_auto_screening_table_row(
-            idx=1, item=item, consecutive_lookup={}, decay_map=None,
-            composite_score=0.4823, bucket_stat=(None, 0),
-        )
-        assert row[4] == "—"
-
-    def test_neutral_signal_hides_confidence_number(self):
-        """direction==0 的策略只显示 "—" — "—60" (无信号却带信心数) 自相矛盾."""
-        item = _make_fused(
-            ticker="000001", score_b=0.50,
-            signals={
-                "trend": StrategySignal(direction=1, confidence=45.0, completeness=1.0, sub_factors={}),
-                "mean_reversion": StrategySignal(direction=0, confidence=59.8, completeness=1.0, sub_factors={}),
-            },
-        )
-        row = _build_auto_screening_table_row(
-            idx=1, item=item, consecutive_lookup={}, decay_map=None, composite_score=None
-        )
-        signal_cell = row[7]
-        assert "↑45" in signal_cell
-        assert "—60" not in signal_cell
-        # MR 槽位只剩裸 "—"
-        assert signal_cell.split()[1] == "—"
 
 
 class TestScoreWaterfallAdditiveOnly:
@@ -248,3 +82,80 @@ class TestScoreWaterfallAdditiveOnly:
         assert "+0.1000" in output
         assert "score_b" in output
         assert "+0.3300" in output
+
+
+class TestAutoScreeningTableRowV3:
+    """v3 8 列契约: #, 代码 名称, 行业, 综合分, 信号, 连续, 衰减, 提示."""
+
+    def test_row_has_eight_columns(self):
+        item = _make_fused(ticker="000001", score_b=0.50)
+        row = _build_auto_screening_table_row(
+            idx=1, item=item, consecutive_lookup={}, decay_map=None, composite_score=0.4823
+        )
+        assert len(row) == 8
+        # Composite is the 4th element (index 3) — 同档 tie-break 键
+        assert "+0.48" in row[3]
+
+    def test_composite_two_decimals_not_four(self):
+        """同档内 score 差异是 tie-break 噪声 — 4 位小数是假精度 (v3)."""
+        item = _make_fused(ticker="000001", score_b=0.50)
+        row = _build_auto_screening_table_row(
+            idx=1, item=item, consecutive_lookup={}, decay_map=None, composite_score=0.4823
+        )
+        assert "0.4823" not in "".join(row)
+
+    def test_row_shows_dash_when_composite_missing(self):
+        item = _make_fused(ticker="000001", score_b=0.50)
+        row = _build_auto_screening_table_row(
+            idx=1, item=item, consecutive_lookup={}, decay_map=None, composite_score=None
+        )
+        assert "—" in row[3]
+
+    def test_gap_to_limit_flag_at_threshold(self):
+        """gap_to_limit ≤ 0.01 (距涨停 <1%) → ⚠距涨停提示 (T+1 买不进风险)."""
+        item = _make_fused(ticker="688498", score_b=0.40, metrics={"gap_to_limit": 0.005})
+        row = _build_auto_screening_table_row(
+            idx=1, item=item, consecutive_lookup={}, decay_map=None, composite_score=None
+        )
+        assert "⚠距涨停<1%" in row[7]
+
+    def test_gap_to_limit_no_flag_when_far(self):
+        item = _make_fused(ticker="000001", score_b=0.40, metrics={"gap_to_limit": 0.05})
+        row = _build_auto_screening_table_row(
+            idx=1, item=item, consecutive_lookup={}, decay_map=None, composite_score=None
+        )
+        assert "距涨停" not in row[7]
+
+    def test_gap_to_limit_missing_metric_no_flag(self):
+        """metrics 无 gap_to_limit → 不提示 (未知不编造)."""
+        item = _make_fused(ticker="000001", score_b=0.40, metrics={})
+        row = _build_auto_screening_table_row(
+            idx=1, item=item, consecutive_lookup={}, decay_map=None, composite_score=None
+        )
+        assert "距涨停" not in row[7]
+
+    def test_arbitration_label_in_hints(self):
+        item = _make_fused(ticker="000004", arbitration=["short_hold", "consensus_bonus"])
+        row = _build_auto_screening_table_row(
+            idx=1, item=item, consecutive_lookup={}, decay_map=None, composite_score=None
+        )
+        assert "短线持有" in row[7]
+        assert "★" in row[7]
+
+    def test_neutral_signal_hides_confidence_number(self):
+        """direction==0 的策略只显示 "—" — "—60" (无信号却带信心数) 自相矛盾."""
+        item = _make_fused(
+            ticker="000001", score_b=0.50,
+            signals={
+                "trend": StrategySignal(direction=1, confidence=45.0, completeness=1.0, sub_factors={}),
+                "mean_reversion": StrategySignal(direction=0, confidence=59.8, completeness=1.0, sub_factors={}),
+            },
+        )
+        row = _build_auto_screening_table_row(
+            idx=1, item=item, consecutive_lookup={}, decay_map=None, composite_score=None
+        )
+        signal_cell = row[4]
+        assert "↑45" in signal_cell
+        assert "—60" not in signal_cell
+        # MR 槽位只剩裸 "—"
+        assert signal_cell.split()[1] == "—"
