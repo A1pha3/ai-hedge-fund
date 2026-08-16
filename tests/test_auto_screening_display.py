@@ -2,7 +2,7 @@
 + --daily-action 成交价缺失守卫 (F10).
 
 行级契约见 test_score_decomposition.py::TestAutoScreeningTableRowV3;
-本文件钉住整张表的端到端渲染: 桶头钱数、记分牌常驻、numparse、
+本文件钉住整张表的端到端渲染: 档头钱数、记分牌常驻、numparse、
 无信号策略与 legacy header 形态.
 """
 
@@ -79,11 +79,13 @@ def test_table_bucket_header_carries_money_stats(capsys: pytest.CaptureFixture[s
     """F1 (v3): 排序主键 (桶胜率) 上桶头 — 胜率/均值/盈亏笔均/赔率一次渲染,
     图例指向桶头; 行内不再逐行重复桶级数字."""
     output = _render_table(capsys)
-    assert "较低 (0.3-0.4)" in output
+    assert "信号分档 0.3-0.4" in output  # 冷读反馈: 区间+名次, 不出现定性标签
+    assert "本表第 1 名" in output  # 档归属的名次区间
+    assert "较低" not in output
     assert "胜率 48%" in output
     assert "赔率 1.1" in output
     assert "盈笔均 +9.9%" in output and "亏笔均 -8.6%" in output
-    assert "桶头" in output  # 一行图例指向桶头语义
+    assert "档头" in output  # 图例指向档头语义
 
 
 def test_table_scorecard_lines_when_no_briefing(capsys: pytest.CaptureFixture[str]) -> None:
@@ -106,7 +108,7 @@ def test_table_bucket_header_null_state(capsys: pytest.CaptureFixture[str]) -> N
         bucket_display_stats={},
     )
     output = capsys.readouterr().out
-    assert "较低 (0.3-0.4)" in output
+    assert "信号分档 0.3-0.4" in output
     assert "不提供估计" in output
     # 桶头无点估计 ("T+5 胜率" 只在有钱数的桶头出现; 图例的 "T+5 实证" 不受影响)
     assert "T+5 胜率" not in output

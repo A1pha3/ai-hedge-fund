@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import math
+import re
 import statistics
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
@@ -383,24 +384,34 @@ def format_scorecard_lines(report: ScorecardReport) -> list[str]:
     return [line1, line2]
 
 
-def format_bucket_header(stats: BucketStats) -> str:
-    """桶头一行 (纯文本, 无 ANSI)。空态矩阵: 无窗口 / 无成熟 / 少样本 / 可信。"""
+def format_bucket_header(stats: BucketStats, *, rank_note: str | None = None) -> str:
+    """档头一行 (纯文本, 无 ANSI)。空态矩阵: 无窗口 / 无成熟 / 少样本 / 可信。
+
+    展示术语 (冷读反馈 2026-08-16): 内部 SCORE_BUCKETS 标签 ("较低 (0.3-0.4)")
+    对读者是黑话 + 悖论 — 定性词"较低"会被读成"这票差", 实际它只描述信号分
+    绝对区间 (全池分数普遍 <0.5, 0.3-0.4 即常见高位), 且表内已无信号分列,
+    "(0.3-0.4)" 指代悬空。展示层只报**区间 + 本表名次归属** (rank_note 由
+    表格渲染层传入), 定性标签留在数据层不进显示。
+    """
+    band = re.search(r"\(([^)]+)\)", stats.label)
+    band_text = f"信号分档 {band.group(1)}" if band else f"信号分档（{stats.label}）"
+    rank_seg = f"（{rank_note}）" if rank_note else ""
     window_seg = (
         f"（{stats.window_start}→{stats.window_end}）"
         if stats.window_start and stats.window_end
         else ""
     )
     if stats.n_records == 0:
-        return f"── 桶 {stats.label} · 无追踪数据，不提供估计"
+        return f"── {band_text}{rank_seg} · 无追踪数据，不提供估计"
     if stats.n_mature < POINT_ESTIMATE_MIN_MATURE:
         return (
-            f"── 桶 {stats.label} · 近窗口{window_seg} "
+            f"── {band_text}{rank_seg} · 同档近60推荐日{window_seg} "
             f"成熟样本不足（{stats.n_mature}<{POINT_ESTIMATE_MIN_MATURE}），不提供点估计"
         )
     payoff_seg = f"赔率 {stats.payoff:.1f}" if stats.payoff is not None else "赔率 —"
     low_sample = " ⚠少样本" if stats.n_mature < TRUSTED_MIN_MATURE else ""
     return (
-        f"── 桶 {stats.label} · 近窗口{window_seg} {stats.n_records}笔（成熟{stats.n_mature}）· "
+        f"── {band_text}{rank_seg} · 同档近60推荐日{window_seg} {stats.n_records}笔（成熟{stats.n_mature}）· "
         f"T+5 胜率 {_fmt_pct(stats.win_rate)} · 均值 {_fmt_pct(stats.mean_return, signed=True)}（未扣费） · "
         f"盈笔均 {_fmt_pct(stats.avg_win, signed=True)} 亏笔均 {_fmt_pct(stats.avg_loss, signed=True)} · "
         f"{payoff_seg}{low_sample}"

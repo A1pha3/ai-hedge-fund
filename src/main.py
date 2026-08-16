@@ -2728,16 +2728,16 @@ def _build_auto_screening_table_row(
 
 
 def _print_table_legend() -> None:
-    """表格下方图例 (两行) — 完整版收进 ``--top --legend`` (v3 冷读收口 2026-08-16)。"""
+    """表格下方图例 (两行) — 完整版收进 ``--top --legend`` (冷读反馈迭代 2026-08-16)。"""
     from colorama import Fore, Style
 
     print(
-        f"  {Fore.WHITE}怎么看: 桶头=同档近60推荐日 T+5 毛实证(胜率·均值·赔率, 未扣费) · "
-        f"记分牌 verdict=信任档(无正向证据→只读不跟){Style.RESET_ALL}"
+        f"  {Fore.WHITE}怎么看: 行按「信号分」区间分组 (档头注明本表名次区间), "
+        f"档头=同档近60推荐日 T+5 毛实证(胜率·均值·赔率, 未扣费){Style.RESET_ALL}"
     )
     print(
-        f"  {Fore.WHITE}「综合分」=同档排序 tie-break · ⚠=确定性阈值提示 · "
-        f"完整图例: uv run python src/main.py --top --legend{Style.RESET_ALL}"
+        f"  {Fore.WHITE}记分牌 verdict=信任档(无正向证据→只读不跟) · 「综合分」=同档排序 tie-break · "
+        f"⚠=确定性阈值提示 · 完整图例: uv run python src/main.py --top --legend{Style.RESET_ALL}"
     )
 
 
@@ -2747,16 +2747,18 @@ def _print_table_legend_full() -> None:
 
     lines = [
         "完整图例 (--auto 候选表):",
-        "  · 桶分组: 同一 SCORE_BUCKETS 档位的行排在一起, 档位由 score_b 划定;",
-        "    桶头一行是同档近 60 推荐日的 T+5 实证: 胜率 · 均值 · 盈笔均/亏笔均 · 赔率(盈笔均/|亏笔均|)。",
+        "  · 分组: 行按「信号分」(score_b, 四策略融合的信号强度, 0-1) 的区间归档, 同档名次相邻;",
+        "    档头注明该档覆盖的本表名次 (如 第 1-7 名)。区间标签描述的是**分数绝对区间** —",
+        "    全池分数普遍 <0.5, 0.3-0.4 已是常见高位; 它不是排名, 更不是好坏判语。",
+        "    档头一行是同档近 60 推荐日的历史实证: 胜率 · 均值 · 盈笔均/亏笔均 · 赔率(盈笔均/|亏笔均|)。",
         "    成熟样本 <5 不给点估计; 5-19 带 ⚠少样本; ≥20 视为可信 (与 BUY-gate backing_sample 纪律对齐)。",
-        "  · 口径 (冷读收口 2026-08-16): 桶头与记分牌是 **T+5 诊断口径、毛收益(未扣费)** —",
+        "  · 口径 (冷读收口 2026-08-16): 档头与记分牌是 **T+5 诊断口径、毛收益(未扣费)** —",
         "    往返成本约 0.65% (30bps/边滑点+5bps 卖出印花税), 均值扣费即净先验;",
         "    与 --daily-action 的实际执行合约 (T+1 开盘买 / T+10 开盘卖) 是不同窗口, 勿直接对标。",
         "  · 记分牌 verdict 是信任档, 决定这张表今天怎么用:",
         "    无正向证据 → 只读不跟 (观察清单); ⚠反向 → 排越前越差, 仅反向参考;",
         "    有正向证据 → 也仍非买入指令, 实际 BUY 只出自 --daily-action。",
-        "  · 排序: 主键=桶 (桶头胜率), 同档内按「综合分」tie-break; 表头记分牌行披露排序近期实测有效性。",
+        "  · 排序: 主键=信号分档 (档头胜率), 同档内按「综合分」tie-break; 表头记分牌行披露排序近期实测有效性。",
         "  · 「信号」= 趋势/均值回归/基本面/事件情绪四策略投票: ↑看多 ↓看空 —无信号, 数字=信心(0-100)。",
         "  · 「连续」= 连续上榜天数, ≥3天(绿)信号持续; 「衰减」= 信号分较近期峰值跌幅, 红=严重。",
         "  · 「提示」= 策略仲裁自动调整 (短线持有/信趋势/共识加分★ 等) + 确定性阈值警示:",
@@ -2907,7 +2909,13 @@ def _print_auto_screening_table(
     # 重解析成 float 再 %g 输出 — "+"号与尾零被静默吃掉。
     for label, rows in _group_results_by_bucket(top_results):
         stats = bucket_display_stats.get(label)
-        header_line = format_bucket_header(stats if stats is not None else empty_bucket_stats(label))
+        ranks = [idx for idx, _ in rows]
+        rank_note = (
+            f"本表第 {ranks[0]}-{ranks[-1]} 名" if ranks[-1] > ranks[0] else f"本表第 {ranks[0]} 名"
+        )
+        header_line = format_bucket_header(
+            stats if stats is not None else empty_bucket_stats(label), rank_note=rank_note
+        )
         print(f"\n{Fore.WHITE}{Style.BRIGHT}{header_line}{Style.RESET_ALL}")
         table_data = [
             _build_auto_screening_table_row(
