@@ -96,7 +96,8 @@ BTST (n=133):  recorded +8.15%/68%  →  corrected +5.07%/60%  →  executable +
 OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  →  executable -2.15%/39% (n=56, 无 alpha 确认)
 ```
 
-- **执行口径结论（2026-08-16 首次落地，产物 `outputs/journal_execution_stats_20260816.json`）**：BTST 扣成本与 T+1 开盘 gap 后仍为正（+3.41%，较 corrected 低 ~1.6pp = 成本 0.65pp + 开盘 gap ~1pp），crisis 仍最强（+8.23%）——"不能断言只会更低"的悬案就此关闭：**更低，但仍为正**。OB 执行口径 −2.15%/39%，**维持默认暂停**。一字排除 0 笔经独立验证为真（74 笔触发日涨停样本中次日开盘最大 +6.8%，无一续一字）；6 笔停牌/缺 bar 排除（BTST 3、OB 3），19 笔回测结束时未平仓（unpaired）。corrected-T0 列与 2026-07-18 产物交叉验证：8 组最大 |delta| 1.57pp（n=9 的 risk_off，排除项所致），btst/ALL 仅差 0.03pp。
+- **执行口径结论（2026-08-16 首次落地，产物 `outputs/journal_execution_stats_20260816.json`）**：BTST 扣成本与 T+1 开盘 gap 后仍为正（+3.41%，较 corrected 低 ~1.6pp = 成本 0.65pp + 开盘 gap ~1pp），crisis 仍最强（+8.23%）——"不能断言只会更低"的悬案就此关闭：**更低，但仍为正**。OB 执行口径 −2.15%/39%，**维持默认暂停**。一字排除 0 笔经独立验证为真（74 笔触发日涨停样本中次日开盘最大 +6.8%，无一续一字）；6 笔停牌/缺 bar 排除（BTST 3、OB 3），19 笔回测结束时未平仓（unpaired）。corrected-T0 对照列与 2026-07-18 产物交叉验证：**8 组逐分复现（delta=0.00，PASS）**。
+- **双锚口径与防御（2026-08-16 对抗审查 F1/F2 修复）**：executable 用**日历锚**（T+N 个交易日，停牌排除——合约语义）；corrected/recorded 对照列用**个股锚 frame+N**（停牌顺延——0718 修正的实际口径，变体对撞逐分确认后跟随）+ 全配对分母（含被排除仓位，n=133/59），两列分母刻意不同。曾误把 risk_off 1.57pp 差异归因"排除项"（该组排除数为 0）——已更正：差异全部来自停牌仓位的锚点分歧。复权回落（pct 缺失/非有限，`_back_adjust_ohlcv` 静默返回原始价的 fail-open 路径）现以 `adjusted_fallback_raw` 显式排除并计数（本样本 0 触发）；涨停阈值不含 ST 5% 板（journal 无名称字段，样本是否含 ST 未核验；候选池按设计排除 ST）。
 - **方向结论不变**（BTST 三 regime 都为正、crisis 最强；OB 统计不显著），但 **E[r] 系统性高估 3.1pp、胜率高估 8pp**。修正产物：`outputs/journal_corrected_stats_20260718.json`；journal 原文件未改动（锚定 bug 机制见上条警示）。
 - **BTST 执行匹配证据已重建，但仍不构成 regime 加仓授权**：样本期仅 6 个月（顺行情）、每 regime 样本小、且这是 RESEARCH_RECONSTRUCTION 研究重建——v2 ledger 的 regime 加仓需要的是可由 repository 重验的 canonical regime 授权证据，不是研究脚本产物。risk_off 的 1.1× 依据已基本消失。
 - **OversoldBounce 默认暂停**：执行口径 -2.15%/39%，没有可授权的正 alpha。旧版 `+0.34%/52%`、CI 与尾部数字来自锚定 bug 污染的 recorded P&L，只能作为历史审计线索。

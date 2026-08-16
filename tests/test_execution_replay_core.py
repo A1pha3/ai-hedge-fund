@@ -304,3 +304,71 @@ class TestAggregate:
         crisis = stats["btst_breakout/crisis"]
         assert crisis["n_filled"] == 1
         assert crisis["net_mean"] == pytest.approx(-1.0)
+
+
+class TestDualAnchorAndFallback:
+    """对抗审查 F1/F2 修复 (2026-08-16): 双锚口径 + 复权回落可观测。"""
+
+    def _position(self, signal_date: str = "20260701", horizon: int = 10):
+        from scripts.rebuild_journal_execution_returns import Position
+
+        return Position(ticker="600001", setup="btst_breakout", horizon=horizon, signal_date=signal_date, regime="normal")
+
+    def test_corrected_anchor_rolls_forward_on_suspension(self):
+        """F1: corrected 用 frame+N (顺延), executable 用日历 cal+N — 中途停牌
+        (非 E/X 日缺 bar) 时两锚指向不同日期, corrected 取顺延后的行。"""
+        rows = _day_rows(CAL, [10.0] * 12, [10.0] * 12, [0.0] * 12).to_dict("records")
+        # 挖掉 cal index 5 (中途停牌日, 非 E=1 非 X=10)
+        rows = [r for r in rows if r["date"] != CAL[5]]
+        # 信号 close=10; frame 第 10 行 (= cal index 11) close=12 → corrected +20%
+        rows[-1]["close"] = 12.0
+        frame = pd.DataFrame(rows)
+        out = replay_position(frame, CAL, self._position(), ReplayConfig())
+        assert out.status == "filled"  # E/X bar 都在, 可执行不受中途停牌影响
+        assert out.corrected_t0_pct == pytest.approx(20.0)
+
+    def test_excluded_position_still_carries_corrected(self):
+        """F1: 被排除仓位 (入场日停牌) 仍产出 corrected 对照值 — artifact
+        分母含全部配对仓位, 对照列分母与其对齐。"""
+        rows = _day_rows(CAL, [10.0] * 12, [10.0] * 12, [0.0] * 12).to_dict("records")
+        rows = [r for r in rows if r["date"] != CAL[1]]  # E 停牌
+        rows[-1]["close"] = 11.0  # frame 第 10 行 close 11 → corrected +10%
+        frame = pd.DataFrame(rows)
+        out = replay_position(frame, CAL, self._position(), ReplayConfig())
+        assert out.status == "excluded"
+        assert out.reason == "suspended_or_missing_entry_bar"
+        assert out.corrected_t0_pct == pytest.approx(10.0)
+
+    def test_adjustment_fallback_excluded(self):
+        """F2: pct_change 含 NaN → _back_adjust_ohlcv 静默回落原始价, replay
+        必须排除 (adjusted_fallback_raw) 而不是把幻影价当真。"""
+        rows = _day_rows(CAL, [10.0] * 12, [10.0] * 12, [0.0] * 12)
+        rows.loc[3, "pct_change"] = float("nan")
+        out = replay_position(rows, CAL, self._position(), ReplayConfig())
+        assert out.status == "excluded"
+        assert out.reason == "adjusted_fallback_raw"
+        assert out.corrected_t0_pct is None  # 该帧上任何数字都不可信
+
+    def test_missing_pct_column_excluded(self):
+        rows = _day_rows(CAL, [10.0] * 12, [10.0] * 12, [0.0] * 12).drop(columns=["pct_change"])
+        out = replay_position(rows, CAL, self._position(), ReplayConfig())
+        assert out.status == "excluded"
+        assert out.reason == "adjusted_fallback_raw"
+
+    def test_aggregate_dual_denominators(self):
+        """F1: exec 列只用 filled; corrected/recorded 用全配对 (含被排除)。"""
+        from scripts.rebuild_journal_execution_returns import Position, ReplayOutcome
+
+        pos = lambda: Position("600001", "btst_breakout", 10, "20260701", "normal")
+        outcomes = [
+            ReplayOutcome(pos(), "filled", None, "20260702", "20260715", 10.65, 10.0, 5.0, None),
+            ReplayOutcome(pos(), "excluded", "suspended_or_missing_entry_bar", None, None, None, None, 3.0, None),
+        ]
+        stats = aggregate(outcomes)
+        g = stats["btst_breakout/ALL"]
+        assert g["n_filled"] == 1
+        assert g["n_paired"] == 2
+        assert g["net_mean"] == pytest.approx(10.0)
+        # corrected 分母=2: (5.0+3.0)/2 — 与 artifact 口径对齐
+        assert g["corrected_t0_n"] == 2
+        assert g["corrected_t0_mean"] == pytest.approx(4.0)
