@@ -412,9 +412,14 @@ class TestFormatting:
         enough = [_rec("20260701", 0.35, 6.0 if i % 2 == 0 else -4.0) for i in range(6)]
         mid_n = compute_bucket_stats(enough)
         header_mid = format_bucket_header(mid_n["较低 (0.3-0.4)"])
+        assert "信号分档 0.3-0.4" in header_mid  # 冷读反馈: 展示区间, 不展示定性标签
+        assert "较低" not in header_mid  # "较低"会被读成"这票差" — 悖论词不出现在档头
         assert "胜率" in header_mid and "赔率" in header_mid
         assert "未扣费" in header_mid  # 均值是毛收益, 扣费判断读者自己能做
         assert "少样本" in header_mid
+        # rank_note (本表名次区间) 由表格渲染层注入, 透传进档头
+        header_ranked = format_bucket_header(mid_n["较低 (0.3-0.4)"], rank_note="本表第 1-7 名")
+        assert "本表第 1-7 名" in header_ranked
 
         null_header = format_bucket_header(
             type(low_n["较低 (0.3-0.4)"])(
