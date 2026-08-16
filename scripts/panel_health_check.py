@@ -7,6 +7,13 @@ have realized per horizon (default >=30), runs a Welch's t-test comparing
     Does the full setup filter actually pick alpha, or is plan_eligible
     membership statistically indistinguishable from the filtered rejects?
 
+The filtered control group is stratified (2026-08-16): rows whose detector was
+data-degraded (``degraded=True`` or ``block_reason`` starting with
+``readiness degraded:``) never ran the full strategy judgment, so they are
+reported as a separate disclosure layer and excluded from the control test.
+Mixing them in once produced a p<0.001 fake "filter picks alpha" verdict off a
+single-day industry_data_missing outage (257/295 filtered rows).
+
 Strictly read-only: never writes files, never touches strategy params, no
 network. Safe to run any time. Below the sample threshold it prints the current
 distributions and says "not enough data yet" rather than guessing.
@@ -66,6 +73,42 @@ def _returns(rows: list[dict], horizon: int, eligible: bool) -> list[float]:
     return out
 
 
+def _is_data_degraded(row: dict) -> bool:
+    """数据护栏降级票: 检测器因数据缺失降级, 未跑完整策略判断.
+
+    判别优先结构化 ``degraded`` 字段, ``block_reason`` 前缀作交叉兜底
+    (真实 panel 两者一致; 分离时以结构化字段为准).
+    """
+    if row.get("degraded"):
+        return True
+    return str(row.get("block_reason", "") or "").startswith("readiness degraded")
+
+
+def _split_returns(rows: list[dict], horizon: int) -> tuple[list[float], list[float], list[float]]:
+    """三层切分 realized 前向收益: (eligible, 策略过滤, 数据护栏降级)."""
+    key = f"return_t{horizon}"
+    elig: list[float] = []
+    strat: list[float] = []
+    deg: list[float] = []
+    for r in rows:
+        v = r.get(key)
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(fv):
+            continue
+        if bool(r.get("plan_eligible")):
+            elig.append(fv)
+        elif _is_data_degraded(r):
+            deg.append(fv)
+        else:
+            strat.append(fv)
+    return elig, strat, deg
+
+
 def _cohens_d(a: list[float], b: list[float]) -> float:
     na, nb = len(a), len(b)
     if na < 2 or nb < 2:
@@ -94,40 +137,47 @@ def _verdict(p: float, delta_mean: float, alpha: float = 0.05) -> str:
 
 
 def _test_horizon(rows: list[dict], horizon: int, min_n: int, min_group: int) -> dict | None:
-    """Welch t-test stats for one horizon, or None if too few realized samples."""
-    elig = _returns(rows, horizon, True)
-    filt = _returns(rows, horizon, False)
-    if len(elig) + len(filt) < min_n or len(elig) < min_group or len(filt) < min_group:
+    """Welch t-test stats for one horizon, or None if too few realized samples.
+
+    Control group = strategy-filtered only; data-degraded rows are counted for
+    disclosure but never enter the test.
+    """
+    elig, strat, deg = _split_returns(rows, horizon)
+    if len(elig) + len(strat) < min_n or len(elig) < min_group or len(strat) < min_group:
         return None
-    res = stats.ttest_ind(elig, filt, equal_var=False)
+    res = stats.ttest_ind(elig, strat, equal_var=False)
     df_attr = getattr(res, "df", None)
     return {
         "p": float(res.pvalue),
         "t": float(res.statistic),
-        "df": float(df_attr) if df_attr is not None else _welch_df(elig, filt),
-        "delta_mean": float(np.mean(elig)) - float(np.mean(filt)),
-        "d": _cohens_d(elig, filt),
+        "df": float(df_attr) if df_attr is not None else _welch_df(elig, strat),
+        "delta_mean": float(np.mean(elig)) - float(np.mean(strat)),
+        "d": _cohens_d(elig, strat),
         "n_elig": len(elig),
-        "n_filt": len(filt),
+        "n_filt": len(strat),
+        "n_degraded": len(deg),
     }
 
 
 def check_horizon(rows: list[dict], horizon: int, min_n: int, min_group: int) -> tuple[str, bool | None]:
     """Return (rendered_block, verdict). verdict: True=alpha, False=tested-no-alpha, None=untestable."""
-    elig = _returns(rows, horizon, True)
-    filt = _returns(rows, horizon, False)
-    total = len(elig) + len(filt)
+    elig, strat, deg = _split_returns(rows, horizon)
+    total = len(elig) + len(strat)
     lines = [
         f"--- T+{horizon} ---",
         f"  plan_eligible: {_fmt(_summarize(elig))}",
-        f"  filtered     : {_fmt(_summarize(filt))}",
+        f"  策略过滤      : {_fmt(_summarize(strat))}",
     ]
+    if deg:
+        lines.append(
+            f"  数据护栏降级  : {_fmt(_summarize(deg))}  ← readiness 降级未跑完整策略判断, 不进对照检验"
+        )
     stat = _test_horizon(rows, horizon, min_n, min_group)
     if stat is None:
         if total < min_n:
-            lines.append(f"  ⏳ 样本不足（已实现 {total} < {min_n}）——继续用 --daily-action + --auto 累积")
+            lines.append(f"  ⏳ 样本不足（已实现 {total} < {min_n}，降级票 {len(deg)} 不计入）——继续用 --daily-action + --auto 累积")
         else:
-            lines.append(f"  ⏳ 某组样本过小（eligible={len(elig)}, filtered={len(filt)}, 需各 ≥{min_group}）")
+            lines.append(f"  ⏳ 某组样本过小（eligible={len(elig)}, 策略过滤={len(strat)}, 需各 ≥{min_group}）")
         return "\n".join(lines), None
     lines.append(
         f"  Welch t-test: t={stat['t']:+.2f}  df={stat['df']:.1f}  p={stat['p']:.4f}  "
@@ -142,7 +192,9 @@ def panel_health_status(panel: Path = PANEL, min_n: int = 30, min_group: int = 5
 
     Same loaders/thresholds as :func:`panel_health_oneline`; returns per-horizon
     testability + Welch stats instead of a rendered string so display layers can
-    consume the facts without re-deriving them. Strictly read-only.
+    consume the facts without re-deriving them. ``n_filt`` counts the
+    strategy-filtered control group only; ``n_degraded`` counts data-degraded
+    rows (excluded from the test, disclosure only). Strictly read-only.
     """
     rows = load_panel(panel)
     realized = sum(1 for r in rows if r.get("realized"))
@@ -150,12 +202,12 @@ def panel_health_status(panel: Path = PANEL, min_n: int = 30, min_group: int = 5
     for horizon in HORIZONS:
         stat = _test_horizon(rows, horizon, min_n, min_group)
         if stat is None:
-            elig = _returns(rows, horizon, True)
-            filt = _returns(rows, horizon, False)
+            elig, strat, deg = _split_returns(rows, horizon)
             horizons[str(horizon)] = {
                 "testable": False,
                 "n_elig": len(elig),
-                "n_filt": len(filt),
+                "n_filt": len(strat),
+                "n_degraded": len(deg),
             }
         else:
             horizons[str(horizon)] = {
@@ -164,6 +216,7 @@ def panel_health_status(panel: Path = PANEL, min_n: int = 30, min_group: int = 5
                 "delta_mean": stat["delta_mean"],
                 "n_elig": stat["n_elig"],
                 "n_filt": stat["n_filt"],
+                "n_degraded": stat["n_degraded"],
             }
     return {"rows": len(rows), "realized": realized, "horizons": horizons}
 
@@ -175,6 +228,11 @@ def panel_health_oneline(panel: Path = PANEL, min_n: int = 30, min_group: int = 
         return "面板为空"
     realized = sum(1 for r in rows if r.get("realized"))
     prefix = f"{len(rows)}条/已实现{realized}"
+    degraded_total = sum(
+        1 for r in rows if not r.get("plan_eligible") and _is_data_degraded(r)
+    )
+    if degraded_total:
+        prefix += f"/降级{degraded_total}不入对照"
     tags: list[str] = []
     testable = False
     for horizon in HORIZONS:
@@ -190,7 +248,7 @@ def panel_health_oneline(panel: Path = PANEL, min_n: int = 30, min_group: int = 
         else:
             tags.append(f"T+{horizon}:◻️p={stat['p']:.3f}")
     if not testable:
-        return f"{prefix} 未达检验门槛(需某 horizon 已实现≥{min_n}/组≥{min_group})"
+        return f"{prefix} 未达检验门槛(需某 horizon 已实现≥{min_n}/组≥{min_group}, 对照=策略过滤组)"
     return f"{prefix}  " + " ".join(tags)
 
 
@@ -214,12 +272,13 @@ def main() -> None:
     regimes = Counter(str(r.get("regime")) for r in rows)
     setups = Counter(str(r.get("setup")) for r in rows)
     elig_n = sum(1 for r in rows if r.get("plan_eligible"))
+    deg_n = sum(1 for r in rows if not r.get("plan_eligible") and _is_data_degraded(r))
     print(f"记录: {len(rows)}  已实现: {len(realized)}  待实现: {len(rows) - len(realized)}  信号日: {len(days)} ({days[0]}→{days[-1]})")
     print("regime: " + "  ".join(f"{k}={v}" for k, v in regimes.most_common()))
     print("setup:  " + "  ".join(f"{k}={v}" for k, v in setups.most_common()))
-    print(f"分组: plan_eligible={elig_n}  filtered={len(rows) - elig_n}")
-    print(f"门槛: 每 horizon 已实现 ≥{args.min_n} 且每组 ≥{args.min_group} 才做 Welch t 检验")
-    print("注: eligible 主要为过全过滤的 btst；filtered 含多种被拒 setup，样本足够后建议按 setup 分层复核。")
+    print(f"分组: plan_eligible={elig_n}  策略过滤={len(rows) - elig_n - deg_n}  数据护栏降级={deg_n}（不入对照）")
+    print(f"门槛: 每 horizon 已实现 ≥{args.min_n} 且每组 ≥{args.min_group} 才做 Welch t 检验（对照 = 策略过滤组；数据护栏降级票不入对照，单独披露）")
+    print("注: eligible 主要为过全过滤的 btst；策略过滤组为检测器正常但被策略判断拒绝的票（强度/资金流/行业等）；数据护栏降级组未跑完整策略判断，不是策略证据。")
     print("─" * 60)
 
     tested = False
