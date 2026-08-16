@@ -77,27 +77,29 @@ Plan 07（Broker Gateway 与 DR）primitive 已实现（2026-08-08，broker 套�
 
 **位置：`data/paper_trading_backtest/`**（不是 `data/paper_trading/`！）
 
-- `journal.jsonl`：403 条记录，含 **211 笔 BUY + 192 笔 EXIT**，覆盖 2026-01-15 → 2026-07-06。
-- `portfolio_state.json`：legacy 记录为 nav=2.10、realized_pnl=+110%；该数值受下述锚定 bug 与零成本/T0 收盘口径污染，**不得继续作为有效业绩引用**。
+- `journal.jsonl`：⚠️ **磁盘上的该文件自 2026-08-15 晚起是 2024 跨周期重放**（171 BUY，trap-15 修复验证工作用 `scripts/backtest_paper_loop.py` 重跑 2024 时覆盖了它）——**2026 原版（403 条 = 211 BUY + 192 EXIT，2026-01-15 → 2026-07-06）已从 git `0be66383` 恢复至 `outputs/journal_20260115_20260706_recovered.jsonl`**，本节全部 2026 结论以恢复副本为准。journal 自 commit `22cb6026` 起不被 git 跟踪，重放前先备份。
+- `portfolio_state.json`：legacy 记录为 nav=2.10、realized_pnl=+110%；该数值受下述锚定 bug 与零成本/T0 收盘口径污染，**不得继续作为有效业绩引用**（当前磁盘版本描述的是 2024 重放，同样不引用）。
 - **这是目前唯一真实的历史成交候选源**，但不是可直接引用的收益真相；验证 setup、regime 或止损前必须按本仓位锚点和目标执行合约重建。
 - ⚠️ **不要和 `data/paper_trading/`（运行时实例，0 笔 EXIT）混淆**。曾因此误判系统"0 笔成交"。
 - ⚠️ **journal 的 recorded P&L 存在锚定 bug（2026-07-18 对抗性审查定位，三方独立复现）**：生成它的回测以 `price_loader=None` 调用 `close_matured`（`scripts/backtest_paper_loop.py:134`），`fetch_actual_returns` 把每票收益锚到**本批次最早 buy_date** 而非本仓位 buy_date；且入场口径是 **T0 收盘**（不是文档声称的 T+1 开盘）、零成本。可复核 139 笔中 **42% 偏差 >0.5pp，最大 ±31.6pp**（300033 两笔不同仓位同记 -26.74%，精确复现锚定窗口）。**下表引述值因此系统性虚高**，修正后见"2026 实测表现"。另：**53/192 笔（28%）的 ticker 缓存文件已被删除，永久不可复核**——回测产物必须连同输入数据快照归档。
+- ⚠️ **journal 的 EXIT.date 与 BUY.date 相同**（回测把开仓/平仓都记在信号日），到期日必须从交易日历机械推导，不能拿 EXIT.date 当卖出日。
 
-### 2026 实测表现（截至 2026-07-09，源自 paper_trading_backtest；2026-07-18 全量修正）
+### 2026 实测表现（截至 2026-07-09，源自 paper_trading_backtest；2026-07-18 全量修正 + 2026-08-16 执行口径重建）
 
-journal recorded 原值（旧引述，锚定 bug 污染）→ **全量修正值**（192/192 全部可复核，own-anchor 本仓位 T0 收盘、零成本、pct_change 链除权免疫；32 只缺失票已从 tushare 回填）：
+三列口径：journal recorded 原值（锚定 bug 污染）→ **全量修正值**（192/192 可复核，own-anchor 本仓位 T0 收盘、零成本、pct_change 链除权免疫）→ **可执行合约**（T+1 开盘买、信号日+horizon 交易日开盘卖、30bps/边滑点+5bps 卖出印花税、复权帧 open-to-open、一字/停牌/缺 bar 逐项排除；`scripts/rebuild_journal_execution_returns.py`，186 filled/6 excluded/19 unpaired）：
 
 ```
-BTST (n=133):  recorded +8.15%/68%  →  corrected +5.07%/60%
-  crisis (21):   +16.93%/76%       →  +10.44%/67%   (仍最强)
-  risk_off (9):  +8.87%/78%        →  +1.97%/56%    (优势基本消失, n=9 本就不可靠)
-  normal (103):  +6.29%/66%        →  +4.24%/59%
-OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  (无 alpha 确认)
+BTST (n=133):  recorded +8.15%/68%  →  corrected +5.07%/60%  →  executable +3.41%/57% (n=130)
+  crisis (21):   +16.93%/76%       →  +10.44%/67%          →  +8.23%/62%   (仍最强)
+  risk_off (9):  +8.87%/78%        →  +1.97%/56%           →  +4.15%/67%   (n=9, 本就不可靠)
+  normal (103):  +6.29%/66%        →  +4.24%/59%           →  +2.33%/55%   (n=100)
+OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  →  executable -2.15%/39% (n=56, 无 alpha 确认)
 ```
 
-- **方向结论不变**（BTST 三 regime 都为正、crisis 最强；OB 统计不显著），但 **E[r] 系统性高估 3.1pp、胜率高估 8pp**。双边成本必然拖累收益，但 T+1 开盘相对 T0 收盘的 gap 可正可负；目标执行口径的准确结果仍须重建，不能断言“只会更低”。修正产物：`outputs/journal_corrected_stats_20260718.json`；journal 原文件未改动（锚定 bug 机制见上条警示）。
-- **BTST 三个 regime 的修正均值都为正，crisis 最强**，说明它值得优先重建执行匹配证据；但样本小、T0 收盘/零成本口径与目标执行不一致，**不能据此授权 regime 加仓**。risk_off 的 1.1× 依据已基本消失。
-- **OversoldBounce 默认暂停**：全量修正后 E[r]=-0.13%、胜率 44%，没有可授权的正 alpha。旧版 `+0.34%/52%`、CI 与尾部数字来自锚定 bug 污染的 recorded P&L，只能作为历史审计线索，不能继续用作定量决策；仓位受限时应优先研究修正均值更高的 BTST（+5.07%），但 BTST 同样须先重建 T+1/T+10、真实成本口径。
+- **执行口径结论（2026-08-16 首次落地，产物 `outputs/journal_execution_stats_20260816.json`）**：BTST 扣成本与 T+1 开盘 gap 后仍为正（+3.41%，较 corrected 低 ~1.6pp = 成本 0.65pp + 开盘 gap ~1pp），crisis 仍最强（+8.23%）——"不能断言只会更低"的悬案就此关闭：**更低，但仍为正**。OB 执行口径 −2.15%/39%，**维持默认暂停**。一字排除 0 笔经独立验证为真（74 笔触发日涨停样本中次日开盘最大 +6.8%，无一续一字）；6 笔停牌/缺 bar 排除（BTST 3、OB 3），19 笔回测结束时未平仓（unpaired）。corrected-T0 列与 2026-07-18 产物交叉验证：8 组最大 |delta| 1.57pp（n=9 的 risk_off，排除项所致），btst/ALL 仅差 0.03pp。
+- **方向结论不变**（BTST 三 regime 都为正、crisis 最强；OB 统计不显著），但 **E[r] 系统性高估 3.1pp、胜率高估 8pp**。修正产物：`outputs/journal_corrected_stats_20260718.json`；journal 原文件未改动（锚定 bug 机制见上条警示）。
+- **BTST 执行匹配证据已重建，但仍不构成 regime 加仓授权**：样本期仅 6 个月（顺行情）、每 regime 样本小、且这是 RESEARCH_RECONSTRUCTION 研究重建——v2 ledger 的 regime 加仓需要的是可由 repository 重验的 canonical regime 授权证据，不是研究脚本产物。risk_off 的 1.1× 依据已基本消失。
+- **OversoldBounce 默认暂停**：执行口径 -2.15%/39%，没有可授权的正 alpha。旧版 `+0.34%/52%`、CI 与尾部数字来自锚定 bug 污染的 recorded P&L，只能作为历史审计线索。
 - ⚠️ 样本期仅 6 个月，可能有样本期偏差；补全历史数据重跑前，这些结论是"当前最佳依据"而非定论。
 - ✅ **已验证**：59 笔回测用的是完整版 setup（volume 列存在、量比条件3 生效），不是残缺版。git 证据：volume 列在 commit `7c51cef8`(07-07) 加入，回测在 07-08 跑，setup 代码当时已有完整过滤逻辑。
 
@@ -142,6 +144,7 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  (无 alpha 确认
 - **评分链已回溯复权**（2026-07-18）：`load_price_frame` 用 pct_change 链把 OHLC 复权到最新行口径（末行=原始价），此前 EMA/RSI/动量/布林带/ATR 从 raw close 重算，除权缺口被读成崩盘幻影（001388 型 raw -26.8% 实际 +10%；~19% 的票近 126 行内有缺口）。**修复前生成的 composite/score_b 与全部因子 IC/校准证据是在幻影污染的信号上量的，重跑前不可直接对比。**
 - **因子数学修正**（2026-07-18）：① growth 趋势符号反转修复（newest-first 序列倒序回归，此前 50.8% 的票加速/减速判反）；② ADX 改 Wilder RMA（与 RSI 同平滑，此前 ewm(span) 系统性偏高、31.5% 趋势门翻转）；③ growth 钳位 score=0 区分负增长/零增长（raw_score 保留原值，此前 27.4% 零增长票被满置信看空）；④ 动量三窗改对数收益求和（消除高波动票动量高估的横截面偏差）。
 - 排序证据（双确认）：composite/score_b 主键在真实 Top10 切片显著反向 — c272（47% vs 60%）+ 2026-07-18 独立复核（T+5 IC=-0.112 t=-2.49，top-3 45% vs 反选 58%）。全池 300 票日 IC 为正——顶部非单调反转。tracking 回填改用 price_cache pct_change 链（43 条幻影记录已迁移重算）。
+- **展示层 v3（2026-08-16 重构，冻结规格）**：`--auto` 候选表按 SCORE_BUCKETS 桶分组，桶级钱数（近 60 推荐日 T+5 胜率/均值/盈亏笔均/赔率，`scorecard.py::compute_bucket_stats`）只在桶头渲染一次（此前逐行重复"48%·428" 7 次）；header 记分牌行常驻（briefing 卡「排序」段 / legacy 回退时表格上方）：Top10 切片胜率·均值·日内 Spearman IC·前3vs后7 + 三态 verdict（positive 需 IC t≥2 且切片均值>0；t≤−2 判反向；**tracking 只记录每日 Top10，无池级基准，不编造**）；桶成熟样本 <5 不给点估计、5–19 带 ⚠少样本（对齐 BUY-gate backing_sample≥20 纪律）。评分构成块已删（与因子瀑布同数据两遍），因子瀑布需 `AUTO_TABLE_VERBOSE=1`；图例一行 + `--top --legend` 全量；`gap_to_limit≤0.01` → 行内 ⚠距涨停<1%（T+1 买不进风险）；行业集中警示改 count≥3（旧 ratio>0.4 在 sector cap=3 下永不触发，是死代码）；行业轮动行加 ⚠背离（价格动量与 avg score_b 反向）；P9-1 预期收益块样本不足时显式披露行（不再静默消失）。测试：`tests/test_scorecard.py`、`test_auto_briefing.py`、`test_auto_screening_display.py`、`test_score_decomposition.py::TestAutoScreeningTableRowV3`、`test_sector_concentration.py`。
 
 ### 样本外验证闭环（logger → backfill → panel）
 
@@ -216,10 +219,12 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  (无 alpha 确认
 | 样本外 logger | `src/screening/offensive/setup_output_log.py`（`--daily-action` 逐日写信号快照） |
 | 样本外 backfill | `scripts/join_setup_outputs_with_returns.py`（`backfill_panel()`；`--auto` 末尾回填前向收益 → panel） |
 | 面板体检（只读） | `scripts/panel_health_check.py`（plan_eligible vs 策略过滤组 Welch t 检验，数据护栏降级票不入对照只披露；`--auto` 末尾打印一行摘要，realized≥30/组≥5 时出结论） |
+| 排序记分牌/桶头统计 | `src/screening/scorecard.py`（Top10 切片胜率/均值/日内 IC 三态 verdict + SCORE_BUCKETS 桶头 T+5 实证；briefing 卡「排序」行与 `--auto` 桶分组表的单一事实源，只读 tracking_history） |
 | 跨周期裸信号验证 | `scripts/validate_btst_setup_cross_cycle.py`、`scripts/validate_auto300_gate_removal.py` |
 | ATR 止损工具 | `src/screening/offensive/atr_utils.py`（Wilder ATR + 止损价计算） |
 | 涨停板块判定 | `src/tools/ashare_board_utils.py`（`limit_up_pct_for_ticker`：主板9.5%/科创创业19.5%/北交所29%） |
 | 止损策略回测 | `scripts/backtest_exit_strategies.py`（对比 no_stop/固定/ATR 止损的 E[r]/Sharpe） |
+| 执行口径重放 | `scripts/rebuild_journal_execution_returns.py`（2026 journal 第三列：T+1 开盘买/T+N 开盘卖+真实成本+除权免疫；测试 `tests/test_execution_replay_core.py`；输入用 `outputs/journal_20260115_20260706_recovered.jsonl`，勿指向被 2024 重放覆盖的运行时 journal） |
 | 回测框架 | `scripts/setup_research.py`（Phase 0，需深历史数据） |
 | 因子评分 | `src/screening/`（candidate_pool / strategy_scorer / signal_fusion / investability） |
 
