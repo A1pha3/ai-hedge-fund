@@ -138,3 +138,83 @@ class TestHonestFallback:
         result = PaperTracker._close_to_close_return(frame, "20240520", 2)
         assert result is not None
         assert result[0] == (9.506 / 10.00) - 1.0
+
+
+class TestUnrealizedPctCorpActionImmunity:
+    """open_positions_detail 的 unrealized_pct 除权免疫 (autodev 2026-08-16 第三轮).
+
+    持有中仓位的浮动盈亏此前用 latest_close/entry_price 原始价比值, 跨除权日
+    显示幻影跳变 (10送10 后真实 +36.7% 显示 -67% 类)。修复: 窗口检出缺口时用
+    pct_change 链口径; 无缺口 (±0.5% 容差) 或链不可用时保持原始比值 (逐位一致)。
+    """
+
+    @staticmethod
+    def _tracker_with_buy(tmp_path, entry_price: float = 10.0) -> PaperTracker:
+        tracker = PaperTracker(tmp_path / "journal_dir")
+        tracker.record_buy(
+            "20240520",
+            "600000",
+            "btst_breakout",
+            10,
+            entry_price,
+            0.08,
+            -0.05,
+            -0.08,
+            "test",
+        )
+        return tracker
+
+    @staticmethod
+    def _held_gap_frame() -> pd.DataFrame:
+        """D0 close 10.00 买入持有; D1 +2%; D2 除权 (10送10) 真实 +5%.
+
+        raw close[D2] = 10.20*1.05/2 = 5.355; raw 比值 5.355/10-1 = -46.45%
+        vs 真实 +7.1% (close[D0]→close[D2] 链 = 1.02*1.05-1) — 幻影全部来自缺口。
+        """
+        return pd.DataFrame(
+            {
+                "date": ["20240520", "20240521", "20240522"],
+                "close": [10.00, 10.20, 5.355],
+                "pct_change": [1.0, 2.0, 5.0],
+            }
+        )
+
+    def test_held_gap_uses_chain_basis(self, tmp_path) -> None:
+        tracker = self._tracker_with_buy(tmp_path)
+        frame = self._held_gap_frame()
+
+        details = tracker.open_positions_detail(
+            as_of="20240522", price_loader=lambda _t, _d: frame
+        )
+
+        assert len(details) == 1
+        expected = (1.02 * 1.05) * (10.00 / 10.0) - 1.0  # close[buy]=entry_price
+        assert details[0]["unrealized_pct"] == pytest.approx(expected, abs=1e-12)
+        # fixture 自检: raw 比值与链口径偏差必须显著 (>0.5pp)
+        raw = 5.355 / 10.0 - 1.0
+        assert abs(expected - raw) > 0.005
+
+    def test_no_gap_frame_keeps_raw_ratio_bitwise(self, tmp_path) -> None:
+        tracker = self._tracker_with_buy(tmp_path)
+        frame = self._held_gap_frame()
+        # 无缺口: close 比值与 pct_change 完全一致 (除权比 1.0)
+        frame.loc[2, "close"] = 10.20 * 1.05
+        frame.loc[2, "pct_change"] = 5.0
+
+        details = tracker.open_positions_detail(
+            as_of="20240522", price_loader=lambda _t, _d: frame
+        )
+
+        raw = 10.20 * 1.05 / 10.0 - 1.0
+        assert details[0]["unrealized_pct"] == raw  # 逐位一致, 非 approx
+
+    def test_missing_pct_change_keeps_raw_ratio_bitwise(self, tmp_path) -> None:
+        tracker = self._tracker_with_buy(tmp_path)
+        frame = self._held_gap_frame().drop(columns=["pct_change"])
+
+        details = tracker.open_positions_detail(
+            as_of="20240522", price_loader=lambda _t, _d: frame
+        )
+
+        raw = 5.355 / 10.0 - 1.0
+        assert details[0]["unrealized_pct"] == raw  # 回退: 与旧口径逐位一致

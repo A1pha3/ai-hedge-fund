@@ -1136,6 +1136,16 @@ class DailyActionService:
         if entry_index < 14 or as_of_index < entry_index:
             return None, False, "insufficient_data"
 
+        # 除权免疫 (AGENTS.md 陷阱 15 第三轮): 重放消费的 high/low/close 统一
+        # 复权到 entry 日口径 — 否则除权缺口的机械跳降会被 exit 状态机读成
+        # 跌破移动止盈线 / 激活阈值被永久压制 / ATR 缺口日 spike。无缺口或
+        # pct_change 不可用时原样/回退 (与旧口径逐位一致)。
+        adjusted_frame = self._adjust_shadow_frame_for_gaps(
+            frame, entry_index, as_of_index
+        )
+        if adjusted_frame is not None:
+            frame = adjusted_frame
+
         state = ExitPolicyState.unarmed(entry_price=trade.raw_entry_price)
         decision_reason = "hold"
         should_exit = False
@@ -1160,6 +1170,60 @@ class DailyActionService:
             if should_exit:
                 break
         return state.exit_line, should_exit, decision_reason
+
+    @staticmethod
+    def _adjust_shadow_frame_for_gaps(
+        frame: pd.DataFrame, entry_index: int, as_of_index: int
+    ) -> pd.DataFrame | None:
+        """除权免疫: 把重放消费的 high/low/close 复权到 entry 日 close 口径.
+
+        price_cache 存不复权原始价 (AGENTS.md 陷阱 15): 持有窗跨除权日时,
+        缺口的机械跳降会被 exit 状态机读成 close_below_trailing_line 虚假
+        退出, 激活阈值 close >= entry*1.10 被缺口永久压制, ATR 的 True Range
+        在缺口日 spike。pct_change 列是交易所按除权基准重置的真实涨幅,
+        以 entry 日为锚复合即可还原一致口径的调整后序列。
+
+        Returns:
+            原样 frame — 窗口内 pct_change 与 close 比值一致 (±0.5% 容差
+            吸收两位小数舍入), 无缺口, 与旧口径逐位一致;
+            复权 frame — 检出缺口, high/low/close 乘逐日因子 (无缺口段
+            因子为恒等), entry 日因子恒为 1 (首日 close vs entry 比较不变);
+            None — pct_change 缺失或窗口值非有限, 诚实回退原始口径。
+        """
+        if "pct_change" not in frame.columns:
+            return None
+        if not (0 < entry_index <= as_of_index < len(frame)):
+            return None
+        pct = pd.to_numeric(frame["pct_change"], errors="coerce")
+        closes = pd.to_numeric(frame["close"], errors="coerce")
+        if closes.isna().any() or pct.iloc[1 : as_of_index + 1].isna().any():
+            return None
+        gap_detected = False
+        for index in range(1, as_of_index + 1):
+            ratio = float(closes.iloc[index]) / float(closes.iloc[index - 1])
+            implied = 1.0 + float(pct.iloc[index]) / 100.0
+            if abs(ratio - implied) > 0.005 * ratio:
+                gap_detected = True
+                break
+        if not gap_detected:
+            return frame
+        entry_close = float(closes.iloc[entry_index])
+        ratios = [1.0] * len(frame)
+        for index in range(entry_index + 1, as_of_index + 1):
+            ratios[index] = ratios[index - 1] * (1.0 + float(pct.iloc[index]) / 100.0)
+        for index in range(entry_index - 1, -1, -1):
+            ratios[index] = ratios[index + 1] / (1.0 + float(pct.iloc[index + 1]) / 100.0)
+        factors = [
+            entry_close * ratios[index] / float(closes.iloc[index])
+            for index in range(len(frame))
+        ]
+        if any(not math.isfinite(f) or f <= 0.0 for f in factors):
+            return None
+        adjusted = frame.copy()
+        for column in ("high", "low", "close"):
+            values = pd.to_numeric(adjusted[column], errors="coerce")
+            adjusted[column] = values * factors
+        return adjusted
 
     def _shadow_history(
         self,
@@ -1243,7 +1307,15 @@ class DailyActionService:
                 return None
             civil_dates.append(civil_date)
             previous = civil_date
-        prefix = frame.iloc[: len(civil_dates)][["high", "low", "close"]].copy()
+        # 除权免疫 (陷阱 15 第三轮): 保留 pct_change 列供 _evaluate_shadow_path
+        # 复权; 其 NaN/非法值不拒绝整个 frame (留给复权函数按窗口诚实回退),
+        # high/low/close 的严格校验语义不变。
+        selected_columns = (
+            ["high", "low", "close", "pct_change"]
+            if "pct_change" in frame.columns
+            else ["high", "low", "close"]
+        )
+        prefix = frame.iloc[: len(civil_dates)][selected_columns].copy()
         prefix.insert(0, "date", civil_dates)
         if prefix.empty:
             return None

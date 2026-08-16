@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
+import pandas as pd
+
 logger = logging.getLogger(__name__)
 
 
@@ -367,6 +369,15 @@ class PaperTracker:
                         latest_close = float(df.iloc[-1]["close"])
                         if latest_close > 0:
                             unrealized_pct = latest_close / entry_price - 1.0
+                            # 除权免疫 (AGENTS.md 陷阱 15 第三轮): 持有窗跨除权日时
+                            # 原始价比值显示幻影跳变 (分红方向一律大幅低估); 检出
+                            # 缺口时改用 pct_change 链口径, 无缺口 (±0.5% 容差) 或
+                            # 链不可用时保持原始比值 (与旧口径逐位一致)。
+                            adjusted = PaperTracker._gap_aware_unrealized_pct(
+                                df, buy_date, entry_price
+                            )
+                            if adjusted is not None:
+                                unrealized_pct = adjusted
                 except Exception:
                     pass
             out.append(
@@ -757,6 +768,62 @@ class PaperTracker:
             effective_exit_close = entry_close * (1.0 + chain / 100.0)
             return (effective_exit_close / entry_close) - 1.0, effective_exit_close
         return (exit_close / entry_close) - 1.0, exit_close
+
+    @staticmethod
+    def _gap_aware_unrealized_pct(
+        df: Any, buy_date: str, entry_price: float
+    ) -> float | None:
+        """持有仓位的除权免疫浮动盈亏 (AGENTS.md 陷阱 15 第三轮).
+
+        buy_date → latest 行检出除权缺口 (pct_change 与 close 比值偏差 >0.5%,
+        容差吸收两位小数舍入) 时, 用 pct_change 链还原真实涨幅:
+        ``unrealized = (1 + chain) × close[buy_date] / entry_price - 1``
+        (close[buy] 与 entry_price 同日同口径, 该比例保留数据源差异)。
+        无缺口 / pct_change 缺失 / 窗口值非有限 / buy_date 不在序列 → None
+        (调用方保持原始比值, 与旧口径逐位一致)。
+        """
+        if df is None or len(df) == 0:
+            return None
+        if not {"date", "close", "pct_change"}.issubset(df.columns):
+            return None
+        normalized = df.copy()
+        try:
+            normalized["date_str"] = normalized["date"].dt.strftime("%Y%m%d")
+        except Exception:
+            normalized["date_str"] = (
+                normalized["date"].astype(str).str.replace("-", "", regex=False)
+            )
+        normalized = normalized.sort_values("date_str").reset_index(drop=True)
+        matches = normalized.index[normalized["date_str"] == str(buy_date)]
+        if len(matches) == 0:
+            return None
+        buy_idx = int(matches[0])
+        last_idx = len(normalized) - 1
+        if last_idx <= buy_idx:
+            return None
+        pct = pd.to_numeric(normalized["pct_change"], errors="coerce")
+        closes = pd.to_numeric(normalized["close"], errors="coerce")
+        window = pct.iloc[buy_idx + 1 : last_idx + 1]
+        if window.isna().any() or closes.iloc[buy_idx : last_idx + 1].isna().any():
+            return None
+        gap_detected = False
+        for index in range(buy_idx + 1, last_idx + 1):
+            ratio = float(closes.iloc[index]) / float(closes.iloc[index - 1])
+            implied = 1.0 + float(pct.iloc[index]) / 100.0
+            if abs(ratio - implied) > 0.005 * ratio:
+                gap_detected = True
+                break
+        if not gap_detected:
+            return None
+        from src.screening.offensive.price_returns import chained_return_pct
+
+        chain = chained_return_pct(normalized, buy_idx, last_idx)
+        if chain is None:
+            return None
+        entry_close = float(closes.iloc[buy_idx])
+        if entry_close <= 0 or entry_price <= 0:
+            return None
+        return (1.0 + chain / 100.0) * (entry_close / entry_price) - 1.0
 
     @staticmethod
     def _stop_adjusted_return(
