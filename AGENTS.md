@@ -122,16 +122,16 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  →  executable -
 | fund_flow_cache | `data/fund_flow_cache/*.csv` | 370 文件，深度不一（部分仅 1 行）⚠️ |
 | tracking_history | `data/reports/tracking_history.json` | `--auto` 推荐追踪，跨日 T+1/T+3/T+5 收益 |
 
-## 当前选股系统状态（截至 2026-07-18）
+## 当前选股系统状态（截至 2026-08-16）
 
 ### 凸性 setup（`--daily-action`）
 
-- **BTST 涨停突破（T+10）**：✅ 启用。扫描器会请求 crisis/risk_off 加仓，但 v2 ledger 当前因 canonical manifest 缺少可重算的 regime 授权证据而安全降级到 10%，并披露 `regime_authorization_evidence_unavailable`；在证据完成绑定前不实际加仓。（2026-07-18 修复：旧实现仅在 strength=1.0 时被 clamp 拦住，strength<1 时 regime 加仓实际泄漏 +0.5~2pp/票且 provenance 谎报 normal——现 v2 扫描在证据绑定前 regime_factor 恒 1.0，候选仍带 authorization 标记用于披露。）
-- **OversoldBounce 超跌反弹（T+5）**：⏸️ **默认暂停**（全量修正 E[r]=-0.13%、winrate=44%，没有可授权的正 alpha）。
+- **BTST 涨停突破（T+10）**：✅ 启用（normal regime）。**regime gate（2026-08-14 接线，R-5.F 收口）：信号日 regime ∈ {crisis, risk_off} 不开新仓**（`_REGIME_GATE_BLOCK_REGIMES`；detect 照跑、blocked 以 `regime_gate_halt` 带完整 trigger_strength 诊断——面板继续积累危机日对照组，仅仓位/计划层阻断）。证据链：① 诚实 court（T+1 开盘+滑点、**全触发候选**、2026H1）：crisis 9%/−8.98% (n=11)、risk_off 8%/−16.12% (n=13)——**灾难 regime 该阻断而非加仓**；gated BTST-only NAV 1.430 vs ungated 1.133。② 跨期复现（2025H2）方向一致。③ 止损×gate 联合网格：gate 优于止损。见 `data/reports/regime_gate_decision_pack_2026-08-09.md`、`data/reports/stop_loss_x_regime_gate_court_20260814.json`。⚠️ 旧 1.2×/1.1× regime 加仓表已于 2026-08-14 删除（对抗性审查 P1a：依据是受污染 recorded P&L + 成交宇宙选择偏差，且从未生效——"挂着引信的错误开关"）；服务层 `regime_authorization_evidence_unavailable` 披露保留为纵深防御。**任何未来 regime 仓位差异化必须用全候选 court 重放证据，不得用 journal 成交子集**（见陷阱 19）。
+- **OversoldBounce 超跌反弹（T+5）**：⏸️ **默认暂停**（执行口径 E[r]=-2.15%、winrate=39%，没有可授权的正 alpha；见"2026 实测表现"第三列）。
   - 控制：`DAILY_ACTION_DISABLED_SETUPS` env（默认含 `oversold_bounce`）。
   - 恢复：`DAILY_ACTION_DISABLED_SETUPS=none`（补全历史数据重跑后再决定去留）。
   - ⚠️ 旧 `+0.34%`、CI、crisis 和尾部数字来自受污染 recorded P&L，不再作为恢复或分层依据。详见上文“2026 实测表现”。
-- Kelly 仓位：half-Kelly，当前 v2 ledger 单票硬上限 10%，组合上限 60%；12% regime 例外暂停，待 canonical regime evidence 可由 repository 重验后恢复。
+- Kelly 仓位：half-Kelly，当前 v2 ledger 单票硬上限 10%，组合上限 60%；regime 加仓例外已随 2026-08-14 gate 决定**移除**（crisis/risk_off 直接阻断新仓而非加仓）。
 - **Drawdown 熔断 + 行业集中度（2026-07-18 恢复，v2 迁移时曾丢失）**：组合回撤 ≤-20% 停止一切新仓、≤-15% 新仓权重减半（与 legacy `drawdown_action` 对齐）；同一入场日同行业新仓 ≤2（含当日已预留，依据：集中日 E[r] +6.3% vs 分散日 +9.7%）。
 - **执行成本口径 v2.1**（2026-07-18）：v2 ledger 执行成本从零成本改为 30bps/边滑点 + 5bps 卖出印花税，与 Kelly 先验（`adjust_returns` 30bps/边）对齐；此前零成本使实盘 P&L 系统性优于证据 ~0.6pp/笔，污染 edge 衰减监测。成本版本不匹配的计划按 `cost_version_mismatch` skip（不再 raise 崩溃死锁）。
 - **运行护栏**（2026-07-18）：`--end-date` 不得晚于 17:00 规则的自然信号日（未来日会永久杀掉排队计划并写入未来估值）；入场日 09:30 后不再创建当日入场计划（`entry_window_missed`，防止按不可执行的开盘价记账）；交易日历前向覆盖 <30 天时保留旧文件（防止年末日历截断静默失效）；drawdown 熔断/日历不可用/窗口阻断在默认渲染可见（不再伪装成"今日无信号"），并输出台账净值/回撤行。
@@ -204,6 +204,7 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  →  executable -
 16. **profit_aware 校准池饥饿与 None 语义**（2026-07-18 定位）：严格模式 git-sha 等值过滤（27 版本漂移）+ 98% 记录无 `return_tN_date`，校准池 89/89 天为空 → profit_aware 实际从未生效（排序静默退回 composite）。已修：sha 仅 provenance 不过滤、未标注日期用交易日历推断 realized_on。另：profit_aware 主键 None 从 -inf 改中性（0.5 胜率/0.0 期望）——旧语义让"已知 30% 胜率"排在"未知"前（方向错误）。
 17. **台账初始资金的整手截断**（2026-07-18 定位并修复）：10% 单票上限 × 10 万 = 1 万，股价 >100 元即买不起一手（journal 样本 28%~46% 的价格带，含 688 高价龙头）。**已解决**：initial_cash 默认提至 100 万（`DAILY_ACTION_LEDGER_INITIAL_CASH` 可覆盖），旧 10 万台账归档于 `data/paper_trading_v2/archive/`（0 成交，无损失）；skip 原因区分 `lot_floor_zero_shares` vs `cash_capacity`。
 18. **低桶细分与盈利阈值校准**（2026-07-18）：① `SCORE_BUCKETS` 的 <0.5 单桶细分为 5 桶（tracking n=8168 实证内部单调梯度：0.1-0.2 峰 62.0% → 0.4-0.5 44.7%，高桶边界不变），profit_aware 主键在 Top10 内恢复区分度（此前 ~56% 的天全落同桶）；② profitability 阈值从美股口径（ROE≥0.15/NM≥0.20/OM≥0.15，A 股 75% 满置信看空）改为 A 股全市场 ~p65-70（0.08/0.09/0.11，n≈4800 快照），0 通过率 75%→~30%，quality-first 红旗恢复选择性。
+19. **journal 成交子集做 regime 证据 = 选择偏差；文档滞后曾误导一次加仓特性开发**（2026-08-16 定位并当场回退）：journal 的 192 笔 EXIT 是 legacy 回测**实际买入**的仓位子集（P1a 审查点名的"成交宇宙选择偏差"），在其上重建的执行口径 regime 统计（如 crisis +8.23%/n=21）**不能**作为 regime 仓位差异化证据——正确宇宙是全触发候选 court 重放（同策略全候选 T+1 开盘+滑点：crisis 9%/−8.98%，结论相反）。2026-08-16 曾据本文件过期的"待 canonical regime evidence 恢复 12%"句（描述 2026-07-18 状态，未反映 2026-08-14 的 gate 决定）开发了 crisis 12% 授权 manifest 并生成，核对 `daily_action.py:85-106` 注释后**整体回退**。教训：① 引用"当前状态"段落前先 grep 代码内的决策包引用与日期更新的注释；② 加仓/授权类特性的证据宇宙必须与被授权策略的候选宇宙一致。
 
 
 ## 关键文件速查
