@@ -156,7 +156,7 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  (无 alpha 确认
 
 - **logger**（`setup_output_log.py`）：`--daily-action` 每跑一次，把当日所有候选（含被过滤的）连同 `plan_eligible`/`degraded`/`trigger_strength`/`entry_price`/`kelly_pct`/`regime`/`block_reason` + 扁平化 metadata（pct_change / main_net_inflow / industry_pct / pre_5d_runup_pct / limit_up_pct_threshold）写成当日 JSONL。原子覆盖 = 幂等。
 - **backfill**（`join_setup_outputs_with_returns.py` 的 `backfill_panel()`）：`--auto` 末尾 best-effort 调用（`try/except`，永不拖垮 `--auto`）。只加载**已记录票**的价格序列（不是全 700+ 只），join 出 T+1/T+3/T+5/T+10 前向收益，写 panel。到期才标 `realized=True`。
-- **面板按 `plan_eligible`(过全过滤) vs `filtered` 分层**：这是判断「全过滤是否真的挑出 alpha」的样本外依据。样本够大前不要据此改策略参数。
+- **面板按 `plan_eligible`(过全过滤) vs 策略过滤组（检测器正常但被策略判断拒绝）分层**：这是判断「全过滤是否真的挑出 alpha」的样本外依据。`degraded=True` / `readiness degraded:` 数据护栏降级票**不入对照、单独披露**（commit 362a2789 分层修复）——2026-07-08/07-15 两天各 263 张涨停注入候选因旧行业映射路径（候选池快照仅覆盖 ~4%）被降级，07-17 readiness v2 强制 SW 精确覆盖宇宙后 0 复发；混入对照曾产出 p<0.001「全过滤挑 alpha」假阳性。首个诚实结论（2026-08-16, 326 realized）：T+1 反向显著（策略过滤 +1.30% vs eligible −1.37%, p=0.040）、T+3/T+5/T+10 不显著——**尚无证据全过滤挑 alpha**。样本够大前不要据此改策略参数。
 - ⚠️ **panel 是样本外累积，不是回测**：`data/paper_trading_backtest/` 才是历史回测（192 EXIT）。两者别混。刚上线时 panel 里多数 `realized=False`（前向窗口未到期）属正常。
 
 ### --auto 缓存刷新性能（2026-07-17 优化，~408s → ~21s）
@@ -215,7 +215,7 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  (无 alpha 确认
 | PIT 证据指纹 | `src/screening/offensive/pit_evidence.py`（canonical 指纹/校验；输出是 ledger 契约，改实现必须做逐位等价验证） |
 | 样本外 logger | `src/screening/offensive/setup_output_log.py`（`--daily-action` 逐日写信号快照） |
 | 样本外 backfill | `scripts/join_setup_outputs_with_returns.py`（`backfill_panel()`；`--auto` 末尾回填前向收益 → panel） |
-| 面板体检（只读） | `scripts/panel_health_check.py`（plan_eligible vs filtered Welch t 检验；`--auto` 末尾打印一行摘要，realized≥30/组≥5 时出结论） |
+| 面板体检（只读） | `scripts/panel_health_check.py`（plan_eligible vs 策略过滤组 Welch t 检验，数据护栏降级票不入对照只披露；`--auto` 末尾打印一行摘要，realized≥30/组≥5 时出结论） |
 | 跨周期裸信号验证 | `scripts/validate_btst_setup_cross_cycle.py`、`scripts/validate_auto300_gate_removal.py` |
 | ATR 止损工具 | `src/screening/offensive/atr_utils.py`（Wilder ATR + 止损价计算） |
 | 涨停板块判定 | `src/tools/ashare_board_utils.py`（`limit_up_pct_for_ticker`：主板9.5%/科创创业19.5%/北交所29%） |
