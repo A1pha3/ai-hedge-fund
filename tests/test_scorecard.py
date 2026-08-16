@@ -275,6 +275,7 @@ class TestFormatting:
         joined = "\n".join(lines)
         assert "胜率" in joined and "IC" in joined
         assert "前3" in joined
+        assert "未扣费" in joined  # 冷读收口: 毛收益口径必须自明
         assert "--daily-action" in joined  # 边界声明常驻
 
     def test_scorecard_lines_insufficient_discloses(self):
@@ -337,6 +338,7 @@ class TestFormatting:
         mid_n = compute_bucket_stats(enough)
         header_mid = format_bucket_header(mid_n["较低 (0.3-0.4)"])
         assert "胜率" in header_mid and "赔率" in header_mid
+        assert "未扣费" in header_mid  # 均值是毛收益, 扣费判断读者自己能做
         assert "少样本" in header_mid
 
         null_header = format_bucket_header(

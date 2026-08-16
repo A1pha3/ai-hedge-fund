@@ -263,6 +263,7 @@ def test_scorecard_segment_states(tmp_path: Path) -> None:
     card = render_briefing_card(payload)
     assert "排序" in card and "有正向证据" in card
     assert "胜率60%" in card and "IC+1.00" in card
+    assert "未扣费" in card  # 冷读收口: 记分牌均值是 T+5 毛收益
     assert payload["ranking_scorecard"]["available"] is True
     assert payload["ranking_scorecard"]["verdict"] == "positive"
     # ic_t_str 是预格式化字符串 (±inf 不进 JSON 数值)

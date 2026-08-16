@@ -916,7 +916,7 @@ def _scorecard_segment(sc: Mapping[str, Any] | None) -> str:
     }.get(str(sc.get("verdict")), "无正向证据→观察清单")
     return (
         f"近{sc.get('n_dates')}推荐日 切片T+5 "
-        f"胜率{sc.get('win_rate'):.0%}·均值{sc.get('mean_pct'):+.1f}%·"
+        f"胜率{sc.get('win_rate'):.0%}·均值{sc.get('mean_pct'):+.1f}%（未扣费）·"
         f"IC{sc.get('ic'):+.2f}(t={sc.get('ic_t_str')}) → {verdict_zh}"
     )
 
@@ -988,7 +988,7 @@ def render_briefing_push_lines(briefing: Mapping[str, Any]) -> list[str]:
     if scorecard.get("available"):
         lines.append(
             f"- 排序记分牌: 近`{scorecard.get('n_dates')}`推荐日 切片T+5 "
-            f"胜率 `{scorecard.get('win_rate'):.0%}`·均值 `{scorecard.get('mean_pct'):+.1f}%`·"
+            f"胜率 `{scorecard.get('win_rate'):.0%}`·均值 `{scorecard.get('mean_pct'):+.1f}%`（未扣费）·"
             f"IC `{scorecard.get('ic'):+.2f}`(t=`{scorecard.get('ic_t_str')}`)"
         )
     else:

@@ -363,7 +363,7 @@ def format_scorecard_lines(report: ScorecardReport) -> list[str]:
     line1 = (
         f"排序记分牌 近{report.n_dates}个推荐日（{report.window_start}→{report.window_end}）: "
         f"Top10 切片 T+5 胜率 {_fmt_pct(report.slice_win_rate)} · "
-        f"均值 {_fmt_pct(report.slice_mean_return, signed=True)} · "
+        f"均值 {_fmt_pct(report.slice_mean_return, signed=True)}（未扣费） · "
         f"排序IC {report.mean_daily_ic:+.2f}(t={_fmt_ic_t(report.ic_t_stat)}) · "
         f"前3 {_fmt_pct(report.head_win_rate)} vs 后7 {_fmt_pct(report.rest_win_rate)}"
     )
@@ -394,7 +394,7 @@ def format_bucket_header(stats: BucketStats) -> str:
     low_sample = " ⚠少样本" if stats.n_mature < TRUSTED_MIN_MATURE else ""
     return (
         f"── 桶 {stats.label} · 近窗口{window_seg} {stats.n_records}笔（成熟{stats.n_mature}）· "
-        f"T+5 胜率 {_fmt_pct(stats.win_rate)} · 均值 {_fmt_pct(stats.mean_return, signed=True)} · "
+        f"T+5 胜率 {_fmt_pct(stats.win_rate)} · 均值 {_fmt_pct(stats.mean_return, signed=True)}（未扣费） · "
         f"盈笔均 {_fmt_pct(stats.avg_win, signed=True)} 亏笔均 {_fmt_pct(stats.avg_loss, signed=True)} · "
         f"{payoff_seg}{low_sample}"
     )
