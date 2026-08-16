@@ -108,8 +108,8 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  →  executable -
 
 **位置：`data/price_cache/*.csv`**（每股一个文件，6 位代码命名）
 
-- **深度已补齐**（2026-07-17 实测）：823 票，中位 1579 行，2020-01-02 → 2026-07-17。（07-08 时曾只有 6 个月 ~117 行/股，之后做过历史回填。）
-- `scripts/setup_research.py` 直接跑仍会 **n≈0**：完整 setup 需要资金流条件，而 `fund_flow_cache` 历史仍浅（见下表）——价格深度不再是瓶颈，资金流才是。
+- **深度已补齐**（2026-08-17 实测：**1594 票**；2026-07-17 快照为 823 票/中位 1579 行，2020-01-02 起；07-08 时曾只有 6 个月 ~117 行/股）。
+- ⚠️ 把资金流深度当作历史回放瓶颈的旧叙述**已过期**——fund_flow 已补齐（见下表），历史评估的现行资产是 court 管道（见陷阱 9），旧 Phase 0 框架及其瓶颈叙述不再指导任何工作。
 - `data/reports/setup_research/phase0_report_20260708.md` 声称的 n=1762 **无法从本地数据复现**——它在别处（更深资金流历史）生成。
 - ⚠️ **引用 Phase 0 报告的结论前，先与修正后的 paper_trading_backtest 重建结果交叉验证。** 曾因盲信 Phase 0（声称 OB E=+3.42%/n=1113）对 OversoldBounce 统一加仓；全量修正后 OB 为 n=59/E=-0.13%/winrate=44%，没有可授权 alpha。
 
@@ -146,7 +146,7 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  →  executable -
 - **评分链已回溯复权**（2026-07-18）：`load_price_frame` 用 pct_change 链把 OHLC 复权到最新行口径（末行=原始价），此前 EMA/RSI/动量/布林带/ATR 从 raw close 重算，除权缺口被读成崩盘幻影（001388 型 raw -26.8% 实际 +10%；~19% 的票近 126 行内有缺口）。**修复前生成的 composite/score_b 与全部因子 IC/校准证据是在幻影污染的信号上量的，重跑前不可直接对比。**
 - **因子数学修正**（2026-07-18）：① growth 趋势符号反转修复（newest-first 序列倒序回归，此前 50.8% 的票加速/减速判反）；② ADX 改 Wilder RMA（与 RSI 同平滑，此前 ewm(span) 系统性偏高、31.5% 趋势门翻转）；③ growth 钳位 score=0 区分负增长/零增长（raw_score 保留原值，此前 27.4% 零增长票被满置信看空）；④ 动量三窗改对数收益求和（消除高波动票动量高估的横截面偏差）。
 - 排序证据（双确认）：composite/score_b 主键在真实 Top10 切片显著反向 — c272（47% vs 60%）+ 2026-07-18 独立复核（T+5 IC=-0.112 t=-2.49，top-3 45% vs 反选 58%）。全池 300 票日 IC 为正——顶部非单调反转。tracking 回填改用 price_cache pct_change 链（43 条幻影记录已迁移重算）。
-- **展示层 v3（2026-08-16 重构，冻结规格；同日冷读收口）**：`--auto` 候选表按 SCORE_BUCKETS 桶分组，桶级钱数（近 60 推荐日 T+5 胜率/均值/盈亏笔均/赔率，`scorecard.py::compute_bucket_stats`）只在桶头渲染一次（此前逐行重复"48%·428" 7 次）；header 记分牌行常驻（briefing 卡「排序」段 / legacy 回退时表格上方）：Top10 切片胜率·均值·日内 Spearman IC·前3vs后7 + 三态 verdict（positive 需 IC t≥2 且切片均值>0；t≤−2 判反向；**tracking 只记录每日 Top10，无池级基准，不编造**）；桶成熟样本 <5 不给点估计、5–19 带 ⚠少样本（对齐 BUY-gate backing_sample≥20 纪律）。**冷读验收（2026-08-16）通过**：三问（信几成/为什么/做什么）可全部从表内推导；补齐三个口径标注——桶头与记分牌均值标 **（未扣费）**（往返 ~0.65%，均值扣费即净先验）、完整图例声明 **T+5 是诊断口径、与 --daily-action T+1/T+10 合约不同窗口**、一行图例固化 **verdict=信任档（无正向证据→只读不跟）**。评分构成块已删（与因子瀑布同数据两遍），因子瀑布需 `AUTO_TABLE_VERBOSE=1`；图例两行 + `--top --legend` 全量；`gap_to_limit≤0.01` → 行内 ⚠距涨停<1%（T+1 买不进风险）；行业集中警示改 count≥3（旧 ratio>0.4 在 sector cap=3 下永不触发，是死代码）；行业轮动行加 ⚠背离（价格动量与 avg score_b 反向）；P9-1 预期收益块样本不足时显式披露行（不再静默消失）。测试：`tests/test_scorecard.py`、`test_auto_briefing.py`、`test_auto_screening_display.py`、`test_score_decomposition.py::TestAutoScreeningTableRowV3`、`test_sector_concentration.py`。
+- **展示层 v3（2026-08-16 重构，冻结规格；同日冷读收口）**：`--auto` 候选表按 SCORE_BUCKETS 桶分组，桶级钱数（近 60 推荐日 T+5 胜率/均值/盈亏笔均/赔率，`scorecard.py::compute_bucket_stats`）只在桶头渲染一次（此前逐行重复"48%·428" 7 次）；header 记分牌行常驻（briefing 卡「排序」段 / legacy 回退时表格上方）：Top10 切片胜率·均值·日内 Spearman IC·前3vs后7 + 三态 verdict（positive 需 IC t≥2 且切片均值>0；t≤−2 判反向；**IC 日数 <2 时 t=None「样本不足」、单日 IC 不宣称显著**——2026-08-16 收口 commit `25fcabe2`；**tracking 只记录每日 Top10，无池级基准，不编造**）；桶成熟样本 <5 不给点估计、5–19 带 ⚠少样本（对齐 BUY-gate backing_sample≥20 纪律）。**冷读验收（2026-08-16）通过**：三问（信几成/为什么/做什么）可全部从表内推导；补齐三个口径标注——桶头与记分牌均值标 **（未扣费）**（往返 ~0.65%，均值扣费即净先验）、完整图例声明 **T+5 是诊断口径、与 --daily-action T+1/T+10 合约不同窗口**、一行图例固化 **verdict=信任档（无正向证据→只读不跟）**。评分构成块已删（与因子瀑布同数据两遍），因子瀑布需 `AUTO_TABLE_VERBOSE=1`；图例两行 + `--top --legend` 全量；`gap_to_limit≤0.01` → 行内 ⚠距涨停<1%（T+1 买不进风险）；行业集中警示改 count≥3（旧 ratio>0.4 在 sector cap=3 下永不触发，是死代码）；行业轮动行加 ⚠背离（价格动量与 avg score_b 反向）；P9-1 预期收益块样本不足时显式披露行（不再静默消失）。测试：`tests/test_scorecard.py`、`test_auto_briefing.py`、`test_auto_screening_display.py`、`test_score_decomposition.py::TestAutoScreeningTableRowV3`、`test_sector_concentration.py`。
 
 ### 样本外验证闭环（logger → backfill → panel）
 
@@ -172,7 +172,6 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  →  executable -
 - **日期处理向量化**：`_fund_flow_dates`/`_price_dates` 纯字符串整列操作，替代逐值 `pd.to_datetime`（800 票 × 中位 1579 行 × 多趟）。
 - **PIT 指纹快路**（`pit_evidence.py`）：`to_dict(records)` → `itertuples` 行迭代 + 零填充 ISO 日期快速路径；`_normalize_daily_batch` 与 `_daily_batch_evidence_fingerprint` 改用 `canonical_price_row_fingerprint`（免每行 DataFrame 构造）。**逐位等价已验证**：优化前后对全部真实缓存（6042 个指纹，含 daily_batch manifest 指纹）逐位一致。
 - **资金流批量预取**（`DAILY_ACTION_FUND_FLOW_BATCH`，默认开）：stale 票用 `fetch_batch_fund_flow_tushare(trade_date)` 单次 API 全市场拉取替代逐票串行（~1.3s/票），命中票免网络与 rate-limit；close/pct_change 从当日 daily batch 填，main_net_pct 留 NaN（见陷阱 11）。冷缓存实测 68 票 30.6s → 6.4s；首日 ~500 票场景从 >10min 量级降到秒级。批量失败/未覆盖自动回落逐票路径。
-- 复测入口：`/tmp/refresh_probe2.py`（分段计时探针，一次性诊断脚本，不入库）。
 
 ### Daily Action readiness v2 legacy 数据完整性链
 
@@ -193,7 +192,7 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  →  executable -
 4. **`known_distributions.py` 是硬编码常量**（n=1762 等），无自动刷新，引用前需交叉验证。
 5. **`--daily-action` 扫描空间 = price_cache 文件名集合**：曾因只含候选池"好股票"而漏掉涨停小盘股（已用涨停注入修复，见 `cache_refresh.py`）。
 6. **BTST 涨停判定是板块自适应的**（2026-07-10 修复）：`limit_up_pct_for_ticker` 按前缀取阈值——主板 9.5%，科创/创业 19.5%，北交所 29.0%。旧固定 9.5% 会把 20% 板的非涨停大涨日误判为涨停。`execution_adjuster.is_limit_up_unbuyable_next_day` 也同步修复。
-7. **BTST 资金流条件在浅数据下降级**（2026-07-10 修复）：`fund_flow_cache` 普遍浅（<5 天）时，BTST 的「资金流 >20d 均值」条件无法判定 → `degraded=True`，渲染时标 `⚠残缺`。运行时检测口径比回测分布更宽松，operator 须知晓。
+7. **BTST 资金流条件在浅数据下降级**（2026-07-10 修复；2026-08-17 前提更新）：单票 `fund_flow` 历史 <5 天时「资金流 >20d 均值」无法判定 → `degraded=True`，渲染标 `⚠残缺`。fund_flow 已回填后全市场性浅数据的状况不再成立，触发面收窄为新上市/新注入票；降级机制与 operator 披露语义不变（`_MAIN_FLOW_MIN_HISTORY_DAYS=5`）。
 8. **setup-output panel 是样本外累积、不是回测**（2026-07-15 新增）：`data/reports/setup_output_panel.jsonl` 由 `--daily-action` 逐日记录 + `--auto` 回填前向收益生成，用于验证「全过滤挑 alpha」是否成立。别和 `data/paper_trading_backtest/` 的历史回测混淆。样本够大前**不要据此改策略参数**；刚上线多数 `realized=False` 属正常。跨周期裸信号已证明 2026 胜率是顺行情、非周期稳健。
 9. **完整 setup 2025-07 起可全保真重放（court），2020–2024 仍不可**（2026-08-16 更新）：旧"历史 fund_flow/industry 数据太浅 + 强度排序不可回放"（2026-07-15 记录）**已过期**——fund_flow 已补齐（99% ≥2025-07），生产 BTST 不依赖 composite（`btst_breakout.py` import 链无 scoring）。`data/research/btst_court/event_tables/event_table_v1.csv.gz`（2025-07→2026-08-15）即全候选跨周期重放产物。引用「跨周期回测」结论前仍先确认口径（裸信号 / court 全候选 / journal 成交子集）；2020–2024 全保真仍拿不到，跨周期结论以 2025-07 起 court 为准。
 10. **东财 push2his 会按源 IP 行为封禁，ProxyError 有误导性**（2026-07-17 定位）：`--auto` 每日对 `push2his.eastmoney.com` 逐票数百次 fflow 请求（含 enrich 补全），东财 WAF 对本机 IP 的 `/api/qt/*` 100% 断连（TLS 正常、请求发出后 empty reply；根路径 404、push2 实时 API 200 → 定点封 API 路径，非网络故障）。报错显示 ProxyError 是因为 requests 走系统代理（Clash），**根因不在代理**。已加熔断器（`src/tools/akshare_fund_flow.py`：连续 5 次网络错误熔断 15 分钟、半开自动复位；enrich 路径同步跳过），熔断期 akshare 源由 tushare/ftshare 兜底。注意：`push2` 的 `fflow/kline/get` 只有当日实时数据，**不能**替代历史接口；分片主机 `N.push2his.*` 同被封。封禁期 ftshare 缺的日子 `close`/`main_net_pct` 补不上属预期代价，解封后（通常数小时~几天）自动恢复。
