@@ -656,9 +656,9 @@ def test_render_recommendations_null_score_b_shows_na_not_zero(tmp_path: Path) -
         result = generate_screening_pdf(report, out, config=config)
     assert result.exists()
 
-    # Find the recommendations table (has score_b header).
+    # Find the recommendations table (has 信号分 header — 冷读清扫: score_b 表头已中文化).
     rec_table = next(
-        (t for t in captured_tables if "score_b" in t["headers"]),
+        (t for t in captured_tables if "信号分" in t["headers"]),
         None,
     )
     assert rec_table is not None, f"recommendations table not captured; got tables={[t['headers'] for t in captured_tables]}"
@@ -669,7 +669,7 @@ def test_render_recommendations_null_score_b_shows_na_not_zero(tmp_path: Path) -
     normal_row = next(r for r in rec_table["rows"] if "正常" in str(r[1]))
     # score_b is the 4th column (index 3) per headers: 代码/名称/行业/score_b/...
     assert null_row[3] == "n/a", f"null score_b should display 'n/a'; got {null_row[3]!r}"
-    assert normal_row[3] == "+0.7200", f"normal score_b should format as +0.7200; got {normal_row[3]!r}"
+    assert normal_row[3] == "+0.72", f"normal score_b should format 2dp; got {normal_row[3]!r}"  # 冷读清扫: 4dp 假精度已废
 
 
 def test_render_recommendations_section_title_shows_total_when_truncated(tmp_path: Path) -> None:

@@ -169,6 +169,23 @@ class FusedScore(BaseModel):
         return "strong_sell"
 
 
+# 决策枚举 → 中文标签 (展示层统一; 未知值原样回退, 不吞新枚举)。
+# 覆盖两套历史枚举域: FusedScore.classify_decision (strong_buy/watch/…) 与
+# 旧推送/why-not 报告的 buy/hold/bullish/bearish — 冷读清扫 2026-08-16 前
+# 这些 surface 直接渲染英文枚举 (watch/AVOID/Score B)。
+DECISION_LABELS_ZH: dict[str, str] = {
+    "strong_buy": "强烈买入",
+    "buy": "买入",
+    "watch": "关注",
+    "bullish": "看多",
+    "neutral": "观望",
+    "hold": "持有",
+    "sell": "卖出",
+    "bearish": "看空",
+    "strong_sell": "强烈卖出",
+}
+
+
 class ArbitrationAction(StrEnum):
     """冲突仲裁动作"""
 

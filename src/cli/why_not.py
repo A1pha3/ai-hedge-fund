@@ -324,7 +324,8 @@ def _print_already_recommended(
         "不可用": Fore.YELLOW,
     }
     verdict_color = _front_door_colors.get(front_door_action, Fore.YELLOW)
-    verdict_display = f"{verdict_color}{front_door_action}{Style.RESET_ALL}"
+    _front_zh = {"BUY": "买入", "HOLD": "持有", "AVOID": "回避"}.get(front_door_action, front_door_action)
+    verdict_display = f"{verdict_color}{_front_zh}{Style.RESET_ALL}"
 
     if front_door_action == "BUY":
         # 所有格子都通过 → 绿色推荐
@@ -336,7 +337,12 @@ def _print_already_recommended(
             f"{Fore.YELLOW}该票在推荐池中, 但 {reason} ({verdict_display}) — "
             f"原始推荐理由可用 {Fore.CYAN}--explain {ticker}{Style.RESET_ALL} 查看{Style.RESET_ALL}"
         )
-    print(f"  当前状态: {decision}  |  前门判决: {verdict_display}  |  Score B: {score_b:+.4f}  |  名称: {name}")
+    from src.screening.models import DECISION_LABELS_ZH
+
+    print(
+        f"  当前状态: {DECISION_LABELS_ZH.get(decision, decision)}  |  "
+        f"前门判决: {verdict_display}  |  信号分: {score_b:+.2f}  |  名称: {name}"
+    )
 
 
 def _print_not_in_market(ticker: str, report_path: Path) -> None:

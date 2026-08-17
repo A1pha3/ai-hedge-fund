@@ -3573,7 +3573,7 @@ def _print_custom_weights_results(top: list[dict], w: dict, *, market_regime: st
             recalibration_needed_count += 1
             recalib_marker = f"  {Fore.YELLOW}⚠重权越界(校准已重置){Style.RESET_ALL}"
         print(
-            f"  {idx:>2}. {label:<22}  score_b {score_b:+.3f}  "
+            f"  {idx:>2}. {label:<22}  信号分 {score_b:+.3f}  "
             f"前门 {verdict_display}  (原 {original:+.3f}  Δ {diff_str}){recalib_marker}"
         )
     if recalibration_needed_count > 0:
@@ -4460,8 +4460,14 @@ def run_explain(ticker: str) -> int:
     # 等跨 surface 一致 (BUY=绿/HOLD=黄/AVOID=红). 原为纯文本, AVOID 不醒目.
     _explain_verdict_colors = {"BUY": Fore.GREEN, "HOLD": Fore.YELLOW, "AVOID": Fore.RED, "不可用": Fore.YELLOW}
     _verdict_color = _explain_verdict_colors.get(front_door_action, Fore.YELLOW)
-    _verdict_display = f"{_verdict_color}{front_door_action}{Style.RESET_ALL}"
-    print(f"  决策: {decision}  |  前门判决: {_verdict_display}  |  Score B: {score_b:+.4f}")
+    _front_zh = {"BUY": "买入", "HOLD": "持有", "AVOID": "回避"}.get(front_door_action, front_door_action)
+    _verdict_display = f"{_verdict_color}{_front_zh}{Style.RESET_ALL}"
+    from src.screening.models import DECISION_LABELS_ZH
+
+    print(
+        f"  决策: {DECISION_LABELS_ZH.get(decision, decision)}  |  "
+        f"前门判决: {_verdict_display}  |  信号分: {score_b:+.2f}"
+    )
     print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
 
     # Market state at scoring time

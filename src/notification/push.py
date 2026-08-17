@@ -267,8 +267,11 @@ def format_report_markdown(report_data: Mapping[str, Any], *, max_rows: int = 10
     for idx, rec in enumerate(recs_raw[:max_rows], 1):
         if not isinstance(rec, Mapping):
             continue
+        from src.screening.models import DECISION_LABELS_ZH
+
         ticker = _safe_str(rec.get("ticker"), "-")
-        decision = _safe_str(rec.get("decision"), "-")
+        _raw_decision = _safe_str(rec.get("decision"), "-")
+        decision = DECISION_LABELS_ZH.get(_raw_decision, _raw_decision)
         score_b = _safe_float(rec.get("score_b"), 0.0)
         try:
             from src.screening.investability import build_front_door_verdict
@@ -293,7 +296,8 @@ def format_report_markdown(report_data: Mapping[str, Any], *, max_rows: int = 10
             arrow = "↑" if direction > 0 else "↓" if direction < 0 else "—"
             return f"{arrow}{confidence:.0f}"
 
-        lines.append(f"| {idx} | {ticker} | {decision} | {front_door_action} | {score_b:+.4f} | " f"{_sig('trend')} | {_sig('mean_reversion')} | {_sig('fundamental')} | {_sig('event_sentiment')} |")
+        _front_zh = {"BUY": "买入", "HOLD": "持有", "AVOID": "回避"}.get(front_door_action, front_door_action)
+        lines.append(f"| {idx} | {ticker} | {decision} | {_front_zh} | {score_b:+.2f} | " f"{_sig('trend')} | {_sig('mean_reversion')} | {_sig('fundamental')} | {_sig('event_sentiment')} |")
     lines.append("")
     if len(recs_raw) > max_rows:
         lines.append(f"_仅展示 Top {max_rows} / 共 {len(recs_raw)} 条。完整内容请查看 JSON 报告。_")

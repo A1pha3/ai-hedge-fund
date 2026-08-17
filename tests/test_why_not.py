@@ -82,10 +82,10 @@ def test_already_recommended_surfaces_front_door_verdict(tmp_path: Path, capsys)
     captured = capsys.readouterr()
 
     assert rc == 0
-    assert "当前状态: bullish" in captured.out
+    assert "当前状态: 看多" in captured.out  # 冷读清扫: 枚举中文化
     # 前门判决 AVOID 已着色; 检查核心词存在, 避免被 ANSI 码隔断
     assert "前门判决" in captured.out
-    assert "AVOID" in captured.out
+    assert "回避" in captured.out  # 冷读清扫: 前门中文化
 
 
 def test_ticker_not_in_recommendations_outputs_4_blocks(tmp_path: Path, capsys) -> None:
@@ -208,9 +208,9 @@ def test_score_b_null_in_already_recommended_does_not_crash(tmp_path: Path, caps
 
     assert rc == 0
     # autodev-24: 非 BUY → 不再显示绿色「已被推荐」
-    assert "在推荐池中" in captured.out or "Score B:" in captured.out
+    assert "在推荐池中" in captured.out or "信号分:" in captured.out
     # null 必须降级为 0.0, 不得崩 format string
-    assert "Score B:" in captured.out
+    assert "信号分:" in captured.out
 
 
 def test_confidence_block_last_pick_matches_min_score(tmp_path: Path, capsys) -> None:
@@ -544,7 +544,7 @@ class TestAlreadyRecommendedVerdictColor:
 
         assert rc == 0
         assert "前门判决" in out
-        assert "AVOID" in out  # crisis 下 AVOID
+        assert "回避" in out  # crisis 下 AVOID → 中文标签 (冷读清扫)
         # 非 BUY 时不影响既有的 disclaimer
         assert "不构成任何投资建议" in out
 
@@ -633,7 +633,7 @@ class TestWhyNotGreenEndorsementRegressionGuard:
         # 必须出现警告措辞
         assert "该票在推荐池中" in out
         assert "前门门控拒绝" in out
-        assert "AVOID" in out
+        assert "回避" in out  # 冷读清扫: 前门中文化
         # --explain 入口必须保留
         assert "--explain 000001" in out
 
@@ -659,4 +659,4 @@ class TestWhyNotGreenEndorsementRegressionGuard:
         assert "该票已被推荐" not in out
         assert "该票在推荐池中" in out
         assert "前门非买入" in out
-        assert "HOLD" in out
+        assert "持有" in out  # 冷读清扫: 前门中文化

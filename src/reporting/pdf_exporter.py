@@ -476,13 +476,16 @@ def _render_recommendations(pdf: _ScreeningPDF, report_data: dict) -> None:
     else:
         title = f"推荐标的 (Top {rendered})"
     pdf._section(title)
-    headers = ["代码", "名称", "行业", "score_b", "决策", "连续天数", "信号衰减"]
+    headers = ["代码", "名称", "行业", "信号分", "决策", "连续天数", "信号衰减"]
     widths = [22.0, 38.0, 28.0, 18.0, 22.0, 18.0, 24.0]
     rows: list[list[Any]] = []
     row_colors: list[list[tuple[int, int, int]]] = []
     for rec in recs[: pdf.config.max_recommendations]:
-        decision = rec.get("decision", "neutral")
-        decision_color = _decision_color(decision)
+        from src.screening.models import DECISION_LABELS_ZH
+
+        _raw_decision = rec.get("decision", "neutral")
+        decision = DECISION_LABELS_ZH.get(_raw_decision, _raw_decision)
+        decision_color = _decision_color(_raw_decision)
         decay = rec.get("decay") or {}
         decay_level = decay.get("level", "none")
         decay_color = _COLOR_AVOID if decay_level in ("strong", "moderate") else (_COLOR_WATCH if decay_level == "mild" else _COLOR_MUTED)
@@ -506,7 +509,7 @@ def _render_recommendations(pdf: _ScreeningPDF, report_data: dict) -> None:
         # Trust-calibration (R92 / Campaign 1 Stage 3 family): score_b=null 时
         # PDF 单元格显示 "n/a" 而非 "+0.0000", 让用户一眼区分"真实 0 分"
         # vs "数据残缺降级为 0", 不会把降级 0.0 误读为真实评分校准信任度。
-        score_b_display = "n/a" if score_b_is_missing else f"{score_b:+.4f}"
+        score_b_display = "n/a" if score_b_is_missing else f"{score_b:+.2f}"
         rows.append(
             [
                 rec.get("ticker", ""),

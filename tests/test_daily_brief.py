@@ -243,8 +243,8 @@ class TestDailyBriefFrontDoorVerdictConsistency:
         out = capsys.readouterr().out
 
         assert rc == 0
-        assert "strong_buy" in out, "raw decision is still shown (additive disclosure)"
-        assert "AVOID" in out, "When the raw decision (strong_buy) is contradicted by the front-door " "verdict (AVOID), the daily-brief MUST surface the gated verdict so the " "operator is not misled into acting on a pre-gate signal the BUY gate rejects."
+        assert "强烈买入" in out, "decision label shown (additive disclosure, 中文化后)"
+        assert "回避" in out, "When the raw decision (强烈买入) is contradicted by the front-door " "verdict (回避), the daily-brief MUST surface the gated verdict so the " "operator is not misled into acting on a pre-gate signal the BUY gate rejects."
 
     def test_raw_decision_agrees_with_front_door_no_contradiction_marker(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Negative guard: when raw decision and front-door verdict AGREE (both

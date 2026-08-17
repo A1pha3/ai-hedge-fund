@@ -276,7 +276,7 @@ _PORTFOLIO_SUMMARY_MIN_BUYS: int = 2
 def _extract_t30_metrics(item: dict) -> tuple[float | None, float | None]:
     """Extract the T+30 expected-return edge and win-rate from a pick dict.
 
-    Used by the per-pick table row (:func:`_build_top_table_row`) to render the
+    Used by the per-pick table row renderers to display the
     long-horizon *invalidation* view (T+30 edge<0 → "T+30 edge 转负" reason in
     ``build_front_door_verdict``). T+30 is intentionally NOT the BUY-gate
     decision horizon (see C220 commit 4184dd7e + C222 horizon 一致性) — it is
@@ -371,9 +371,11 @@ def _format_bucket_tag(item: dict) -> str:
     label = str(item.get("bucket_label", "") or "").strip()
     if not label:
         return ""
-    # Compact "低 (<0.5)" → "低(<0.5)" (drop the cosmetic space for density).
-    compact = label.replace(" (", "(")
-    return f"  bucket={compact}"
+    # 冷读清扫 (2026-08-16): "bucket=低(<0.5)" 的英文前缀+定性悖论词不再进
+    # 显示 — 与 --auto 档头/P9-1 同款区间提取 (scorecard.bucket_band_text)。
+    from src.screening.scorecard import bucket_band_text
+
+    return f"  {bucket_band_text(label)}"
 
 
 def _classify_return_rhythm(expected_returns: dict | None) -> str:

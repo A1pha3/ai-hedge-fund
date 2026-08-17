@@ -341,13 +341,20 @@ def _format_score_colored(score_b: float) -> str:
 
 
 def _format_decision_colored(decision: str) -> str:
-    """decision 着色: bullish 绿, bearish 红, 其他黄。"""
+    """decision 着色+中文化: 看多 绿, 看空 红, 其他黄。
+
+    冷读清扫 (2026-08-16): 此前直接渲染英文枚举 (bullish/bearish/neutral),
+    与 push/PDF/--explain 同病 — 统一经 DECISION_LABELS_ZH, 未知值原样回退。
+    """
+    from src.screening.models import DECISION_LABELS_ZH
+
     d = (decision or "").lower()
-    if d == "bullish":
-        return f"{Fore.GREEN}{decision}{Style.RESET_ALL}"
-    if d == "bearish":
-        return f"{Fore.RED}{decision}{Style.RESET_ALL}"
-    return f"{Fore.YELLOW}{decision or 'neutral'}{Style.RESET_ALL}"
+    label = DECISION_LABELS_ZH.get(d, decision or "观望")
+    if d == "bullish" or d == "buy" or d == "strong_buy":
+        return f"{Fore.GREEN}{label}{Style.RESET_ALL}"
+    if d == "bearish" or d == "sell" or d == "strong_sell":
+        return f"{Fore.RED}{label}{Style.RESET_ALL}"
+    return f"{Fore.YELLOW}{label}{Style.RESET_ALL}"
 
 
 def _print_daily_brief(
@@ -455,7 +462,10 @@ def _print_daily_brief(
         # BUY (operator could act on the raw signal and be rejected by the gate).
         _contradiction = _raw_buyish and action != "BUY"
         verdict_marker = f" {Fore.RED}⚠{Style.RESET_ALL}" if _contradiction else ""
-        verdict_str = f"{Fore.CYAN}前门:{Style.RESET_ALL} {action}{verdict_marker}"
+        # 冷读清扫 (2026-08-16): 前门渲染英文枚举 (BUY/AVOID) → 中文 (买入/回避),
+        # 着色/矛盾标记 (raw 看多 vs 前门未过闸) 契约不变。
+        _front_zh = {"BUY": "买入", "HOLD": "持有", "AVOID": "回避"}.get(action, action)
+        verdict_str = f"{Fore.CYAN}前门:{Style.RESET_ALL} {_front_zh}{verdict_marker}"
 
         ticker_label = f"{ticker} {name}" if name else ticker
         score_str = _format_score_colored(score_b)

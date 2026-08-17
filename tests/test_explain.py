@@ -270,10 +270,10 @@ class TestExplainFrontDoorVerdict:
         rc, output = _run_explain_capture(report)
 
         assert rc == 0
-        assert "决策: buy" in output
+        assert "决策: 买入" in output  # 冷读清扫: 枚举中文化
         # autodev-27 loop 141: verdict 着色 (ANSI); 核心词仍可见
         assert "前门判决" in output
-        assert "AVOID" in output
+        assert "回避" in output  # 冷读清扫: 前门中文化
 
     def test_explain_verdict_is_color_coded(self):
         """autodev-27 loop 141: 前门判决必须着色 (ANSI 码存在)."""
@@ -857,7 +857,7 @@ class TestRunExplainNoneScoreBHandling:
         rc, output = _run_explain_capture(report, ticker="000001")
         assert rc == 0, f"run_explain crashed on score_b=None (TypeError at score_b:+.4f format). " f"Operator cannot see explain output for corrupt/partial reports. " f"Got rc={rc}, output={output!r}"
         # Score B line should show 0.0000 (coerced) not crash
-        assert "Score B:" in output
+        assert "信号分:" in output  # 冷读清扫: Score B → 信号分
 
     def test_missing_score_b_key_still_uses_default(self) -> None:
         """Regression guard: missing score_b key must still fall back to 0.0.
@@ -870,7 +870,7 @@ class TestRunExplainNoneScoreBHandling:
         report = _make_report(recommendations=[rec])
         rc, output = _run_explain_capture(report, ticker="000001")
         assert rc == 0
-        assert "Score B:" in output
+        assert "信号分:" in output  # 冷读清扫: Score B → 信号分
 
     def test_none_score_b_shows_zero_not_blank(self) -> None:
         """None score_b must render as 0.0000, not blank or 'None'.
@@ -883,7 +883,7 @@ class TestRunExplainNoneScoreBHandling:
         report = _make_report(recommendations=[rec])
         rc, output = _run_explain_capture(report, ticker="000001")
         assert rc == 0
-        assert "+0.0000" in output, f"None score_b should coerce to 0.0000 for honest display. Got: {output!r}"
+        assert "+0.00" in output, f"None score_b should coerce to 0.00 for honest display. Got: {output!r}"  # 冷读清扫: 2dp
 
 
 class TestRunExplainNoneDecisionHandling:
@@ -911,8 +911,8 @@ class TestRunExplainNoneDecisionHandling:
         report = _make_report(recommendations=[rec])
         rc, output = _run_explain_capture(report, ticker="000001")
         assert rc == 0
-        assert "决策: neutral" in output, f"None decision should coerce to 'neutral' (the missing-key default), " f"not render as '决策: None'. Got: {output!r}"
-        assert "None" not in output.replace("Score B:", ""), f"Literal 'None' should not appear in decision display. Got: {output!r}"
+        assert "决策: 观望" in output, f"None decision should coerce to neutral label (中文), not render as '决策: None'. Got: {output!r}"  # 冷读清扫: 枚举中文化
+        assert "None" not in output.replace("信号分:", ""), f"Literal 'None' should not appear in decision display. Got: {output!r}"
 
     def test_empty_string_decision_shows_neutral(self) -> None:
         """decision='' (empty string) must also coerce to 'neutral'.
@@ -925,7 +925,7 @@ class TestRunExplainNoneDecisionHandling:
         report = _make_report(recommendations=[rec])
         rc, output = _run_explain_capture(report, ticker="000001")
         assert rc == 0
-        assert "决策: neutral" in output
+        assert "决策: 观望" in output
 
     def test_valid_decision_preserved(self) -> None:
         """Regression guard: valid decision must be preserved (not coerced).
@@ -936,7 +936,7 @@ class TestRunExplainNoneDecisionHandling:
         report = _make_report(recommendations=[rec])
         rc, output = _run_explain_capture(report, ticker="000001")
         assert rc == 0
-        assert "决策: watch" in output
+        assert "决策: 关注" in output
 
 
 class TestRunExplainNoneSignalsHandling:

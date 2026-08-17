@@ -618,7 +618,7 @@ def test_format_report_markdown_surfaces_front_door_verdict() -> None:
     )
 
     assert "| # | 代码 | 决策 | 前门判决 | 评分 |" in body
-    assert "| 1 | 300750 | buy | AVOID | +0.7800 |" in body
+    assert "| 1 | 300750 | 买入 | 回避 | +0.78 |" in body  # 冷读清扫: 决策/前门中文化, 4dp→2dp
 
 
 def test_format_report_markdown_truncates_table_rows() -> None:

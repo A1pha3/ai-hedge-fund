@@ -956,9 +956,10 @@ class TestPrintPickEntryBucketAggregateDisclosure:
         )
         _print_pick_entry(1, item, ctx)
         out = capsys.readouterr().out
-        # The bucket short-name (低 / 中低 / 中 / 中高 / 高) must appear, anchored
-        # to the calibration row so the operator reads "bucket=低 决策=+4.67%".
-        assert "bucket" in out.lower(), "Per-pick calibration metrics are bucket-level aggregates (verified " "empirically: same-bucket picks share byte-identical 决策/胜率/样本). " "The operator must see a bucket label to distinguish bucket estimate " "from per-ticker measurement — contract §估计值的清晰披露."
+        # 冷读清扫 (2026-08-16): 标签改为「信号分档 <区间>」 — 英文 bucket=
+        # 前缀与定性悖论词 (低) 不进显示, 但披露意图不变: 同档票共享逐档校准
+        # 指标, 操作员必须能区分"本票实测"与"本档平均"。
+        assert "信号分档" in out, "Per-pick calibration metrics are bucket-level aggregates (verified " "empirically: same-bucket picks share byte-identical 决策/胜率/样本). " "The operator must see a bucket band to distinguish bucket estimate " "from per-ticker measurement — contract §估计值的清晰披露."
 
     @patch("src.screening.top_picks.build_front_door_verdict")
     def test_no_bucket_tag_when_label_absent(self, mock_verdict, capsys) -> None:
@@ -1043,11 +1044,10 @@ class TestPrintPickEntryBucketAggregateDisclosure:
 
         # Both rows must carry a bucket tag, and the tag must be IDENTICAL
         # across the two picks (same bucket → same disclosure).
-        bucket_tags = re.findall(r"bucket[=: ]*[^\s]+", out, re.IGNORECASE)
-        assert len(bucket_tags) >= 2, f"Expected >=2 bucket tags (one per pick), got {bucket_tags!r}"
-        # Normalize for comparison (case-insensitive)
-        normalized = {t.lower().strip() for t in bucket_tags}
-        assert len(normalized) == 1, f"Two picks in the SAME 低(<0.5) bucket must show the SAME bucket tag " f"so the operator can connect identical 决策/胜率 to the shared bucket. " f"Got distinct tags: {normalized!r}"
+        band_tags = re.findall(r"信号分档 \S+", out)
+        assert len(band_tags) >= 2, f"Expected >=2 信号分档 tags (one per pick), got {band_tags!r}"
+        # 同档两票的档标签逐字一致 (同档 → 同披露)
+        assert band_tags[0] == band_tags[1], f"Two picks in the SAME bucket must show the SAME band tag " f"so the operator can connect identical 决策/胜率 to the shared bucket. " f"Got distinct tags: {band_tags!r}"
 
 
 # ---------------------------------------------------------------------------
