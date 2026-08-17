@@ -235,6 +235,71 @@ def calibration(ev: pd.DataFrame) -> dict:
     return {int(i): {"n": int(r.n), "ts": f"[{r.ts_min:.2f},{r.ts_max:.2f}]", "E_t10": round(r.E_t10, 5), "WR_t10": round(r.WR_t10, 3), "E_t8": round(r.E_t8, 5) if pd.notna(r.E_t8) else None} for i, r in g.iterrows()}
 
 
+def monthly_by_regime(ev: pd.DataFrame, horizon: int = 10) -> dict:
+    """月度 × regime × gate 聚合 — 固化此前的一次性临时聚合, 口径显式可重验.
+
+    band = traded (eligible ∩ fillable ∩ strength≥MIN_TRIGGER_STRENGTH; 保留
+    gate_blocked 行以输出 gate_off 对照); 收益 = T+{horizon} 净口径 (30bps/边
+    滑点 + 5bps 卖出印花税, 同 net_ret); 分组 = signal_date 前 6 位 (YYYYMM).
+    缺失/非有限收益行排除且 n 如实; 空 regime 层显式 n=0, 不静默缺键.
+    月度样本小 (n≈百级), 仅描述不检验 — 推断仍走 Q1 的按日聚类 bootstrap.
+    """
+    col = f"gross_ret_t{horizon}"
+    band = ev[
+        ~ev["degraded"] & ~ev["industry_missing"] & ~ev["st_name"] & ~ev["excluded_ticker"]
+        & ev["price_ge_3"] & ev["fillable"] & (ev["trigger_strength"] >= MIN_TRIGGER_STRENGTH)
+    ].copy()
+    band["ret"] = net_ret(band[col], SLIPPAGE_BPS)
+    band = band[band["ret"].notna()]
+    band["month"] = band["signal_date"].astype(str).str[:6]
+
+    def _stats(df: pd.DataFrame) -> dict:
+        if df.empty:
+            return {"n": 0, "mean": None, "winrate": None}
+        return {
+            "n": int(len(df)),
+            "mean": round(float(df["ret"].mean()), 5),
+            "winrate": round(float((df["ret"] > 0).mean()), 3),
+        }
+
+    out: dict = {}
+    for month, g in band.groupby("month"):
+        layers = {}
+        for gate_key, sub in (("gate_on", g[~g["gate_blocked"]]), ("gate_off", g)):
+            layers[gate_key] = {
+                layer: _stats(sub if layer == "total" else sub[sub["regime"] == layer])
+                for layer in ("total", "normal", "crisis", "risk_off")
+            }
+        out[month] = layers
+    return out
+
+
+def render_monthly_md(monthly: dict) -> list[str]:
+    L = ["## 月度 × regime × gate (T+10 净收益, traded band)", ""]
+    L.append("固化口径: band=eligible∩fillable∩strength≥0.5 · 净=30bps/边+5bps 印花税 · 分组=signal_date 月份")
+    L.append("```")
+    L.append("  月份   gate   n   E(T+10)  win |  normal        crisis       risk_off")
+    for month, layers in monthly.items():
+        for gate_key in ("gate_on", "gate_off"):
+            t = layers[gate_key]
+            parts = []
+            for layer in ("normal", "crisis", "risk_off"):
+                s = t[layer]
+                m = "--" if s["mean"] is None else format(s["mean"], "+.2%")
+                parts.append(f"{s['n']:3d} {m:>7}")
+            mean_text = "--" if t["total"]["mean"] is None else format(t["total"]["mean"], "+.2%")
+            win_text = "--" if t["total"]["winrate"] is None else f"{t['total']['winrate']:.0%}"
+            L.append(
+                f"  {month}  {'ON ' if gate_key == 'gate_on' else 'OFF'}  {t['total']['n']:4d}  {mean_text:>7}  {win_text:>3} | "
+                + "  ".join(parts)
+            )
+    L.append("```")
+    L.append("- gate OFF 行 = 同 band 不剔 gate_blocked 的对照 (评估 regime gate 月度价值的直接证据).")
+    L.append("- ⚠ 月度样本 n≈百级且跨月事件相关, 本表只描述不检验; 显著性走 Q1 聚类 bootstrap.")
+    L.append("")
+    return L
+
+
 def render_md(pack: dict, manifest: dict, eligibility: dict) -> str:
     L = ["# BTST Court Decision Pack", ""]
     L.append(f"- 构建日: {pack['as_of']} · 事件表: {manifest['artifact']} ({manifest['rows']} hits) · git `{manifest['git_sha'][:10]}`")
@@ -271,6 +336,7 @@ def render_md(pack: dict, manifest: dict, eligibility: dict) -> str:
     L.append(f"- 悬崖检验 {json.dumps(q3['cliff_tests'], ensure_ascii=False)} · 门 {q3['gates']} · 候选悬崖 {q3['proposed_cliff']}")
     L.append("- ⚠ 形状同读: 悬崖门通过 ≠ 3% 处有悬崖; 若毒性集中在 >6% 尾区, 按 3% 跳过会误杀 3~6% 正 EV 区.")
     L.append("")
+    L.extend(render_monthly_md(pack["monthly_by_regime"]))
     L.append("## 强度十分位校准表 (研究产物, 不构成接线授权)")
     L.append("```")
     for d, r in pack["calibration"].items():
@@ -321,6 +387,7 @@ def main() -> None:
         "q2": q2_threshold(threshold_view),
         "q3": q3_gap(traded),
         "calibration": calibration(eligible[eligible["fillable"]]),
+        "monthly_by_regime": monthly_by_regime(table),
     }
     stamp = date.today().strftime("%Y%m%d")
     md_path = Path(f"data/reports/btst_court_decision_pack_{stamp}.md")
