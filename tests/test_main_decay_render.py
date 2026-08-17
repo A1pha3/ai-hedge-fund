@@ -1,87 +1,96 @@
-"""R53: surface ``days_since_peak`` in the top-picks decay tag.
+"""R53: surface ``days_since_peak`` in the table decay tag (--top v3 迁移后)。
 
 ``DecayInfo.days_since_peak`` (how many days since the ticker's score peaked)
-is computed by ``signal_decay_detector`` and serialized into the report, but
-the ``--top`` / ``--auto`` table renderers showed only ``change_pct``. R53
-appends the days-since-peak so the user can distinguish early decay (↓20% at
-1d) from late decay (↓20% at 5d) — a meaningful trajectory signal for the
-"is this BUY still valid?" decision.
+is computed by ``signal_decay_detector`` and serialized into the report;
+``--top`` 现复用 v3 行构造器 ``_build_auto_screening_table_row`` + 
+``_decay_map_from_recs`` 形状适配 (2026-08-16 迁移)。R53 契约不变: 早期衰减
+(↓20% 1天) 与晚期衰减 (↓20% 5天) 必须可区分。
+
+行为变化 (v3): 旧 ``_build_top_table_row`` 对 ``score_b=None`` 渲染 0.0;
+新路径按 FusedScore 校验失败**跳行 + 警告** — 报告 JSON 来自自身 dump,
+坏行不该被静默补零渲染 (bucket 分组也依赖 score_b)。
 """
 
 from __future__ import annotations
 
-from src.main import _build_top_table_row
+import pytest
+
+from src.main import _build_auto_screening_table_row, _decay_map_from_recs, _front_door_cell
+from src.screening.models import FusedScore, StrategySignal
+from src.screening.signal_decay_detector import DecayLevel
 
 
-def _make_rec(decay: dict | None = None, **overrides) -> dict:
-    rec = {
-        "ticker": "000001",
-        "name": "测试",
-        "industry_sw": "银行",
-        "score_b": 0.5,
-        "decision": "watch",
-        "consecutive_days": 1,
-    }
-    if decay is not None:
-        rec["decay"] = decay
-    rec.update(overrides)
-    return rec
+def _item(ticker: str = "000001") -> FusedScore:
+    return FusedScore(
+        ticker=ticker,
+        name="测试",
+        industry_sw="银行",
+        score_b=0.5,
+        strategy_signals={
+            "trend": StrategySignal(direction=1, confidence=50.0, completeness=1.0, sub_factors={}),
+        },
+    )
 
 
-def test_decay_tag_shows_days_since_peak() -> None:
-    """R53: a decaying pick must surface days_since_peak in the decay cell."""
-    rec = _make_rec(decay={"level": "moderate", "change_pct": -20.0, "days_since_peak": 5})
-    row = _build_top_table_row(idx=1, rec=rec)
-    decay_cell = row[-1]
-    assert "(5d)" in decay_cell, f"Expected '(5d)' days-since-peak in decay cell, got: {decay_cell!r}"
+def _render(decay: dict) -> list:
+    rec = {"ticker": "000001", "decay": decay}
+    item = _item()
+    row = _build_auto_screening_table_row(
+        idx=1,
+        item=item,
+        consecutive_lookup={"000001": rec},
+        decay_map=_decay_map_from_recs([rec]),
+        composite_score=0.48,
+    )
+    return row
 
 
-def test_decay_tag_omits_days_when_at_peak() -> None:
-    """R53: days_since_peak=0 (today IS the peak) must not append a days tag."""
-    rec = _make_rec(decay={"level": "moderate", "change_pct": -5.0, "days_since_peak": 0})
-    row = _build_top_table_row(idx=1, rec=rec)
-    decay_cell = row[-1]
-    assert "(0d)" not in decay_cell, f"Should not show '(0d)' at peak, got: {decay_cell!r}"
-    # The change_pct must still be present.
-    assert "5" in decay_cell
+class TestDecayTagR53:
+    def test_decay_tag_shows_days_since_peak(self) -> None:
+        """R53: decaying pick must surface days_since_peak in the decay cell."""
+        row = _render({"level": "moderate", "change_pct": -20.0, "days_since_peak": 5})
+        decay_cell = row[6]
+        assert "(5天)" in decay_cell, f"Expected '(5天)' in decay cell, got: {decay_cell!r}"
+        assert "20%" in decay_cell
+
+    def test_decay_tag_omits_days_when_at_peak(self) -> None:
+        """days_since_peak=0 (today IS the peak) must not append a days tag."""
+        row = _render({"level": "mild", "change_pct": -5.0, "days_since_peak": 0})
+        decay_cell = row[6]
+        assert "(0天)" not in decay_cell
+        assert "5%" in decay_cell
+
+    def test_decay_none_shows_dash(self) -> None:
+        row = _render({"level": "none", "change_pct": None, "days_since_peak": 0})
+        decay_cell = row[6]
+        assert "↓" not in decay_cell
+        assert "—" in decay_cell
 
 
-def test_decay_none_shows_dash() -> None:
-    """No decay → dash, no days tag."""
-    rec = _make_rec(decay={"level": "none", "change_pct": None, "days_since_peak": 0})
-    row = _build_top_table_row(idx=1, rec=rec)
-    decay_cell = row[-1]
-    assert "↓" not in decay_cell
-    assert "—" in decay_cell
+class TestDecayMapFromRecs:
+    def test_invalid_level_skipped_not_crash(self) -> None:
+        recs = [{"ticker": "000001", "decay": {"level": "非枚举值", "change_pct": -1.0}}]
+        assert _decay_map_from_recs(recs) == {}
+
+    def test_missing_decay_skipped(self) -> None:
+        assert _decay_map_from_recs([{"ticker": "000001"}]) == {}
+
+    def test_maps_to_decay_level(self) -> None:
+        out = _decay_map_from_recs([{"ticker": "000001", "decay": {"level": "severe", "change_pct": -30.0, "days_since_peak": 2}}])
+        assert out["000001"].level is DecayLevel.SEVERE
 
 
-def test_top_table_row_surfaces_front_door_verdict() -> None:
-    """The legacy --top row must show the front-door verdict (中文标签: 买入/持有/回避)."""
-    rec = _make_rec(score_b=0.8, decision="bullish")
-    row = _build_top_table_row(idx=1, rec=rec)
+class TestFrontDoorCell:
+    def test_three_actions_labeled(self, monkeypatch) -> None:
+        import src.main as main_mod
 
-    assert any("回避" in str(cell) for cell in row)
+        for action, label in (("BUY", "买入"), ("HOLD", "持有"), ("AVOID", "回避")):
+            monkeypatch.setattr(
+                "src.screening.investability.build_front_door_verdict",
+                lambda *a, **k: {"action": action},
+            )
+            assert label in _front_door_cell({}, "normal")
 
-
-def test_top_table_row_resilient_to_null_score_b() -> None:
-    """``score_b: null`` (JSON null) must not crash ``--top`` rendering.
-
-    ``_build_top_table_row`` used a bare ``float(rec.get("score_b", 0.0))`` which
-    raises ``TypeError`` when the key is present with value ``None`` (the default
-    arg only fires when the key is *absent*). Sibling renderers (``--top-picks``,
-    ``--daily-brief``) already use the shared ``safe_float`` helper; this brings
-    ``--top`` to the same resilience so one malformed recommendation does not
-    take down the whole table. Falls back to 0.0.
-    """
-    rec = _make_rec(score_b=None)
-    row = _build_top_table_row(idx=1, rec=rec)  # must not raise
-    # score column renders 0.0 (signed format +0.0000); stringify cells since
-    # idx column is an int (the row is a heterogeneous list).
-    assert any("0.0000" in str(cell) for cell in row)
-
-
-def test_top_table_row_resilient_to_non_numeric_score_b() -> None:
-    """A non-numeric ``score_b`` string must degrade to 0.0, not crash."""
-    rec = _make_rec(score_b="abc")
-    row = _build_top_table_row(idx=1, rec=rec)  # must not raise
-    assert any("0.0000" in str(cell) for cell in row)
+    def test_junk_rec_never_raises(self) -> None:
+        cell = _front_door_cell({"ticker": "000001"}, "normal")
+        assert isinstance(cell, str) and cell  # 回避 或 不可用 — 均不崩溃

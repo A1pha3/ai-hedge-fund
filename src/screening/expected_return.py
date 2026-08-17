@@ -31,6 +31,7 @@ from src.screening.confidence_calibration import (
 )
 from src.screening.consecutive_recommendation import resolve_report_dir
 from src.screening.drawdown_estimate import compute_drawdown_estimate
+from src.screening.scorecard import bucket_band_text
 from colorama import Fore, Style
 from src.utils.numeric import safe_float  # NS-13: NaN-rejecting coercion
 
@@ -432,7 +433,10 @@ def render_expected_returns_compact(report: ExpectedReturnReport) -> str:
     # Long-horizon invalidation view (T+20/T+30). Attribute the T+30 stat to
     # its matured-sample denominator (BH-002), not the all-records
     # ``bucket_sample_count``, so users see how much actually backs the number.
-    lines = [f"  长期 invalidation horizon T+20/T+30 edge (基于 {report.total_samples} 条历史, 其中 {report.mature_t30_samples} 条已满 30 天; BUY 决策 horizon 为 T+5/T+10):"]
+    lines = [
+        f"  长期失效视野 T+20/T+30（毛收益，未扣费；基于 {report.total_samples} 条历史，"
+        f"其中 {report.mature_t30_samples} 条已满 30 天；实际 BUY 决策窗口为 T+5/T+10）:"
+    ]
     for item in report.items[:5]:
         er = item.expected_returns
         t20 = _fmt_return(er.get("t20"))
@@ -453,7 +457,8 @@ def render_expected_returns_compact(report: ExpectedReturnReport) -> str:
         # are very different bets even with identical mean.
         std_str = f" (±{item.bucket_t30_std_return:.1f}% 离散)" if item.bucket_t30_std_return is not None else ""
         # Q-5: tail risk (5th percentile) — worst plausible outcome.
-        p5_str = f"  尾={item.bucket_t30_p5_return:.1f}%" if item.bucket_t30_p5_return is not None else ""
+        # 冷读反馈 (2026-08-16): "尾=" 不可猜 → 最差5% 自明。
+        p5_str = f"  最差5%={item.bucket_t30_p5_return:.1f}%" if item.bucket_t30_p5_return is not None else ""
         # Q-2: average-path max drawdown from per-horizon cumulative returns.
         # +3.2% T+30 with −15% mid-hold drawdown ≠ +3.2% with −2%; the path matters.
         dd_est = compute_drawdown_estimate(er)
@@ -461,6 +466,12 @@ def render_expected_returns_compact(report: ExpectedReturnReport) -> str:
         # R-5.C: T+30 中位数 (诚实窄预测). 与 mean 并列展示 — 差距大说明本桶被
         # outlier 拉高/拉低, 用户应更信任 median 作为典型票的代表.
         med_str = f"  T+30中位={_fmt_return(item.bucket_t30_median_return)}" if item.bucket_t30_median_return is not None else ""
-        lines.append(f"    {item.ticker:<8} score={item.score_b:.3f}  bucket={item.bucket_label}  样本={item.bucket_sample_count:<3d}(T30熟={item.bucket_t30_mature_count:<3d})  T+20={t20}  T+30={t30}{med_str}{std_str}  T+30胜率={wr_str}{dd_str}{p5_str}")
+        # 冷读反馈 (2026-08-16): bucket_label 的定性词 (较低) 不进显示 —
+        # 与 --auto 档头同款区间提取 (scorecard.bucket_band_text)。
+        lines.append(
+            f"    {item.ticker:<8} 信号分={item.score_b:.3f}  {bucket_band_text(item.bucket_label)}  "
+            f"样本={item.bucket_sample_count:<3d}（满30天={item.bucket_t30_mature_count:<3d}）  "
+            f"T+20={t20}  T+30={t30}{med_str}{std_str}  T+30胜率={wr_str}{dd_str}{p5_str}"
+        )
 
     return "\n".join(lines)

@@ -65,7 +65,9 @@ class TestRunTop:
         output = capsys.readouterr().out
         assert "300750" in output
         assert "宁德时代" in output
-        assert "+0.5500" in output
+        # v3 (2026-08-16): 桶分组纪律 — 4 位小数信号分已删, 档头带区间+名次
+        assert "信号分档" in output
+        assert "本表第 1 名" in output
         assert "最近推荐" in output
 
     def test_top_n_limits_output(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
@@ -101,7 +103,7 @@ class TestRunTop:
                 rc = run_top()
         assert rc == 0
         output = capsys.readouterr().out
-        assert "3d" in output
+        assert "3天" in output  # v3: 连续天数中文 (旧 "3d" 已废)
         assert "↓8%" in output
 
     def test_invalid_report_returns_1(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
@@ -138,9 +140,10 @@ class TestRunTop:
         output = capsys.readouterr().out
         assert "缓存命中:" in output
 
-    def test_top_table_is_chinese_and_shows_bucket_winrate(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-        """G3: --top 表格与 --auto 同一展示契约 — 中文表头/决策标签 + 池胜率列
-        (profit_aware 排序主键; 缺失时显示 "—")."""
+    def test_top_table_is_chinese_and_bucket_grouped(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+        """G3 (v3 2026-08-16): --top 与 --auto 同一展示契约 — 中文表头 + 桶分组
+        档头; 旧「池胜率」逐行列已删 (桶级钱数上档头一次)。本 fixture 的
+        report_dir 无 tracking_history → 档头走确定性空态, 不编造数字。"""
         recs = [{
             "ticker": "300750", "name": "宁德时代", "industry_sw": "电力设备",
             "score_b": 0.55, "decision": "watch", "consecutive_days": 1,
@@ -162,15 +165,17 @@ class TestRunTop:
                 rc = run_top()
         assert rc == 0
         output = capsys.readouterr().out
-        assert "池胜率" in output
-        assert "48%·428" in output
-        assert "关注" in output
+        assert "信号分档 0.5-0.6" in output  # score_b=0.55 → 档 0.5-0.6, 中文区间
+        assert "前门" in output  # --top 独有判决列保留
+        assert "不提供估计" in output  # 无 tracking → 档头空态, 不显示编造胜率
         assert "Front Door" not in output
         assert "watch" not in output
 
-    def test_malformed_score_b_does_not_crash(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-        """score_b 越界或缺字段时不崩溃，优雅降级。"""
-        # score_b > 1 violates FusedScore field constraint — must be caught
+    def test_malformed_score_b_does_not_crash(self, capsys: pytest.CaptureFixture[str], tmp_path: Path, caplog) -> None:
+        """score_b 越界时不崩溃 — v3 契约: 坏行**跳过 + 警告**, 不再渲染补零行。
+
+        旧契约 (渲染 0.0) 已废: 桶分组依赖 score_b, 报告 JSON 来自自身 dump,
+        坏行应响亮暴露而不是被 "+0.0000" 静默淹没。"""
         recs = [
             {"ticker": "300750", "name": "宁德时代", "industry_sw": "电气设备", "score_b": 5.0, "decision": "watch", "consecutive_days": 1, "decay": {"level": "none"}},
             {"ticker": "000001", "name": "平安银行", "industry_sw": "银行", "score_b": 0.35, "decision": "watch", "consecutive_days": 1, "decay": {"level": "none"}},
@@ -179,10 +184,11 @@ class TestRunTop:
         with patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=report_path.parent):
             with patch("src.reporting.pdf_exporter.find_latest_report", return_value=report_path):
                 rc = run_top()
-        # Should not crash — table still shows, decomposition may be skipped
         assert rc == 0
         output = capsys.readouterr().out
-        assert "300750" in output  # ticker shown in table even if decomposition fails
+        assert "000001" in output  # 合法行照常渲染
+        assert "300750" not in output  # 坏行被跳过 (不再以 +0.0000 补零渲染)
+        assert any("300750" in r.message for r in caplog.records)  # 且有跳行警告
 
 
 # ── autodev-29 loop 146: report staleness disclosure ──

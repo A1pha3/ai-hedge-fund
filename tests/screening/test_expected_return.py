@@ -251,14 +251,14 @@ class TestComputeExpectedReturns:
         assert "120 条历史" in text
         assert "25 条已满 30 天" in text
         # Row shows matured T+30 count (10), not the all-records count (40).
-        assert "T30熟=10" in text
+        assert "满30天=10" in text  # 冷读反馈: T30熟 → 满30天 (自明)
         assert "样本=40" in text
         # autodev-13 / loop 109: compact renderer now surfaces the bucket label
         # per-row (sibling of loops 98/99 bucket-aggregate disclosure on
         # --top-picks and --decision-flow). Previous iteration only had header
         # framing ("基于 {total_samples} 条历史"); the actual bucket_label
         # column was missing — same disease as loop 98 on --top-picks.
-        assert "bucket=高" in text, (
+        assert "信号分档 >0.8" in text, (  # 冷读反馈: bucket=label → 信号分档区间 (定性词不进显示)
             "render_expected_returns_compact per-row display must surface "
             "the bucket label so the operator can tell the T+20/T+30 stats "
             "are bucket-level aggregates (same disease class as loops 98/99)."
@@ -395,7 +395,7 @@ class TestRenderCompact:
         report = compute_expected_returns(recommendations=recs, lookback_days=60)
         text = render_expected_returns_compact(report)
         # winrate is present (100% on n=1) but flagged low-confidence
-        assert "T30熟=1" in text or "T30熟= 1" in text
+        assert "满30天=1" in text or "满30天= 1" in text
         assert "少" in text or "⚠" in text or "不足" in text, "T+30 winrate based on <5 mature samples must carry a low-confidence marker " "— a green 100% on n=1 misleads users of a 赚钱工具."
 
     @patch("src.screening.expected_return._load_tracking_records")

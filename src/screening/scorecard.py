@@ -363,8 +363,10 @@ def format_scorecard_lines(report: ScorecardReport) -> list[str]:
             "无法评估排序有效性 — 本表按观察清单使用"
         ]
 
+    # 冷读反馈 (2026-08-16): IC 附「秩相关」gloss; None 安全分支保留
+    # (a275d261 B1: 薄窗口 daily_ics 为空时 f"{None:+.2f}" 曾崩主渲染路径)。
     ic_seg = (
-        f"排序IC {report.mean_daily_ic:+.2f}(t={_fmt_ic_t(report.ic_t_stat)})"
+        f"排序IC(秩相关) {report.mean_daily_ic:+.2f}(t={_fmt_ic_t(report.ic_t_stat)})"
         if report.mean_daily_ic is not None
         else "排序IC 样本不足"
     )
@@ -384,6 +386,16 @@ def format_scorecard_lines(report: ScorecardReport) -> list[str]:
     return [line1, line2]
 
 
+def bucket_band_text(label: str) -> str:
+    """SCORE_BUCKETS 标签 → 展示区间「信号分档 0.3-0.4」。
+
+    定性标签 (较低/低/中…) 描述信号分绝对区间, 会被读成排名或好坏判语
+    (冷读反馈 2026-08-16) — 展示层统一只报区间。无括号区间时原样兜底。
+    """
+    band = re.search(r"\(([^)]+)\)", label)
+    return f"信号分档 {band.group(1)}" if band else f"信号分档（{label}）"
+
+
 def format_bucket_header(stats: BucketStats, *, rank_note: str | None = None) -> str:
     """档头一行 (纯文本, 无 ANSI)。空态矩阵: 无窗口 / 无成熟 / 少样本 / 可信。
 
@@ -393,8 +405,7 @@ def format_bucket_header(stats: BucketStats, *, rank_note: str | None = None) ->
     "(0.3-0.4)" 指代悬空。展示层只报**区间 + 本表名次归属** (rank_note 由
     表格渲染层传入), 定性标签留在数据层不进显示。
     """
-    band = re.search(r"\(([^)]+)\)", stats.label)
-    band_text = f"信号分档 {band.group(1)}" if band else f"信号分档（{stats.label}）"
+    band_text = bucket_band_text(stats.label)
     rank_seg = f"（{rank_note}）" if rank_note else ""
     window_seg = (
         f"（{stats.window_start}→{stats.window_end}）"

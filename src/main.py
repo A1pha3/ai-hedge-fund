@@ -101,13 +101,6 @@ _GAP_TO_LIMIT_WARN = 0.01
 # --auto 表格的中文展示标签 (仅渲染层使用; JSON 报告与逻辑层保持英文枚举)。
 # 键必须覆盖 models.py 中 classify_decision / ArbitrationAction 的全部取值;
 # 未知值经 .get(x, x) 回退为原始字符串, 新增枚举值不会渲染成空白。
-_DECISION_LABELS = {
-    "strong_buy": "强烈买入",
-    "watch": "关注",
-    "neutral": "观望",
-    "sell": "卖出",
-    "strong_sell": "强烈卖出",
-}
 _ARBITRATION_LABELS = {
     "avoid": "回避",
     "short_hold": "短线持有",
@@ -2211,94 +2204,6 @@ def _apply_top_filters(recs: list[dict], filters: dict) -> tuple[list[dict], str
     return recs, summary
 
 
-def _build_top_table_row(*, idx: int, rec: dict, market_regime: str = "normal") -> list:
-    """Build one row of the ``--top`` recommendations table.
-
-    Extracted from :func:`run_top` — per-row formatting (score/decision color,
-    consecutive-day + re-entry signal, P0-3 decay tag) lives here; the caller
-    only assembles headers and invokes ``tabulate``.
-    """
-    from colorama import Fore, Style
-
-    score_b = _safe_float(rec.get("score_b"), 0.0)
-    decision = rec.get("decision", "neutral")
-    decision_label = _DECISION_LABELS.get(decision, decision)
-    try:
-        from src.screening.investability import build_front_door_verdict
-
-        front_door_action = str(
-            build_front_door_verdict(rec, market_regime=market_regime).get("action", "AVOID") or "AVOID"
-        )
-    except Exception as exc:  # noqa: BLE001 — keep legacy top table rendering
-        logger.warning("[Top] build_front_door_verdict 失败, 前门判决显示为不可用: %s", exc, exc_info=True)
-        front_door_action = "不可用"
-
-    if score_b >= SCORE_B_GREEN_FLOOR:
-        score_colored = f"{Fore.GREEN}{score_b:+.4f}{Style.RESET_ALL}"
-        decision_colored = f"{Fore.GREEN}{decision_label}{Style.RESET_ALL}"
-    elif score_b >= SCORE_B_YELLOW_FLOOR:
-        score_colored = f"{Fore.YELLOW}{score_b:+.4f}{Style.RESET_ALL}"
-        decision_colored = f"{Fore.YELLOW}{decision_label}{Style.RESET_ALL}"
-    else:
-        score_colored = f"{Fore.RED}{score_b:+.4f}{Style.RESET_ALL}"
-        decision_colored = f"{Fore.RED}{decision_label}{Style.RESET_ALL}"
-    _front_door_label = {"BUY": "买入", "HOLD": "持有", "AVOID": "回避"}.get(front_door_action, front_door_action)
-    if front_door_action == "BUY":
-        front_door_colored = f"{Fore.GREEN}{_front_door_label}{Style.RESET_ALL}"
-    elif front_door_action == "HOLD":
-        front_door_colored = f"{Fore.YELLOW}{_front_door_label}{Style.RESET_ALL}"
-    elif front_door_action == "AVOID":
-        front_door_colored = f"{Fore.RED}{_front_door_label}{Style.RESET_ALL}"
-    else:
-        front_door_colored = f"{Fore.YELLOW}{_front_door_label}{Style.RESET_ALL}"
-
-    # 池胜率 (排序主键) — 与 --auto 表格同口径, 缺证据显示 "—".
-    from src.screening.investability import _max_short_horizon_metric
-
-    win_rates = rec.get("win_rates")
-    bucket_str = _bucket_stat_text(
-        _max_short_horizon_metric(win_rates if isinstance(win_rates, dict) else None),
-        _safe_int(rec.get("bucket_sample_count"), 0),
-    )
-
-    ticker = rec.get("ticker", "—")
-    name = rec.get("name", "")
-    industry = rec.get("industry_sw", "—")
-    ticker_label = f"{ticker} {name}" if name else ticker
-
-    # Consecutive days / re-entry signal (P4-2)
-    consecutive_days = int(rec.get("consecutive_days", 0) or 0)
-    # P4-2: REENTRY_SIGNAL — 曾被推荐后消失又重返, 标记为 "↻" 提示用户
-    rec_status = str(rec.get("consecutive_status", "") or "")
-    is_reentry = rec_status == "reentry_signal"
-    if is_reentry:
-        cons_str = f"{Fore.MAGENTA}{Style.BRIGHT}↻{consecutive_days}d{Style.RESET_ALL}"
-    elif consecutive_days >= 3:
-        cons_str = f"{Fore.GREEN}{Style.BRIGHT}{consecutive_days}d{Style.RESET_ALL}"
-    elif consecutive_days == 2:
-        cons_str = f"{Fore.YELLOW}{consecutive_days}d{Style.RESET_ALL}"
-    elif consecutive_days == 1:
-        cons_str = f"{Fore.WHITE}{consecutive_days}d{Style.RESET_ALL}"
-    else:
-        cons_str = f"{Fore.RED}—{Style.RESET_ALL}"
-
-    # Decay
-    decay = rec.get("decay", {})
-    decay_level = decay.get("level", "none")
-    if decay_level == "none" or not decay_level:
-        decay_str = f"{Fore.WHITE}—{Style.RESET_ALL}"
-    else:
-        decay_pct = abs(float(decay.get("change_pct", 0) or 0))
-        # R53: surface days_since_peak (computed-but-hidden). Distinguishes early
-        # decay (↓20% at 1d) from late decay (↓20% at 5d) — a trajectory signal
-        # for the "is this BUY still valid?" decision. Omit when 0 (today=peak).
-        days_since_peak = int(decay.get("days_since_peak", 0) or 0)
-        days_tag = f"({days_since_peak}d)" if days_since_peak > 0 else ""
-        decay_str = f"{Fore.YELLOW}↓{decay_pct:.0f}%{days_tag}{Style.RESET_ALL}"
-
-    return [idx, ticker_label, industry, score_colored, bucket_str, decision_colored, front_door_colored, cons_str, decay_str]
-
-
 def _print_top_score_enhancements(
     recs: list[dict],
     top_n: int,
@@ -2472,16 +2377,82 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
 
     print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
 
-    table_data = [_build_top_table_row(idx=idx, rec=rec, market_regime=market_regime) for idx, rec in enumerate(recs, 1)]
-
-    headers = [f"{Fore.WHITE}#", "代码 名称", "行业", "信号分", "池胜率", "决策", "前门", "连续", "衰减"]
-    # disable_numparse: 行构造器已显式格式化 ("+0.3570"), 防止 tabulate 重解析吃格式.
-    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center", "center", "center"), disable_numparse=True))
-    print(f"  {Fore.WHITE}· 「前门」= 可投资性准入判决 (买入/持有/回避); 「池胜率」与「信号分」等其余列含义同 --auto 表格{Style.RESET_ALL}")
-
-    # Score decomposition + waterfall + expected returns for top 5 (skip on validation failure)
+    # v3 迁移 (2026-08-16): --top 与 --auto 同一套桶分组纪律 — 4 位小数信号分/
+    # 逐行重复的池胜率/决策列已在 --auto 删除, 不在 --top 保留第二套口径;
+    # 「前门」是 --top 独有的判决列, 插在综合分之后。
     from src.screening.consecutive_recommendation import load_tracking_history
+    from src.screening.scorecard import (
+        compute_bucket_stats,
+        empty_bucket_stats,
+        format_bucket_header,
+    )
+    from src.screening.signal_fusion import FusedScore
 
+    tracking_records = load_tracking_history(report_dir)
+    bucket_display_stats = compute_bucket_stats(tracking_records)
+
+    fused_items: list = []
+    for r in recs:
+        try:
+            fused_items.append(FusedScore.model_validate(r))
+        except Exception as exc:  # noqa: BLE001 — 单票重建失败跳行, 不阻塞整表
+            logger.warning("[Top] rec 无法重建 FusedScore, 行跳过: %s (%s)", r.get("ticker"), exc)
+
+    rec_by_ticker = {str(r.get("ticker")): r for r in recs}
+    consecutive_lookup = rec_by_ticker
+    composite_by_ticker = {t: r.get("composite_score") for t, r in rec_by_ticker.items()}
+    decay_map = _decay_map_from_recs(recs)
+
+    headers = [
+        f"{Fore.WHITE}#",
+        "代码 名称",
+        "行业",
+        "综合分",
+        "前门",
+        "信号(趋 均 基 情)",
+        "连续",
+        "衰减",
+        "提示",
+    ]
+    for label, rows in _group_results_by_bucket(fused_items):
+        stats = bucket_display_stats.get(label)
+        ranks = [idx for idx, _ in rows]
+        rank_note = (
+            f"本表第 {ranks[0]}-{ranks[-1]} 名" if ranks[-1] > ranks[0] else f"本表第 {ranks[0]} 名"
+        )
+        header_line = format_bucket_header(
+            stats if stats is not None else empty_bucket_stats(label), rank_note=rank_note
+        )
+        print(f"\n{Fore.WHITE}{Style.BRIGHT}{header_line}{Style.RESET_ALL}")
+        table_data = []
+        for idx, item in rows:
+            row = _build_auto_screening_table_row(
+                idx=idx,
+                item=item,
+                consecutive_lookup=consecutive_lookup,
+                decay_map=decay_map,
+                composite_score=composite_by_ticker.get(item.ticker),
+            )
+            row.insert(4, _front_door_cell(rec_by_ticker.get(item.ticker, {}), market_regime))
+            table_data.append(row)
+        print(
+            tabulate(
+                table_data,
+                headers=headers,
+                tablefmt="grid",
+                colalign=("right", "left", "left", "right", "center", "center", "center", "center", "left"),
+                disable_numparse=True,
+            )
+        )
+
+    print()
+    _print_table_legend()
+    print(
+        f"  {Fore.WHITE}· 「前门」= 可投资性准入判决 (买入/持有/回避) — --top 独有列, "
+        f"与档头实证/记分牌相互独立{Style.RESET_ALL}"
+    )
+
+    # 因子瀑布 (verbose) + 预期收益增强块
     _print_top_score_enhancements(
         recs,
         top_n,
@@ -2759,6 +2730,11 @@ def _print_table_legend_full() -> None:
         "    无正向证据 → 只读不跟 (观察清单); ⚠反向 → 排越前越差, 仅反向参考;",
         "    有正向证据 → 也仍非买入指令, 实际 BUY 只出自 --daily-action。",
         "  · 排序: 主键=信号分档 (档头胜率), 同档内按「综合分」tie-break; 表头记分牌行披露排序近期实测有效性。",
+        "  · 两个分的区别 (冷读反馈 2026-08-16): 「信号分」(score_b) 是四策略融合的信号强度 (0-1),",
+        "    决定档位归属; 「综合分」= 信号分 + 行业/连续上榜等加成后的排序分 (可略高), 只作同档内排序 —",
+        "    所以档头区间 0.3-0.4 而行内综合分可能是 +0.47, 两者不是同一个数。",
+        "  · 「排序IC」= 当日排名与后 5 日收益的秩相关 (-1~+1, 越正越好; |t|≥2 才谈显著,",
+        "    重叠样本下 t 偏乐观); 「仓位系数」= 市场状态对建议仓位的缩放 (弱市调低, 1.00=不缩放)。",
         "  · 「信号」= 趋势/均值回归/基本面/事件情绪四策略投票: ↑看多 ↓看空 —无信号, 数字=信心(0-100)。",
         "  · 「连续」= 连续上榜天数, ≥3天(绿)信号持续; 「衰减」= 信号分较近期峰值跌幅, 红=严重。",
         "  · 「提示」= 策略仲裁自动调整 (短线持有/信趋势/共识加分★ 等) + 确定性阈值警示:",
@@ -2822,6 +2798,52 @@ def _group_results_by_bucket(top_results: list) -> list[tuple[str, list[tuple[in
             groups.append((label, index[label]))
         index[label].append((idx, item))
     return groups
+
+
+def _decay_map_from_recs(recs: list[dict]) -> dict:
+    """--top: 报告 rec 的 ``decay`` dict → 渲染层 DecayInfo 形状对象。
+
+    行构造器只读 ``level``/``change_pct``/``days_since_peak`` 三个属性;
+    报告 JSON 的 decay 是 dict, 这里做形状适配 (R53 契约不变)。
+    """
+    from types import SimpleNamespace
+
+    from src.screening.signal_decay_detector import DecayLevel
+
+    out: dict = {}
+    for rec in recs:
+        d = rec.get("decay")
+        if not isinstance(d, dict):
+            continue
+        try:
+            level = DecayLevel(str(d.get("level")))
+        except ValueError:
+            continue
+        ticker = str(rec.get("ticker"))
+        out[ticker] = SimpleNamespace(
+            level=level,
+            change_pct=d.get("change_pct"),
+            days_since_peak=int(d.get("days_since_peak") or 0),
+        )
+    return out
+
+
+def _front_door_cell(rec: dict, market_regime: str) -> str:
+    """「前门」列 (--top 独有): 可投资性准入判决, 与档头实证/记分牌相互独立。"""
+    from colorama import Fore, Style
+
+    from src.screening.investability import build_front_door_verdict
+
+    try:
+        action = str(
+            build_front_door_verdict(rec, market_regime=market_regime).get("action", "AVOID") or "AVOID"
+        )
+    except Exception as exc:  # noqa: BLE001 — 判决失败显示不可用, 不阻塞表格
+        logger.warning("[Top] build_front_door_verdict 失败, 前门判决显示为不可用: %s", exc)
+        action = "不可用"
+    label = {"BUY": "买入", "HOLD": "持有", "AVOID": "回避"}.get(action, action)
+    color = {"BUY": Fore.GREEN, "HOLD": Fore.YELLOW, "AVOID": Fore.RED}.get(action, Fore.YELLOW)
+    return f"{color}{label}{Style.RESET_ALL}"
 
 
 def _print_auto_screening_table(
