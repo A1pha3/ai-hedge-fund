@@ -21,19 +21,24 @@ PERIODS = {
     "2024": ("20240102", "20241231"),
 }
 
-results: dict[str, dict] = {}
-for period, (start, end) in PERIODS.items():
-    for gate, block in (("ungated", ()), ("gated", ("crisis", "risk_off"))):
-        key = f"{period}_{gate}"
-        print(f"===== {key}: {start}→{end} block={block or 'none'} =====", flush=True)
-        results[key] = bt(
-            start_date=start,
-            end_date=end,
-            block_regimes=block,
-            only_setups=("btst_breakout",),
-        )
+def main() -> None:
+    results: dict[str, dict] = {}
+    for period, (start, end) in PERIODS.items():
+        for gate, block in (("ungated", ()), ("gated", ("crisis", "risk_off"))):
+            key = f"{period}_{gate}"
+            print(f"===== {key}: {start}→{end} block={block or 'none'} =====", flush=True)
+            results[key] = bt(
+                start_date=start,
+                end_date=end,
+                block_regimes=block,
+                only_setups=("btst_breakout",),
+            )
 
-out = "data/reports/regime_gate_cross_period_court_20260815.json"
-with open(out, "w", encoding="utf-8") as fh:
-    json.dump(results, fh, ensure_ascii=False, indent=2)
-print(f"written: {out}")
+    out = "data/reports/regime_gate_cross_period_court_20260815.json"
+    with open(out, "w", encoding="utf-8") as fh:
+        json.dump(results, fh, ensure_ascii=False, indent=2)
+    print(f"written: {out}")
+
+
+if __name__ == "__main__":
+    main()

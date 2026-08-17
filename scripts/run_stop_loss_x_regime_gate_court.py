@@ -27,25 +27,30 @@ PERIODS = {
     "2026H1": ("20260101", "20260706"),
 }
 
-results: dict[str, dict] = {}
-for period, (start, end) in PERIODS.items():
-    for gate, block in (("ungated", ()), ("gated", ("crisis", "risk_off"))):
-        for stop in ("none", "fixed8"):
-            key = f"{period}_{gate}_stop-{stop}"
-            print(f"===== {key} =====", flush=True)
-            if stop == "none":
-                os.environ.pop("DAILY_ACTION_EXECUTION_STOP", None)
-            else:
-                os.environ["DAILY_ACTION_EXECUTION_STOP"] = stop
-            results[key] = bt(
-                start_date=start,
-                end_date=end,
-                block_regimes=block,
-                only_setups=("btst_breakout",),
-            )
+def main() -> None:
+    results: dict[str, dict] = {}
+    for period, (start, end) in PERIODS.items():
+        for gate, block in (("ungated", ()), ("gated", ("crisis", "risk_off"))):
+            for stop in ("none", "fixed8"):
+                key = f"{period}_{gate}_stop-{stop}"
+                print(f"===== {key} =====", flush=True)
+                if stop == "none":
+                    os.environ.pop("DAILY_ACTION_EXECUTION_STOP", None)
+                else:
+                    os.environ["DAILY_ACTION_EXECUTION_STOP"] = stop
+                results[key] = bt(
+                    start_date=start,
+                    end_date=end,
+                    block_regimes=block,
+                    only_setups=("btst_breakout",),
+                )
 
-os.environ.pop("DAILY_ACTION_EXECUTION_STOP", None)
-out = "data/reports/stop_loss_x_regime_gate_court_20260814.json"
-with open(out, "w", encoding="utf-8") as fh:
-    json.dump(results, fh, ensure_ascii=False, indent=2)
-print(f"written: {out}")
+    os.environ.pop("DAILY_ACTION_EXECUTION_STOP", None)
+    out = "data/reports/stop_loss_x_regime_gate_court_20260814.json"
+    with open(out, "w", encoding="utf-8") as fh:
+        json.dump(results, fh, ensure_ascii=False, indent=2)
+    print(f"written: {out}")
+
+
+if __name__ == "__main__":
+    main()
