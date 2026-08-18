@@ -324,9 +324,13 @@ def main(granularity: str = "sw_l1") -> None:
         & (clean["matured"])
         & (clean["gross_ret_t8"].notna())
     ]
+    # 聚类单位 = 物理确认日 (v3.4 审查修正: 原实现按 (industry, confirm_date) 聚类,
+    # 同日多行业确认是同一场事件的多个切面、高度相关 — 细行业口径 56.7% 的确认日
+    # 同日多行业 (331 事件/180 物理日), 原口径低估 se 且给大火腿日重复计权。
+    # 预注册"按确认日聚类"的正确实现是物理日; 修正后 Tier A/B1 均复核重跑。)
     cycles = defaultdict(list)
     for r in main_slice.itertuples(index=False):
-        cycles[(r.industry, r.confirm_date)].append(r.gross_ret_t8)
+        cycles[r.confirm_date].append(r.gross_ret_t8)
     cycle_means = [sum(v) / len(v) for v in cycles.values()]
     primary = _cluster_ci(cycle_means)
 
@@ -374,7 +378,8 @@ def main(granularity: str = "sw_l1") -> None:
         decision = "close_direction"  # CI 不达标且均值超上界以外 → 按关闭处理 (最保守)
 
     report = {
-        "review": "theme momentum Tier A — 行业涨停占比确认方向性验证 (计划 v3.3)",
+        "disclaimer": "研究重放产物: 不构成任何策略接入/仓位/授权依据; 任何接入须按计划 Phase 2/3 前向证据门槛",
+        "review": "theme momentum — 行业涨停占比确认方向性验证 (计划 v3.4, 物理日聚类)",
         "generated_at": date.today().isoformat(),
         "window": {"start": sessions[0], "end": sessions[-1], "sessions": len(sessions),
                    "court_snapshot_note": "court raw 静态快照 (构建日锁死窗口)"},
@@ -422,7 +427,7 @@ def _pct_buckets(clean: pd.DataFrame) -> dict:
     out = {}
     sel = clean[clean["matured"] & clean["gross_ret_t8"].notna() & (clean["btst_eligible"] == False)]  # noqa: E712
     for lo, hi, tag in ((-100, -5, "≤-5%"), (-5, 0, "-5~0%"), (0, 5, "0~5%"), (5, 100, ">5%")):
-        b = sel[sel["signal_pct_change"].between(lo, hi)]
+        b = sel[sel["signal_pct_change"].between(lo, hi, inclusive="left" if hi != 100 else "both")]
         out[tag] = _event_stats(b.to_dict("records"))
     return out
 
