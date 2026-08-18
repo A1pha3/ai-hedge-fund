@@ -1,4 +1,4 @@
-# 题材动量（Theme Momentum）研究计划 Implementation Plan (v3.3)
+# 题材动量（Theme Momentum）研究计划 Implementation Plan (v3.4)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -131,6 +131,22 @@ def test_missing_bar_skips_forward():
 - [ ] **Step 4: Commit** `git commit -m "feat(research): 题材动量 Tier A — 行业口径方向性决策包 (增量+聚类)"`
 
 ---
+
+## Tier B：粒度阶梯（v3.4；Tier A 判定 near_zero_tier_b_once 后执行）
+
+Tier A 结果（2026-08-18）与华正案例诊断确立两条事实：① 行业代理阴性主要来自**代理不忠实**（真题材被活跃行业基线稀释，实测：电子 8-04 占比 18.2% 通过但冷启动基线 6 失败）；② **东财细行业粒度可捕获本案**（"元件" 8-04 前 20 会话中位=1、当日 15 家/占比 10.9%，双条件全过）。故 Tier B 改为预注册**粒度阶梯**，把自由度结构化：
+
+```
+Tier B1 = 东财细行业口径 (lu 自带 industry 字段, 零新增数据, 参数级改动)
+Tier B2 = 概念成分口径 (dc_member 每 10 交易日采样 — v3.4 从月度加密: 新题材首周
+          是研究价值所在, 月度延迟砍掉主要价值, 成本仅 ×2; 涨停家数自算不变)
+停止规则 (预注册):
+  - B1 主假设成立 → Phase 2 (B2 不再需要)
+  - B1 点估计 ≤ −0.5pp (远离零) → 关闭方向, B2 不许跑 (同 Tier A 保守规则)
+  - B1 接近零 → B2 是最后一步; B2 也不成立 → 关闭, 粒度阶梯耗尽
+主假设/统计口径/决策分支与 Tier A 逐字相同; K₁=3 维持 (概念家数天然偏小的
+敏感性由 K₁ 网格披露, 不改主假设)。
+```
 
 ## Tier B：概念板块口径（仅当 Task 2 判定"启动"，否则跳过）
 
