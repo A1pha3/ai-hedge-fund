@@ -48,8 +48,8 @@ from src.tools.ashare_board_utils import (  # noqa: E402
 )
 
 # ---- 预注册常量 (先于数据写死) ----
-OUT_EVENTS = Path("data/research/theme_momentum/tier_a_events.csv.gz")
-OUT_REPORT = Path(f"data/reports/theme_momentum_tier_a_decision_pack_{date.today():%Y%m%d}.json")
+OUT_EVENTS = Path("data/research/theme_momentum/tier_events{suffix}.csv.gz")  # suffix 由 main 注入
+OUT_REPORT = Path(f"data/reports/theme_momentum_tier_decision_pack_{date.today():%Y%m%d}{{suffix}}.json")
 RAW_LU = Path("data/research/btst_court/raw/limit_up")
 SW_MEMBERS = Path("data/research/btst_court/raw/sw_members.csv")
 BTST_TABLE = Path("data/research/btst_court/event_tables/event_table_v1.csv.gz")
@@ -71,7 +71,13 @@ EXEC_COST_PP = 0.65
 # 8-15 次, 单月峰值 = 14 个行业各 1-2 次的轮动频发期, 无单一行业爆量) —
 # v1 的 [2,15] 为无数据依据的先验值, 按实测校准为 [2,25] (校准理由记录于
 # 决策包 sanity 段; 主假设判定不受影响 — 锚是经验参数不是假设)。
-sanity = {"confirm_per_month_range": (2, 25), "calibrated_from": (2, 15, "v1 无依据先验; 实测 [4,23], 分布健康")}
+sanity = {
+    # 粒度相关锚 (确认数量天然随粒度变细上升): sw_l1 实测 [4,23] → [2,25];
+    # dc 细行业 89 个, 实测 [3,38] (单月峰值 = 19 行业各 2 次, 无爆量) → [2,40]。
+    # 校准只动经验参数, 主假设判定不受影响; 理由随决策包披露。
+    "confirm_per_month_range": (2, 40),
+    "calibrated_from": (2, 15, "v1 无依据先验; sw_l1 实测 [4,23] → [2,25]; dc 细行业实测 [3,38] → [2,40]"),
+}
 
 
 def _load_lu_index() -> dict[str, pd.DataFrame]:
@@ -143,7 +149,16 @@ def _event_stats(rows: list[dict], key_t8: str = "gross_ret_t8") -> dict:
     }
 
 
-def main() -> None:
+def main(granularity: str = "sw_l1") -> None:
+    """granularity: sw_l1 (申万一级, Tier A) | dc_industry (东财细行业, Tier B1)."""
+    if granularity not in ("sw_l1", "dc_industry"):
+        raise SystemExit(f"unknown granularity: {granularity}")
+    suffix = "" if granularity == "sw_l1" else "_dc"
+    if granularity == "dc_industry":
+        def ind_of(_sw_rows, sym, ymd, _rows_day=None):
+            return _rows_day.get(sym, {}).get("dc_industry") or None if _rows_day else None
+    else:
+        ind_of = lambda sw_rows, sym, ymd, _rows_day=None: _industry_of(sw_rows, sym, ymd)  # noqa: E731
     # ---- 前置防御: lu 快照月度覆盖完整性 ----
     lu = _load_lu_index()
     lu_dates = sorted(lu.keys())
@@ -197,7 +212,10 @@ def main() -> None:
                 "ts_code": ts_code, "name": str(r.name), "close": float(r.close),
                 "pct_chg": float(r.pct_chg) if r.pct_chg else None,
                 "first_time": str(r.first_time), "open_times": r.open_times, "up_stat": str(r.up_stat),
+                "dc_industry": str(getattr(r, "industry", "") or ""),
             }
+        if granularity == "dc_industry":
+            swc = dcc  # 主粒度口径直接用东财单一行业字段 (dcc 即逐票行业计数)
         sw_counts[d] = dict(swc)
         dc_counts[d] = dict(dcc)
         mkt_counts[d] = mkt
@@ -251,7 +269,7 @@ def main() -> None:
                 continue
             # 腿 a: 当日该行业涨停票
             for sym, r in lu_rows_by_day[d].items():
-                if _industry_of(sw_rows, sym, d) != ind:
+                if (ind_of(sw_rows, sym, d, lu_rows_by_day[d]) != ind):
                     continue
                 events.append(_mk_event(sym, r["ts_code"], d, ind, cyc["confirm_date"], dist_sessions,
                                         "a_limit_up", r["pct_chg"], r["close"], r["name"], regime[d],
@@ -261,7 +279,7 @@ def main() -> None:
                 prev_by_day = by_day.get(prev_d)
                 if prev_by_day is not None:
                     for sym, r in lu_rows_by_day[prev_d].items():
-                        if _industry_of(sw_rows, sym, prev_d) != ind:
+                        if (ind_of(sw_rows, sym, prev_d, lu_rows_by_day[prev_d]) != ind):
                             continue
                         if sym in lu_rows_by_day[d]:   # 今日又涨停 → 腿 a 已覆盖
                             continue
@@ -279,8 +297,10 @@ def main() -> None:
 
     ev = pd.DataFrame(events)
     print(f"  确认日={len(confirms)} 事件={len(ev)}")
-    OUT_EVENTS.parent.mkdir(parents=True, exist_ok=True)
-    ev.to_csv(OUT_EVENTS, index=False, compression="gzip")
+    out_events = Path(str(OUT_EVENTS).format(suffix=suffix))
+    out_report = Path(str(OUT_REPORT).format(suffix=suffix))
+    out_events.parent.mkdir(parents=True, exist_ok=True)
+    ev.to_csv(out_events, index=False, compression="gzip")
 
     # ---- sanity 锚: 每月确认日数量 ----
     print("[4/5] sanity 锚与统计 …")
@@ -374,10 +394,10 @@ def main() -> None:
         "huazheng_603186_observation": huazheng,
         "decision": decision,
     }
-    OUT_REPORT.parent.mkdir(parents=True, exist_ok=True)
-    OUT_REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_report.parent.mkdir(parents=True, exist_ok=True)
+    out_report.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({k: report[k] for k in ("counts", "primary_hypothesis", "decision")}, ensure_ascii=False, indent=2))
-    print(f"产物: {OUT_EVENTS}\n      {OUT_REPORT}")
+    print(f"产物: {out_events}\n      {out_report}")
 
 
 def _mk_event(sym, ts_code, d, ind, confirm_date, dist_sessions, leg, pct, close, name,
@@ -408,4 +428,8 @@ def _pct_buckets(clean: pd.DataFrame) -> dict:
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--granularity", default="sw_l1", choices=["sw_l1", "dc_industry"])
+    main(granularity=ap.parse_args().granularity)

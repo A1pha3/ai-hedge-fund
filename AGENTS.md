@@ -236,6 +236,7 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  →  executable -
 | 回测框架 | `scripts/setup_research.py`（Phase 0，旧框架，已被 court 取代） |
 | 条件2 资金流 gate 复核 | `scripts/review_cond2_fund_flow_gate.py`（court 管道 cond1+3+4 宇宙重建 + cond2 分流 A/B + 生产 detect 仲裁自检；产物 `data/reports/cond2_gate_court_review_20260817.{json,md}`） |
 | 题材动量 setup 设计 | `docs/superpowers/specs/2026-08-17-theme-momentum-setup-design.md`（设计稿，Phase 0 未开始，不构成授权；**§9 = 实现后的使用形态备忘**——三种结局各自用法/"做"则成为与 BTST 并存的第三 setup 共享风控独立证据/时间线/无论结局事件表都可反哺 BTST 条件3 与 event_sentiment） |
+| 题材动量 Tier A 决策包 | `data/reports/theme_momentum_tier_a_decision_pack_20260818.md`（**已跑：主假设未过（增量 −0.26pp CI 跨零）→ 接近零 → Tier B 一次**；华正案例实证行业口径假阴性（电子冷启动基线 6）；一字率 3.7×；事件表 `data/research/theme_momentum/tier_a_events.csv.gz`） |
 | 题材动量研究计划 | `docs/superpowers/plans/2026-08-17-theme-momentum-research.md`（v3.3 两级火箭：Tier A 确认 = **双条件分离**（家数跳变 ≥3∧20 日中位≤1 + 占比≥5% 防普涨；v3 的 max(2×baseline) 在零基线恒真退化已修）·零新数据源先出方向性决策包（基线锚定确认日、双粒度预注册、matured 截尾、第四态、每月 2-15 确认日 sanity 锚）；Tier B 唯一新增数据 = 月度 as-of 成分，概念涨停家数由 lu 快照∩成分**自算**；主假设预注册唯一且为 **¬BTST-eligible 增量子集 + 按确认日聚类 CI**；先验披露 20-35%——Phase 2 shadow 是阳性后强制步骤；court raw 静态快照前置依赖显式化，研究窗口截至快照构建日） |
 | 因子评分 | `src/screening/`（candidate_pool / strategy_scorer / signal_fusion / investability） |
 
