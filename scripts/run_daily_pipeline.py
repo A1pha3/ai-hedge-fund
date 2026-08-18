@@ -125,12 +125,7 @@ def main() -> int:
             _log(log, f"--daily-action 看门狗超时 ({ACTION_TIMEOUT_S}s) — 强杀记失败")
             action_rc = 124
         dur = int(time.time() - start)
-        # ---- court 资产哨点 (advisory: trap 22 运营覆盖层; 永不影响管道 rc/状态) ----
-        try:
-            subprocess.call([str(PY), "scripts/court_asset_sentinel.py"], cwd=str(REPO),
-                            stdout=log, stderr=subprocess.STDOUT, timeout=60)
-        except Exception:  # noqa: BLE001 - 哨点自身故障不拖垮每日管道
-            _log(log, "court 资产哨点异常 (advisory, 忽略)")
+        _run_advisory_sentinels(log)
         # rc=14 = POLICY_HALT_EXIT_CODE (regime 全闸/熔断/入场窗口) — 设计内停手, 非故障
         if action_rc == 14:
             _log(log, f"--daily-action 策略性停手 (设计内), 全链 {dur}s")
@@ -139,6 +134,28 @@ def main() -> int:
             _log(log, f"--daily-action 完成 rc={action_rc}, 全链 {dur}s")
             final_rc = action_rc
         return _write_status(status_path, today, 0, action_rc, final_rc, dur, log)
+
+
+def _run_advisory_sentinels(log) -> None:
+    """daemon 日链收尾的 advisory 哨点群 — 只读诊断, 永不影响管道 rc/状态.
+
+    - court 资产哨点 (trap 22 运营覆盖层): 公式指纹漂移/表龄超限当天可见。
+    - 先验方向断言 (trap 4 重验闭环, 2026-08-19 接入): review_btst_prior_court
+      --check 在事件表重建 (人工, 唯一新数据入口) 后自动重验先验-court 方向
+      关系 — 漂移当天暴露, 不等下次人工评估 (trap 20: 先有检测才有处置)。
+    """
+    # court 资产哨点 (毫秒级)
+    try:
+        subprocess.call([str(PY), "scripts/court_asset_sentinel.py"], cwd=str(REPO),
+                        stdout=log, stderr=subprocess.STDOUT, timeout=60)
+    except Exception:  # noqa: BLE001 - 哨点自身故障不拖垮每日管道
+        _log(log, "court 资产哨点异常 (advisory, 忽略)")
+    # 先验方向断言 (秒级 bootstrap; 断言失败 = 先验-court 关系漂移信号, 记日志不改 rc)
+    try:
+        subprocess.call([str(PY), "scripts/review_btst_prior_court.py", "--check"],
+                        cwd=str(REPO), stdout=log, stderr=subprocess.STDOUT, timeout=120)
+    except Exception:  # noqa: BLE001 - 同上
+        _log(log, "先验方向断言哨点异常 (advisory, 忽略)")
 
 
 if __name__ == "__main__":
