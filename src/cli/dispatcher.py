@@ -1246,6 +1246,19 @@ def _resolve_daily_action(
                     scan,
                     new_entry_block=snapshot_block_reason,
                 )
+        # 信号覆盖断层哨点 (2026-08-17 BUG-1; 2026-08-18 审查项 2 接入 v2 路径):
+        # 此前只挂在 legacy generate_daily_action — 生产 --daily-action 走本函数
+        # (scan_from_verified_snapshot + DailyActionService), 哨点从不执行, 华正
+        # 新材型断跑 (8-05~8-11 等 19/30 交易日无日志) 在本路径零检测. advisory,
+        # 无论快照是否阻断都跑 (断跑检测独立于当日就绪状态).
+        try:
+            from src.screening.offensive.setup_output_log import (
+                warn_missing_signal_log_sessions,
+            )
+
+            warn_missing_signal_log_sessions(before=signal_date.strftime("%Y%m%d"))
+        except Exception:  # noqa: BLE001 - advisory, 绝不阻断信号生成
+            logger.debug("信号覆盖断层检查失败 (advisory)", exc_info=True)
         verbose = "--verbose" in argv
         rendered = render_daily_action_v2(v2_run, verbose=verbose)
         # 结论先行: 结论块一律置于正文之前 — 操作员第一眼看到当天最重要的事实.

@@ -26,6 +26,9 @@ class Distribution:
     ci_low: float  # 95% bootstrap CI 下界 (expected_return)
     ci_high: float  # 95% bootstrap CI 上界
     ic: float = 0.0  # vs 全市场基线的 information coefficient (可选)
+    # 样本出处披露 (样本宇宙/口径/校准日期/费用口径), 随 known_distributions
+    # 常量一起填写; 渲染层用它区分"数字是什么"与"数字从哪来", 不编造标签.
+    provenance: str = ""
 
 
 def _bootstrap_expected_return_ci(returns: np.ndarray, n_boot: int = 2000, seed: int = 42, alpha: float = 0.05) -> tuple[float, float]:

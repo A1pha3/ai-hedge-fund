@@ -33,7 +33,10 @@ from src.screening.offensive.daily_action_service import (
 )
 from src.screening.offensive.daily_action_snapshot import VerifiedDailyActionSnapshot
 from src.screening.offensive.data.fund_flow_store import FundFlowRecord
-from src.screening.offensive.known_distributions import get_known_distribution
+from src.screening.offensive.known_distributions import (
+    BTST_EXECUTABLE_REFERENCE,
+    get_known_distribution,
+)
 from src.screening.offensive.paper_tracker import PaperTracker, TradeAction
 from src.screening.offensive.price_returns import chained_return_pct
 from src.screening.offensive.risk_framework import build_risk_plan
@@ -416,31 +419,51 @@ def _load_ticker_to_industry_from_snapshots(
         return {}
 
     result: dict[str, str] = {}
-    snapshots = Path(snapshot_dir)
-    for path in sorted(snapshots.glob("candidate_pool_*.json"), reverse=True):
-        if needed.issubset(result):
-            break
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(payload, list):
-            records = payload
-        elif isinstance(payload, dict):
-            records = []
-            for key in ("recommendations", "candidates", "candidate_pool", "selected_candidates", "shadow_candidates"):
-                value = payload.get(key)
-                if isinstance(value, list):
-                    records.extend(value)
-        else:
-            records = []
-        for rec in records:
-            if not isinstance(rec, dict):
+
+    # 第一层 (对抗审查 BUG-2, 2026-08-17): --auto 落盘的全市场 SW L1 映射
+    # (cache_refresh._persist_sw_industry_snapshot)。此前只靠候选池快照并集,
+    # 涨停注入票 (从未进池) 拿不到行业 → BTST 条件3 以「行业缺失=miss」静默
+    # 砍掉 (8-14 涨停 62 只中 15 只死在该缺口)。文件缺失/损坏静默落回第二层,
+    # 行为回到修复前 — 不改变 fail 语义, 只消除数据管道覆盖缺口.
+    sw_snapshot = Path(snapshot_dir) / "sw_industry_latest.json"
+    try:
+        payload = json.loads(sw_snapshot.read_text(encoding="utf-8"))
+        mapping = payload.get("mapping") if isinstance(payload, dict) else None
+        if isinstance(mapping, dict):
+            for code, industry in mapping.items():
+                code6 = str(code)[:6]
+                if code6 in needed and industry:
+                    result[code6] = str(industry)
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    # 第二层: 候选池快照并集 (原路径, 离线兜底; SW 文件已覆盖的不再覆盖).
+    if not needed.issubset(result):
+        snapshots = Path(snapshot_dir)
+        for path in sorted(snapshots.glob("candidate_pool_*.json"), reverse=True):
+            if needed.issubset(result):
+                break
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
                 continue
-            ticker = str(rec.get("ticker") or rec.get("ts_code") or "")[:6]
-            industry = str(rec.get("industry_sw") or rec.get("industry") or "").strip()
-            if ticker in needed and industry and ticker not in result:
-                result[ticker] = industry
+            if isinstance(payload, list):
+                records = payload
+            elif isinstance(payload, dict):
+                records = []
+                for key in ("recommendations", "candidates", "candidate_pool", "selected_candidates", "shadow_candidates"):
+                    value = payload.get(key)
+                    if isinstance(value, list):
+                        records.extend(value)
+            else:
+                records = []
+            for rec in records:
+                if not isinstance(rec, dict):
+                    continue
+                ticker = str(rec.get("ticker") or rec.get("ts_code") or "")[:6]
+                industry = str(rec.get("industry_sw") or rec.get("industry") or "").strip()
+                if ticker in needed and industry and ticker not in result:
+                    result[ticker] = industry
     return result
 
 
@@ -713,6 +736,9 @@ class DailyActionScan:
     reference_prices: tuple[tuple[str, float], ...] = ()
     snapshot_id: str | None = None
     funnel: ScanFunnel | None = None
+    # 信号日 regime (verified snapshot 携带): 渲染层披露 "今日为何能/不能开新仓"
+    # 的前置条件 — 此前只能从 "有无计划" 反推, 危机日阻断时 operator 看不到原因.
+    regime: str | None = None
 
 
 @dataclass(frozen=True)
@@ -748,6 +774,12 @@ class DailyActionV2Run:
     plan_details: tuple[PlanDetail, ...] = ()
     # funnel: 扫描漏斗计数 (snapshot 路径产出); None 时渲染省略漏斗行.
     funnel: ScanFunnel | None = None
+    # capacity_skipped: 计划层容量拦截 (行业集中/组合敞口/单票上限) — 漏斗
+    # 算术闭合的第三项 (命中 = 可计划 + 不可计划 + 容量拦截). 旧构造点不传
+    # (与 funnel 同例的优雅降级).
+    capacity_skipped: tuple[Any, ...] = ()
+    # regime: 信号日市场状态 (crisis/risk_off 会阻断新仓), None 时渲染省略.
+    regime: str | None = None
 
 
 _BLOCK_REASON_ZH = {
@@ -833,8 +865,11 @@ def _weekday_zh(d: date) -> str:
 
 
 # 强度分量 metadata key → 中文标签 (与 btst_breakout detect 的 strength 公式同序).
+# board_score 是"上市板"质量分 (002/300/301/688/60x=0.95, 000/001 深主板=0.0),
+# 不是行业板块效应 — 行业动量是独立条件 (行业当日>2%) 与本分量无关. 旧标签
+# 「板块」与下一行「行业当日 +X%」并排会被误读成行业动量 (2026-08-18 审查项 4).
 _STRENGTH_COMPONENT_LABELS = (
-    ("board_score", "板块"),
+    ("board_score", "上市板"),
     ("low_vol_score", "低波"),
     ("squeeze_score", "压缩"),
     ("volume_score", "量能"),
@@ -923,12 +958,15 @@ def _format_plan_detail_rows(
         rows.append(f"  {' · '.join(structure)}")
 
     # 先验胜率赔率: 冻结分布 (驱动仓位的那套数字 — 展示口径 = 决策口径).
+    # 标签诚实化 (2026-08-18 审查项 3): 不再自称「全池回测」— 现行 BTST 常量
+    # 是 626 票样本、连续涨停口径、2026-07-12 校准、未扣费; 样本出处脚注
+    # (含执行口径参考) 在新计划区末尾渲染一次, 不逐票重复.
     dist = detail.distribution
     if dist is not None:
         payoff = dist.avg_gain / abs(dist.avg_loss) if dist.avg_loss else None
         payoff_text = f" · 盈亏比 {payoff:.1f}（盈 {dist.avg_gain:+.1%} / 亏 {dist.avg_loss:+.1%}）" if payoff else ""
         rows.append(
-            f"  先验（T+{detail.horizon} 全池回测 n={dist.n}）：胜率 {dist.winrate:.0%}"
+            f"  先验（T+{detail.horizon} 历史回测 n={dist.n} · 未扣费）：胜率 {dist.winrate:.0%}"
             f"{payoff_text} · 期望 {dist.expected_return:+.1%}"
             f"（95% CI {dist.ci_low:+.1%}~{dist.ci_high:+.1%}）"
         )
@@ -1309,6 +1347,8 @@ def complete_daily_action_v2(
         scan.reference_prices,
         plan_details=_build_plan_details(service, scan, persisted),
         funnel=scan.funnel,
+        capacity_skipped=getattr(service_run, "capacity_skipped", ()),
+        regime=scan.regime,
     )
 
 
@@ -1382,6 +1422,17 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         summary = " · ".join(parts) or "今日无新计划"
 
     lines = [f"━━━ 每日动作 · 信号日 {as_of.isoformat()}（周{_weekday_zh(as_of)}）━━━", ""]
+    # regime 披露 (2026-08-18 审查项 4): regime gate 是新仓前置条件 (crisis/
+    # risk_off 阻断), 此前只能从"有无计划"反推 — 危机日被阻断时 operator
+    # 看不到原因. None (旧构造点不带) 时整行省略.
+    if getattr(run, "regime", None):
+        gate_note = (
+            "（当前不阻断新仓；crisis/risk_off 信号日将阻断）"
+            if run.regime == "normal"
+            else "（⚠ 该 regime 阻断新仓，今日不应有新计划）"
+        )
+        lines.append(f"Regime：{run.regime}{gate_note}")
+        lines.append("")
     if summary is not None:
         lines.append(f"今日摘要：{summary}")
         lines.append("")
@@ -1438,6 +1489,18 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
             "  ⭐双信号 = 同日也在 --auto Top-N（收敛子集历史胜率更高，"
             "但 bootstrap CI[-7%,+28%] 跨 0 未达显著，勿据此加仓）"
         )
+    # 先验口径脚注 (渲染一次, 不逐票重复): 样本出处来自 Distribution.provenance,
+    # 执行口径参考是 BTST journal 执行重建 — 两个口径差 ~3pp 是口径差不是退化.
+    prior_provenance = {
+        detail.distribution.provenance
+        for detail in run.plan_details
+        if detail.distribution is not None and detail.distribution.provenance
+    }
+    if prior_provenance:
+        footnote = "；".join(sorted(prior_provenance))
+        if any(detail.setup == "btst_breakout" for detail in run.plan_details):
+            footnote += f"；{BTST_EXECUTABLE_REFERENCE}"
+        plan_rows.append(f"  先验口径：{footnote}")
     lines.extend(_render_section(f"新计划（{len(run.plans)} 只）", plan_rows))
     lines.append("")
 
@@ -1507,11 +1570,52 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         lines.append(f"  另：{ineligible_count} 只不具备计划资格（数据契约拒票，未触发信号，已从明细折叠）")
     lines.append("")
 
+    # ---- 容量拦截 (计划层) ----
+    # 2026-08-18 审查项 1: 行业集中/组合敞口/单票上限拦截此前在 service 层是裸
+    # continue — 强度达标的候选从漏斗里凭空消失 (命中 ≠ 可计划 + 不可计划).
+    # 上限决定买什么, 不决定看什么: 每只被拦候选留痕 + 原因披露, 仓位释放后
+    # operator 可自行判断是否还有次日机会. 空集时不渲染 (无信息量).
+    capacity_skipped = tuple(run.capacity_skipped or ())
+    if capacity_skipped:
+        capacity_rows: list[str] = []
+        for skip in capacity_skipped:
+            label = _pad_to(_label(skip.ticker), _LABEL_WIDTH)
+            capacity_rows.append(
+                f"{label} {_fmt_ref_price(references.get(skip.ticker))}  原因：{skip.detail}"
+            )
+            if verbose:
+                debug.append(
+                    f"{skip.ticker}  容量拦截：{skip.detail}  "
+                    f"[capacity_skip_reason={skip.reason} industry={skip.industry}]"
+                )
+        lines.extend(
+            _render_section(f"容量拦截（{len(capacity_skipped)} 只）", capacity_rows)
+        )
+        lines.append("")
+
     # ---- 扫描漏斗: 未命中票从来不是候选, 漏斗把沉默的大多数变成数字 ----
+    # 算术闭合 (2026-08-18): 命中 = 可计划 + 不可计划 + 容量拦截 — 第三项
+    # 此前缺失, 13 命中只交代 7 只的操作员不可复核算不出来.
     if run.funnel is not None:
+        capacity_suffix = ""
+        if capacity_skipped:
+            reason_counts: dict[str, int] = {}
+            for skip in capacity_skipped:
+                reason_counts[skip.reason] = reason_counts.get(skip.reason, 0) + 1
+            reason_zh = {
+                "industry_concentration": "行业",
+                "portfolio_cap": "敞口",
+                "ticker_cap": "单票",
+            }
+            parts = " · ".join(
+                f"{reason_zh.get(reason, reason)} {count}"
+                for reason, count in reason_counts.items()
+            )
+            capacity_suffix = f" · 容量拦截 {len(capacity_skipped)} 只（{parts}）"
         lines.append(
             f"扫描漏斗：扫描 {run.funnel.scannable} 只 → 涨幅≥9.5% {run.funnel.prefilter_passed} 只 → "
-            f"命中 {run.funnel.hits} 只 → 可计划 {len(run.plans)} 只 · 不可计划 {len(actionable_blocked)} 只"
+            f"命中 {run.funnel.hits} 只 → 可计划 {len(run.plans)} 只 · "
+            f"不可计划 {len(actionable_blocked)} 只{capacity_suffix}"
         )
         lines.append("")
 
@@ -1540,6 +1644,18 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         f"台账：净值 {valuation.nav:,.0f} · 峰值 {valuation.peak:,.0f} · "
         f"回撤 {_format_drawdown(valuation.drawdown)}{stale}"
     )
+    # 敞口披露 (2026-08-18 审查项 4, v1 有 v2 曾丢): 今日敞口约束是否 binding
+    # 直接决定强度达标的候选会不会被拦 (见容量拦截区) — 不显示时 operator
+    # 无从知道 603110 型候选消失的原因. reserved 含全部待成交计划 (跨信号日).
+    open_exposure = getattr(run.service_run, "open_exposure", None)
+    reserved_exposure = getattr(run.service_run, "reserved_exposure", None)
+    if open_exposure is not None and reserved_exposure is not None:
+        total_exposure = open_exposure + reserved_exposure
+        at_cap = " ⚠达上限" if total_exposure >= _MAX_PORTFOLO_PCT - 1e-9 else ""
+        lines.append(
+            f"敞口：持仓 {open_exposure:.0%} + 待成交计划 {reserved_exposure:.0%} "
+            f"= {total_exposure:.0%} / {_MAX_PORTFOLO_PCT:.0%} 上限{at_cap}"
+        )
 
     # ---- verbose 诊断区: 中文含义为主行, raw audit 码收进方括号附录 ----
     if run.service_run.block_reason and verbose:
@@ -1739,6 +1855,19 @@ def generate_daily_action(
 
     tracker.last_action_trade_date = trade_date
     tracker.last_action_regime = regime
+
+    # 信号覆盖断层哨点 (对抗审查 BUG-1, 2026-08-17): 当次处理的信号日之前若有交易日
+    # 无 setup_output_log, 说明 --daily-action 曾断跑 — 醒目披露, advisory 不阻断.
+    # full_market 模式 (生产路径) 才检查; report 模式是 legacy/测试路径.
+    if scan_mode == "full_market":
+        try:
+            from src.screening.offensive.setup_output_log import (
+                warn_missing_signal_log_sessions,
+            )
+
+            warn_missing_signal_log_sessions(before=trade_date)
+        except Exception:  # noqa: BLE001 - advisory, 绝不阻断信号生成
+            logger.debug("信号覆盖断层检查失败 (advisory)", exc_info=True)
 
     # 2. 先平到期仓位 + 回填 realized P&L → 驱动 drawdown (闭环核心)
     tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=_load_prices)
@@ -2219,6 +2348,7 @@ def scan_from_verified_snapshot(
             prefilter_passed=prefilter_passed,
             hits=hit_count,
         ),
+        regime=regime,
     )
 
 

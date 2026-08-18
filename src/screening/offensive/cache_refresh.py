@@ -13,7 +13,7 @@ import os
 import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -40,7 +40,7 @@ from src.screening.offensive.pit_evidence import (
     validate_price_artifact,
 )
 from src.tools.ashare_board_utils import is_excluded_ticker
-from src.utils.atomic_files import atomic_write_csv
+from src.utils.atomic_files import atomic_write_csv, atomic_write_json
 from src.utils.date_utils import latest_open_trade_date_on_or_before
 
 logger = logging.getLogger(__name__)
@@ -1133,6 +1133,78 @@ def _frame_has_current_row(frame: pd.DataFrame, trade_date: str) -> bool:
     return bool((_fund_flow_dates(frame["date"]) == requested).any())
 
 
+_SW_SNAPSHOT_FILENAME = "sw_industry_latest.json"
+
+
+def _load_known_industry_names(
+    industry_index_cache_dir: Path | str = _DEFAULT_INDUSTRY_INDEX_CACHE_DIR,
+) -> set[str] | None:
+    """读行业指数缓存的已知 SW L1 名称集 (名称校验用); 读取失败返回 None (不校验)."""
+    try:
+        codes = json.loads((Path(industry_index_cache_dir) / "_industry_codes.json").read_text(encoding="utf-8"))
+        return {str(v) for v in codes.values()} if isinstance(codes, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _persist_sw_industry_snapshot(
+    membership: Mapping[str, str],
+    signal_date: str,
+    *,
+    snapshot_dir: Path | str = _DEFAULT_SNAPSHOT_DIR,
+    known_industries: set[str] | None = None,
+) -> bool:
+    """原子落盘全市场 {code6: SW L1 行业名} 供 --daily-action 本地快读。
+
+    对抗审查 BUG-2 (2026-08-17) 的供给侧: 历史上 SW 映射只在注入过滤时取一次
+    就丢弃, --daily-action 只能从候选池快照并集 (几百票) 拿行业, 涨停注入票
+    系统性缺失。此处把 --auto 每晚已取到的映射持久化, 消费侧见
+    ``daily_action._load_ticker_to_industry_from_snapshots``。
+
+    名称校验 (第二遍对抗审查, 2026-08-17): 消费侧按 (行业名, 日期) 查
+    industry_index_cache 的涨幅 — SW 文件层又优先于候选池快照, 若 API 名称
+    与 _industry_codes.json 键名漂移 (SW 改版/缓存重建), 会把快照层原本正确
+    的映射顶掉造成全候选行业 miss。故落盘前按 known_industries 过滤: 未知
+    名称的票不落盘 (留在快照层兜底) 并计数告警。known_industries=None 表示
+    校验集不可用 → 不校验 (兜底仍是快照层, 语义回到修复前)。
+
+    写入目标跟随 refresh 的 ``snapshot_dir`` (生产 = data/snapshots/, 测试 =
+    tmp_path — 绝不写死工作区路径, 与 readiness 测试隔离纪律一致)。advisory:
+    失败只告警不阻断刷新。
+    """
+    try:
+        mapping: dict[str, str] = {}
+        dropped_unknown = 0
+        unknown_names: set[str] = set()
+        for ts_code, industry in membership.items():
+            if not industry:
+                continue
+            name = str(industry)
+            if known_industries is not None and name not in known_industries:
+                dropped_unknown += 1
+                unknown_names.add(name)
+                continue
+            mapping[str(ts_code).split(".")[0]] = name
+        if dropped_unknown:
+            logger.warning(
+                "[cache_refresh] SW 映射落盘剔除未知行业名 %d 只 (不落盘, 快照层兜底): %s",
+                dropped_unknown,
+                ",".join(sorted(unknown_names)[:8]),
+            )
+        payload = {
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "signal_date": signal_date,
+            "mapping": mapping,
+        }
+        target = Path(snapshot_dir) / _SW_SNAPSHOT_FILENAME
+        target.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(target, payload)
+        return True
+    except Exception as exc:  # noqa: BLE001 - advisory, 兜底是快照 fallback
+        logger.warning("[cache_refresh] SW 行业映射落盘失败 (advisory): %s", exc)
+        return False
+
+
 def refresh_daily_action_caches(
     trade_date: str,
     *,
@@ -1233,7 +1305,30 @@ def refresh_daily_action_caches(
             daily_batch_fingerprint = None
             resolved_daily_prices = pd.DataFrame(columns=_DAILY_BATCH_COLUMNS)
     injected = sorted(set(limit_up_tickers) - set(base_tickers))
-    if injected:
+    # SW L1 映射获取从 `if injected:` 提升为无条件 (对抗审查 BUG-2, 2026-08-17):
+    # --daily-action 行业条件 (BTST 条件3) 的票→行业映射历史上只来自候选池快照
+    # 并集, 涨停注入票 (从未进池) 拿不到行业 → 被「行业缺失=miss」静默过滤
+    # (8-14 涨停 62 只中 38 只无映射、15 只死在该缺口 — 数据管道缺口伪装成策略
+    # 过滤)。--auto 每晚取一次全市场 SW L1 映射并原子落盘, --daily-action 本地
+    # 毫秒级读。进程内缓存 + readiness capture 共用同一份, 边际成本≈0。
+    from src.tools.tushare_api import get_sw_industry_classification
+
+    try:
+        sw_membership = get_sw_industry_classification()
+    except Exception as exc:  # noqa: BLE001 - 过滤失败不得拖垮缓存刷新
+        logger.warning("[cache_refresh] 涨停注入 SW 过滤失败, 跳过过滤: %s", exc)
+        sw_membership = None
+    if sw_membership is not None:
+        # 名称校验集来自 refresh 同源的 industry_index_cache_dir (跟随参数,
+        # 测试 tmp 隔离); 读取失败 → None → 不校验 (快照层兜底)。
+        known_industries = _load_known_industry_names(industry_index_cache_dir)
+        _persist_sw_industry_snapshot(
+            sw_membership,
+            effective_trade_date,
+            snapshot_dir=snapshot_dir,
+            known_industries=known_industries,
+        )
+    if injected and sw_membership is not None:
         # P0 回归 (2026-08-11): 上市首日新股涨停注入会阻断 --auto readiness
         # 发布。当日 stock_basic 必含新股 (list_status=L) 而 SW L1 as-of
         # membership 尚不含它们 (纳入日 > 上市日) — 新股进冻结宇宙后 SW 映射
@@ -1242,23 +1337,15 @@ def refresh_daily_action_caches(
         # injected 部分, 使宇宙始终可被 SW 精确覆盖; 基础宇宙 (候选池/缓存)
         # 不过滤。数据源不可用 → fail-open 不过滤 (与退市过滤同款语义, 由
         # readiness 严格校验兜底)。
-        from src.tools.tushare_api import get_sw_industry_classification
-
-        try:
-            sw_membership = get_sw_industry_classification()
-        except Exception as exc:  # noqa: BLE001 - 过滤失败不得拖垮缓存刷新
-            logger.warning("[cache_refresh] 涨停注入 SW 过滤失败, 跳过过滤: %s", exc)
-            sw_membership = None
-        if sw_membership is not None:
-            sw_codes = {_code6(ticker) for ticker in sw_membership}
-            dropped = sorted(ticker for ticker in injected if ticker not in sw_codes)
-            if dropped:
-                logger.info(
-                    "[cache_refresh] 涨停注入剔除无 SW 行业归属 %d 只 (次新股/无成分): %s",
-                    len(dropped),
-                    ",".join(dropped),
-                )
-                injected = [ticker for ticker in injected if ticker in sw_codes]
+        sw_codes = {_code6(ticker) for ticker in sw_membership}
+        dropped = sorted(ticker for ticker in injected if ticker not in sw_codes)
+        if dropped:
+            logger.info(
+                "[cache_refresh] 涨停注入剔除无 SW 行业归属 %d 只 (次新股/无成分): %s",
+                len(dropped),
+                ",".join(dropped),
+            )
+            injected = [ticker for ticker in injected if ticker in sw_codes]
     frozen_universe = tuple(sorted(set(base_tickers) | set(injected)))
 
     # Capture every baseline once after the universe is frozen and before any
@@ -1501,6 +1588,19 @@ def refresh_daily_action_caches(
 
     legacy_stats = DailyActionCacheRefreshStats(limit_up_injected=len(injected))
     legacy_stats.merge(industry_stats).merge(price_stats).merge(fund_flow_stats)
+
+    # 信号覆盖断层哨点 (对抗审查 BUG-1, 2026-08-17): --auto 每晚必经此处, 是发现
+    # --daily-action 断跑的最佳哨点 (与 --daily-action 自身的哨点互为冗余).
+    # advisory only — 任何失败都不改变刷新结果.
+    try:
+        from src.screening.offensive.setup_output_log import (
+            warn_missing_signal_log_sessions,
+        )
+
+        warn_missing_signal_log_sessions(before=effective_trade_date)
+    except Exception:  # noqa: BLE001 - advisory
+        logger.debug("[cache_refresh] 信号覆盖断层检查失败 (advisory)", exc_info=True)
+
     return DailyActionRefreshResult(
         trade_date=trade_date_dt,
         universe_tickers=frozen_universe,

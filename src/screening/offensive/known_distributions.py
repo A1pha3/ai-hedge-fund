@@ -1,20 +1,29 @@
-"""Phase 0 验证过的已知 setup 分布 (从全池真实回测产出)。
+"""已冻结的 setup 先验分布 (Kelly 仓位输入) + 各常量的样本出处披露。
 
 这些是 --daily-action 用于 Kelly 仓位 + 风险计划的"先验"。
-每个分布对应一个 setup 在特定 horizon 的全池 execution-adjusted 历史统计。
+⚠ 出处分层 (2026-08-18 审查项 3, 展示层与文件头对齐): 当前生效的 BTST 常量
+来自 2026-07-12 校准的 626 票样本回测 (连续涨停样本、未扣费口径) — 不是
+"全池 execution-adjusted"。它早于 2026-07-18 journal 锚定 bug 全量修正与
+2026-08-16 执行口径重建, 未按两者重验; 引用前先与
+outputs/journal_execution_stats_20260816.json 交叉验证 (trap 4)。
 
 ⚠ 重要: 这些分布来自历史回测, 不是未来承诺。setup IC 会衰减, 需定期重测
 (月度重校准, 见 risk_framework 的衰减监控)。
 
-当前已验证:
-- btst_breakout @ T+10: cv=1.81, winrate=54.2%, E=+3.38%, n=1762, IC=0.126
-  → 条件4 (涨停前5日涨幅≤5%) 过滤后, alpha 显著提升 (旧版 cv=1.53/win=50.6%)
-  → CI [2.57%, 4.15%] 远不跨 0, IC 0.126 有排序信息
-  → paper_trading_backtest 实测更优: win=68.4%, E=+8.15%, n=133 (牛市样本)
+历史校准记录 (审计线索, 非当前生效值的出处):
+- Phase 0 btst_breakout @ T+10: cv=1.81, winrate=54.2%, E=+3.38%, n=1762, IC=0.126
+  → 本地数据不可复现 (AGENTS.md trap 4), 仅作历史审计线索
+- 旧文档曾引 "paper_trading_backtest 实测更优: win=68.4%, E=+8.15%, n=133"
+  作为佐证 — 该 recorded P&L 已被 2026-07-18 审查判定受锚定 bug 污染
+  (修正后毛口径 +5.07%, 执行口径 +3.41%), 不得再作为校准依据引用
 - oversold_bounce @ T+5: ⚠ 已用真实成交数据重校准 (2026-07-11)
   → 旧先验 (Phase 0) E=+3.42%/cv=2.51 严重高估: avg_loss 被 2x 低估
-  → 真实回测: E=+0.34%, cv=0.96 (<1.5), CI [-3.15%, +3.83%] 跨 0
+  → 真实回测: E[r]=+0.34%, cv=0.96 (<1.5), CI [-3.15%, +3.83%] 跨 0
   → 当前默认暂停 (DAILY_ACTION_DISABLED_SETUPS), 仓位 Kelly f*≈0
+
+执行口径参考 (BTST, 与先验不可比 — 供展示层脚注披露, 不进 Kelly):
+journal 执行重建 (2026-08-16, T+1 开盘买/成本 30bps+5bps, n=130):
+期望 +3.41% · 胜率 57%; 先验期望高于可执行收益约 3pp。
 """
 
 from __future__ import annotations
@@ -44,6 +53,7 @@ BTST_BREAKOUT_T8 = Distribution(
     ci_low=0.0430,
     ci_high=0.0656,
     ic=0.15,
+    provenance="626 票样本 · 连续涨停样本口径 · 2026-07-12 校准 · 未扣费",
 )
 
 # BTST 突破 T+10 (2026-07-12 重新校准至当前过滤器链: 8% 涨停前涨幅门控 + 成交量回避区)
@@ -62,6 +72,11 @@ BTST_BREAKOUT_T10 = Distribution(
     ci_low=0.0530,
     ci_high=0.0784,
     ic=0.15,
+    # ⚠ 口径披露: 样本是"连续涨停"而生产触发以首板为主 (人群错配未校准);
+    # 校准早于 07-18 锚定修正与 08-16 执行重建, 期望未按可执行口径重验
+    # (执行口径 +3.41%, 见模块头). 改常量数值 = 策略行为变化, 需新证据世代;
+    # 本字段只做展示披露, 不改变 Kelly 输入.
+    provenance="626 票样本 · 连续涨停样本口径 · 2026-07-12 校准 · 未扣费",
 )
 
 # OversoldBounce 超跌反弹 T+5 — 用 paper_trading_backtest 真实成交重校准 (2026-07-11)
@@ -80,6 +95,7 @@ OVERSOLD_BOUNCE_T5 = Distribution(
     ci_low=-0.0315,  # 95% CI 跨 0 → 无统计显著的 alpha
     ci_high=0.0383,
     ic=0.003,
+    provenance="journal 成交子集 59 笔 · 2026-07-11 重校准 · 已默认暂停",
 )
 
 # 已知分布注册表: {(setup_name, horizon): Distribution}
@@ -95,3 +111,12 @@ KNOWN_DISTRIBUTIONS: dict[tuple[str, int], Distribution] = {
 def get_known_distribution(setup_name: str, horizon: int) -> Distribution | None:
     """查已知分布; 未验证的 setup 返回 None (--daily-action 会拒绝出信号)."""
     return KNOWN_DISTRIBUTIONS.get((setup_name, horizon))
+
+
+# 执行口径参考 (展示层脚注用, 不进 Kelly): BTST journal 执行重建 2026-08-16,
+# T+1 开盘买 + 30bps/边滑点 + 5bps 卖出印花税, n=130 (outputs/journal_execution_stats_20260816.json).
+# 先验是未扣费、非执行口径 → 两者相差 ~3pp 是口径差, 不是策略退化信号.
+BTST_EXECUTABLE_REFERENCE = (
+    "执行口径参考（2026-08-16 重建，T+1 开盘+真实成本，n=130）："
+    "期望 +3.4% · 胜率 57% — 先验期望系统性高于可执行收益约 3pp"
+)

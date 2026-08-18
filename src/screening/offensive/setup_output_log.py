@@ -18,6 +18,7 @@ Design:
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import tempfile
@@ -27,6 +28,9 @@ from typing import Any, Iterable
 
 SCHEMA_VERSION = 1
 _DEFAULT_DIR = Path("data/reports/setup_output_log")
+_DEFAULT_CALENDAR = Path("data/reports/trade_calendar.json")
+
+logger = logging.getLogger(__name__)
 
 
 def _finite(value: Any) -> float | None:
@@ -109,3 +113,65 @@ def log_setup_outputs(
             pass
         raise
     return target
+
+
+def audit_signal_log_coverage(
+    sessions: Iterable[str],
+    *,
+    before: str,
+    log_dir: Path | str = _DEFAULT_DIR,
+) -> list[str]:
+    """Return past signal days with no setup_output_log file (ascending).
+
+    对抗审查修复 BUG-1 (2026-08-17): 2026-08-05..08-11 五个交易日 --daily-action
+    未运行, 系统无任何检测 — 当期最强 setup 信号 (华正新材 08-05, strength 0.79)
+    就此漏掉。判定语义: 日志文件存在 (含 0 字节 = 跑过但当日无信号) 即覆盖;
+    文件不存在 = 当日从未运行。只审计严格早于 ``before`` 的信号日 — 当次运行
+    会写 ``before`` 自己的日志, 不属于缺口。目录读取失败返回 [] (advisory,
+    绝不阻断主流程)。
+    """
+    try:
+        existing = {p.stem for p in Path(log_dir).glob("*.jsonl")}
+    except OSError:
+        return []
+    return sorted(
+        s
+        for s in sessions
+        if isinstance(s, str) and len(s) == 8 and s.isdigit() and s < before and s not in existing
+    )
+
+
+def warn_missing_signal_log_sessions(
+    *,
+    before: str,
+    calendar_path: Path | str = _DEFAULT_CALENDAR,
+    log_dir: Path | str = _DEFAULT_DIR,
+    max_show: int = 10,
+    lookback_sessions: int = 30,
+) -> list[str]:
+    """Read the authoritative trade calendar and warn about missing signal days.
+
+    ``--auto`` (cache_refresh 收尾) 与 ``--daily-action`` (信号解析后) 各挂一次:
+    两个哨点互为冗余, 任一在跑就能发现对方的断跑。告警窗口有界 (``before``
+    往前 ``lookback_sessions`` 个交易日) — 权威日历从 2020 起算, 无界审计在
+    从未运行的环境里会产生上千天的噪声。advisory only — 读取/解析失败静默
+    返回 [], 不改变任何交易语义。
+    """
+    try:
+        sessions = json.loads(Path(calendar_path).read_text(encoding="utf-8"))
+        if not isinstance(sessions, list):
+            return []
+    except (OSError, json.JSONDecodeError):
+        return []
+    recent = [s for s in sessions if isinstance(s, str) and s < before][-lookback_sessions:]
+    gaps = audit_signal_log_coverage(recent, before=before, log_dir=log_dir)
+    if gaps:
+        logger.warning(
+            "⚠ 信号覆盖断层: 最近 %d 个交易日中 %d 个无 setup_output_log "
+            "(--daily-action 未运行, 这些日的 setup 信号已永久丢失, 无法补录): %s%s",
+            len(recent),
+            len(gaps),
+            ",".join(gaps[-max_show:]),
+            " ..." if len(gaps) > max_show else "",
+        )
+    return gaps

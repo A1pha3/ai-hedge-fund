@@ -433,8 +433,10 @@ def test_new_plan_renders_full_trade_plan_details(service, signal_date):
     assert "买入：" in rendered and "开盘价执行" in rendered
     assert "开盘涨停/停牌自动放弃" in rendered
     # 买入理由: 强度 + 5 分量 + 能量耦合; 涨停结构 (幅度/连板/前5日/资金流/行业).
+    # 「上市板」≠ 行业板块: board_score 是 002/300/301/688/60x=0.95 的上市板
+    # 质量分 (2026-08-18 审查项 4 改名, 防止与「行业当日」误读).
     assert "理由：强度 0.79" in rendered
-    assert "板块 0.95" in rendered and "低波 0.80" in rendered
+    assert "上市板 0.95" in rendered and "低波 0.80" in rendered
     assert "压缩 1.00" in rendered and "量能 0.60" in rendered and "振幅 0.40" in rendered
     assert "能量耦合 0.08" in rendered
     assert "涨停 +10.0%（首板）" in rendered
@@ -442,10 +444,15 @@ def test_new_plan_renders_full_trade_plan_details(service, signal_date):
     assert "主力净流入 24.8 亿" in rendered
     assert "行业当日 +1.2%" in rendered
     # 胜率赔率: 冻结先验分布 (BTST T+10: n=1458, 胜率 58.78%→59%, 盈亏比 1.8, E +6.6%).
-    assert "先验（T+10 全池回测 n=1458）" in rendered
+    # 标签 = 真实出处 (626 票样本, 非全池) + 未扣费口径标注 (2026-08-18 审查项 3).
+    assert "先验（T+10 历史回测 n=1458 · 未扣费）" in rendered
     assert "胜率 59%" in rendered
     assert "盈亏比 1.8" in rendered
     assert "期望 +6.6%" in rendered
+    # 先验口径脚注: 样本出处 + 执行口径参考, 全渲染只出现一次 (不逐票重复).
+    assert rendered.count("先验口径：") == 1
+    assert "626 票样本" in rendered and "2026-07-12 校准" in rendered
+    assert "执行口径参考" in rendered and "+3.4%" in rendered
     # 退出合约: T+10 时间退出 (第 10 个持有交易日, entry 7/14 → 到期 7/23), 无条件卖出.
     assert "退出：T+10" in rendered
     assert "预计 7/23" in rendered
@@ -503,8 +510,8 @@ def test_blocked_strength_candidate_shows_component_breakdown_and_funnel(service
     )
     rendered = render_daily_action_v2(run_daily_action_v2(service, scan))
     assert "触发强度不足（0.42 < 0.50 阈值，差 0.08）" in rendered
-    assert "强度分量：板块 0.00 · 低波 0.20 · 压缩 0.50 · 量能 0.30 · 振幅 1.00" in rendered
-    assert "短板：板块 0.00" in rendered
+    assert "强度分量：上市板 0.00 · 低波 0.20 · 压缩 0.50 · 量能 0.30 · 振幅 1.00" in rendered
+    assert "短板：上市板 0.00" in rendered
     assert "扫描漏斗：扫描 777 只 → 涨幅≥9.5% 47 只 → 命中 2 只 → 可计划 0 只 · 不可计划 1 只" in rendered
 
 
@@ -524,6 +531,94 @@ def test_funnel_line_omitted_when_scan_has_no_funnel(service, signal_date):
     """legacy 扫描路径不带漏斗计数 → 整行省略 (优雅降级, 不编造计数)."""
     run = run_daily_action_v2(service, _scan(signal_date))
     assert "扫描漏斗" not in render_daily_action_v2(run)
+
+
+def test_capacity_skips_disclosed_and_funnel_arithmetic_closes(service, signal_date):
+    """容量拦截披露 (2026-08-18 审查项 1): 行业集中/组合敞口拦截此前在 service
+    层是裸 continue — 强度达标的候选从漏斗凭空消失 (2026-08-17 实况: 命中 13
+    只只交代 7 只). 契约: 容量拦截区逐只披露原因, 漏斗算术闭合
+    (命中 = 可计划 + 不可计划 + 容量拦截), 敞口/regime 行可见, 幂等重跑不误报."""
+    from types import SimpleNamespace
+
+    from src.screening.offensive.daily_action import complete_daily_action_v2
+
+    industry_map = {
+        "000001": "电子",
+        "000002": "电子",
+        "000003": "电子",  # 第 3 只电子: 行业集中拦截
+        "000004": "机械设备",
+        "000005": "通信",
+        "000006": "计算机",
+        "000007": "食品饮料",
+        "000008": "有色金属",  # 前 6 只各 10% 已填满 60%: 组合敞口拦截
+    }
+    fake_snapshot = SimpleNamespace(
+        signal_date=signal_date,
+        snapshot_id="snap-cap-test",
+        reference_price=lambda _ticker: 10.0,
+        board_rule_version="ashare-board-prefix-v1",
+        manifest=SimpleNamespace(
+            run_id="run-cap-test",
+            content_fingerprint="sha256:content",
+            input_fingerprint="sha256:input",
+            shared_evidence=SimpleNamespace(industry_by_ticker=industry_map),
+        ),
+    )
+    tickers = tuple(industry_map)
+    candidates = tuple(
+        PlanCandidate(
+            ticker=ticker,
+            setup="btst_breakout",
+            setup_version="v2",
+            signal_date=signal_date,
+            target_weight=0.30,  # 被单票上限压到 10%: 6 只恰好填满 60% 组合上限
+            priority=idx + 1,
+            snapshot_id="snap-cap-test",
+            setup_consumed_fingerprint="sha256:consumed",
+            detector_degraded=False,
+            authorization=RegimeAuthorization.NORMAL,
+            trigger_strength=0.79,
+            entry_price=10.0,
+        )
+        for idx, ticker in enumerate(tickers)
+    )
+    scan = DailyActionScan(
+        signal_date,
+        candidates,
+        (),
+        tuple((ticker, 10.0) for ticker in tickers),
+        funnel=ScanFunnel(scannable=1497, prefilter_passed=84, hits=8),
+        regime="normal",
+    )
+    context = service.advance_lifecycle(signal_date)
+    run = complete_daily_action_v2(service, context, scan, verified_snapshot=fake_snapshot)
+    rendered = render_daily_action_v2(run)
+
+    # 6 只成计划 (电子 2 + 四个独立行业 4, 各 10%); 000003 撞行业集中,
+    # 000008 撞组合敞口 — 恰好复现 2026-08-17 的 603110 (强度达标却被 cap 拦).
+    assert len(run.plans) == 6
+    skip_map = {skip.ticker: skip.reason for skip in run.capacity_skipped}
+    assert skip_map == {"000003": "industry_concentration", "000008": "portfolio_cap"}
+    # 容量拦截区逐只披露原因 (上限决定买什么, 不决定看什么).
+    assert "容量拦截（2 只）" in rendered
+    assert "行业集中（电子 已 2 仓，同入场日上限 2）" in rendered
+    assert "组合敞口 60% + 本票 10% > 60% 上限" in rendered
+    # 漏斗算术闭合: 命中 8 = 可计划 6 + 不可计划 0 + 容量拦截 2 (行业 1 · 敞口 1).
+    assert (
+        "扫描漏斗：扫描 1497 只 → 涨幅≥9.5% 84 只 → 命中 8 只 → "
+        "可计划 6 只 · 不可计划 0 只 · 容量拦截 2 只（行业 1 · 敞口 1）"
+    ) in rendered
+    # regime 与敞口披露: 危机阻断的前置条件 + 今日约束是否 binding 可见.
+    assert "Regime：normal（当前不阻断新仓" in rendered
+    assert "敞口：持仓 0% + 待成交计划 60% = 60% / 60% 上限 ⚠达上限" in rendered
+
+    # 幂等重跑: 已持久化计划的 6 只候选不再被误报成容量拦截 (敞口被自己的
+    # 计划占满); 真正被拦的 000003/000008 重跑时如实再报 (当日约束仍未解除).
+    rerun = run_daily_action_v2(service, scan, verified_snapshot=fake_snapshot)
+    assert len(rerun.plans) == 6
+    rerun_skip_map = {skip.ticker: skip.reason for skip in rerun.capacity_skipped}
+    assert rerun_skip_map == {"000003": "industry_concentration", "000008": "portfolio_cap"}
+    assert not {"000001", "000002", "000004", "000005", "000006", "000007"} & set(rerun_skip_map)
 
 
 def test_clamped_stop_discloses_floor_instead_of_fake_range_low(service, signal_date):

@@ -525,7 +525,7 @@ class BtstBreakoutSetup(Setup):
 
         trade_dow = _dt.strptime(trade_date, "%Y%m%d").weekday()  # 0=Mon
         weekday_score = 1.0 if trade_dow >= 2 else 0.0  # Wed-Fri=1, Mon-Tue=0 (仅观测, 不进 strength)
-        board_score = _board_quality_score(ticker)  # 002/300=1.0, 688/60x=0.95, 000=0.0
+        board_score = _board_quality_score(ticker)  # 002/300/301=0.95, 688/60x=0.95, 000/001=0.0 (与 _board_quality_score Q3 校准一致)
 
         # 低波动因子: 用涨停前 20 日 pct_change 计算 (池内正交轴, 替换 position 进 strength)
         low_vol_score = _compute_low_vol_score(prices, trigger_idx)

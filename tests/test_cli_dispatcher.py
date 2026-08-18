@@ -294,6 +294,43 @@ class TestDispatchEarlyFlags(unittest.TestCase):
         # that reopens cache files just to derive the signal date.
         legacy_scan.assert_not_called()
 
+    def test_daily_action_v2_path_runs_signal_coverage_sentinel(self) -> None:
+        """--daily-action v2 生产路径必须跑信号覆盖哨点 (2026-08-18 审查项 2).
+
+        哨点原先只挂在 legacy generate_daily_action — 生产路径走
+        scan_from_verified_snapshot + DailyActionService, 从不经过它,
+        19/30 交易日断跑在本路径零检测 (华正新材型漏信号重演风险)."""
+        from datetime import date, datetime
+
+        from src.screening.offensive.daily_action import _CN_TZ
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch(
+                    "src.screening.offensive.daily_action.resolve_daily_action_signal",
+                    return_value=(date(2026, 7, 10), "normal"),
+                ),
+                patch(
+                    "src.screening.offensive.daily_action._current_cn_datetime",
+                    return_value=datetime(2026, 7, 10, 21, 0, tzinfo=_CN_TZ),
+                ),
+                patch(
+                    "src.screening.offensive.setup_output_log.warn_missing_signal_log_sessions",
+                    return_value=[],
+                ) as warn_sentinel,
+                patch("builtins.print"),
+            ):
+                rc = dispatcher._resolve_daily_action(
+                    ["--daily-action"],
+                    open_sessions=(date(2026, 7, 10), date(2026, 7, 13)),
+                    ledger_path=Path(tmp) / "v2.sqlite3",
+                )
+
+        # 哨点以信号日为界审计 (before=YYYYMMDD), 无论就绪是否阻断都要跑.
+        warn_sentinel.assert_called_once_with(before="20260710")
+        # tmp 目录无就绪清单 → 数据护栏阻断 rc=13 (与既有契约一致).
+        self.assertEqual(rc, 13)
+
     def test_daily_action_passes_end_date_override(self) -> None:
         """--daily-action --end-date=YYYY-MM-DD 应规范化成 YYYYMMDD 传给 signal 解析."""
 

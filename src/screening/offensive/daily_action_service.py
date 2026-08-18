@@ -167,6 +167,21 @@ class TickerGateBlock:
 
 
 @dataclass(frozen=True)
+class CapacitySkip:
+    """计划层容量拦截记录 (行业集中 / 组合敞口 / 单票上限).
+
+    2026-08-18 审查项 1: 这些拦截此前是裸 ``continue`` — 候选从漏斗里凭空
+    消失 (命中数对不上 可计划+不可计划), 操作者无法知道强度达标的票为何
+    没进计划. 上限决定买什么, 不决定看什么 — 拦截必须留痕供渲染层披露.
+    """
+
+    ticker: str
+    reason: str  # industry_concentration | portfolio_cap | ticker_cap
+    industry: str
+    detail: str
+
+
+@dataclass(frozen=True)
 class DailyActionRun:
     trade_date: date
     valuation: DailyValuation
@@ -182,6 +197,7 @@ class DailyActionRun:
     blocked_tickers: tuple[str, ...] = ()
     block_reasons: tuple[str, ...] = ()
     ticker_gate_blocks: tuple[TickerGateBlock, ...] = ()
+    capacity_skipped: tuple[CapacitySkip, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -459,6 +475,7 @@ class DailyActionService:
         self._block_reasons: list[str] = []
         self._blocked_tickers: tuple[str, ...] = ()
         self._ticker_gate_blocks: tuple[TickerGateBlock, ...] = ()
+        self._capacity_skipped: list[CapacitySkip] = []
         self._active_snapshot: VerifiedDailyActionSnapshot | None = None
 
     def run(
@@ -502,6 +519,7 @@ class DailyActionService:
         self._blocked_tickers = ()
         self._block_reasons = []
         self._ticker_gate_blocks = ()
+        self._capacity_skipped = []
         self._active_manifest = None
         self._active_snapshot = None
         self._settle_due_entry_plans(as_of)
@@ -939,10 +957,30 @@ class DailyActionService:
             if candidate.ticker in seen:
                 continue
             seen.add(candidate.ticker)
+            # 幂等重跑: 该候选的计划已在本信号日早前持久化 (显示层由 persisted
+            # 提供) — 不是容量拦截, 不记入 capacity_skipped (否则重跑会把
+            # 自己已建的计划误报成被敞口上限拦下).
+            if any(
+                plan.ticker == candidate.ticker and plan.signal_date == as_of
+                for plan in reserved
+            ):
+                continue
             if candidate.authorization is not RegimeAuthorization.NORMAL:
                 self._add_block_reason("regime_authorization_evidence_unavailable")
             industry = _industry_of(candidate.ticker)
             if industry_count.get(industry, 0) >= _MAX_PER_INDUSTRY_DAILY:
+                self._capacity_skipped.append(
+                    CapacitySkip(
+                        ticker=candidate.ticker,
+                        reason="industry_concentration",
+                        industry=industry,
+                        detail=(
+                            f"行业集中（{industry} 已 "
+                            f"{industry_count.get(industry, 0)} 仓，同入场日上限 "
+                            f"{_MAX_PER_INDUSTRY_DAILY}）"
+                        ),
+                    )
+                )
                 continue
             provenance = self._plan_provenance(candidate, as_of, entry_date)
             weight = min(
@@ -960,11 +998,34 @@ class DailyActionService:
                 open_weight + sum(p.planned_weight for p in reserved) + weight
                 > PORTFOLIO_CAP + 1e-12
             ):
+                self._capacity_skipped.append(
+                    CapacitySkip(
+                        ticker=candidate.ticker,
+                        reason="portfolio_cap",
+                        industry=industry,
+                        detail=(
+                            f"组合敞口 {open_weight + sum(p.planned_weight for p in reserved):.0%}"
+                            f" + 本票 {weight:.0%} > {PORTFOLIO_CAP:.0%} 上限"
+                        ),
+                    )
+                )
                 continue
             if (
                 ticker_weight + ticker_reserved + weight
                 > candidate.authorization.ticker_cap + 1e-12
             ):
+                self._capacity_skipped.append(
+                    CapacitySkip(
+                        ticker=candidate.ticker,
+                        reason="ticker_cap",
+                        industry=industry,
+                        detail=(
+                            f"单票上限（持仓 {ticker_weight:.0%} + 已预留 "
+                            f"{ticker_reserved:.0%} + 本票 {weight:.0%} > "
+                            f"{candidate.authorization.ticker_cap:.0%}）"
+                        ),
+                    )
+                )
                 continue
             try:
                 trade, created = self.repository.create_plan_if_absent(
@@ -1076,6 +1137,7 @@ class DailyActionService:
             self._blocked_tickers,
             tuple(self._block_reasons),
             self._ticker_gate_blocks,
+            tuple(self._capacity_skipped),
         )
 
     def _shadow_position_view(
