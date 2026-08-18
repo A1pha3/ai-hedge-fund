@@ -25,6 +25,10 @@ from datetime import date, datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+# 看门狗 (发现 A): --auto 正常 2-15 分钟, 挂起场景 (网络死锁等) 无外层超时会永久
+# 停摆整个守护 — 超时强杀记失败, streak 告警接管
+AUTO_TIMEOUT_S = 3600
+ACTION_TIMEOUT_S = 600
 PY = REPO / ".venv" / "bin" / "python"
 LOG_DIR = REPO / "logs" / "cron"
 
@@ -33,6 +37,17 @@ def _log(fh, msg: str) -> None:
     line = f"[{datetime.now():%H:%M:%S}] {msg}\n"
     fh.write(line)
     fh.flush()
+
+
+def _record(status_path: Path, payload: dict) -> None:
+    """原子写当前状态 + 追加每日历史 (发现 C/D: 原子性与去重)。"""
+    from src.utils.atomic_files import atomic_write_json
+
+    atomic_write_json(status_path, payload)
+    history = status_path.parent / "cron" / "status_history.jsonl"
+    history.parent.mkdir(parents=True, exist_ok=True)  # helper 独立调用时不依赖 main 的 mkdir
+    with open(history, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 def _write_status(status_path: Path, today: str, auto_rc: int, action_rc, final_rc,
@@ -45,9 +60,7 @@ def _write_status(status_path: Path, today: str, auto_rc: int, action_rc, final_
     history = status_path.parent / "cron" / "status_history.jsonl"
     payload = {"date": today, "auto_rc": auto_rc, "action_rc": action_rc,
                "final_rc": final_rc, "duration_s": dur}
-    status_path.write_text(json.dumps(payload), encoding="utf-8")
-    with open(history, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    _record(status_path, payload)
     try:
         rows = [json.loads(l) for l in history.read_text(encoding="utf-8").splitlines() if l.strip()]
         streak = 0
@@ -79,10 +92,7 @@ def main() -> int:
             is_open = date.today().weekday() < 5
         if not is_open:
             _log(log, "休市日, 跳过")
-            payload = {"date": today, "skipped": "market_closed", "final_rc": 0}
-            status_path.write_text(json.dumps(payload), encoding="utf-8")
-            with open(LOG_DIR / "status_history.jsonl", "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            _record(status_path, {"date": today, "skipped": "market_closed", "final_rc": 0})
             return 0
 
         # ---- --auto (锁等待重试) ----
@@ -90,8 +100,13 @@ def main() -> int:
         auto_rc = 75
         for attempt in (1, 2, 3):
             _log(log, f"--auto 第 {attempt} 次启动")
-            auto_rc = subprocess.call([str(PY), "src/main.py", "--auto"], cwd=str(REPO),
-                                      stdout=log, stderr=subprocess.STDOUT)
+            try:
+                auto_rc = subprocess.call([str(PY), "src/main.py", "--auto"], cwd=str(REPO),
+                                          stdout=log, stderr=subprocess.STDOUT,
+                                          timeout=AUTO_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                _log(log, f"--auto 看门狗超时 ({AUTO_TIMEOUT_S}s) — 强杀记失败 (防永久停摆)")
+                auto_rc = 124
             if auto_rc != 75:
                 break
             _log(log, "--auto 被管道锁占用 (75), 120s 后重试")
@@ -102,8 +117,13 @@ def main() -> int:
         _log(log, "--auto 完成 rc=0")
 
         # ---- --daily-action ----
-        action_rc = subprocess.call([str(PY), "src/main.py", "--daily-action"], cwd=str(REPO),
-                                    stdout=log, stderr=subprocess.STDOUT)
+        try:
+            action_rc = subprocess.call([str(PY), "src/main.py", "--daily-action"], cwd=str(REPO),
+                                        stdout=log, stderr=subprocess.STDOUT,
+                                        timeout=ACTION_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            _log(log, f"--daily-action 看门狗超时 ({ACTION_TIMEOUT_S}s) — 强杀记失败")
+            action_rc = 124
         dur = int(time.time() - start)
         # rc=14 = POLICY_HALT_EXIT_CODE (regime 全闸/熔断/入场窗口) — 设计内停手, 非故障
         if action_rc == 14:

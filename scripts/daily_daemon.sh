@@ -69,6 +69,13 @@ t = now.replace(hour=$TRIGGER_HH, minute=$TRIGGER_MM, second=0, microsecond=0)
 if now >= t:
     t += dt.timedelta(days=1)
 print(int((t - now).total_seconds()))")
+    # 合法性防御 (发现 B): SLEEP 计算 (python -c) 失败输出空/非法值时,
+    # 整数测试失败会让等待循环直接穿透 → 无间隔重跑管道 (空转风暴)。
+    if ! [[ "$SLEEP" =~ ^[1-9][0-9]*$ ]] || [ "$SLEEP" -gt 90000 ]; then
+        echo "[$(date '+%F %T')] SLEEP 非法 ('$SLEEP') — 等 300s 后重算 (防空转风暴)"
+        sleep 300
+        continue
+    fi
     echo "[$(date '+%F %T')] 下次触发: $(date -v+${SLEEP}S '+%F %T') (sleep ${SLEEP}s)"
     # 分片 sleep (60s 粒度): bash 的 SIGTERM 要等当前前台命令结束才处理,
     # 整段 sleep 会导致 kill 等待最长 24h — 分片后每 60s 是一个停止检查点 (发现1)
