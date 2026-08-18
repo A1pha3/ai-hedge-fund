@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from datetime import date
@@ -33,9 +34,52 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _btst_court_common import SELL_STAMP_BPS, SLIPPAGE_BPS, TABLE_DIR  # noqa: E402
 
 TABLE_PATH = TABLE_DIR / "event_table_v1.csv.gz"
+MANIFEST_PATH = TABLE_DIR / "manifest_v1.json"
 HORIZON_COL = "gross_ret_t10"
 BOOT_SEED = 20260818  # 固定种子: 报告可复现
 N_BOOT_DEFAULT = 3_000
+MAX_TABLE_AGE_DAYS = 45  # 跨期评估的表龄上限 (≈30 个交易日的宽松版)
+SETUP_REL_PATH = Path("src/screening/offensive/setups/btst_breakout.py")
+REBUILD_HINT = (
+    "court 事件表不可信 — 重建: uv run python scripts/btst_court_fetch.py "
+    "&& uv run python scripts/btst_court_build.py"
+)
+
+
+def load_manifest() -> dict | None:
+    """读取 court manifest; 缺失返回 None (诚实披露, fail 与否由消费方决定)."""
+    if not MANIFEST_PATH.exists():
+        return None
+    return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+
+
+def current_setup_sha() -> str:
+    """当前生产 BTST setup 的 sha256 (与 btst_court_build._file_sha256 同口径)."""
+    repo_root = Path(__file__).resolve().parent.parent
+    return hashlib.sha256((repo_root / SETUP_REL_PATH).read_bytes()).hexdigest()
+
+
+def table_freshness(manifest: dict | None, setup_sha: str, today: date) -> dict:
+    """事件表新鲜度 × 公式漂移守卫 (纯函数, 只产事实不猜)."""
+    if manifest is None:
+        return {
+            "manifest_present": False,
+            "built_at": None,
+            "age_days": None,
+            "manifest_setup_sha": None,
+            "current_setup_sha": setup_sha,
+            "formula_match": None,
+        }
+    built_at = date.fromisoformat(str(manifest.get("built_at")))
+    manifest_sha = str(manifest.get("formula_fingerprint", {}).get("btst_breakout_sha256", ""))
+    return {
+        "manifest_present": True,
+        "built_at": str(manifest.get("built_at")),
+        "age_days": (today - built_at).days,
+        "manifest_setup_sha": manifest_sha,
+        "current_setup_sha": setup_sha,
+        "formula_match": manifest_sha == setup_sha if manifest_sha else None,
+    }
 
 
 def net_ret(gross: pd.Series, slip_bps: float = SLIPPAGE_BPS) -> pd.Series:
@@ -186,6 +230,7 @@ def build_report(ev: pd.DataFrame, n_boot: int = N_BOOT_DEFAULT) -> dict:
             "n_boot": n_boot,
             "seed": BOOT_SEED,
             "prior": prior,
+            **table_freshness(load_manifest(), current_setup_sha(), date.today()),
         },
         "all_candidates": all_view,
         "strength_quintiles": strength_quintiles(u, n_boot=n_boot),
@@ -204,8 +249,26 @@ def build_report(ev: pd.DataFrame, n_boot: int = N_BOOT_DEFAULT) -> dict:
     }
 
 
-def run_check(ev: pd.DataFrame) -> None:
-    """真实事件表方向断言 (verification 冻结命令)."""
+def run_check(ev: pd.DataFrame, today: date | None = None) -> None:
+    """真实事件表方向断言 + 表新鲜度/公式漂移 fail-closed 断言 (verification 冻结命令)."""
+    today = today or date.today()
+    fresh = table_freshness(load_manifest(), current_setup_sha(), today)
+    problems = []
+    if not fresh["manifest_present"]:
+        problems.append(f"manifest 缺失: {MANIFEST_PATH}")
+    else:
+        if fresh["age_days"] > MAX_TABLE_AGE_DAYS:
+            problems.append(
+                f"表龄 {fresh['age_days']} 天 > {MAX_TABLE_AGE_DAYS} (built_at {fresh['built_at']})"
+            )
+        if fresh["formula_match"] is not True:
+            problems.append(
+                f"公式漂移: manifest {str(fresh['manifest_setup_sha'])[:8]} "
+                f"!= 当前 {str(fresh['current_setup_sha'])[:8]} (court 表不代表当前生产口径)"
+            )
+    if problems:
+        print(json.dumps({"check": "blocked", "problems": problems, "hint": REBUILD_HINT}, ensure_ascii=False))
+        raise SystemExit(2)
     rep = build_report(ev, n_boot=1_000)
     prior = rep["fingerprint"]["prior"]
     allv = rep["all_candidates"]
@@ -230,10 +293,29 @@ def run_check(ev: pd.DataFrame) -> None:
 def render_md(rep: dict) -> str:
     fp = rep["fingerprint"]
     prior = fp["prior"]
+    if fp.get("manifest_present") is True:
+        age = fp.get("age_days")
+        formula = fp.get("formula_match")
+        stale = age is not None and age > MAX_TABLE_AGE_DAYS
+        drift = formula is not True
+        flag = " ⚠ " if (stale or drift) else ""
+        notes = []
+        if stale:
+            notes.append(f"表龄 {age} 天 > {MAX_TABLE_AGE_DAYS}, 结论过期须重建")
+        if drift:
+            notes.append(f"公式漂移 (manifest {str(fp.get('manifest_setup_sha'))[:8]} != 当前 {str(fp.get('current_setup_sha'))[:8]}), court 表不代表当前生产口径")
+        fresh_line = (
+            f"- 事件表新鲜度:{flag} built_at {fp.get('built_at')} · 表龄 {age} 天 · "
+            f"公式指纹{'一致' if formula is True else '漂移'}"
+            + (f" · ⚠ {'; '.join(notes)}" if notes else "")
+        )
+    else:
+        fresh_line = "- 事件表新鲜度: ⚠ manifest 缺失 — 表龄与公式指纹不可验证, 结论仅供存档参考"
     lines = [
         "# BTST T+10 先验 × court 全候选执行口径重验",
         "",
         f"- 事件表: {fp['rows']} 行, {fp['date_min']} → {fp['date_max']}",
+        fresh_line,
         f"- 宇宙: {fp['universe']}; 净成本 {fp['cost_bps']:.0f}bps; 聚类 bootstrap n={fp['n_boot']} seed={fp['seed']}",
         f"- 先验: E={prior['expected_return']:+.2%} win={prior['winrate']:.1%} n={prior['n']} ({prior['provenance']})",
         "",

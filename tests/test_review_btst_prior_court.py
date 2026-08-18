@@ -117,3 +117,73 @@ def test_cluster_bootstrap_is_deterministic_per_seed():
     a = rpc.cluster_boot_ci_low(r, days, n_boot=300)
     b = rpc.cluster_boot_ci_low(r, days, n_boot=300)
     assert a == b
+
+
+# ---- Round B: 事件表新鲜度 × 公式漂移守卫 ----
+
+from datetime import date  # noqa: E402
+
+
+def _manifest(built_at: str, setup_sha: str = "a" * 64) -> dict:
+    return {
+        "version": 1,
+        "built_at": built_at,
+        "formula_fingerprint": {"btst_breakout_sha256": setup_sha},
+        "window": {"start": "20250701", "end": "20260815", "sessions": 268},
+    }
+
+
+def test_freshness_age_days_exact_and_boundary():
+    today = date(2026, 10, 1)
+    f = rpc.table_freshness(_manifest("2026-08-17"), "b" * 64, today)
+    assert f["age_days"] == 45
+    g = rpc.table_freshness(_manifest("2026-08-16"), "b" * 64, today)
+    assert g["age_days"] == 46
+
+
+def test_freshness_formula_match_boolean():
+    m = _manifest("2026-08-17", setup_sha="a" * 64)
+    ok = rpc.table_freshness(m, "a" * 64, date(2026, 8, 18))
+    bad = rpc.table_freshness(m, "b" * 64, date(2026, 8, 18))
+    assert ok["formula_match"] is True
+    assert bad["formula_match"] is False
+
+
+def test_freshness_missing_manifest_is_honest():
+    f = rpc.table_freshness(None, "a" * 64, date(2026, 8, 18))
+    assert f["manifest_present"] is False
+    assert f["age_days"] is None and f["formula_match"] is None
+
+
+def test_run_check_fails_closed_on_stale_or_drifted_table(tmp_path, monkeypatch, capsys):
+    import pandas as _pd
+
+    rows = [
+        {"signal_date": "20260101", "trigger_strength": 0.9, "fillable": True,
+         "gate_blocked": False, "gross_ret_t10": 0.02, "regime": "normal"},
+        {"signal_date": "20260102", "trigger_strength": 0.8, "fillable": True,
+         "gate_blocked": False, "gross_ret_t10": -0.01, "regime": "normal"},
+    ]
+    ev = _pd.DataFrame(rows)
+    today = date(2026, 10, 1)  # 表龄 46 天 (>45)
+    monkeypatch.setattr(rpc, "load_manifest", lambda: _manifest("2026-08-16", setup_sha="a" * 64))
+    monkeypatch.setattr(rpc, "current_setup_sha", lambda: "b" * 64)  # 公式也漂移
+    try:
+        rpc.run_check(ev, today=today)
+        raise AssertionError("stale+drifted table must fail closed")
+    except SystemExit as exc:
+        assert exc.code != 0
+    out = capsys.readouterr().out + capsys.readouterr().err
+    assert "btst_court_fetch" in out and "btst_court_build" in out  # 重建指引
+
+
+def test_report_fingerprint_discloses_freshness():
+    ev = _ev([
+        {"signal_date": "20260101", "trigger_strength": 0.6, "fillable": True,
+         "gate_blocked": False, "gross_ret_t10": 0.01, "regime": "normal"},
+    ])
+    rep = rpc.build_report(ev, n_boot=50)
+    fp = rep["fingerprint"]
+    for key in ("manifest_present", "built_at", "age_days",
+                "manifest_setup_sha", "current_setup_sha", "formula_match"):
+        assert key in fp, key
