@@ -159,10 +159,41 @@ def ratchet_replay(frame: pd.DataFrame, entry_idx: int, entry_price: float) -> t
     return None
 
 
-def main() -> None:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--end", default=None)
-    args = parser.parse_args()
+    parser.add_argument(
+        "--rebuild-force",
+        action="store_true",
+        help="公式指纹变化时允许覆盖既有事件表 (同行为重建逃生门; "
+        "manifest 记录 formula_change_forced + prior 指纹)",
+    )
+    return parser.parse_args(argv)
+
+
+def overwrite_allowed(prior_fp: str | None, new_fp: str, *, force: bool) -> bool:
+    """防覆盖护栏判定 (纯函数).
+
+    prior 缺失或同指纹 → 允许 (数据保鲜/bug 修复重建);
+    指纹变化 → 仅显式 force 时允许 (行为变化原则上应开新版本文件).
+    """
+    if not prior_fp or prior_fp == new_fp:
+        return True
+    return bool(force)
+
+
+def _manifest_forced_overwrite_fields(prior_fp: str | None, new_fp: str) -> dict:
+    """force 覆盖时的 manifest 诚实披露字段 (同指纹/无 prior 为空)."""
+    if prior_fp and prior_fp != new_fp:
+        return {
+            "formula_change_forced": True,
+            "prior_formula_fingerprint": prior_fp,
+        }
+    return {}
+
+
+def main() -> None:
+    args = _parse_args()
     end = args.end or date.today().strftime("%Y%m%d")
 
     sessions_cal = load_sessions(WINDOW_A_START, end)
@@ -278,10 +309,11 @@ def main() -> None:
     new_fp = _file_sha256("src/screening/offensive/setups/btst_breakout.py")
     prior_manifest = TABLE_DIR / "manifest_v1.json"
     rebuild_count = 0
+    prior_fp: str | None = None
     if prior_manifest.exists():
         prior = json.loads(prior_manifest.read_text(encoding="utf-8"))
         prior_fp = prior.get("formula_fingerprint", {}).get("btst_breakout_sha256")
-        if prior_fp and prior_fp != new_fp:
+        if not overwrite_allowed(prior_fp, new_fp, force=args.rebuild_force):
             raise SystemExit(
                 f"event_table_v1 已由不同公式指纹构建 ({prior_fp[:8]} → {new_fp[:8]}): "
                 "行为变化须写新版本文件, 不覆盖; 如确要覆盖用 --rebuild-force"
@@ -311,6 +343,7 @@ def main() -> None:
         "universe_audit": universe_audit,
         "cross_check_vs_panel": xcheck,
         "rebuild_count": rebuild_count,
+        **_manifest_forced_overwrite_fields(prior_fp, new_fp),
         "rows": len(table),
         "artifact": out.name,
     }
