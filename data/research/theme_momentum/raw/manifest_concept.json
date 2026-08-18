@@ -1,0 +1,152 @@
+{
+  "fetched_at": "2026-08-18",
+  "sample_every_sessions": 10,
+  "samples": [
+    {
+      "date": "20250701",
+      "rows": 66305,
+      "concepts": 552
+    },
+    {
+      "date": "20250715",
+      "rows": 66665,
+      "concepts": 552
+    },
+    {
+      "date": "20250729",
+      "rows": 66860,
+      "concepts": 554
+    },
+    {
+      "date": "20250812",
+      "rows": 65280,
+      "concepts": 555
+    },
+    {
+      "date": "20250826",
+      "rows": 40000,
+      "concepts": 233
+    },
+    {
+      "date": "20250909",
+      "rows": 66274,
+      "concepts": 555
+    },
+    {
+      "date": "20250923",
+      "rows": 66448,
+      "concepts": 555
+    },
+    {
+      "date": "20251015",
+      "rows": 66672,
+      "concepts": 556
+    },
+    {
+      "date": "20251029",
+      "rows": 20748,
+      "concepts": 217
+    },
+    {
+      "date": "20251112",
+      "rows": 66653,
+      "concepts": 559
+    },
+    {
+      "date": "20251126",
+      "rows": 66878,
+      "concepts": 558
+    },
+    {
+      "date": "20251210",
+      "rows": 66884,
+      "concepts": 558
+    },
+    {
+      "date": "20251224",
+      "rows": 67438,
+      "concepts": 558
+    },
+    {
+      "date": "20260109",
+      "rows": 67683,
+      "concepts": 558
+    },
+    {
+      "date": "20260123",
+      "rows": 67917,
+      "concepts": 559
+    },
+    {
+      "date": "20260206",
+      "rows": 69229,
+      "concepts": 571
+    },
+    {
+      "date": "20260302",
+      "rows": 82273,
+      "concepts": 996
+    },
+    {
+      "date": "20260316",
+      "rows": 81689,
+      "concepts": 1010
+    },
+    {
+      "date": "20260330",
+      "rows": 85007,
+      "concepts": 1010
+    },
+    {
+      "date": "20260414",
+      "rows": 88689,
+      "concepts": 1020
+    },
+    {
+      "date": "20260428",
+      "rows": 89173,
+      "concepts": 1013
+    },
+    {
+      "date": "20260515",
+      "rows": 89827,
+      "concepts": 1013
+    },
+    {
+      "date": "20260529",
+      "rows": 90194,
+      "concepts": 1013
+    },
+    {
+      "date": "20260612",
+      "rows": 90948,
+      "concepts": 1021
+    },
+    {
+      "date": "20260629",
+      "rows": 92130,
+      "concepts": 1021
+    },
+    {
+      "date": "20260713",
+      "rows": 92191,
+      "concepts": 1023
+    },
+    {
+      "date": "20260727",
+      "rows": 91581,
+      "concepts": 1022
+    },
+    {
+      "date": "20260810",
+      "rows": 92381,
+      "concepts": 1031
+    },
+    {
+      "date": "20260814",
+      "rows": 92352,
+      "concepts": 1031
+    }
+  ],
+  "gaps": []
+}
