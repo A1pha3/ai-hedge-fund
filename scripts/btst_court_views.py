@@ -37,6 +37,49 @@ from _btst_court_common import (  # noqa: E402
     SLIPPAGE_STRESS_BPS,
     TABLE_DIR,
 )
+from review_btst_prior_court import (  # noqa: E402 — Round 2 已验证的消费侧守卫, 同目录复用
+    MAX_TABLE_AGE_DAYS,
+    current_setup_sha,
+    table_freshness,
+)
+
+REBUILD_HINT = (
+    "court 事件表不可信 — 重建: uv run python scripts/btst_court_fetch.py "
+    "&& uv run python scripts/btst_court_build.py"
+)
+
+
+def freshness_problems(fresh: dict) -> list[str]:
+    """表龄/公式漂移/manifest 缺失的问题清单 (空 = 可信)."""
+    problems = []
+    if not fresh.get("manifest_present"):
+        problems.append("manifest 缺失 — 表龄与公式指纹不可验证")
+        return problems
+    age = fresh.get("age_days")
+    if age is not None and age > MAX_TABLE_AGE_DAYS:
+        problems.append(f"表龄 {age} 天 > {MAX_TABLE_AGE_DAYS} (built_at {fresh.get('built_at')})")
+    if fresh.get("formula_match") is not True:
+        problems.append(
+            f"公式漂移: manifest {str(fresh.get('manifest_setup_sha'))[:8]} "
+            f"!= 当前 {str(fresh.get('current_setup_sha'))[:8]} (court 表不代表当前生产口径)"
+        )
+    return problems
+
+
+def freshness_line(fresh: dict) -> str:
+    """决策包头部的新鲜度披露行 (match 无 ⚠; 有问题则 ⚠ + 重建指引)."""
+    problems = freshness_problems(fresh)
+    if not fresh.get("manifest_present"):
+        return f"- 事件表新鲜度: ⚠ manifest 缺失 — 结论仅供存档参考。{REBUILD_HINT}"
+    age = fresh.get("age_days")
+    formula_ok = fresh.get("formula_match") is True
+    head = (
+        f"- 事件表新鲜度:{'' if not problems else ' ⚠'} built_at {fresh.get('built_at')} · "
+        f"表龄 {age} 天 · 公式指纹{'一致' if formula_ok else '漂移'}"
+    )
+    if problems:
+        head += f" · ⚠ {'; '.join(problems)}。{REBUILD_HINT}"
+    return head
 
 try:
     from scipy import stats as sps
@@ -304,6 +347,8 @@ def render_md(pack: dict, manifest: dict, eligibility: dict) -> str:
     L = ["# BTST Court Decision Pack", ""]
     L.append(f"- 构建日: {pack['as_of']} · 事件表: {manifest['artifact']} ({manifest['rows']} hits) · git `{manifest['git_sha'][:10]}`")
     L.append(f"- 窗口: {manifest['window']['start']}→{manifest['window']['end']} ({manifest['window']['sessions']} sessions) · 公式指纹见 manifest_v1.json")
+    if "freshness" in pack:
+        L.append(freshness_line(pack["freshness"]))
     L.append(f"- 资格漏斗: {json.dumps(eligibility, ensure_ascii=False)}")
     L.append(f"- 宇宙对账: {json.dumps(manifest['universe_audit'], ensure_ascii=False)}")
     xc = manifest["cross_check_vs_panel"]
@@ -380,8 +425,10 @@ def main() -> None:
 
     # 主收益列预计算
     traded["ret"] = net_ret(traded["gross_ret_t10"], SLIPPAGE_BPS)
+    fresh = table_freshness(manifest, current_setup_sha(), date.today())
     pack = {
         "as_of": date.today().isoformat(),
+        "freshness": fresh,
         "eligibility": eligibility,
         "q1": q1_horizon(traded, manifest),
         "q2": q2_threshold(threshold_view),
@@ -396,6 +443,11 @@ def main() -> None:
     json_path.write_text(json.dumps(pack, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     print(render_md(pack, manifest, eligibility))
     print(f"\n→ {md_path} / {json_path}")
+    problems = freshness_problems(fresh)
+    if problems:
+        # 产物照写保留 (存档价值), 但以非零退出强提示 — 过期/错位表上的结论不可直接采信。
+        print(f"\n⚠ {'; '.join(problems)}\n{REBUILD_HINT}", file=sys.stderr)
+        sys.exit(3)
 
 
 if __name__ == "__main__":

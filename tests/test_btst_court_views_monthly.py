@@ -121,3 +121,44 @@ def test_months_without_data_absent_and_empty_table_safe():
     empty = pd.DataFrame([_row("20260310", gross_ret_t10=float("nan"))])
     # 全部收益缺失 → 无任何月输出, 不崩
     assert monthly_by_regime(empty) == {}
+
+
+# ---- Round C: 消费侧新鲜度守卫 ----
+
+from datetime import date  # noqa: E402
+
+from btst_court_views import freshness_line, freshness_problems  # noqa: E402
+from review_btst_prior_court import table_freshness  # noqa: E402
+
+
+def _fresh(built_at: str, manifest_sha: str, cur_sha: str, today: date) -> dict:
+    return table_freshness(
+        {"built_at": built_at, "formula_fingerprint": {"btst_breakout_sha256": manifest_sha}},
+        cur_sha,
+        today,
+    )
+
+
+def test_freshness_line_match_vs_drift():
+    today = date(2026, 8, 18)
+    ok = _fresh("2026-08-15", "a" * 64, "a" * 64, today)
+    line = freshness_line(ok)
+    assert "表龄 3 天" in line and "公式指纹一致" in line and "⚠" not in line
+    drift = _fresh("2026-08-15", "a" * 64, "b" * 64, today)
+    dline = freshness_line(drift)
+    assert "⚠" in dline and "公式漂移" in dline and "btst_court_build" in dline
+
+
+def test_freshness_problems_boundaries():
+    today = date(2026, 10, 1)  # 2026-08-17 → 45 天; 2026-08-16 → 46 天
+    ok45 = _fresh("2026-08-17", "a" * 64, "a" * 64, today)
+    assert freshness_problems(ok45) == []
+    stale46 = _fresh("2026-08-16", "a" * 64, "a" * 64, today)
+    assert any("表龄" in p for p in freshness_problems(stale46))
+    drift = _fresh("2026-08-17", "a" * 64, "b" * 64, today)
+    assert any("公式漂移" in p for p in freshness_problems(drift))
+
+
+def test_freshness_problems_missing_manifest():
+    none = table_freshness(None, "a" * 64, date(2026, 8, 18))
+    assert any("manifest" in p for p in freshness_problems(none))
