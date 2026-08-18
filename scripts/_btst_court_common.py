@@ -16,6 +16,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pandas as pd
+
+from src.tools.ashare_board_utils import limit_up_cap_pct_for_ticker
+
 # ---- 研究命名空间 (绝不写 data/price_cache / fund_flow_cache / ledgers) ----
 RESEARCH_DIR = Path("data/research/btst_court")
 RAW_DIR = RESEARCH_DIR / "raw"
@@ -65,3 +69,63 @@ def load_sessions(start: str, end: str) -> list[str]:
 def load_regime_history() -> dict[str, str]:
     payload = json.loads(_REGIME_PATH.read_text(encoding="utf-8"))
     return {str(k).replace("-", "")[:8]: str(v) for k, v in payload.items()}
+
+
+def forward_open_returns(
+    by_day: dict[str, pd.DataFrame],
+    sessions_cal: list[str],
+    ts_code: str,
+    s: str,
+    signal_close: float,
+    symbol: str,
+    horizons: tuple[int, ...] = (5, 8, 10),
+) -> dict:
+    """court 执行口径前向收益 (公共函数, 题材动量计划 Task 1 提升).
+
+    语义与 review_cond2_fund_flow_gate._forward_returns 原实现逐字同源
+    (该脚本已改 import 此处, 本地副本删除 — 禁止再复制粘贴):
+      - T+1 open 买入; 一字锁死 (open ≥ 涨停价-0.001) = 不可成交;
+      - T+k open 卖出, 缺 bar 顺延至 FORWARD_SESSIONS 窗口内下一可用开盘;
+      - 返回 {fillable, t1_unbuyable, t1_missing_bar, gap_t1_open,
+              gross_ret_t{k}...} — 不可成交时不带 gross_ret 键。
+    horizons 可自定义 (研究侧灵活性), 默认 (5, 8, 10)。
+    """
+    fwd = [d for d in sessions_cal if d > s][:FORWARD_SESSIONS]
+    bars = []
+    for d in fwd:
+        day = by_day.get(d)
+        r = None
+        if day is not None:
+            m = day[day["ts_code"] == ts_code]
+            if not m.empty:
+                r = m.iloc[0]
+        bars.append(
+            (float(r["open"]), float(r["close"]), float(r["pre_close"])) if r is not None else (None, None, None)
+        )
+    t1_open = bars[0][0] if bars else None
+    t1_unbuyable = False
+    if t1_open is not None and bars[0][2] and bars[0][2] > 0:
+        cap = limit_up_cap_pct_for_ticker(symbol)
+        limit_price = round(bars[0][2] * (1 + cap / 100), 2)
+        t1_unbuyable = t1_open >= limit_price - 0.001
+    fillable = t1_open is not None and not t1_unbuyable
+    out: dict = {
+        "fillable": fillable,
+        "t1_unbuyable": t1_unbuyable,
+        "t1_missing_bar": t1_open is None,
+        "gap_t1_open": (t1_open / signal_close - 1) if (t1_open and signal_close > 0) else None,
+    }
+    if not fillable:
+        return out
+    entry = t1_open
+
+    def fixed_open(k: int):
+        for j in range(k - 1, min(FORWARD_SESSIONS, len(bars))):
+            if bars[j][0] is not None:
+                return bars[j][0]
+        return None
+
+    for k in horizons:
+        ex = fixed_open(k)
+        out[f"gross_ret_t{k}"] = (ex / entry - 1) if ex else None
+    return out
