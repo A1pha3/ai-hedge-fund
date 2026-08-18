@@ -240,6 +240,21 @@ OB (n=59):     recorded +0.34%/52%  →  corrected -0.13%/44%  →  executable -
 | 题材动量研究计划 | `docs/superpowers/plans/2026-08-17-theme-momentum-research.md`（**已执行完毕并关闭（2026-08-18）**——v3.4 粒度阶梯；原文：v3.3 两级火箭：Tier A 确认 = **双条件分离**（家数跳变 ≥3∧20 日中位≤1 + 占比≥5% 防普涨；v3 的 max(2×baseline) 在零基线恒真退化已修）·零新数据源先出方向性决策包（基线锚定确认日、双粒度预注册、matured 截尾、第四态、每月 2-15 确认日 sanity 锚）；Tier B 唯一新增数据 = 月度 as-of 成分，概念涨停家数由 lu 快照∩成分**自算**；主假设预注册唯一且为 **¬BTST-eligible 增量子集 + 按确认日聚类 CI**；先验披露 20-35%——Phase 2 shadow 是阳性后强制步骤；court raw 静态快照前置依赖显式化，研究窗口截至快照构建日） |
 | 因子评分 | `src/screening/`（candidate_pool / strategy_scorer / signal_fusion / investability） |
 
+## 每日自动调度（2026-08-18 起）
+
+常驻守护 `scripts/daily_daemon.sh`（用户终端手动启动、每天 18:01 自动跑 `--auto → --daily-action` 串行链）：
+
+```bash
+cd /Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork
+nohup bash scripts/daily_daemon.sh >> logs/cron/daemon.log 2>&1 &   # 启动（--now 可先立即跑一轮）
+kill $(cat logs/.daily_daemon.pid)                                   # 停止
+```
+
+- 单实例 mkdir 原子锁（macOS 无 flock）+ PID 活性检查/陈旧锁自愈；管道锁冲突（rc=75，如手动 --auto 在跑）自动等待重试 3 次；`--daily-action` rc=14（POLICY_HALT：regime 全闸/熔断/窗口）归一为成功。
+- 状态 `logs/.daily_run_status.json`；日志 `logs/cron/pipeline_YYYYMMDD.log`；覆盖哨点在链内自动运行。
+- **为什么不用 launchd/cron**：外置卷受 macOS TCC 保护，launchd/cron 启动的进程读卷上文件被拒（2026-08-18 探针实测 rc=126/78）；终端启动的守护继承授权。机器重启后需手动重启守护。
+- 检查是否在跑：`ps -p $(cat logs/.daily_daemon.pid)`。
+
 ## 测试
 
 ```bash
