@@ -114,6 +114,80 @@ def candidate_universe(ev: pd.DataFrame) -> pd.DataFrame:
     return ev.loc[mask].copy()
 
 
+# 生产可计划过滤链在研究重验中的对齐维度 (degraded/ST/行业缺失/排除名单/低价).
+# 列缺失 = 口径理解错误, fail closed 不静默当作不过滤.
+PRODUCTION_EXCLUDE_COLS = ("degraded", "st_name", "industry_missing", "excluded_ticker")
+PRODUCTION_DISCLOSURE_KEYS = PRODUCTION_EXCLUDE_COLS + ("price_lt_3",)
+# 预注册半年度切片 (court 研究窗口 2025-07 起; 末段右开, 窗口跨 2027 后需重注册)
+TIME_SLICE_BOUNDS = (
+    ("2025H2", "20250701", "20251231"),
+    ("2026H1", "20260101", "20260630"),
+    ("2026H2+", "20260701", "99999999"),
+)
+
+
+def _require_production_cols(u: pd.DataFrame) -> None:
+    missing = [c for c in PRODUCTION_EXCLUDE_COLS + ("price_ge_3",) if c not in u.columns]
+    if missing:
+        raise ValueError(f"production-universe columns missing: {missing} (口径理解错误, fail closed)")
+
+
+def production_universe(u: pd.DataFrame) -> pd.DataFrame:
+    """candidate_universe 之上再对齐生产可计划过滤链 (degraded/ST/行业缺失/排除名单/低价)."""
+    _require_production_cols(u)
+    mask = ~u[list(PRODUCTION_EXCLUDE_COLS)].any(axis=1)
+    mask &= u["price_ge_3"] == True  # noqa: E712
+    return u.loc[mask].copy()
+
+
+def exclusion_disclosure(u: pd.DataFrame, n_boot: int = N_BOOT_DEFAULT) -> dict:
+    """生产过滤链排除行的分组披露 (净口径; 组间可有重叠, total 为去重行数).
+
+    排除行的 E 是生产过滤链样本外价值的直接证据 (trap 20 同型: 数据管道
+    缺口 vs 策略过滤 是两层, 这里量化的是策略过滤层).
+    """
+    _require_production_cols(u)
+    excluded_any = u[list(PRODUCTION_EXCLUDE_COLS)].any(axis=1) | (u["price_ge_3"] != True)  # noqa: E712
+    groups = []
+    for key in PRODUCTION_DISCLOSURE_KEYS:
+        m = (~u["price_ge_3"]) if key == "price_lt_3" else u[key]
+        g = u[m == True]  # noqa: E712
+        rets = net_ret(g[HORIZON_COL]) if len(g) else pd.Series(dtype=float)
+        s = stats_block(rets, g["signal_date"] if len(g) else pd.Series(dtype=object), n_boot=n_boot)
+        groups.append({"key": key, "n": s["n"], "mean": s["mean"], "winrate": s["winrate"]})
+    return {
+        "groups": groups,
+        "total_excluded": int(excluded_any.sum()),
+        "retained": int((~excluded_any).sum()),
+        "note": "组间可重叠 (一行命中多维度); total_excluded 为去重行数",
+    }
+
+
+def time_slices(u: pd.DataFrame, n_boot: int = N_BOOT_DEFAULT) -> list[dict]:
+    """预注册半年度切片: 全候选 stats + 段内每日 top-1 (生产行为近似).
+
+    空段诚实保留 (n=0/mean=None), 切片完备覆盖不重不漏.
+    """
+    sd = u["signal_date"].astype(str)
+    out = []
+    for label, lo, hi in TIME_SLICE_BOUNDS:
+        m = u[(sd >= lo) & (sd <= hi)]
+        s = stats_block(net_ret(m[HORIZON_COL]), m["signal_date"], n_boot=n_boot) if len(m) else {
+            "n": 0, "mean": None, "winrate": None, "ci90_low": None, "ci90_high": None,
+        }
+        top1 = {"n": 0, "trade_mean": None, "winrate": None}
+        if len(m):
+            t = m.sort_values("trigger_strength", ascending=False).groupby("signal_date").head(1)
+            rets = net_ret(t[HORIZON_COL])
+            top1 = {
+                "n": int(len(t)),
+                "trade_mean": float(rets.mean()),
+                "winrate": float((rets > 0).mean()),
+            }
+        out.append({"label": label, "range": f"{lo}..{hi}", **s, "top_1": top1})
+    return out
+
+
 def cluster_boot_ci_low(diffs: pd.Series, days: pd.Series, ci: float = 0.90, n_boot: int = N_BOOT_DEFAULT, seed: int = BOOT_SEED) -> float:
     """按信号日聚类 bootstrap 单侧下界 (重采样天 → 池化事件取均值).
 
@@ -214,6 +288,8 @@ def build_report(ev: pd.DataFrame, n_boot: int = N_BOOT_DEFAULT) -> dict:
     u = candidate_universe(ev)
     rets = net_ret(u[HORIZON_COL])
     all_view = stats_block(rets, u["signal_date"], n_boot=n_boot)
+    p = production_universe(u)
+    prod_view = stats_block(net_ret(p[HORIZON_COL]), p["signal_date"], n_boot=n_boot)
     topk = {f"top_{k}": daily_topk(u, k, n_boot=n_boot) for k in (1, 3, 5)}
     blocked = ev[(ev["gate_blocked"] == True) & ev[HORIZON_COL].notna()]  # noqa: E712
     blocked_rets = net_ret(blocked[HORIZON_COL]) if len(blocked) else pd.Series(dtype=float)
@@ -226,18 +302,22 @@ def build_report(ev: pd.DataFrame, n_boot: int = N_BOOT_DEFAULT) -> dict:
             "date_max": str(ev["signal_date"].max()),
             "horizon_col": HORIZON_COL,
             "cost_bps": 2 * SLIPPAGE_BPS + SELL_STAMP_BPS,
-            "universe": "fillable & !gate_blocked & ret 非空",
+            "universe": "现行=fillable & !gate_blocked & ret 非空; 生产对齐=再排除 degraded/ST/行业缺失/排除名单/price<3",
             "n_boot": n_boot,
             "seed": BOOT_SEED,
             "prior": prior,
             **table_freshness(load_manifest(), current_setup_sha(), date.today()),
         },
         "all_candidates": all_view,
+        "production_aligned": prod_view,
+        "exclusion_disclosure": exclusion_disclosure(u, n_boot=n_boot),
+        "time_slices": time_slices(p, n_boot=n_boot),
         "strength_quintiles": strength_quintiles(u, n_boot=n_boot),
         "daily_topk": topk,
         "gate_blocked_contrast": blocked_stats,
         "deviation": {
             "all_candidates": deviation_block(all_view, prior),
+            "production_aligned": deviation_block(prod_view, prior),
             "top_1": deviation_block(
                 {"mean": topk["top_1"]["trade_mean"], "winrate": topk["top_1"]["winrate"]}, prior
             ),
@@ -272,10 +352,15 @@ def run_check(ev: pd.DataFrame, today: date | None = None) -> None:
     rep = build_report(ev, n_boot=1_000)
     prior = rep["fingerprint"]["prior"]
     allv = rep["all_candidates"]
+    prod = rep["production_aligned"]
     top1 = rep["daily_topk"]["top_1"]
     assert allv["ci90_high"] < prior["ci_low"], (
         f"方向断言失败: 全候选净口径 CI 上界 {allv['ci90_high']:.4f} "
         f">= 先验 ci_low {prior['ci_low']:.4f} (先验或口径理解错误, 回 Observe)"
+    )
+    assert prod["ci90_high"] < prior["ci_low"], (
+        f"方向断言失败: 生产对齐宇宙 CI 上界 {prod['ci90_high']:.4f} "
+        f">= 先验 ci_low {prior['ci_low']:.4f} (对齐口径下先验失真应同样成立, 否则口径理解错误)"
     )
     assert 0 < top1["trade_mean"] < 0.04, (
         f"top-1 量级断言失败: {top1['mean']:.4f} 不在 (0, 0.04) — 与预验 (+1.77% 毛 / +1.12% 净) 背离"
@@ -284,6 +369,7 @@ def run_check(ev: pd.DataFrame, today: date | None = None) -> None:
         json.dumps({
             "check": "ok",
             "all_candidates": allv,
+            "production_aligned": prod,
             "top_1": top1,
             "deviation": rep["deviation"],
         }, ensure_ascii=False)
@@ -324,6 +410,40 @@ def render_md(rep: dict) -> str:
         f"- n={rep['all_candidates']['n']}  E={rep['all_candidates']['mean']:+.4%}  "
         f"win={rep['all_candidates']['winrate']:.1%}  "
         f"CI90=[{rep['all_candidates']['ci90_low']:+.4%}, {rep['all_candidates']['ci90_high']:+.4%}]",
+        "",
+        "## 生产对齐宇宙 (净口径, 再排除 degraded/ST/行业缺失/排除名单/price<3)",
+        "",
+        f"- n={rep['production_aligned']['n']}  E={rep['production_aligned']['mean']:+.4%}  "
+        f"win={rep['production_aligned']['winrate']:.1%}  "
+        f"CI90=[{rep['production_aligned']['ci90_low']:+.4%}, {rep['production_aligned']['ci90_high']:+.4%}]",
+        "",
+        "## 排除行披露 (现行宇宙内被生产过滤链排除的行, 净口径)",
+        "",
+        "| 维度 | n | E | win |",
+        "|---|---|---|---|",
+    ]
+    ed = rep["exclusion_disclosure"]
+    for g in ed["groups"]:
+        mean_txt = f"{g['mean']:+.4%}" if g["mean"] is not None else "—"
+        win_txt = f"{g['winrate']:.1%}" if g["winrate"] is not None else "—"
+        lines.append(f"| {g['key']} | {g['n']} | {mean_txt} | {win_txt} |")
+    lines += [
+        f"",
+        f"- 去重排除 {ed['total_excluded']} 行 · 保留 {ed['retained']} 行 ({ed['note']})",
+        "",
+        "## 时间切片 (生产对齐宇宙, 预注册半年度)",
+        "",
+        "| 段 | n | E | win | top1 n | top1 E | top1 win |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for t in rep["time_slices"]:
+        mean_txt = f"{t['mean']:+.4%}" if t["mean"] is not None else "—"
+        win_txt = f"{t['winrate']:.1%}" if t["winrate"] is not None else "—"
+        t1 = t["top_1"]
+        t1_mean = f"{t1['trade_mean']:+.4%}" if t1["trade_mean"] is not None else "—"
+        t1_win = f"{t1['winrate']:.1%}" if t1["winrate"] is not None else "—"
+        lines.append(f"| {t['label']} | {t['n']} | {mean_txt} | {win_txt} | {t1['n']} | {t1_mean} | {t1_win} |")
+    lines += [
         "",
         "## 强度五分位 (净口径)",
         "",

@@ -19,6 +19,18 @@ def _ev(rows: list[dict]) -> pd.DataFrame:
     return df.astype({"signal_date": str})
 
 
+_PROD_DEFAULTS = {
+    "degraded": False, "st_name": False, "industry_missing": False,
+    "excluded_ticker": False, "price_ge_3": True,
+}
+
+
+def _ev_prod(rows: list[dict]) -> pd.DataFrame:
+    """带生产过滤链列的 fixture (degraded/st/行业缺失/excluded/price<3)."""
+    df = pd.DataFrame([{**_PROD_DEFAULTS, **r} for r in rows])
+    return df.astype({"signal_date": str})
+
+
 def test_net_cost_65bps_exact():
     assert rpc.net_ret(pd.Series([0.10, 0.0, -0.05])).tolist() == [0.0935, -0.0065, -0.0565]
 
@@ -88,7 +100,7 @@ def test_deviation_ratios_hand_computed():
 
 
 def test_report_includes_fingerprint_and_boundary():
-    ev = _ev([
+    ev = _ev_prod([
         {"signal_date": "20260101", "trigger_strength": 0.6, "fillable": True, "gate_blocked": False, "gross_ret_t10": 0.01, "regime": "normal"},
     ])
     rep = rpc.build_report(ev, n_boot=50)
@@ -102,7 +114,7 @@ def test_report_includes_fingerprint_and_boundary():
 
 
 def test_gate_blocked_contrast_survives_when_present():
-    ev = _ev([
+    ev = _ev_prod([
         {"signal_date": "20260101", "trigger_strength": 0.6, "fillable": True, "gate_blocked": False, "gross_ret_t10": 0.01, "regime": "normal"},
         {"signal_date": "20260101", "trigger_strength": 0.6, "fillable": True, "gate_blocked": True, "gross_ret_t10": -0.30, "regime": "crisis"},
     ])
@@ -178,7 +190,7 @@ def test_run_check_fails_closed_on_stale_or_drifted_table(tmp_path, monkeypatch,
 
 
 def test_report_fingerprint_discloses_freshness():
-    ev = _ev([
+    ev = _ev_prod([
         {"signal_date": "20260101", "trigger_strength": 0.6, "fillable": True,
          "gate_blocked": False, "gross_ret_t10": 0.01, "regime": "normal"},
     ])
@@ -187,3 +199,116 @@ def test_report_fingerprint_discloses_freshness():
     for key in ("manifest_present", "built_at", "age_days",
                 "manifest_setup_sha", "current_setup_sha", "formula_match"):
         assert key in fp, key
+
+
+# ---- Round C: 生产对齐宇宙 / 排除行披露 / 时间切片 (owner 重校准决策材料完整性) ----
+
+import pytest  # noqa: E402
+
+
+def _prod_row(sd, ret, strength=0.6, **kw):
+    row = {"signal_date": sd, "trigger_strength": strength, "fillable": True,
+           "gate_blocked": False, "gross_ret_t10": ret, "regime": "normal"}
+    row.update(kw)
+    return row
+
+
+def test_production_universe_excludes_pipeline_filtered_rows():
+    ev = _ev_prod([
+        _prod_row("20260101", 0.02),                                   # 干净 → 保留
+        _prod_row("20260101", -0.30, degraded=True),                   # degraded → 排除
+        _prod_row("20260101", -0.20, st_name=True),                    # ST → 排除
+        _prod_row("20260101", -0.10, industry_missing=True),           # 行业缺失 → 排除
+        _prod_row("20260101", -0.05, excluded_ticker=True),            # 排除名单 → 排除
+        _prod_row("20260101", -0.04, price_ge_3=False),                # 低价 → 排除
+    ])
+    u = rpc.candidate_universe(ev)
+    p = rpc.production_universe(u)
+    assert len(u) == 6 and len(p) == 1
+    assert abs(rpc.net_ret(p["gross_ret_t10"]).iloc[0] - (0.02 - 0.0065)) < 1e-12
+
+
+def test_production_universe_fails_closed_on_missing_columns():
+    ev = _ev([_prod_row("20260101", 0.02)])  # 无生产过滤列
+    u = rpc.candidate_universe(ev)
+    with pytest.raises(Exception):
+        rpc.production_universe(u)
+
+
+def test_exclusion_disclosure_reports_each_dimension():
+    ev = _ev_prod([
+        _prod_row("20260101", -0.30, degraded=True),                   # 净 -0.3065
+        _prod_row("20260101", 0.02),                                   # 干净 (不在披露内)
+        _prod_row("20260101", -0.04, price_ge_3=False),                # 净 -0.0465
+    ])
+    u = rpc.candidate_universe(ev)
+    d = rpc.exclusion_disclosure(u)
+    groups = {g["key"]: g for g in d["groups"]}
+    assert groups["degraded"]["n"] == 1
+    assert abs(groups["degraded"]["mean"] - (-0.3065)) < 1e-12
+    assert groups["price_lt_3"]["n"] == 1
+    assert abs(groups["price_lt_3"]["mean"] - (-0.0465)) < 1e-12
+    assert d["total_excluded"] == 2 and d["retained"] == 1
+    # 空维度的组也出现 (n=0, mean=None) — 诚实披露全部维度
+    assert groups["st_name"]["n"] == 0 and groups["st_name"]["mean"] is None
+
+
+def test_time_slices_partition_and_top1():
+    rows = []
+    # 2025H2: 2 天各 2 笔; 2026H1: 1 天 2 笔; 2026H2+: 1 天 2 笔
+    for sd, strengths, rets in (
+        ("20250801", (0.9, 0.5), (0.10, -0.02)),
+        ("20250901", (0.8, 0.6), (0.04, -0.03)),
+        ("20260302", (0.9, 0.5), (0.02, -0.05)),
+        ("20260706", (0.7, 0.5), (0.06, 0.01)),
+    ):
+        for s, r in zip(strengths, rets):
+            rows.append(_prod_row(sd, r, strength=s))
+    ev = _ev_prod(rows)
+    u = rpc.production_universe(rpc.candidate_universe(ev))
+    ts = rpc.time_slices(u, n_boot=100)
+    labels = [t["label"] for t in ts]
+    assert labels == ["2025H2", "2026H1", "2026H2+"]
+    assert sum(t["n"] for t in ts) == len(u)  # 切片完备覆盖不重不漏
+    h25 = ts[0]
+    assert h25["n"] == 4
+    # top_1: 每天最高强度 → 2025H2 取 0.9(+0.10) 与 0.8(+0.04), 净后均值
+    exp_top1 = ((0.10 - 0.0065) + (0.04 - 0.0065)) / 2
+    assert abs(h25["top_1"]["trade_mean"] - exp_top1) < 1e-12
+    assert h25["top_1"]["n"] == 2
+
+
+def test_time_slices_empty_segment_is_honest():
+    ev = _ev_prod([_prod_row("20260302", 0.02)])
+    u = rpc.production_universe(rpc.candidate_universe(ev))
+    ts = rpc.time_slices(u, n_boot=10)
+    seg = {t["label"]: t for t in ts}
+    assert seg["2026H1"]["n"] == 1
+    assert seg["2025H2"]["n"] == 0 and seg["2025H2"]["mean"] is None
+
+
+def test_build_report_mounts_new_views():
+    ev = _ev_prod([
+        _prod_row("20260302", 0.02),
+        _prod_row("20260302", -0.30, degraded=True),
+    ])
+    rep = rpc.build_report(ev, n_boot=50)
+    assert rep["production_aligned"]["n"] == 1
+    assert abs(rep["production_aligned"]["mean"] - (0.02 - 0.0065)) < 1e-12
+    assert rep["exclusion_disclosure"]["total_excluded"] == 1
+    assert any(t["label"] == "2026H1" for t in rep["time_slices"])
+    assert "production_aligned" in rep["deviation"]
+    # 现行宇宙口径并列保留 (n 含 degraded 行)
+    assert rep["all_candidates"]["n"] == 2
+
+
+def test_render_md_contains_new_sections():
+    ev = _ev_prod([
+        _prod_row("20260302", 0.02),
+        _prod_row("20260302", -0.30, degraded=True),
+    ])
+    md = rpc.render_md(rpc.build_report(ev, n_boot=50))
+    assert "生产对齐宇宙" in md
+    assert "排除行披露" in md
+    assert "时间切片" in md
+    assert "2026H1" in md
