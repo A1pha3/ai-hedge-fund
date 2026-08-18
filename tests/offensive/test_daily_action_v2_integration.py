@@ -452,7 +452,11 @@ def test_new_plan_renders_full_trade_plan_details(service, signal_date):
     # 先验口径脚注: 样本出处 + 执行口径参考, 全渲染只出现一次 (不逐票重复).
     assert rendered.count("先验口径：") == 1
     assert "626 票样本" in rendered and "2026-07-12 校准" in rendered
-    assert "执行口径参考" in rendered and "+3.4%" in rendered
+    # 执行口径参考主锚 = court 全候选生产对齐宇宙 (trap 19: journal 成交子集
+    # 不可作证据宇宙 — 同期 2026H1 court +0.06% vs journal +3.41%, 差异全为
+    # 成交选择偏差), journal 数字只保留为标注过的审计线索.
+    assert "执行口径参考" in rendered and "+0.56%" in rendered
+    assert "n=1464" in rendered and "全候选" in rendered
     # 退出合约: T+10 时间退出 (第 10 个持有交易日, entry 7/14 → 到期 7/23), 无条件卖出.
     assert "退出：T+10" in rendered
     assert "预计 7/23" in rendered

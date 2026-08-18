@@ -1,11 +1,12 @@
 """已冻结的 setup 先验分布 (Kelly 仓位输入) + 各常量的样本出处披露。
 
 这些是 --daily-action 用于 Kelly 仓位 + 风险计划的"先验"。
-⚠ 出处分层 (2026-08-18 审查项 3, 展示层与文件头对齐): 当前生效的 BTST 常量
-来自 2026-07-12 校准的 626 票样本回测 (连续涨停样本、未扣费口径) — 不是
-"全池 execution-adjusted"。它早于 2026-07-18 journal 锚定 bug 全量修正与
-2026-08-16 执行口径重建, 未按两者重验; 引用前先与
-outputs/journal_execution_stats_20260816.json 交叉验证 (trap 4)。
+⚠ 出处分层 (2026-08-18 审查项 3, 展示层与文件头对齐; 2026-08-19 重验入册):
+当前生效的 BTST 常量来自 2026-07-12 校准的 626 票样本回测 (连续涨停样本、
+未扣费口径) — 不是"全池 execution-adjusted"。它早于 2026-07-18 journal 锚定
+bug 全量修正与 2026-08-16 执行口径重建; 2026-08-19 已用 court 全候选生产对齐
+宇宙重验 (n=1464, E=+0.56%/46.4%, 先验虚高 ~6pp/~12pp — 见 review_btst_prior_court
+三视图报告), 数值重校准是 owner 决策 (trap 4: 改常量 = 新证据世代)。
 
 ⚠ 重要: 这些分布来自历史回测, 不是未来承诺。setup IC 会衰减, 需定期重测
 (月度重校准, 见 risk_framework 的衰减监控)。
@@ -22,8 +23,13 @@ outputs/journal_execution_stats_20260816.json 交叉验证 (trap 4)。
   → 当前默认暂停 (DAILY_ACTION_DISABLED_SETUPS), 仓位 Kelly f*≈0
 
 执行口径参考 (BTST, 与先验不可比 — 供展示层脚注披露, 不进 Kelly):
-journal 执行重建 (2026-08-16, T+1 开盘买/成本 30bps+5bps, n=130):
-期望 +3.41% · 胜率 57%; 先验期望高于可执行收益约 3pp。
+court 全候选生产对齐宇宙 (2026-08-19 重验, T+1 开盘买 + 30bps/边滑点 +
+5bps 卖出印花税, n=1464): 期望 +0.56% · 胜率 46.4%; 先验期望高于全候选
+执行口径约 6pp。journal 执行重建 (n=130, +3.41%/57%) 是成交子集 — 按trap 19
+不可作证据宇宙 (同期 2026H1 court 生产对齐 +0.06% vs journal +3.41%, 差异
+全部来自成交选择偏差), 仅保留为历史审计线索。
+重验工具: scripts/review_btst_prior_court.py (三视图: 生产对齐宇宙/
+排除行披露/时间切片), 产物 data/reports/btst_prior_court_recheck_*.md。
 """
 
 from __future__ import annotations
@@ -74,7 +80,7 @@ BTST_BREAKOUT_T10 = Distribution(
     ic=0.15,
     # ⚠ 口径披露: 样本是"连续涨停"而生产触发以首板为主 (人群错配未校准);
     # 校准早于 07-18 锚定修正与 08-16 执行重建, 期望未按可执行口径重验
-    # (执行口径 +3.41%, 见模块头). 改常量数值 = 策略行为变化, 需新证据世代;
+    # (执行口径 court 生产对齐 +0.56%, 见模块头). 改常量数值 = 策略行为变化, 需新证据世代;
     # 本字段只做展示披露, 不改变 Kelly 输入.
     provenance="626 票样本 · 连续涨停样本口径 · 2026-07-12 校准 · 未扣费",
 )
@@ -113,10 +119,14 @@ def get_known_distribution(setup_name: str, horizon: int) -> Distribution | None
     return KNOWN_DISTRIBUTIONS.get((setup_name, horizon))
 
 
-# 执行口径参考 (展示层脚注用, 不进 Kelly): BTST journal 执行重建 2026-08-16,
-# T+1 开盘买 + 30bps/边滑点 + 5bps 卖出印花税, n=130 (outputs/journal_execution_stats_20260816.json).
-# 先验是未扣费、非执行口径 → 两者相差 ~3pp 是口径差, 不是策略退化信号.
+# 执行口径参考 (展示层脚注用, 不进 Kelly): 主锚 = court 全候选生产对齐宇宙
+# (2026-08-19 重验, scripts/review_btst_prior_court.py 三视图), trap 19 纪律:
+# journal 成交子集不可作证据宇宙 (同期 2026H1 court +0.06% vs journal +3.41%,
+# 差异全部来自成交选择偏差), 只保留为标注过的审计线索.
+# 先验是未扣费、非执行口径 → 与 court 执行口径差 ~6pp 是口径差, 不是策略退化信号.
 BTST_EXECUTABLE_REFERENCE = (
-    "执行口径参考（2026-08-16 重建，T+1 开盘+真实成本，n=130）："
-    "期望 +3.4% · 胜率 57% — 先验期望系统性高于可执行收益约 3pp"
+    "执行口径参考（court 全候选生产对齐宇宙，2026-08-19 重验，"
+    "T+1 开盘+真实成本，n=1464）：期望 +0.56% · 胜率 46.4% — "
+    "先验期望系统性高于全候选执行收益约 6pp"
+    "（journal 成交子集 n=130 +3.4% 仅作历史审计：成交选择偏差，非证据宇宙）"
 )
