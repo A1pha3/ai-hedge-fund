@@ -35,6 +35,36 @@ def _log(fh, msg: str) -> None:
     fh.flush()
 
 
+def _write_status(status_path: Path, today: str, auto_rc: int, action_rc, final_rc,
+                  dur: int, log) -> int:
+    """写当前状态 + 追加每日历史 + 连续失败 streak 告警 (无人值守的告警面).
+
+    状态文件只存最后一天 → 无法察觉连续失败; 历史 jsonl 每日一行 (审计资产),
+    streak ≥3 天时醒目告警 — 这是无外部通知渠道下能做的告警上限。
+    """
+    history = status_path.parent / "cron" / "status_history.jsonl"
+    payload = {"date": today, "auto_rc": auto_rc, "action_rc": action_rc,
+               "final_rc": final_rc, "duration_s": dur}
+    status_path.write_text(json.dumps(payload), encoding="utf-8")
+    with open(history, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    try:
+        rows = [json.loads(l) for l in history.read_text(encoding="utf-8").splitlines() if l.strip()]
+        streak = 0
+        for row in reversed(rows):   # 从最新往前数连续失败 (今天的行已含)
+            fr = row.get("final_rc")
+            if fr is None or fr != 0:
+                streak += 1
+            else:
+                break
+    except Exception:  # noqa: BLE001 - 历史读取失败不阻断
+        streak = 0
+    if streak >= 3:
+        _log(log, f"⚠⚠⚠ 管道已连续失败 {streak} 天 — 检查数据源/手动跑 --auto 排查 "
+                  f"(历史: {history})")
+    return final_rc if final_rc is not None else (auto_rc if auto_rc != 0 else 0)
+
+
 def main() -> int:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     today = date.today().strftime("%Y%m%d")
@@ -49,7 +79,10 @@ def main() -> int:
             is_open = date.today().weekday() < 5
         if not is_open:
             _log(log, "休市日, 跳过")
-            status_path.write_text(json.dumps({"date": today, "skipped": "market_closed"}), encoding="utf-8")
+            payload = {"date": today, "skipped": "market_closed", "final_rc": 0}
+            status_path.write_text(json.dumps(payload), encoding="utf-8")
+            with open(LOG_DIR / "status_history.jsonl", "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
             return 0
 
         # ---- --auto (锁等待重试) ----
@@ -65,9 +98,7 @@ def main() -> int:
             time.sleep(120)
         if auto_rc != 0:
             _log(log, f"--auto 最终失败 rc={auto_rc} — 跳过 --daily-action (避免半新数据)")
-            status_path.write_text(json.dumps({"date": today, "auto_rc": auto_rc,
-                                               "action_rc": None, "note": "auto_failed"}), encoding="utf-8")
-            return auto_rc
+            return _write_status(status_path, today, auto_rc, None, None, int(time.time() - start), log)
         _log(log, "--auto 完成 rc=0")
 
         # ---- --daily-action ----
@@ -81,9 +112,7 @@ def main() -> int:
         else:
             _log(log, f"--daily-action 完成 rc={action_rc}, 全链 {dur}s")
             final_rc = action_rc
-        status_path.write_text(json.dumps({"date": today, "auto_rc": 0, "action_rc": action_rc,
-                                           "final_rc": final_rc, "duration_s": dur}), encoding="utf-8")
-        return final_rc
+        return _write_status(status_path, today, 0, action_rc, final_rc, dur, log)
 
 
 if __name__ == "__main__":
