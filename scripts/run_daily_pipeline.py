@@ -125,6 +125,12 @@ def main() -> int:
             _log(log, f"--daily-action 看门狗超时 ({ACTION_TIMEOUT_S}s) — 强杀记失败")
             action_rc = 124
         dur = int(time.time() - start)
+        # ---- court 资产哨点 (advisory: trap 22 运营覆盖层; 永不影响管道 rc/状态) ----
+        try:
+            subprocess.call([str(PY), "scripts/court_asset_sentinel.py"], cwd=str(REPO),
+                            stdout=log, stderr=subprocess.STDOUT, timeout=60)
+        except Exception:  # noqa: BLE001 - 哨点自身故障不拖垮每日管道
+            _log(log, "court 资产哨点异常 (advisory, 忽略)")
         # rc=14 = POLICY_HALT_EXIT_CODE (regime 全闸/熔断/入场窗口) — 设计内停手, 非故障
         if action_rc == 14:
             _log(log, f"--daily-action 策略性停手 (设计内), 全链 {dur}s")
