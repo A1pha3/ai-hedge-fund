@@ -143,6 +143,8 @@ def _run_advisory_sentinels(log) -> None:
     - 先验方向断言 (trap 4 重验闭环, 2026-08-19 接入): review_btst_prior_court
       --check 在事件表重建 (人工, 唯一新数据入口) 后自动重验先验-court 方向
       关系 — 漂移当天暴露, 不等下次人工评估 (trap 20: 先有检测才有处置)。
+    - 资金流新鲜度哨点 (2026-08-19 对抗性复核): fund_flow 子集整段缺口
+      (7/13-8/13, 118 只) 曾让 BTST 条件 2 用失真均值静默判定 — 缺口当天可见。
     """
     # court 资产哨点 (毫秒级)
     try:
@@ -156,6 +158,12 @@ def _run_advisory_sentinels(log) -> None:
                         cwd=str(REPO), stdout=log, stderr=subprocess.STDOUT, timeout=120)
     except Exception:  # noqa: BLE001 - 同上
         _log(log, "先验方向断言哨点异常 (advisory, 忽略)")
+    # 资金流新鲜度 (秒级, 只读比对 price/fund_flow 缓存最新日期)
+    try:
+        subprocess.call([str(PY), "scripts/fund_flow_freshness_sentinel.py"],
+                        cwd=str(REPO), stdout=log, stderr=subprocess.STDOUT, timeout=120)
+    except Exception:  # noqa: BLE001 - 同上
+        _log(log, "资金流新鲜度哨点异常 (advisory, 忽略)")
 
 
 if __name__ == "__main__":
