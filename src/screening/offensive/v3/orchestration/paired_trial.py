@@ -36,7 +36,9 @@ from src.screening.offensive.v3.governance.regime_trial import (
     ValidatedRegimeTrialBundle,
 )
 from src.screening.offensive.v3.kernel.admission import BTST_FAMILY
+from src.screening.offensive.v3.contracts.base import ExecutionMode
 from src.screening.offensive.v3.kernel.models import (
+    FrozenTradingSessionSchedule,
     CandidateEvidenceBinding,
     DeadlineContract,
     NoTradeDecision,
@@ -243,6 +245,12 @@ def freeze_shared_input(
     regime: RegimeObservation,
     regime_hash: str,
     trusted_at: datetime,
+    trading_schedule: "FrozenTradingSessionSchedule",
+    evidence_set_merkle_root: str,
+    stage_id: str,
+    stage_manifest_hash: str,
+    registry_epoch: int,
+    trusted_evidence_cutoff: datetime,
 ) -> ShadowSharedInput:
     """One frozen shared input, identical for both arms (official + replay).
 
@@ -251,9 +259,24 @@ def freeze_shared_input(
     bytes exactly.
     """
 
-    raise PairedTrialRunnerError(
-        "forward_input_authority_unavailable",
-        "store-owned trading schedule receipt is not implemented",
+    return ShadowSharedInput(
+        signal_session=session,
+        decision_cycle_id=cycle_id,
+        trial_manifest_hash=validated.trial_manifest.content_hash(),
+        sap_manifest_hash=validated.sap_manifest.content_hash(),
+        mode=ExecutionMode.DAILY_BAR_PROXY,
+        trusted_evidence_cutoff=trusted_evidence_cutoff,
+        evidence_set_merkle_root=evidence_set_merkle_root,
+        regime_observation=regime,
+        trial_id=validated.trial_manifest.trial_id,
+        research_program_id=validated.trial_manifest.research_program_id,
+        economic_lineage_id=validated.trial_manifest.economic_lineage_id,
+        stage_id=stage_id,
+        stage_manifest_hash=stage_manifest_hash,
+        trust_bundle_hash=validated.trial_manifest.trust_bundle_hash,
+        registry_epoch=registry_epoch,
+        trusted_at=trusted_at,
+        trading_session_schedule=trading_schedule,
     )
 
 

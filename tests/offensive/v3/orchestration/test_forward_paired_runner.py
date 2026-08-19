@@ -1302,3 +1302,54 @@ def test_committed_candidates_fails_closed_on_session_mismatch():
         committed_candidates(
             producer, snapshot=object(), expected_signal_session=session.__class__(2020, 1, 1)
         )
+
+
+# ---------- Phase 3 (2026-08-20): freeze_shared_input — 纯构造器 (排程回执消费) ----------
+
+
+def _freeze_with_schedule(rig, cutoff):
+    from src.screening.offensive.v3.evidence.trading_schedule import derive_trading_schedule
+    from src.screening.offensive.v3.governance.regime_trial import validate_regime_trial_bundle
+
+    trusted_at = _frozen_trusted_at()
+    validated = validate_regime_trial_bundle(
+        _bundle_covering_signal(rig), trusted_at=trusted_at
+    )
+    schedule = derive_trading_schedule(
+        signal_session=SIGNAL_DATE,
+        calendar_dates={SIGNAL_DATE + __import__("datetime").timedelta(days=i) for i in range(1, 12)},
+        available_at=trusted_at,
+    )
+    return paired_trial_module.freeze_shared_input(
+        portfolio_id=PORTFOLIO,
+        trial_id=TRIAL_ID,
+        validated=validated,
+        session=SIGNAL_DATE,
+        cycle_id=rig.decision_cycle_id(),
+        regime=_regime_observation(RegimeState.NORMAL),
+        regime_hash=HASH,
+        trusted_at=trusted_at,
+        trading_schedule=schedule,
+        evidence_set_merkle_root=HASH,
+        stage_id="stage-btst-trial-1",
+        stage_manifest_hash=HASH,
+        registry_epoch=1,
+        trusted_evidence_cutoff=cutoff,
+    ), schedule
+
+
+def test_freeze_shared_input_builds_binding_valid_shared_input(rig: _Rig) -> None:
+    cutoff = _frozen_trusted_at() + __import__("datetime").timedelta(minutes=30)
+    shared, schedule = _freeze_with_schedule(rig, cutoff)
+    assert shared.trading_session_schedule == schedule
+    assert shared.trading_session_schedule.available_at <= shared.trusted_evidence_cutoff
+    assert shared.mode.name == "DAILY_BAR_PROXY"
+
+
+def test_freeze_shared_input_rejects_late_schedule(rig: _Rig) -> None:
+    import pytest as _pytest
+    from pydantic import ValidationError
+
+    cutoff = _frozen_trusted_at() - __import__("datetime").timedelta(minutes=1)
+    with _pytest.raises(ValidationError):  # available_at > cutoff → 宪法 12 fail-closed
+        _freeze_with_schedule(rig, cutoff)
