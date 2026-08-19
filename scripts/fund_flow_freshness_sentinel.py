@@ -58,31 +58,44 @@ def _latest_date(csv_path: Path) -> str | None:
         return None
 
 
-def main() -> int:
-    if not PRICE_DIR.exists() or not CAL_PATH.exists():
-        print("[fund_flow_sentinel] price_cache 或 trade_calendar 缺失, 哨点无法运行")
-        return 1
-    tdays = _trading_days()
+def scan_stale(price_dir: Path, flow_dir: Path, tdays: set[str],
+               threshold: int) -> tuple[int, list[tuple[str, int]], list[str]]:
+    """纯判定: 扫 price_dir 每只票, 比较其 flow_dir 最新日期落后交易日数.
 
+    返回 (checked, stale, missing):
+    - checked: 价格缓存有最新日期、参与判定的票数 (仅头行/空文件的票无从判定, 跳过);
+    - stale: [(ticker, 落后交易日数)], lag = (flow_latest, price_latest] 内交易日个数,
+      仅 lag ≥ threshold 入列 (lag 0/1 = 当日未开市或非交易日的正常态);
+    - missing: 资金流文件完全缺失 (含空文件) 的票.
+    """
     stale: list[tuple[str, int]] = []  # (ticker, 落后交易日数)
     missing: list[str] = []
     checked = 0
-    for p in sorted(PRICE_DIR.glob("*.csv")):
+    for p in sorted(price_dir.glob("*.csv")):
         ticker = p.stem
         price_latest = _latest_date(p)
         if price_latest is None:
             continue
         checked += 1
-        flow_latest = _latest_date(FLOW_DIR / f"{ticker}.csv")
+        flow_latest = _latest_date(flow_dir / f"{ticker}.csv")
         if flow_latest is None:
             missing.append(ticker)
             continue
         if flow_latest >= price_latest:
             continue
-        # 落后交易日数 = (flow_latest, price_latest] 内的交易日个数
         lag = sum(1 for d in tdays if flow_latest < d <= price_latest)
-        if lag >= _STALE_THRESHOLD_DAYS:
+        if lag >= threshold:
             stale.append((ticker, lag))
+    return checked, stale, missing
+
+
+def main() -> int:
+    if not PRICE_DIR.exists() or not CAL_PATH.exists():
+        print("[fund_flow_sentinel] price_cache 或 trade_calendar 缺失, 哨点无法运行")
+        return 1
+    tdays = _trading_days()
+    checked, stale, missing = scan_stale(PRICE_DIR, FLOW_DIR, tdays,
+                                         _STALE_THRESHOLD_DAYS)
 
     if not stale and not missing:
         print(f"[fund_flow_sentinel] OK: {checked} 只 universe 票资金流缓存均新鲜")
