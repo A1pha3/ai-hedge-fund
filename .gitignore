@@ -21,6 +21,8 @@ data/reports/*
 !data/reports/p6_btst_risk_budget_overlay_eval.md
 !data/reports/ob_pause_court_recheck_20260819.json
 !data/reports/ob_pause_court_recheck_20260819.md
+!data/reports/panel_decomposition_20260819.json
+!data/reports/panel_decomposition_20260819.md
 data/snapshots
 data/price_cache
 data/fund_flow_cache
@@ -124,3 +126,4 @@ data/paper_trading/
 data/paper_trading_backtest/
 data/paper_trading_v2/
 data/research/btst_court/
+data/research/ob_court/

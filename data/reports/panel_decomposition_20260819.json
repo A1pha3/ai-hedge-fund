@@ -1,0 +1,179 @@
+{
+  "rows_total": 358,
+  "degraded_excluded": 287,
+  "eligible_n": 48,
+  "rejected_n": 23,
+  "headline": {
+    "t1": {
+      "n_a": 47,
+      "n_b": 22,
+      "t": -2.055269492258051,
+      "p": 0.04624230827747707,
+      "cohens_d": -0.5310808958847928,
+      "mean_a": -0.888267031270959,
+      "mean_b": 1.4504865640587747
+    },
+    "t5": {
+      "n_a": 28,
+      "n_b": 17,
+      "t": -0.2296129727093132,
+      "p": 0.8197533390501671,
+      "cohens_d": -0.07030013735710379,
+      "mean_a": -0.021953929440476423,
+      "mean_b": 0.7691135969000779
+    },
+    "t10": {
+      "n_a": 28,
+      "n_b": 17,
+      "t": -0.9520631590845525,
+      "p": 0.34657610865893407,
+      "cohens_d": -0.270780176153363,
+      "mean_a": -2.162055949712745,
+      "mean_b": 1.7428342230726492
+    }
+  },
+  "strength_bucket_horizons": {
+    "t1": {
+      "拒(<0.50)": {
+        "n": 22,
+        "mean": 1.4504865640587747,
+        "win_rate": 0.5909090909090909,
+        "sufficient": false
+      },
+      "0.50-0.60": {
+        "n": 14,
+        "mean": -2.7865233789289667,
+        "win_rate": 0.07142857142857142,
+        "sufficient": false
+      },
+      "0.60-0.70": {
+        "n": 14,
+        "mean": 0.18198371787993464,
+        "win_rate": 0.35714285714285715,
+        "sufficient": false
+      },
+      "≥0.70": {
+        "n": 19,
+        "mean": -0.27815764289729555,
+        "win_rate": 0.3684210526315789,
+        "sufficient": false
+      }
+    },
+    "t5": {
+      "拒(<0.50)": {
+        "n": 17,
+        "mean": 0.7691135969000779,
+        "win_rate": 0.35294117647058826,
+        "sufficient": false
+      },
+      "0.50-0.60": {
+        "n": 9,
+        "mean": -6.372207460417069,
+        "win_rate": 0.3333333333333333,
+        "sufficient": false
+      },
+      "0.60-0.70": {
+        "n": 9,
+        "mean": -0.18517309167203677,
+        "win_rate": 0.4444444444444444,
+        "sufficient": false
+      },
+      "≥0.70": {
+        "n": 10,
+        "mean": 5.840171494446862,
+        "win_rate": 0.7,
+        "sufficient": false
+      }
+    },
+    "t10": {
+      "拒(<0.50)": {
+        "n": 17,
+        "mean": 1.7428342230726492,
+        "win_rate": 0.5882352941176471,
+        "sufficient": false
+      },
+      "0.50-0.60": {
+        "n": 9,
+        "mean": -8.01105103045314,
+        "win_rate": 0.2222222222222222,
+        "sufficient": false
+      },
+      "0.60-0.70": {
+        "n": 9,
+        "mean": -5.314989066290771,
+        "win_rate": 0.4444444444444444,
+        "sufficient": false
+      },
+      "≥0.70": {
+        "n": 10,
+        "mean": 5.939679427873834,
+        "win_rate": 0.7,
+        "sufficient": false
+      }
+    }
+  },
+  "regime_split_t1": {
+    "crisis": {
+      "n_a": 4,
+      "n_b": 9,
+      "t": -1.1289671991569727,
+      "p": 0.3206924339276621,
+      "cohens_d": -0.8184883743476629,
+      "mean_a": -1.5547338492986786,
+      "mean_b": 1.3731069878510016
+    },
+    "normal": {
+      "n_a": 43,
+      "n_b": 13,
+      "t": -1.4436577959391272,
+      "p": 0.16661303470146327,
+      "cohens_d": -0.5035370058964443,
+      "mean_a": -0.8262701179660549,
+      "mean_b": 1.5040570398949256
+    },
+    "risk_off": {
+      "n_a": 0,
+      "n_b": 0,
+      "t": null,
+      "p": null,
+      "cohens_d": null,
+      "mean_a": null,
+      "mean_b": null
+    }
+  },
+  "rejected_reason_classes": {
+    "entry_price_below_minimum": {
+      "n": 1,
+      "t1": {
+        "n": 1,
+        "mean": 5.581395348837215,
+        "win_rate": 1.0,
+        "sufficient": false
+      }
+    },
+    "regime_gate_halt": {
+      "n": 1,
+      "t1": {
+        "n": 0,
+        "mean": null,
+        "win_rate": null,
+        "sufficient": false
+      }
+    },
+    "strength_below_threshold": {
+      "n": 21,
+      "t1": {
+        "n": 21,
+        "mean": 1.253776621926468,
+        "win_rate": 0.5714285714285714,
+        "sufficient": false
+      }
+    }
+  },
+  "date": "20260819",
+  "panel_path": "data/reports/setup_output_panel.jsonl",
+  "pre_registered": {
+    "min_cell_n": 30,
+    "interpretation": "n<30 cells: disclose only, no verdict; diagnostic, not a parameter-change proposal"
+  }
+}
