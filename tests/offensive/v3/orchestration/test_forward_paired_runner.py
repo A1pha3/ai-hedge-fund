@@ -1273,3 +1273,32 @@ def _no_trade(reason=None):
         decision_cycle_id=f"daily-action-{SIGNAL_DATE.isoformat()}",
         reason=reason or BlockReason.NO_SIGNAL,
     )
+
+
+# ---------- Phase 2 (2026-08-20): committed_candidates — producer port 编排 ----------
+
+
+def test_committed_candidates_binds_selected_records_once():
+    from src.screening.offensive.v3.orchestration.paired_trial import committed_candidates
+
+    producer = _CountingProducer()
+    session = producer.records[0].evidence.effective_at.date()
+    out = committed_candidates(producer, snapshot=object(), expected_signal_session=session)
+    assert producer.calls == 1  # 每 session 恰一次发布
+    assert len(out) == 1
+    assert out[0].record == producer.records[0]
+    assert out[0].payload.signal_session == session
+    assert out[0].payload.signal_stage.value == "selected"  # DTO 校验器已保证的绑定
+
+
+def test_committed_candidates_fails_closed_on_session_mismatch():
+    import pytest as _pytest
+
+    from src.screening.offensive.v3.orchestration.paired_trial import committed_candidates
+
+    producer = _CountingProducer()
+    session = producer.records[0].evidence.effective_at.date()
+    with _pytest.raises(Exception):  # noqa: B017 - 复核面拒绝 (session 不一致)
+        committed_candidates(
+            producer, snapshot=object(), expected_signal_session=session.__class__(2020, 1, 1)
+        )

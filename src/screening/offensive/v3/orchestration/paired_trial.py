@@ -7,6 +7,8 @@ direct tests; they do not grant forward input authority.
 
 from __future__ import annotations
 
+from typing import Protocol
+
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -114,6 +116,41 @@ class CommittedBtstCandidate(CanonicalModel):
         if envelope.effective_at.date() != self.payload.signal_session:
             raise ValueError("signal evidence session does not match raw candidate")
         return self
+
+
+class ForwardBtstProducerPort(Protocol):
+    """The runner's producer contract (Phase 2, 2026-08-20).
+
+    Structural port promoted from the duck-typed ``_CountingProducer`` test rig:
+    ``BtstProducerApi`` already satisfies it. ``produce_and_publish`` runs
+    exactly once per signal session; ``candidate_payload`` re-verifies the
+    record against the store before the raw payload is trusted.
+    """
+
+    def produce_and_publish(self, snapshot: object) -> tuple[EvidenceRecord, ...]: ...
+
+    def candidate_payload(self, record: EvidenceRecord, *, expected_signal_session: date) -> object: ...
+
+
+def committed_candidates(
+    producer: ForwardBtstProducerPort,
+    snapshot: object,
+    *,
+    expected_signal_session: date,
+) -> tuple["CommittedBtstCandidate", ...]:
+    """Publish once per session, then bind every SELECTED record to its payload.
+
+    Pure orchestration over the producer port: no store writes beyond the
+    producer's own publication, no authority. Binding integrity (SELECTED
+    stage, payload hash, evidence identity, session) is enforced by the
+    ``CommittedBtstCandidate`` validator — fail-closed on any mismatch.
+    """
+    records = producer.produce_and_publish(snapshot)
+    committed: list[CommittedBtstCandidate] = []
+    for record in records:
+        payload = producer.candidate_payload(record, expected_signal_session=expected_signal_session)
+        committed.append(CommittedBtstCandidate(record=record, payload=payload))
+    return tuple(committed)
 
 
 def classify_pair_session(
