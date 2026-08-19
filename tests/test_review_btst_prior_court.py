@@ -106,7 +106,7 @@ def test_report_includes_fingerprint_and_boundary():
     rep = rpc.build_report(ev, n_boot=50)
     fp = rep["fingerprint"]
     assert fp["rows"] == 1 and fp["date_min"] == "20260101"
-    assert fp["prior"]["expected_return"] == 0.0657  # 生产常量原样引用
+    assert fp["prior"]["expected_return"] == 0.0056  # 生产常量原样引用 (2026-08-19 court 重校准值)
     assert "boundary" in rep and "不进 Kelly" in rep["boundary"]
     # 结构稳定: 无 blocked 行时返回诚实空结构而非 None
     assert rep["gate_blocked_contrast"]["n"] == 0

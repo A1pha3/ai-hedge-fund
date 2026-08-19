@@ -443,15 +443,17 @@ def test_new_plan_renders_full_trade_plan_details(service, signal_date):
     assert "涨停前 5 日 +2.3%" in rendered
     assert "主力净流入 24.8 亿" in rendered
     assert "行业当日 +1.2%" in rendered
-    # 胜率赔率: 冻结先验分布 (BTST T+10: n=1458, 胜率 58.78%→59%, 盈亏比 1.8, E +6.6%).
-    # 标签 = 真实出处 (626 票样本, 非全池) + 未扣费口径标注 (2026-08-18 审查项 3).
-    assert "先验（T+10 历史回测 n=1458 · 未扣费）" in rendered
-    assert "胜率 59%" in rendered
-    assert "盈亏比 1.8" in rendered
-    assert "期望 +6.6%" in rendered
+    # 胜率赔率: 冻结先验分布 (BTST T+10 court 重校准: n=1464, 胜率 46.45%→46%,
+    # 盈亏比 1.3, E +0.6%, CI90 跨 0). 标签口径中性 — 扣费与否由脚注 provenance 表达
+    # (2026-08-19 重校准后先验即 court 扣费口径).
+    assert "先验（T+10 历史回放 n=1464）" in rendered
+    assert "胜率 46%" in rendered
+    assert "盈亏比 1.3" in rendered
+    assert "期望 +0.6%" in rendered
+    assert "CI90" in rendered
     # 先验口径脚注: 样本出处 + 执行口径参考, 全渲染只出现一次 (不逐票重复).
     assert rendered.count("先验口径：") == 1
-    assert "626 票样本" in rendered and "2026-07-12 校准" in rendered
+    assert "court 全候选生产对齐宇宙 n=1464" in rendered and "owner 批准重校准" in rendered
     # 执行口径参考主锚 = court 全候选生产对齐宇宙 (trap 19: journal 成交子集
     # 不可作证据宇宙 — 同期 2026H1 court +0.06% vs journal +3.41%, 差异全为
     # 成交选择偏差), journal 数字只保留为标注过的审计线索.

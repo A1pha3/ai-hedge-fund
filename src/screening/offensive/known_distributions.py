@@ -1,33 +1,36 @@
-"""已冻结的 setup 先验分布 (Kelly 仓位输入) + 各常量的样本出处披露。
+"""已冻结的 setup 先验分布 (披露层) + 各常量的样本出处。
 
-这些是 --daily-action 用于 Kelly 仓位 + 风险计划的"先验"。
-⚠ 出处分层 (2026-08-18 审查项 3, 展示层与文件头对齐; 2026-08-19 重验入册):
-当前生效的 BTST 常量来自 2026-07-12 校准的 626 票样本回测 (连续涨停样本、
-未扣费口径) — 不是"全池 execution-adjusted"。它早于 2026-07-18 journal 锚定
-bug 全量修正与 2026-08-16 执行口径重建; 2026-08-19 已用 court 全候选生产对齐
-宇宙重验 (n=1464, E=+0.56%/46.4%, 先验虚高 ~6pp/~12pp — 见 review_btst_prior_court
-三视图报告), 数值重校准是 owner 决策 (trap 4: 改常量 = 新证据世代)。
+这些分布是 --daily-action 的"先验"披露。⚠ 仓位不消费这些数字:
+仓位 = setup_max_pct × drawdown_factor × strength_factor (daily_action 的
+kelly_pct 路径; 2026-08-14 regime 加仓移除时装饰性 Kelly 计算已删) —
+先验只进展示 (先验行/期望披露) 与 setup 注册验证, 不进仓位链。
 
-⚠ 重要: 这些分布来自历史回测, 不是未来承诺。setup IC 会衰减, 需定期重测
-(月度重校准, 见 risk_framework 的衰减监控)。
+⚠ 出处分层 (2026-08-19 owner 批准重校准入册, 新证据世代):
+BTST T+10 与 OversoldBounce T+5 先验已从 court 全候选重放重校准 —
+与被复核策略候选宇宙一致 (含退市者快照、T+1 开盘买 + 30bps/边滑点 +
+5bps 卖出印花税), 公式指纹钉在 manifest, 重算脚本口径可复验。
+BTST T+8 未重校准 (court 重验只出 T+10 视图) — 保留旧值并显式标注,
+不得再作为当前口径引用。旧值 (2026-07-12 连续涨停样本、未扣费) 移入
+下方历史校准记录。
+
+⚠ 重要: 这些分布来自历史回放, 不是未来承诺。setup IC 会衰减, 需定期重测
+(重验工具 scripts/review_btst_prior_court.py, --check 断言恒跑)。
 
 历史校准记录 (审计线索, 非当前生效值的出处):
 - Phase 0 btst_breakout @ T+10: cv=1.81, winrate=54.2%, E=+3.38%, n=1762, IC=0.126
   → 本地数据不可复现 (AGENTS.md trap 4), 仅作历史审计线索
-- 旧文档曾引 "paper_trading_backtest 实测更优: win=68.4%, E=+8.15%, n=133"
-  作为佐证 — 该 recorded P&L 已被 2026-07-18 审查判定受锚定 bug 污染
-  (修正后毛口径 +5.07%, 执行口径 +3.41%), 不得再作为校准依据引用
-- oversold_bounce @ T+5: ⚠ 已用真实成交数据重校准 (2026-07-11)
-  → 旧先验 (Phase 0) E=+3.42%/cv=2.51 严重高估: avg_loss 被 2x 低估
-  → 真实回测: E[r]=+0.34%, cv=0.96 (<1.5), CI [-3.15%, +3.83%] 跨 0
-  → 当前默认暂停 (DAILY_ACTION_DISABLED_SETUPS), 仓位 Kelly f*≈0
+- BTST T+8/T+10 @ 2026-07-12: 626 票、连续涨停样本、未扣费 (T10: wr=58.78%,
+  E=+6.57%; T8: wr=59.4%, E=+5.43%) — 连续涨停人群与生产首板触发错配且未扣费;
+  2026-08-19 court 重验显示该口径较生产对齐宇宙虚高 E ~6pp/胜率 ~12pp,
+  owner 批准后 T10 由 court 值取代 (T8 保留旧值仅作回测兼容, 已标注)
+- oversold_bounce @ 2026-07-11: journal 成交子集 59 笔 (E=+0.34%, cv=0.96)
+  → 2026-08-19 court 全候选复核 (n=2,205, T+5 净 E=-0.40%, CI90 下界 -1.21%
+  ≤ 0, 无正 alpha) 后由 court 值取代; OB 维持默认暂停
 
-执行口径参考 (BTST, 与先验不可比 — 供展示层脚注披露, 不进 Kelly):
-court 全候选生产对齐宇宙 (2026-08-19 重验, T+1 开盘买 + 30bps/边滑点 +
-5bps 卖出印花税, n=1464): 期望 +0.56% · 胜率 46.4%; 先验期望高于全候选
-执行口径约 6pp。journal 执行重建 (n=130, +3.41%/57%) 是成交子集 — 按trap 19
-不可作证据宇宙 (同期 2026H1 court 生产对齐 +0.06% vs journal +3.41%, 差异
-全部来自成交选择偏差), 仅保留为历史审计线索。
+执行口径参考 (BTST, 与重校准后先验同源 — 供展示层脚注披露):
+court 全候选生产对齐宇宙 (2025-07-02→2026-08-18, n=1464): 期望 +0.56% ·
+胜率 46.4% · CI90 [-1.30%, +2.39%]。journal 执行重建 (n=130, +3.41%/57%)
+是成交子集 — 按 trap 19 不可作证据宇宙, 仅保留为历史审计线索。
 重验工具: scripts/review_btst_prior_court.py (三视图: 生产对齐宇宙/
 排除行披露/时间切片), 产物 data/reports/btst_prior_court_recheck_*.md。
 """
@@ -36,77 +39,67 @@ from __future__ import annotations
 
 from src.screening.offensive.statistics import Distribution
 
-# BTST 突破 T+8 分布 — 从 T+10 全池分布按 paper_trading_backtest T+k 曲线校准.
-# T+10 全池 (2026-07-08 重算, 含条件4): n=1762, win=54.2%, E=+3.38%, avg_loss=-9.17%.
-# paper_trading_backtest 91 笔 T+k 曲线 (2026) 显示:
-#   T+8 mean=+6.33% vs T+10 mean=+5.76% → E[r] 上调系数 1.10
-#   T+8 avg_loss 比 T+10 小 (持仓更短 → 更小回撤) → avg_loss 下调系数 0.85
-#   winrate 略升 (T+8 P(>0)=67% vs T+10 59%) → 0.56
-#
-# 2026-07-12 (autodev 第4轮): 更新分布参数以匹配新的过滤器链 (8% 涨停前涨幅门控 +
-# 成交量回避区过滤). 使用 626 只 A 股、1478 个连续涨停样本进行回测.
-#   新指标: wr=59.4%, avg_gain=+15.85%, avg_loss=-9.82%, E[r]=+5.43%
-#   相较旧指标: wr 56.0%→59.4% (+3.4pp), E[r] 4.66%→5.43% (+0.77pp)
-#   half-Kelly 仍被 15% per-setup 上限限制, 因此实际仓位不变. 更新确保
-#   科学报告准确性 (display metrics 匹配实际过滤后性能).
+# BTST 突破 T+8 — ⚠ 未随 2026-08-19 court 重校准 (重验只出 T+10 视图):
+# 下列数字是 2026-07-12 的 626 票连续涨停样本、未扣费口径, 较生产对齐宇宙
+# 虚高 (同源 T+10 口径虚高 E ~6pp), 仅作回测兼容保留, 不得引用为当前性能.
+# 历史推导: 自 T+10 全池分布按 paper_trading_backtest T+k 曲线校准
+# (E[r] ×1.10, avg_loss ×0.85, winrate 0.56).
 BTST_BREAKOUT_T8 = Distribution(
     n=1478,
-    winrate=0.5940,  # 8% 门控 + 成交量过滤后: 59.4%
-    avg_gain=0.1585,  # 盈利端 +15.85%
-    avg_loss=-0.0982,  # 亏损端 -9.82%
-    convexity_ratio=2.36,  # avg_gain×wr / |avg_loss|×loss
-    expected_return=0.0543,  # +5.43%
+    winrate=0.5940,
+    avg_gain=0.1585,
+    avg_loss=-0.0982,
+    convexity_ratio=2.36,
+    expected_return=0.0543,
     ci_low=0.0430,
     ci_high=0.0656,
     ic=0.15,
-    provenance="626 票样本 · 连续涨停样本口径 · 2026-07-12 校准 · 未扣费",
+    provenance="626 票连续涨停样本 · 2026-07-12 · 未扣费 · ⚠未随 2026-08-19 court 重校准, 仅回测兼容",
 )
 
-# BTST 突破 T+10 (2026-07-12 重新校准至当前过滤器链: 8% 涨停前涨幅门控 + 成交量回避区)
-# 用户明确要求 "未来10天" 持有周期. 626 只 A 股, 1458 个连续涨停样本回测:
-#   wr=58.78%, avg_gain=+18.48%, avg_loss=-10.41%, E[r]=+6.57%
-# 相较 T+8 (E[r]=+5.43%): 收益更高 (+1.14pp), 胜率相近 (58.8% vs 59.4%).
-# T+10 在 DEFAULT_HORIZONS 内 → close_matured 的 fetch_actual_returns 路径原生支持
-# (day_10 总是可用, 无需 price_loader workaround).
+# BTST 突破 T+10 — 2026-08-19 owner 批准重校准 (新证据世代), court 全候选重放:
+# 生产对齐宇宙 (fillable & 非 gate_blocked & 非 degraded/ST/行业缺失/排除名单/
+# price≥3), 2025-07-02→2026-08-18, T+1 开盘买 + T+10 开盘卖, 净口径已扣
+# 30bps/边滑点 + 5bps 卖出印花税; 按信号日聚类 bootstrap CI90 (n_boot=3000,
+# seed=20260818, 与 review_btst_prior_court 同参数可复验); IC = 日内
+# trigger_strength×gross_ret_t10 Spearman 均值 (87 个 ≥5 事件日).
+# 取代 2026-07-12 连续涨停口径 (wr 58.78%→46.45%, E +6.57%→+0.56%) —
+# 旧值虚高主因: 连续涨停人群错配 + 未扣费.
 BTST_BREAKOUT_T10 = Distribution(
-    n=1458,
-    winrate=0.5878,
-    avg_gain=0.1848,  # +18.48%
-    avg_loss=-0.1041,  # -10.41%
-    convexity_ratio=2.53,
-    expected_return=0.0657,  # +6.57%
-    ci_low=0.0530,
-    ci_high=0.0784,
-    ic=0.15,
-    # ⚠ 口径披露: 样本是"连续涨停"而生产触发以首板为主 (人群错配未校准);
-    # 校准早于 07-18 锚定修正与 08-16 执行重建, 期望未按可执行口径重验
-    # (执行口径 court 生产对齐 +0.56%, 见模块头). 改常量数值 = 策略行为变化, 需新证据世代;
-    # 本字段只做展示披露, 不改变 Kelly 输入.
-    provenance="626 票样本 · 连续涨停样本口径 · 2026-07-12 校准 · 未扣费",
+    n=1464,
+    winrate=0.4645,
+    avg_gain=0.1344,  # 盈利端净均值 +13.44%
+    avg_loss=-0.1062,  # 亏损端净均值 -10.62%
+    convexity_ratio=1.10,  # 盈亏比×概率比 — 已低于旧口径的 2.53
+    expected_return=0.0056,  # +0.56% (净, 已扣费)
+    ci_low=-0.0130,  # CI90 跨 0 → 期望为正但单期不显著
+    ci_high=0.0236,
+    ic=0.0964,
+    provenance="court 全候选生产对齐宇宙 n=1464 · 2025-07→2026-08 · T+1 开盘+真实成本 · 2026-08-19 owner 批准重校准",
 )
 
-# OversoldBounce 超跌反弹 T+5 — 用 paper_trading_backtest 真实成交重校准 (2026-07-11)
-# ⚠ 旧先验 (Phase 0 全池回测) avg_loss=-5.57% 严重低估: 实际回测 avg_loss=-11.15% (2x).
-#   convexity 从 2.51 降到 0.96 (<1.5 门槛), E[r]=+0.34% 且 95% CI 跨 0 (p≈0.85).
-#   这意味着 OversoldBounce 在当前样本无可证明的 alpha, Kelly 会给出极小或零仓位.
-# 数据来源: data/paper_trading_backtest/journal.jsonl, 59 笔配对交易 (2026-01~07).
-# 样本仅 6 个月牛市, 非定论 — 补全历史数据重跑后再次校准.
+# OversoldBounce 超跌反弹 T+5 — 2026-08-19 owner 批准重校准 (新证据世代):
+# court 全候选重放 (scripts/ob_court_build.py, 生产 OversoldBounceSetup 原样
+# import), 全触发候选 fillable, 2025-07-02→2026-08-18, T+1 开盘买 + T+5 开盘卖,
+# 净口径已扣 65bps; 聚类 bootstrap CI90 同参数; IC = 日内强度×收益 Spearman
+# 均值 (118 个 ≥5 事件日). 取代 2026-07-11 journal 成交子集 (59 笔, trap 19
+# 选择偏差口径). E 为负且 CI 跨 0 → 无正 alpha, 维持默认暂停.
 OVERSOLD_BOUNCE_T5 = Distribution(
-    n=59,
-    winrate=0.525,
-    avg_gain=0.1073,  # +10.73%
-    avg_loss=-0.1115,  # -11.15% (原 -5.57% 严重低估)
-    convexity_ratio=0.96,  # <1.5 → Kelly f* ≈ 0, 不值得分配仓位
-    expected_return=0.0034,  # +0.34%
-    ci_low=-0.0315,  # 95% CI 跨 0 → 无统计显著的 alpha
-    ci_high=0.0383,
-    ic=0.003,
-    provenance="journal 成交子集 59 笔 · 2026-07-11 重校准 · 已默认暂停",
+    n=2205,
+    winrate=0.4639,
+    avg_gain=0.0786,  # +7.86%
+    avg_loss=-0.0754,  # -7.54%
+    convexity_ratio=0.90,  # <1 → 无凸性, Kelly f* < 0
+    expected_return=-0.0040,  # -0.40% (净, 已扣费)
+    ci_low=-0.0123,  # CI90 跨 0 (上界 +0.38%) → 无显著 alpha, 方向为负
+    ci_high=0.0038,
+    ic=0.0056,
+    provenance="court 全候选 n=2205 · 2025-07→2026-08 · T+1 开盘+真实成本 · 2026-08-19 owner 批准重校准 · 维持暂停",
 )
 
 # 已知分布注册表: {(setup_name, horizon): Distribution}
 # --daily-action 查这个表拿先验分布
-# BTST horizon = T+8: T+8 mean 最优 (+6.33%), 避免 T+9/T+10 回吐
+# 生产执行合约固定 T+10 (T+8 是历史 horizon, 仅回测兼容)
 KNOWN_DISTRIBUTIONS: dict[tuple[str, int], Distribution] = {
     ("btst_breakout", 8): BTST_BREAKOUT_T8,
     ("btst_breakout", 10): BTST_BREAKOUT_T10,   # 保留旧 key 供回测兼容
@@ -119,14 +112,13 @@ def get_known_distribution(setup_name: str, horizon: int) -> Distribution | None
     return KNOWN_DISTRIBUTIONS.get((setup_name, horizon))
 
 
-# 执行口径参考 (展示层脚注用, 不进 Kelly): 主锚 = court 全候选生产对齐宇宙
-# (2026-08-19 重验, scripts/review_btst_prior_court.py 三视图), trap 19 纪律:
-# journal 成交子集不可作证据宇宙 (同期 2026H1 court +0.06% vs journal +3.41%,
-# 差异全部来自成交选择偏差), 只保留为标注过的审计线索.
-# 先验是未扣费、非执行口径 → 与 court 执行口径差 ~6pp 是口径差, 不是策略退化信号.
+# 执行口径参考 (展示层脚注用): 主锚 = court 全候选生产对齐宇宙
+# (scripts/review_btst_prior_court.py 三视图), trap 19 纪律: journal 成交子集
+# 不可作证据宇宙, 只保留为标注过的审计线索. 2026-08-19 重校准后先验与该口径
+# 同源 — 脚注陈述对齐关系而非差距.
 BTST_EXECUTABLE_REFERENCE = (
-    "执行口径参考（court 全候选生产对齐宇宙，2026-08-19 重验，"
+    "执行口径参考（court 全候选生产对齐宇宙，2025-07→2026-08，"
     "T+1 开盘+真实成本，n=1464）：期望 +0.56% · 胜率 46.4% — "
-    "先验期望系统性高于全候选执行收益约 6pp"
+    "先验已按该口径重校准（2026-08-19 owner 批准，新证据世代）"
     "（journal 成交子集 n=130 +3.4% 仅作历史审计：成交选择偏差，非证据宇宙）"
 )

@@ -100,7 +100,7 @@ def prior_snapshot() -> dict:
         "ci_low": d.ci_low,
         "ci_high": d.ci_high,
         "n": d.n,
-        "provenance": "known_distributions.BTST_BREAKOUT_T10 (2026-07-12 校准, 连续涨停样本, 未扣费)",
+        "provenance": f"known_distributions.BTST_BREAKOUT_T10 ({d.provenance})",
     }
 
 
@@ -354,13 +354,18 @@ def run_check(ev: pd.DataFrame, today: date | None = None) -> None:
     allv = rep["all_candidates"]
     prod = rep["production_aligned"]
     top1 = rep["daily_topk"]["top_1"]
-    assert allv["ci90_high"] < prior["ci_low"], (
-        f"方向断言失败: 全候选净口径 CI 上界 {allv['ci90_high']:.4f} "
-        f">= 先验 ci_low {prior['ci_low']:.4f} (先验或口径理解错误, 回 Observe)"
+    # 2026-08-19 owner 批准重校准后, 先验即 court 生产对齐口径 — 断言从
+    # 「先验系统性虚高」(旧) 改为「对齐」: 先验期望须落在生产对齐宇宙
+    # bootstrap CI 的宽容带内 (±1pp, 覆盖不同 n_boot 种子抖动), 且方向
+    # 不允许回到虚高 >6pp 的旧关系; 若 court 表重建后对齐破坏, 这里当天暴露.
+    er_delta_pp = abs(prior["expected_return"] - prod["mean"]) * 100
+    assert er_delta_pp <= 1.0, (
+        f"对齐断言失败: 先验期望 {prior['expected_return']:.4f} 与生产对齐宇宙 "
+        f"{prod['mean']:.4f} 偏离 {er_delta_pp:.2f}pp > 1pp — 先验与 court 口径脱钩, 回 Observe"
     )
-    assert prod["ci90_high"] < prior["ci_low"], (
-        f"方向断言失败: 生产对齐宇宙 CI 上界 {prod['ci90_high']:.4f} "
-        f">= 先验 ci_low {prior['ci_low']:.4f} (对齐口径下先验失真应同样成立, 否则口径理解错误)"
+    assert prior["winrate"] - prod["winrate"] < 0.10, (
+        f"方向断言失败: 先验胜率 {prior['winrate']:.4f} 高于生产对齐宇宙 "
+        f"{prod['winrate']:.4f} 达 10pp — 回到旧「虚高」关系, 重校准失效"
     )
     assert 0 < top1["trade_mean"] < 0.04, (
         f"top-1 量级断言失败: {top1['mean']:.4f} 不在 (0, 0.04) — 与预验 (+1.77% 毛 / +1.12% 净) 背离"

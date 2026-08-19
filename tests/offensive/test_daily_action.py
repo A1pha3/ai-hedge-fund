@@ -123,10 +123,12 @@ def test_paper_tracker_state_persists(tmp_path):
 def test_btst_t10_distribution_exists():
     dist = get_known_distribution("btst_breakout", 10)
     assert dist is not None
-    assert dist.n == 1458  # 2026-07-12 重新校准至 8% 涨停前涨幅门控 + 成交量过滤后
-    assert dist.convexity_ratio > 1.5
-    assert dist.winrate > 0.5
-    assert abs(dist.expected_return - 0.0657) < 0.001
+    # 2026-08-19 owner 批准重校准: court 全候选生产对齐宇宙 (T+1 开盘+真实成本)
+    assert dist.n == 1464
+    assert 1.0 <= dist.convexity_ratio <= 1.3  # 1.10 — 旧连续涨停口径 2.53 已废弃
+    assert 0.44 < dist.winrate < 0.49
+    assert abs(dist.expected_return - 0.0056) < 0.001
+    assert dist.ci_low < 0 < dist.ci_high  # CI90 跨 0 → 期望为正但单期不显著 (如实披露)
 
 
 def test_unknown_setup_returns_none():

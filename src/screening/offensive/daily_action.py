@@ -957,18 +957,18 @@ def _format_plan_detail_rows(
     if structure:
         rows.append(f"  {' · '.join(structure)}")
 
-    # 先验胜率赔率: 冻结分布 (驱动仓位的那套数字 — 展示口径 = 决策口径).
-    # 标签诚实化 (2026-08-18 审查项 3): 不再自称「全池回测」— 现行 BTST 常量
-    # 是 626 票样本、连续涨停口径、2026-07-12 校准、未扣费; 样本出处脚注
-    # (含执行口径参考) 在新计划区末尾渲染一次, 不逐票重复.
+    # 先验胜率赔率: 冻结分布 (披露层 — 仓位不消费这些数字, 见 known_distributions 头注).
+    # 标签口径中性 (2026-08-19 重校准后先验即 court 扣费口径, 不再统一标「未扣费」):
+    # 扣费与否由 Distribution.provenance 表达, 样本出处脚注 (含执行口径参考)
+    # 在新计划区末尾渲染一次, 不逐票重复.
     dist = detail.distribution
     if dist is not None:
         payoff = dist.avg_gain / abs(dist.avg_loss) if dist.avg_loss else None
         payoff_text = f" · 盈亏比 {payoff:.1f}（盈 {dist.avg_gain:+.1%} / 亏 {dist.avg_loss:+.1%}）" if payoff else ""
         rows.append(
-            f"  先验（T+{detail.horizon} 历史回测 n={dist.n} · 未扣费）：胜率 {dist.winrate:.0%}"
+            f"  先验（T+{detail.horizon} 历史回放 n={dist.n}）：胜率 {dist.winrate:.0%}"
             f"{payoff_text} · 期望 {dist.expected_return:+.1%}"
-            f"（95% CI {dist.ci_low:+.1%}~{dist.ci_high:+.1%}）"
+            f"（CI90 {dist.ci_low:+.1%}~{dist.ci_high:+.1%}）"
         )
 
     # 退出合约: 默认退出只有 T+N 时间退出 (到期无条件卖出), 无止盈规则
