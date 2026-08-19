@@ -19,6 +19,8 @@ data/reports/*
 !data/reports/p5_btst_execution_contract_eval.md
 !data/reports/p6_btst_risk_budget_overlay_eval.json
 !data/reports/p6_btst_risk_budget_overlay_eval.md
+!data/reports/ob_pause_court_recheck_20260819.json
+!data/reports/ob_pause_court_recheck_20260819.md
 data/snapshots
 data/price_cache
 data/fund_flow_cache

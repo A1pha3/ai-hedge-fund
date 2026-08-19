@@ -1,0 +1,131 @@
+{
+  "date": "20260819",
+  "manifest_window": {
+    "start": "20250701",
+    "end": "20260818",
+    "sessions": 270
+  },
+  "manifest_formula": {
+    "oversold_bounce_sha256": "cb123f91058f77707c0b92349542c575ea5b0b1bb7669d7f5a3b4cfcf3495ba8",
+    "price_returns_sha256": "c458b58ec365bb91f3bbdfd73bf944ac8908548061fa3743388108fb8a800231"
+  },
+  "primary_horizon": 5,
+  "cost_bps": {
+    "slippage_per_side": 30.0,
+    "sell_stamp": 5.0
+  },
+  "funnel": {
+    "sessions": 270,
+    "prefilter": 84229,
+    "history_short": 0,
+    "hits": 2313,
+    "misses": 81916,
+    "flow_missing_days": 2
+  },
+  "fills": {
+    "events": 2313,
+    "fillable": 2281,
+    "t1_unbuyable": 7,
+    "t1_missing_bar": 25
+  },
+  "verdict": {
+    "n": 2205,
+    "mean_net": -0.0039600898413570266,
+    "win_rate": 0.4639455782312925,
+    "ci_low_90": -0.012082168448310905,
+    "pause_holds": true
+  },
+  "segments": [
+    {
+      "regime": "crisis",
+      "half": "2025H2",
+      "events": 98,
+      "filled": 96,
+      "net_t5_mean": -0.028173262498341383,
+      "win_rate": 0.3125
+    },
+    {
+      "regime": "crisis",
+      "half": "2026H1",
+      "events": 366,
+      "filled": 363,
+      "net_t5_mean": -0.0025443770349763755,
+      "win_rate": 0.4049586776859504
+    },
+    {
+      "regime": "crisis",
+      "half": "2026H2",
+      "events": 248,
+      "filled": 228,
+      "net_t5_mean": -0.007782671350093308,
+      "win_rate": 0.4517543859649123
+    },
+    {
+      "regime": "normal",
+      "half": "2025H2",
+      "events": 177,
+      "filled": 173,
+      "net_t5_mean": -0.009790815913743173,
+      "win_rate": 0.43352601156069365
+    },
+    {
+      "regime": "normal",
+      "half": "2026H1",
+      "events": 639,
+      "filled": 631,
+      "net_t5_mean": -0.008710093701548438,
+      "win_rate": 0.43740095087163233
+    },
+    {
+      "regime": "normal",
+      "half": "2026H2",
+      "events": 620,
+      "filled": 567,
+      "net_t5_mean": 0.01748929870827468,
+      "win_rate": 0.6102292768959435
+    },
+    {
+      "regime": "risk_off",
+      "half": "2025H2",
+      "events": 34,
+      "filled": 34,
+      "net_t5_mean": -0.023076962610827843,
+      "win_rate": 0.29411764705882354
+    },
+    {
+      "regime": "risk_off",
+      "half": "2026H1",
+      "events": 73,
+      "filled": 72,
+      "net_t5_mean": -0.009943625705805715,
+      "win_rate": 0.4444444444444444
+    },
+    {
+      "regime": "risk_off",
+      "half": "2026H2",
+      "events": 58,
+      "filled": 41,
+      "net_t5_mean": -0.11110490922157853,
+      "win_rate": 0.0975609756097561
+    }
+  ],
+  "reference_horizons": {
+    "t3": {
+      "n": 2245,
+      "mean_net": -0.003385468711104875,
+      "win_rate": 0.4592427616926503
+    },
+    "t10": {
+      "n": 2035,
+      "mean_net": -0.013288412079048406,
+      "win_rate": 0.44963144963144963
+    }
+  },
+  "journal_anchor": {
+    "n": 56,
+    "mean": -0.0215,
+    "win_rate": 0.39,
+    "source": "journal executable subset (trap 19 biased)"
+  },
+  "pre_registered_rule": "pause_holds = (T+5 net cluster-bootstrap 90% CI low <= 0); CI low > 0 -> owner review"
+}
