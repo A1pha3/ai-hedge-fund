@@ -221,6 +221,24 @@ def panel_health_status(panel: Path = PANEL, min_n: int = 30, min_group: int = 5
     return {"rows": len(rows), "realized": realized, "horizons": horizons}
 
 
+def _marginal_contrast_segment(rows: list[dict]) -> str:
+    """「边缘对照」段: 预注册对比 (0.50-0.60 边缘桶 vs 拒(<0.50)) 的 T+1 计数.
+
+    count-only (不报均值/p — 反偷看, 推断留给 panel_signal_decomposition 报告);
+    成熟判据 min(a,b) >= MIN_CELL_N (与分解工具的披露门槛同源 import, 无第二处 30).
+    任何异常只降级为占位文本, 绝不拖垮既有体检行.
+    """
+    try:
+        from scripts.panel_signal_decomposition import MIN_CELL_N, contrast_t1_counts
+
+        marginal, rejected = contrast_t1_counts(rows)
+    except Exception:  # noqa: BLE001 - 新段异常隔离, 既有行不受影响
+        return " · (桶计数不可用)"
+    if min(marginal, rejected) >= MIN_CELL_N:
+        return f" · ⚠边缘对照可初判 {marginal}|{rejected}→{MIN_CELL_N}"
+    return f" · 边缘对照 {marginal}|{rejected}/{MIN_CELL_N}"
+
+
 def panel_health_oneline(panel: Path = PANEL, min_n: int = 30, min_group: int = 5) -> str:
     """One-line panel-health summary for --auto logs (best-effort, read-only)."""
     rows = load_panel(panel)
@@ -233,6 +251,7 @@ def panel_health_oneline(panel: Path = PANEL, min_n: int = 30, min_group: int = 
     )
     if degraded_total:
         prefix += f"/降级{degraded_total}不入对照"
+    contrast = _marginal_contrast_segment(rows)
     tags: list[str] = []
     testable = False
     for horizon in HORIZONS:
@@ -248,8 +267,8 @@ def panel_health_oneline(panel: Path = PANEL, min_n: int = 30, min_group: int = 
         else:
             tags.append(f"T+{horizon}:◻️p={stat['p']:.3f}")
     if not testable:
-        return f"{prefix} 未达检验门槛(需某 horizon 已实现≥{min_n}/组≥{min_group}, 对照=策略过滤组)"
-    return f"{prefix}  " + " ".join(tags)
+        return f"{prefix} 未达检验门槛(需某 horizon 已实现≥{min_n}/组≥{min_group}, 对照=策略过滤组){contrast}"
+    return f"{prefix}  " + " ".join(tags) + contrast
 
 
 def main() -> None:

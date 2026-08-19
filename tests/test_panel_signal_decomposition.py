@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from panel_signal_decomposition import (  # noqa: E402
     MIN_CELL_N,
+    contrast_t1_counts,
     block_reason_class,
     cell,
     decompose,
@@ -150,3 +151,27 @@ def test_render_md_contains_sections_and_disclosure():
     assert "headline" in md and "强度桶" in md and "regime 分解" in md
     assert "⚠样本不足" in md  # 小样本格如实标注
     assert "不构成参数变更提案" in md  # 纪律句常驻
+
+
+# ---------- contrast_t1_counts: 与 decompose 桶表奇偶一致 (单一事实源钉死) ----------
+
+
+def test_contrast_t1_counts_parity_with_decompose():
+    rows = []
+    for i in range(12):
+        rows.append(_row(ticker=f"M{i}", plan_eligible=True,
+                         trigger_strength=0.55, return_t1=0.01))       # 边缘桶 12
+        rows.append(_row(ticker=f"R{i}", plan_eligible=False,
+                         block_reason="trigger_strength_below_threshold",
+                         return_t1=-0.01))                              # 拒票组 12
+    for i in range(5):
+        rows.append(_row(ticker=f"S{i}", plan_eligible=True,
+                         trigger_strength=0.75, return_t1=0.02))       # ≥0.70 桶 (不进对比)
+    rows.append(_row(ticker="M13", plan_eligible=True,
+                     trigger_strength=0.55, return_t1=None))           # T+1 未实现 (不数)
+    rows.append(_row(ticker="D1", plan_eligible=True,
+                     trigger_strength=0.55, degraded=True, return_t1=0.5))  # 降级排除
+    marginal, rejected = contrast_t1_counts(rows)
+    t1 = decompose(rows)["strength_bucket_horizons"]["t1"]
+    assert (marginal, rejected) == (t1["0.50-0.60"]["n"], t1["拒(<0.50)"]["n"])
+    assert (marginal, rejected) == (12, 12)

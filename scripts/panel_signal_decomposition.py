@@ -83,6 +83,21 @@ def horizon_returns(rows: list[dict], horizon: int) -> list[float]:
     return out
 
 
+def contrast_t1_counts(rows: list[dict]) -> tuple[int, int]:
+    """预注册对比 (0.50-0.60 边缘桶 vs 拒(<0.50) 组) 的 T+1 已实现计数.
+
+    供 panel_health_check 的「边缘对照」段消费 (成熟判据 min(a,b) >= MIN_CELL_N,
+    count-only 反偷看: 只数数不报均值/p, 推断留给分解报告). 与 decompose() 的
+    强度桶表同源 — split_groups + strength_bucket + horizon_returns 三件套,
+    无第二实现 (trap 22 漂移纪律).
+    """
+    groups = split_groups(rows)
+    nond = groups["eligible"] + groups["rejected"]
+    marginal = [r for r in nond if strength_bucket(r) == "0.50-0.60"]
+    rejected = [r for r in nond if strength_bucket(r) == "拒(<0.50)"]
+    return len(horizon_returns(marginal, 1)), len(horizon_returns(rejected, 1))
+
+
 def welch(a: list[float], b: list[float]) -> dict:
     """Welch t (a vs b) + Cohen's d; 空组返回 n 感知的不可判结构."""
     if not a or not b:

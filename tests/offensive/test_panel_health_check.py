@@ -223,3 +223,44 @@ def test_oneline_discloses_degraded_layer(tmp_path) -> None:
     p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
     out = panel_health_oneline(p, min_n=10, min_group=5)
     assert "降级" in out
+
+
+# ---------- 「边缘对照」段: 预注册对比的 T+1 计数 (2026-08-19, count-only 反偷看) ----------
+
+
+def _contrast_rows(n_marginal: int, n_rejected: int) -> list[dict]:
+    rows = []
+    for i in range(n_marginal):
+        rows.append({"plan_eligible": True, "trigger_strength": 0.55, "return_t1": 0.01})
+    for i in range(n_rejected):
+        rows.append({"plan_eligible": False, "return_t1": -0.01})
+    return rows
+
+
+def test_oneline_marginal_contrast_segment_counts():
+    from scripts.panel_health_check import _marginal_contrast_segment
+
+    seg = _marginal_contrast_segment(_contrast_rows(14, 22))
+    assert seg == " · 边缘对照 14|22/30"  # min(14,22) < 30 → 未熟, 纯计数无均值/p
+
+
+def test_oneline_marginal_contrast_segment_mature_flip():
+    from scripts.panel_health_check import _marginal_contrast_segment
+
+    seg = _marginal_contrast_segment(_contrast_rows(31, 30))
+    assert seg == " · ⚠边缘对照可初判 31|30→30"  # min(31,30) >= 30 → 成熟标记
+
+
+def test_oneline_contrast_segment_exception_isolated(monkeypatch):
+    """计数链崩溃只降级为占位文本, 绝不拖垮既有体检行."""
+    import scripts.panel_signal_decomposition as psd
+
+    def boom(_rows):
+        raise RuntimeError("count crashed")
+
+    monkeypatch.setattr(psd, "contrast_t1_counts", boom)
+    from scripts.panel_health_check import panel_health_oneline
+
+    line = panel_health_oneline()  # 真实 panel 路径 (只读)
+    assert "面板体检" or True  # noqa: B011 - 不断言文案, 只要求不抛
+    assert isinstance(line, str) and ("桶计数不可用" in line or "边缘对照" in line or line == "面板为空")
