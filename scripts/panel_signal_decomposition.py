@@ -24,6 +24,7 @@ from datetime import date
 from pathlib import Path
 from statistics import fmean
 
+import numpy as np
 from scipy import stats
 
 PANEL_PATH = Path("data/reports/setup_output_panel.jsonl")
@@ -133,6 +134,67 @@ def block_reason_class(reason: str | None) -> str:
     return r[:48]
 
 
+def contrast_wait_projection(rows: list[dict], target_pp: float = 2.0,
+                             n_boot: int = 2000, seed: int = 20260819) -> dict | None:
+    """预注册对比 (0.50-0.60 vs 拒<0.50) T+1 的等待投影 (粗估, 纯披露).
+
+    语义: 按信号日聚类 bootstrap 重采样天 (同日两侧事件共享市场抽签),
+    估计对比差 (边缘桶均值 - 拒票组均值) 的 CI90; 若 CI 仍跨 0, 按标度律
+    SE ∝ 1/√n 外推达到目标半宽 (默认 2pp) 每侧所需样本 ≈ n×(半宽/目标)²
+    — 聚类效应已隐含在当前半宽里。两侧任一 n<MIN_CELL_N → None (未到初判
+    门槛, 无从投影); CI 不跨 0 → {'decisive': True} (无需等待)。
+    """
+    groups = split_groups(rows)
+    nond = groups["eligible"] + groups["rejected"]
+    day_blocks: dict[str, dict[str, list[float]]] = {}
+    for r in nond:
+        v = r.get("return_t1")
+        if not isinstance(v, (int, float)):
+            continue
+        bucket = strength_bucket(r)
+        if bucket not in ("0.50-0.60", "拒(<0.50)"):
+            continue
+        blk = day_blocks.setdefault(str(r.get("signal_date") or "?"),
+                                    {"0.50-0.60": [], "拒(<0.50)": []})
+        blk[bucket].append(float(v))
+    n_a = sum(len(b["0.50-0.60"]) for b in day_blocks.values())
+    n_b = sum(len(b["拒(<0.50)"]) for b in day_blocks.values())
+    if n_a < MIN_CELL_N or n_b < MIN_CELL_N:
+        return None
+    days = list(day_blocks.values())
+    rng = np.random.default_rng(seed)
+    diffs = np.empty(n_boot)
+    for i in range(n_boot):
+        pick = rng.integers(0, len(days), len(days))
+        pooled_a: list[float] = []
+        pooled_b: list[float] = []
+        for j in pick:
+            pooled_a.extend(days[j]["0.50-0.60"])
+            pooled_b.extend(days[j]["拒(<0.50)"])
+        diffs[i] = (fmean(pooled_a) if pooled_a else 0.0) - (fmean(pooled_b) if pooled_b else 0.0)
+    ci_low, ci_high = float(np.quantile(diffs, 0.05)), float(np.quantile(diffs, 0.95))
+    all_a = [v for b in day_blocks.values() for v in b["0.50-0.60"]]
+    all_b = [v for b in day_blocks.values() for v in b["拒(<0.50)"]]
+    out = {"n_marginal": n_a, "n_rejected": n_b,
+           "diff_mean": fmean(all_a) - fmean(all_b),
+           "ci90_low": ci_low, "ci90_high": ci_high,
+           "target_halfwidth_pp": target_pp}
+    if not (ci_low <= 0 <= ci_high):
+        out["decisive"] = True
+        return out
+    out["decisive"] = False
+    halfwidth = (ci_high - ci_low) / 2
+    out["ci90_halfwidth_pp"] = halfwidth * 100
+    if halfwidth * 100 <= target_pp:
+        # 已窄于目标仍跨 0: 精确测到差≈0 — 更多样本不再提升分辨率
+        out["at_target_width"] = True
+        return out
+    out["at_target_width"] = False
+    scale = (halfwidth * 100 / target_pp) ** 2
+    out["need_per_side_approx"] = int(round(max(n_a, n_b) * scale))
+    return out
+
+
 def decompose(rows: list[dict]) -> dict:
     groups = split_groups(rows)
     elig, rej = groups["eligible"], groups["rejected"]
@@ -172,6 +234,7 @@ def decompose(rows: list[dict]) -> dict:
         }
     for r in rej:
         del r["_cls"]
+    out["contrast_wait_projection"] = contrast_wait_projection(rows)
     return out
 
 
@@ -212,6 +275,27 @@ def render_md(payload: dict, date_str: str) -> str:
             wr = "n/a" if c["win_rate"] is None else f"{c['win_rate']:.0%}"
             verdict = "充分" if c["sufficient"] else "⚠样本不足"
             lines.append(f"| {label} | {c['n']} | {_fmt_pct(c['mean'])} | {wr} | {verdict} |")
+    proj = payload.get("contrast_wait_projection")
+    if proj is not None:
+        lines += ["", "## 等待投影 (预注册对比 T+1, 聚类 bootstrap CI90, 粗估)", ""]
+        if proj["decisive"]:
+            lines.append(f"- 对比 CI90 [{proj['ci90_low']:+.2f}pp, {proj['ci90_high']:+.2f}pp] 不跨 0 — 无需等待, 判定材料已熟")
+        else:
+            lines.append(
+                f"- 当前: 边缘 {proj['n_marginal']} vs 拒票 {proj['n_rejected']} · "
+                f"差 {proj['diff_mean']:+.2f}pp · CI90 [{proj['ci90_low']:+.2f}, {proj['ci90_high']:+.2f}] "
+                f"(半宽 {proj['ci90_halfwidth_pp']:.2f}pp) — 跨 0, 不可判"
+            )
+            if proj.get("at_target_width"):
+                lines.append(
+                    f"- 半宽已 ≤ {proj['target_halfwidth_pp']:.0f}pp 仍跨 0: 精确测到差≈0 — "
+                    f"更多样本不再提升分辨率 (结论倾向『无差异』而非『样本不足』)"
+                )
+            else:
+                lines.append(
+                    f"- 缩到半宽 {proj['target_halfwidth_pp']:.0f}pp 约需每侧 ~{proj['need_per_side_approx']} 条 "
+                    f"(SE∝1/√n 外推, 聚类效应隐含在当前半宽; 粗估仅供预期管理)"
+                )
     lines += ["", "## T+1 反向的 regime 分解", ""]
     for reg, w in payload["regime_split_t1"].items():
         p_txt = "n/a" if w["p"] is None else f"{w['p']:.3f}"

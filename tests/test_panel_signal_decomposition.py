@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from panel_signal_decomposition import (  # noqa: E402
     MIN_CELL_N,
     contrast_t1_counts,
+    contrast_wait_projection,
     block_reason_class,
     cell,
     decompose,
@@ -175,3 +176,59 @@ def test_contrast_t1_counts_parity_with_decompose():
     t1 = decompose(rows)["strength_bucket_horizons"]["t1"]
     assert (marginal, rejected) == (t1["0.50-0.60"]["n"], t1["拒(<0.50)"]["n"])
     assert (marginal, rejected) == (12, 12)
+
+
+# ---------- contrast_wait_projection: 等待投影 ----------
+
+
+def _proj_rows(n_marginal: int, n_rejected: int, spread: float = 0.03,
+               offset: float = 0.0, days: int = 12) -> list[dict]:
+    rows = []
+    for i in range(n_marginal):
+        rows.append({"plan_eligible": True, "trigger_strength": 0.55,
+                     "signal_date": f"202608{i % days + 1:02d}",
+                     "return_t1": round(offset + ((i % 7) - 3) * spread / 3, 4)})
+    for i in range(n_rejected):
+        rows.append({"plan_eligible": False,
+                     "signal_date": f"202608{i % days + 1:02d}",
+                     "return_t1": round(-((i % 7) - 3) * spread / 3, 4)})
+    return rows
+
+
+def test_wait_projection_none_below_min_n():
+    assert contrast_wait_projection(_proj_rows(10, 10)) is None
+
+
+def test_wait_projection_undecided_gives_scaling():
+    proj = contrast_wait_projection(_proj_rows(40, 40, spread=0.12))
+    assert proj is not None and proj["decisive"] is False
+    assert proj["ci90_low"] <= 0 <= proj["ci90_high"]  # 同分布 → CI 跨 0
+    assert proj["ci90_halfwidth_pp"] > proj["target_halfwidth_pp"]  # 半宽 >2pp
+    assert proj["need_per_side_approx"] > 40  # 需要更多样本
+    assert proj["at_target_width"] is False
+
+
+def test_wait_projection_at_target_width_zero_diff():
+    # 低离散 + 差≈0: 半宽已 ≤2pp 仍跨 0 → at_target_width (继续收集无益)
+    proj = contrast_wait_projection(_proj_rows(40, 40, spread=0.008))
+    assert proj is not None and proj["decisive"] is False
+    assert proj["at_target_width"] is True
+    assert "need_per_side_approx" not in proj
+
+
+def test_wait_projection_decisive_when_offset_large():
+    proj = contrast_wait_projection(_proj_rows(40, 40, spread=0.01, offset=0.05))
+    assert proj is not None and proj["decisive"] is True
+    assert proj["ci90_low"] > 0  # 边缘桶系统性高出 5pp → CI 不跨 0
+
+
+def test_render_md_includes_wait_projection_when_ripe():
+    from panel_signal_decomposition import render_md
+
+    rows = _proj_rows(40, 40, spread=0.12)
+    payload = decompose(rows)
+    md = render_md(payload, "20260819")
+    assert "等待投影" in md and "缩到半宽" in md and "粗估" in md
+    # 未熟时该段整体缺席 (真实面板当前形态)
+    md_small = render_md(decompose(_proj_rows(5, 5)), "20260819")
+    assert "等待投影" not in md_small
