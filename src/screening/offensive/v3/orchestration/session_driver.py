@@ -25,6 +25,7 @@ from datetime import date, datetime
 from src.screening.offensive.v3.capital.fills import FillAttribution
 from src.screening.offensive.v3.capital.repository import CapitalRepository
 from src.screening.offensive.v3.contracts.execution import ExecutionSide
+from src.screening.offensive.v3.execution.lifecycle import DailyBar
 from src.screening.offensive.v3.execution.proxy_core import (
     ProxyCostScenario,
     ProxyOpenSettlement,
@@ -76,7 +77,18 @@ class SessionDriverResult:
 
 
 class SessionLifecycleDriver:
-    """One arm, one scenario, one session sequence — the minimal trial loop."""
+    """One arm, one scenario, one session sequence — the minimal trial loop.
+
+    ``bar_for`` source contract (final review P3-a, 2026-08-20): the driver is
+    mechanism only — it accepts any lookup callable and cannot see where bars
+    come from, so the contract lives here in prose. Official wiring MUST
+    source every bar from the evidence timeline: per-session bar-set
+    evidence records (``MarketBarSetPublisher``) decoded through
+    ``bars_from_record`` / ``assemble_replay_session_facts`` before they
+    reach this driver. A caller that feeds court CSVs, price_cache or any
+    seeding source straight into ``bar_for`` bypasses the Phase 5a
+    data-surface adjudication, and its run is not an official replay.
+    """
 
     def __init__(
         self,
@@ -89,7 +101,7 @@ class SessionLifecycleDriver:
         attribution: FillAttribution,
         command_at: Callable[[date], datetime],
         send_deadline: Callable[[date], datetime],
-        bar_for: Callable[[date, str], "object | None"],
+        bar_for: Callable[[date, str], "DailyBar | None"],
     ) -> None:
         if len(sessions) < 2:
             raise SessionDriverError("sessions_too_short", "need at least two sessions")
