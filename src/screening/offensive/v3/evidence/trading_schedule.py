@@ -51,6 +51,10 @@ CALENDAR_ID: Final[str] = "SSE"
 CALENDAR_VERSION: Final[str] = "sse-sessions-v1"
 SCHEDULE_PRODUCER: Final[str] = "exchange-calendar"
 FOLLOWING_SESSION_COUNT: Final[int] = 10
+_DERIVE_RULE_DOMAIN: Final[str] = "v3.trading-schedule.derive.v1"
+# 推导规则域的 schema major 锚定信封 SUPPORTED_SCHEMA_MAJOR (对抗审查 P3:
+# 此前裸字面量 2 是"白名单试出来的"而非语义选定; 现显式与信封契约对齐)
+_DERIVE_RULE_SCHEMA_MAJOR: Final[int] = SUPPORTED_SCHEMA_MAJOR
 
 
 class TradingScheduleError(RuntimeError):
@@ -128,8 +132,8 @@ def build_schedule_envelope(schedule: FrozenTradingSessionSchedule, *, observed_
         family_id=None,
         strategy_semver="1.0.0",
         behavior_fingerprint=domain_hash(
-            "v3.trading-schedule.derive.v1",
-            2,
+            _DERIVE_RULE_DOMAIN,
+            _DERIVE_RULE_SCHEMA_MAJOR,
             {
                 "calendar_id": CALENDAR_ID,
                 "calendar_version": CALENDAR_VERSION,
