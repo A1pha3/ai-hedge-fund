@@ -1,17 +1,25 @@
 """evidence_set_merkle_root — 治理签名证据根 (2026-08-20).
 
 锁定: 输入顺序无关 (按 evidence_id 排序)、重复 id 冲突不去重、空集
-fail-closed、哈希格式校验、敏感性 (任一叶变化→根变化)、奇数层复制策略、
-黄金根值钉死算法稳定。
+fail-closed、哈希格式校验、敏感性 (任一叶变化→根变化)、**每层**奇数复制
+(大小 5/6/9… 的越界回归钉死)、叶数入根 (同拓扑不同大小无歧义)、黄金根
+值钉死算法稳定、独立第二实现 (递归参考) 逐位交叉验证、包含证明全sizes
+往返 + 篡改面。
 """
 
 from __future__ import annotations
+
+import json
 
 import pytest
 
 from src.screening.offensive.v3.evidence.merkle import (
     EvidenceMerkleError,
+    MerkleInclusionProof,
+    MerklePathStep,
     evidence_set_merkle_root,
+    merkle_inclusion_proof,
+    verify_merkle_inclusion,
 )
 
 PAIRS = [
@@ -21,6 +29,59 @@ PAIRS = [
 ]
 
 
+def _sized_pairs(n: int) -> list[tuple[str, str]]:
+    return [(f"ev-{i:03d}", format(i, "064x")) for i in range(n)]
+
+
+def _reference_root(bindings: list[tuple[str, str]]) -> str:
+    """独立第二实现: 递归形状 (非逐层循环), 与生产实现逐位交叉验证。
+
+    与生产实现的策略差异仅是算法形状 — 排序/去重前置、奇数层复制末位、
+    叶数入根三条策略相同, 由断言而非复制保证。
+    """
+    import hashlib
+    from collections import OrderedDict
+
+    from src.screening.offensive.v3.trust import canonical_json_bytes
+
+    def h(domain: str, payload: dict) -> str:
+        return hashlib.sha256(
+            canonical_json_bytes({"domain": domain, **payload})
+        ).hexdigest()
+
+    seen: OrderedDict[str, str] = OrderedDict()
+    for evidence_id, artifact_hash in bindings:
+        assert evidence_id not in seen
+        seen[evidence_id] = artifact_hash
+    leaves = [
+        h(
+            "ai-hedge-fund.v3.evidence.merkle.leaf.v1",
+            {"evidence_id": i, "artifact_hash": seen[i]},
+        )
+        for i in sorted(seen)
+    ]
+
+    def rec(level: list[str]) -> str:
+        if len(level) == 1:
+            return level[0]
+        if len(level) % 2 == 1:
+            level = [*level, level[-1]]
+        return rec(
+            [
+                h(
+                    "ai-hedge-fund.v3.evidence.merkle.node.v1",
+                    {"left": level[i], "right": level[i + 1]},
+                )
+                for i in range(0, len(level), 2)
+            ]
+        )
+
+    return h(
+        "ai-hedge-fund.v3.evidence.merkle.root.v1",
+        {"top": rec(leaves), "leaf_count": len(leaves)},
+    )
+
+
 def test_input_order_is_irrelevant():
     forward = evidence_set_merkle_root(PAIRS)
     shuffled = evidence_set_merkle_root([PAIRS[2], PAIRS[0], PAIRS[1]])
@@ -28,10 +89,10 @@ def test_input_order_is_irrelevant():
 
 
 def test_golden_root_pins_the_algorithm():
-    # 黄金根: 算法 (排序/叶/节点域/奇数复制) 变化即此断言失败
+    # 黄金根: 算法 (排序/叶/节点/根域+叶数折入/奇数复制) 变化即此断言失败
     assert (
         evidence_set_merkle_root(PAIRS)
-        == "64ad28d56c4dc8b7301d004f32e05996a9d2656f702f05baf630f95f7502f1af"
+        == "7f70936a257280a431f747df6d61a93fbb91d0681073286e6b26ee55b3484d06"
     )
 
 
@@ -67,19 +128,89 @@ def test_empty_evidence_id_rejected():
     assert ei.value.code == "evidence_id_empty"
 
 
-def test_odd_and_even_levels_are_distinct_and_stable():
-    # 黄金根 (PAIRS=3 叶) 已锁奇数层复制路径; 此处钉: 偶数集与奇数集互不相同,
-    # 且同集重复计算恒稳定 (纯函数)。注意 3 叶+末叶复制的 multiset 无法经
-    # 公开 API 表达 (重复 id 一律冲突) — 奇数复制是函数内部规范行为, 由黄金根钉死。
-    odd = evidence_set_merkle_root(PAIRS)
-    even_pair = evidence_set_merkle_root(PAIRS[:2])
-    even_four = evidence_set_merkle_root(PAIRS + [("market:bars:20260810", "d" * 64)])
-    assert len({odd, even_pair, even_four}) == 3
-    assert evidence_set_merkle_root(list(reversed(PAIRS))) == odd
+def test_odd_level_duplication_happens_at_every_level():
+    """回归钉死: 大小 5/6/9 (首个配对层落奇数) 曾 IndexError。"""
+    for n in (5, 6, 9, 10, 11, 12, 13):
+        assert len(evidence_set_merkle_root(_sized_pairs(n))) == 64
 
 
-def test_single_leaf_root_is_a_node_hash_not_a_leaf_hash():
-    # 单叶集: 根恒为 node(leaf, leaf) — 叶哈希与根哈希无歧义地不同域
-    single = evidence_set_merkle_root(PAIRS[:1])
-    assert single != evidence_set_merkle_root(PAIRS[:1] + [("another", "d" * 64)])
-    assert len(single) == 64
+def test_leaf_count_is_folded_into_the_root():
+    # 同拓扑结构、不同叶数 → 不同根 (结构性歧义封死)
+    two = evidence_set_merkle_root(PAIRS[:2])
+    three = evidence_set_merkle_root(PAIRS)
+    four = evidence_set_merkle_root(PAIRS + [("another:1", "d" * 64)])
+    assert len({two, three, four}) == 3
+    assert evidence_set_merkle_root(list(reversed(PAIRS))) == three
+
+
+def test_independent_reference_implementation_agrees_bit_for_bit():
+    """独立递归参考实现 vs 生产逐层实现: 大小 1..33 逐位一致。"""
+    for n in range(1, 34):
+        pairs = _sized_pairs(n)
+        assert evidence_set_merkle_root(pairs) == _reference_root(pairs), n
+
+
+@pytest.mark.parametrize("n", list(range(1, 10)))
+def test_inclusion_proof_round_trips_for_every_leaf(n: int):
+    pairs = _sized_pairs(n)
+    root = evidence_set_merkle_root(pairs)
+    for evidence_id, artifact_hash in pairs:
+        proof = merkle_inclusion_proof(pairs, evidence_id)
+        assert proof.artifact_hash == artifact_hash
+        assert proof.leaf_count == n
+        verify_merkle_inclusion(root, proof)  # 不抛即通过
+        rebuilt = MerkleInclusionProof.model_validate_json(
+            proof.model_dump_json(), strict=True
+        )
+        assert rebuilt == proof
+        verify_merkle_inclusion(root, rebuilt)
+
+
+def test_inclusion_proof_tamper_faces():
+    pairs = _sized_pairs(6)  # 含奇数层的多级树
+    root = evidence_set_merkle_root(pairs)
+    proof = merkle_inclusion_proof(pairs, "ev-002")
+
+    forged_hash = proof.model_dump_json().replace(proof.artifact_hash, "f" * 64)
+    with pytest.raises(EvidenceMerkleError) as ei:
+        verify_merkle_inclusion(
+            root, MerkleInclusionProof.model_validate_json(forged_hash, strict=True)
+        )
+    assert ei.value.code == "inclusion_proof_mismatch"
+
+    # 截断路径: 过模型校验 (叶数>1 且路径非空), 但验证面复算必拒
+    dropped = json.loads(proof.model_dump_json())
+    dropped["path"] = dropped["path"][:-1]
+    truncated = MerkleInclusionProof.model_validate_json(
+        json.dumps(dropped), strict=True
+    )
+    with pytest.raises(EvidenceMerkleError):
+        verify_merkle_inclusion(root, truncated)
+
+    other_root = evidence_set_merkle_root(_sized_pairs(5))
+    with pytest.raises(EvidenceMerkleError):
+        verify_merkle_inclusion(other_root, proof)
+
+    with pytest.raises(EvidenceMerkleError) as ei:
+        merkle_inclusion_proof(pairs, "ev-not-in-set")
+    assert ei.value.code == "evidence_id_not_in_set"
+
+
+def test_single_leaf_proof_is_empty_path():
+    pairs = _sized_pairs(1)
+    root = evidence_set_merkle_root(pairs)
+    proof = merkle_inclusion_proof(pairs, "ev-000")
+    assert proof.path == () and proof.leaf_count == 1
+    verify_merkle_inclusion(root, proof)
+    # 多叶证明不允许空路径 / 单叶证明不允许非空路径
+    with pytest.raises(Exception):
+        MerkleInclusionProof(
+            evidence_id="ev-000", artifact_hash="a" * 64, leaf_count=2, path=()
+        )
+    with pytest.raises(Exception):
+        MerkleInclusionProof(
+            evidence_id="ev-000",
+            artifact_hash="a" * 64,
+            leaf_count=1,
+            path=(MerklePathStep(sibling_hash="b" * 64, sibling_on_right=True),),
+        )

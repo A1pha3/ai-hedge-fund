@@ -36,6 +36,25 @@ from src.screening.offensive.v3.governance.regime_trial import (
 )
 from src.screening.offensive.v3.policy.models import PolicySnapshot
 
+
+class SealedStageRecord:
+    """One immutable sealed stage, strictly reparsed from stored truth."""
+
+    def __init__(
+        self,
+        *,
+        stage_id: str,
+        trial_id: str,
+        stage_manifest: StageManifest,
+        signed_stage_envelope: SignedEnvelope,
+        sealed_at: datetime,
+    ) -> None:
+        self.stage_id = stage_id
+        self.trial_id = trial_id
+        self.stage_manifest = stage_manifest
+        self.signed_stage_envelope = signed_stage_envelope
+        self.sealed_at = sealed_at
+
 _SCHEMA_DDL: Final[tuple[str, ...]] = (
     """
     CREATE TABLE IF NOT EXISTS trial_attempts (
@@ -539,6 +558,54 @@ class GovernanceRepository:
                 "sealed regime trial bundle failed strict revalidation",
                 reason=str(exc),
             ) from exc
+
+    def sealed_stage(self, stage_id: str) -> SealedStageRecord:
+        """Reparse one sealed stage strictly (privileged worker read face).
+
+        第三轮遗留项收口: stage 此前只写不读 — worker/回执核验需要从封存
+        真相重解析 manifest 与签名信封; 存储字节损坏 fail-closed, 不静默。
+        """
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                sa.text(
+                    "SELECT stage_id, trial_id, stage_manifest_hash,"
+                    " stage_manifest_json, signed_stage_envelope_json, sealed_at"
+                    " FROM sealed_stages WHERE stage_id = :stage"
+                ),
+                {"stage": stage_id},
+            ).first()
+        if row is None:
+            raise GovernanceStoreError(
+                "stage_unknown", "no sealed stage for id", stage_id=stage_id
+            )
+        mapping = dict(row._mapping)
+        try:
+            manifest = StageManifest.model_validate_json(
+                str(mapping["stage_manifest_json"]), strict=True
+            )
+            envelope = SignedEnvelope.model_validate_json(
+                str(mapping["signed_stage_envelope_json"]), strict=True
+            )
+        except ValidationError as exc:
+            raise GovernanceStoreError(
+                "sealed_stage_corrupt",
+                "sealed stage failed strict revalidation",
+                stage_id=stage_id,
+                reason=str(exc),
+            ) from exc
+        if manifest.artifact_hash() != str(mapping["stage_manifest_hash"]):
+            raise GovernanceStoreError(
+                "sealed_stage_corrupt",
+                "sealed stage manifest hash column does not bind the stored manifest",
+                stage_id=stage_id,
+            )
+        return SealedStageRecord(
+            stage_id=str(mapping["stage_id"]),
+            trial_id=str(mapping["trial_id"]),
+            stage_manifest=manifest,
+            signed_stage_envelope=envelope,
+            sealed_at=datetime.fromisoformat(str(mapping["sealed_at"])),
+        )
 
     @staticmethod
     def _require_trial_for_stage(conn: sa.Connection, trial_manifest_hash: str) -> str:

@@ -85,9 +85,12 @@ class SessionLifecycleDriver:
     source every bar from the evidence timeline: per-session bar-set
     evidence records (``MarketBarSetPublisher``) decoded through
     ``bars_from_record`` / ``assemble_replay_session_facts`` before they
-    reach this driver. A caller that feeds court CSVs, price_cache or any
-    seeding source straight into ``bar_for`` bypasses the Phase 5a
-    data-surface adjudication, and its run is not an official replay.
+    reach this driver — the blessed junction is
+    ``replay_assembly.evidence_backed_bar_for`` (signature accepts only the
+    evidence repository and published records). A caller that feeds court
+    CSVs, price_cache or any seeding source straight into ``bar_for``
+    bypasses the Phase 5a data-surface adjudication, and its run is not an
+    official replay.
     """
 
     def __init__(

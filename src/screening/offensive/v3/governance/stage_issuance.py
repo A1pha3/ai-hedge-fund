@@ -11,8 +11,10 @@ StageManifest (单一事实源 — 调用方不能重复发明 trial/SAP/指纹/
 诚实边界 (offline primitive): 回执与签名 stage 不构成权限、不激活任何
 authorization envelope、不解锁 runner/replay 的 fail-closed; 请求中的
 attempt checkpoint / 消费 id / loss budget 是**外部台账事实**, 本层只冻结
-不核验 (与全局 attempt ledger / 资本 truth 的交叉核验属特权 worker);
-真实密钥与信任链注入 (替代测试的 ephemeral 链) 同样留给特权 worker。
+不核验 — loss budget 的真实验证点是**激活时与 capital truth 的 stage
+loss state 逐分比对** (特权 worker 职责); 本层对调用方自报 NAV 的任何
+"交叉核对"都是安全剧场, 有意不实现。真实密钥与信任链注入 (替代测试的
+ephemeral 链) 同样留给特权 worker。
 """
 
 from __future__ import annotations
@@ -59,7 +61,12 @@ class StageIssuanceRequest:
     ``attempt_ledger_checkpoint_hash`` / ``alpha_*_consumption_id`` /
     ``stage_loss_*`` / ``maximum_loss_budget_cents`` 是全局 attempt ledger、
     alpha 预算与资本 truth 的事实; 本层原样冻结进签名 manifest, 不替任何
-    一方核验 (见模块 docstring 的诚实边界)。
+    一方核验 (见模块 docstring 的诚实边界)。``issued_at`` 是签发行为的
+    **显式时刻** (第三轮 P2-c 最优解): 签发行为身份 = (trial, stage,
+    内容+时刻) — 同一请求 crash 后重试逐字节收敛, 幂等不再依赖环境钟;
+    换时刻重签同一 ``stage_id`` 是不同行为, 落 ``stage_seal_conflict``
+    (保守安全, 强制显式调查)。签发方不得声明未来时刻 (对注入钟校验);
+    遗留的滞后上界由契约 ``issued_at < enrollment_start`` 钉死。
     """
 
     trial_id: str
@@ -72,6 +79,7 @@ class StageIssuanceRequest:
     stage_loss_version: int
     maximum_loss_budget_cents: int
     issuer_id: str
+    issued_at: datetime
 
 
 #: 回执与签名 StageManifest 同名的字段 — 校验器逐一钉死两者不可漂移
@@ -187,16 +195,21 @@ class GovernanceStageIssuer:
         ``regime_trial_bundle`` 严格重解析的封存字节; governance_policy_version
         取自封存 baseline policy 的 versions (语义单 delta 契约保证双臂一致)。
         契约校验器另钉死 ``issued_at < enrollment_start`` — 入场窗口开始后
-        不可能补签。重试语义 (对抗审查 P2-c, 2026-08-20): ``seal_stage``
-        的幂等收敛仅对**逐字节相同**的重放成立 — 真实墙钟下重跑会产生新
-        ``issued_at`` → 新 manifest 字节 → 同 ``stage_id`` 的
-        ``stage_seal_conflict`` (保守安全: 强制操作者显式调查而非静默吸收;
-        确定性重试需调用方冻结签发时钟)。
+        不可能补签。重试语义 (第三轮 P2-c 落地): ``issued_at`` 在请求内,
+        同一请求重试逐字节收敛且与墙钟无关; 换时刻重签同一 ``stage_id``
+        落 ``stage_seal_conflict``。请求声明的未来时刻在派生前拒绝。
         """
         bundle = self._repository.regime_trial_bundle(request.trial_id)
         trial = bundle.trial_manifest
         sap = bundle.sap_manifest
         now = self._clock()
+        if request.issued_at > now:
+            raise StageIssuanceError(
+                "future_issuance_instant",
+                "issuance instant cannot be ahead of the injected clock",
+                issued_at=request.issued_at.isoformat(),
+                clock=now.isoformat(),
+            )
         manifest = StageManifest(
             stage_id=request.stage_id,
             trial_manifest_hash=trial.artifact_hash(),
@@ -221,7 +234,7 @@ class GovernanceStageIssuer:
             fixed_assessment_date=trial.fixed_assessment_date,
             maximum_loss_budget_cents=request.maximum_loss_budget_cents,
             promotion_boolean_expression=trial.promotion_boolean_expression,
-            issued_at=now,
+            issued_at=request.issued_at,
             issuer_id=request.issuer_id,
             issuer_capability=STAGE_ISSUER_CAPABILITY,
             schema_major=_STAGE_SCHEMA_MAJOR,
@@ -260,7 +273,7 @@ class GovernanceStageIssuer:
             enrollment_start=trial.enrollment_start,
             followup_finality_date=trial.followup_finality_date,
             fixed_assessment_date=trial.fixed_assessment_date,
-            issued_at=now,
+            issued_at=request.issued_at,
             signed_stage_envelope_json=signed.model_dump_json(),
         )
 

@@ -14,12 +14,14 @@ evidence timeline — the assembler never touches seeding sources directly.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from datetime import date
-from typing import Mapping
 
+from src.screening.offensive.v3.contracts.evidence import EvidenceRecord
 from src.screening.offensive.v3.evidence.market_bars import bars_from_record
 from src.screening.offensive.v3.evidence.regime import ActiveRegimeObservation
 from src.screening.offensive.v3.evidence.repository import EvidenceRepository
+from src.screening.offensive.v3.execution.lifecycle import DailyBar
 from src.screening.offensive.v3.orchestration.paired_trial import CommittedBtstCandidate
 from src.screening.offensive.v3.orchestration.replay import ReplaySessionFacts
 
@@ -92,4 +94,36 @@ def assemble_replay_session_facts(
     )
 
 
-__all__ = ["ReplayAssemblyError", "assemble_replay_session_facts"]
+def evidence_backed_bar_for(
+    repository: EvidenceRepository,
+    bar_records: Mapping[date, EvidenceRecord],
+) -> Callable[[date, str], DailyBar | None]:
+    """replay_assembly ↔ session_driver 的唯一正式汇合点 (终轮审查 P3-b)。
+
+    每个会话的 bar-set 证据记录按需组装成 ``ReplaySessionFacts`` (blob →
+    信封绑定 → 严格解码, 全部在证据时间轴内), 再向驱动器供 bar 查询。
+    官方接线必须经此构造 ``bar_for`` —— 签名上只接受证据仓库与已发布
+    记录, 调用方**无法**绕过证据时间轴喂 CSV/price_cache 原始数据 (驱动
+    器 ``bar_for`` 源契约, P3-a)。marks 不经此层: 驱动器从同一 bar 源自
+    建持仓过滤的收盘 marks, 与 facts 同源。
+    """
+    facts_cache: dict[date, ReplaySessionFacts] = {}
+
+    def bar_for(session: date, security_id: str) -> DailyBar | None:
+        record = bar_records.get(session)
+        if record is None:
+            return None  # 未发布证据的会话没有可观测 bar (结算判 UNKNOWN)
+        if session not in facts_cache:
+            facts_cache[session] = assemble_replay_session_facts(
+                repository=repository, session=session, bar_record=record
+            )
+        return facts_cache[session].bars.get(security_id)
+
+    return bar_for
+
+
+__all__ = [
+    "ReplayAssemblyError",
+    "assemble_replay_session_facts",
+    "evidence_backed_bar_for",
+]

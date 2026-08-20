@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -97,6 +97,7 @@ def _request(**overrides) -> StageIssuanceRequest:
         stage_loss_version=1,
         maximum_loss_budget_cents=1_000_000,
         issuer_id="governance.service",
+        issued_at=NOW,
     )
     values.update(overrides)
     return StageIssuanceRequest(**values)
@@ -115,7 +116,7 @@ def sealed(tmp_path: Path):
     return repository, sign, verifier, current_head, caps, bundle
 
 
-def _issuer(sealed, *, signer_caps_key: str = "stage") -> GovernanceStageIssuer:
+def _issuer(sealed, *, signer_caps_key: str = "stage", clock=None) -> GovernanceStageIssuer:
     repository, sign, verifier, current_head, caps, _ = sealed
     return GovernanceStageIssuer(
         repository=repository,
@@ -123,7 +124,7 @@ def _issuer(sealed, *, signer_caps_key: str = "stage") -> GovernanceStageIssuer:
         stage_capability=caps["stage"],
         verifier=verifier,
         trust_head=lambda: current_head,
-        clock=lambda: NOW,
+        clock=clock or (lambda: NOW),
     )
 
 
@@ -161,7 +162,7 @@ def test_issue_derives_every_field_from_sealed_truth(sealed) -> None:
     assert manifest.followup_finality_date == trial.followup_finality_date
     assert manifest.fixed_assessment_date == trial.fixed_assessment_date
     assert manifest.promotion_boolean_expression == trial.promotion_boolean_expression
-    assert manifest.issued_at == NOW  # 注入时钟, 非墙上钟
+    assert manifest.issued_at == NOW  # 请求声明的签发时刻 (P2-c: 行为身份), 非墙上钟
     assert manifest.issuer_capability == STAGE_ISSUER_CAPABILITY
     assert manifest.maximum_loss_budget_cents == 1_000_000  # 请求的外部台账事实
     # 回执冗余字段与派生源一致
@@ -190,14 +191,46 @@ def test_receipt_is_hash_bound_and_drift_proof(sealed) -> None:
 
 
 def test_exact_replay_is_idempotent(sealed) -> None:
-    """crash 后重试同一签发: 幂等收敛, 签名信封逐字节相同。"""
-    issuer = _issuer(sealed)
-    first = issuer.issue(_request())
-    second = issuer.issue(_request())
+    """crash 后重试同一请求: 推进中的墙钟下仍逐字节收敛 (P2-c 落地)。
+
+    签发时刻在请求内, 幂等不再依赖环境钟; 两次 issue 之间时钟前进 1 小时,
+    签名信封仍逐字节相同 (确定性 Ed25519 + 请求决定的 manifest 字节)。
+    """
+    class _AdvancingClock:
+        def __init__(self) -> None:
+            self._moment = NOW
+
+        def __call__(self) -> datetime:
+            self._moment += timedelta(hours=1)
+            return self._moment
+
+    clock = _AdvancingClock()
+    issuer = _issuer(sealed, clock=clock)
+    first = issuer.issue(_request())  # trusted_at = NOW+1h (首读推进)
+    second = issuer.issue(_request())  # trusted_at = NOW+2h, 字节仍收敛
     assert second.stage_manifest_hash == first.stage_manifest_hash
     assert (
         second.signed_stage_envelope.payload == first.signed_stage_envelope.payload
-    )  # 确定性 Ed25519 + 冻结时钟 → 同字节
+    )
+
+
+def test_future_issuance_instant_rejected(sealed) -> None:
+    """签发方不得声明未来时刻 — 对注入钟校验后拒绝, 不落库。"""
+    with pytest.raises(StageIssuanceError) as ei:
+        _issuer(sealed).issue(_request(issued_at=NOW + timedelta(seconds=1)))
+    assert ei.value.code == "future_issuance_instant"
+
+
+def test_sealed_stage_reader_round_trips(sealed) -> None:
+    """sealed_stage 读面: 从封存真相严格重解析, 与回执逐字节一致。"""
+    receipt = _issuer(sealed).issue(_request())
+    record = sealed[0].sealed_stage("stage-regime-001")
+    assert record.stage_manifest.artifact_hash() == receipt.stage_manifest_hash
+    assert record.signed_stage_envelope.payload == receipt.signed_stage_envelope.payload
+    assert record.trial_id == TRIAL_ID
+    with pytest.raises(GovernanceStoreError) as ei:
+        sealed[0].sealed_stage("stage-unknown")
+    assert ei.value.code == "stage_unknown"
 
 
 def test_divergent_reissue_conflicts(sealed) -> None:

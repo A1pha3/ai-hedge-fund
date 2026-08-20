@@ -3,9 +3,10 @@
 两条平行抽象在此显式汇合 (终轮审查 P3-b): replay_assembly (Phase 5b,
 证据记录 → ReplaySessionFacts) 与 session_driver (Phase 6, OpenLine +
 bar_for 回调 → 结算/收盘估值/守恒) 互不直接消费。汇合点不是隐式
-lambda, 而是本文件的 ``evidence_backed_bar_for`` —— 它只接受已发布的
-bar-set 证据记录, 强制 bar 查询走证据时间轴 (P3-a 源契约的测试面执行:
-驱动器 API 本身拦不住直喂 CSV 的调用方, 汇合点要显式且唯一).
+lambda, 而是 ``replay_assembly.evidence_backed_bar_for`` —— 第三轮遗留
+项收口起升入 src (签名只接受证据仓库与已发布 bar-set 证据记录, 调用方
+无法绕过证据时间轴; P3-a 源契约的 blessed 实现), 本文件只消费不再
+自定义。
 
 断言面四件 (写码前钉死): pair 幂等 / 映射后 lines 与 kernel 行逐字段
 一致 / 驱动器守恒 / nav_projections() 非空。fixture 世界模块级构建一次
@@ -17,7 +18,6 @@ STALENESS, 待特权 worker 重写)。
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -44,7 +44,6 @@ from src.screening.offensive.v3.contracts.governance import PolicyActivation
 from src.screening.offensive.v3.contracts.regime import RegimeAdmissionMode, RegimeState
 from src.screening.offensive.v3.contracts.trial import TrialArm
 from src.screening.offensive.v3.evidence.offline_rig import build_offline_evidence_rig
-from src.screening.offensive.v3.evidence.repository import EvidenceRepository
 from src.screening.offensive.v3.execution.lifecycle import DailyBar, OpenExecutionVerdict
 from src.screening.offensive.v3.governance.regime_trial import (
     RegimeTrialBundle,
@@ -63,9 +62,8 @@ from src.screening.offensive.v3.orchestration.paired_trial import (
     build_arm_kernel_inputs,
     build_pair_records,
 )
-from src.screening.offensive.v3.orchestration.replay import ReplaySessionFacts
 from src.screening.offensive.v3.orchestration.replay_assembly import (
-    assemble_replay_session_facts,
+    evidence_backed_bar_for,
 )
 from src.screening.offensive.v3.orchestration.session_driver import (
     UNCONDITIONAL_EXIT_LIMIT_CENTS,
@@ -117,36 +115,9 @@ ATTR = FillAttribution(
 
 
 # ---------------------------------------------------------------------------
-# P3-b: 两条抽象的正式汇合点 (显式小适配函数, 不留隐式 lambda 约定)
+# P3-b: 汇合点已升入 src (replay_assembly.evidence_backed_bar_for) —
+# 本文件自此只消费, 不再持有本地定义 (第三轮遗留项收口)。
 # ---------------------------------------------------------------------------
-
-
-def evidence_backed_bar_for(
-    repository: EvidenceRepository,
-    bar_records: Mapping[date, EvidenceRecord],
-) -> Callable[[date, str], DailyBar | None]:
-    """replay_assembly ↔ session_driver 的唯一正式汇合点 (终轮审查 P3-b)。
-
-    每个会话的 bar-set 证据记录按需组装成 ``ReplaySessionFacts``
-    (blob → 信封绑定 → 严格解码, 全部在证据时间轴内), 再向驱动器供
-    bar 查询。官方接线必须经此构造 ``bar_for`` —— 不接受绕过证据
-    时间轴直喂 CSV/price_cache 的调用方 (驱动器 ``bar_for`` 源契约,
-    P3-a)。marks 不经此层: 驱动器从同一 bar 源自建持仓过滤的收盘
-    marks, 与 facts 同源。
-    """
-    facts_cache: dict[date, ReplaySessionFacts] = {}
-
-    def bar_for(session: date, security_id: str) -> DailyBar | None:
-        record = bar_records.get(session)
-        if record is None:
-            return None  # 未发布证据的会话没有可观测 bar (结算判 UNKNOWN)
-        if session not in facts_cache:
-            facts_cache[session] = assemble_replay_session_facts(
-                repository=repository, session=session, bar_record=record
-            )
-        return facts_cache[session].bars.get(security_id)
-
-    return bar_for
 
 
 # ---------------------------------------------------------------------------
