@@ -441,7 +441,12 @@ class GovernanceRepository:
         current_head: CurrentTrustHeadWitness,
         trusted_at: datetime,
     ) -> str:
-        """Verify and persist one immutable StageManifest bound to its trial."""
+        """Verify and persist one immutable StageManifest bound to its trial.
+
+        恰等重放幂等 (镜像 trial store 的 insert-or-verify-exact 纪律):
+        签发方 crash 后重试同一已封存 stage (同 manifest 字节 + 同签名信封)
+        收敛为幂等返回; 同 ``stage_id`` 不同内容是类型化冲突, 整个事务回滚。
+        """
 
         self._verify_signed_artifact(
             signed_stage,
@@ -453,6 +458,28 @@ class GovernanceRepository:
         )
         sealed_at = self._clock()
         with self._engine.begin() as conn:
+            existing = conn.execute(
+                sa.text(
+                    "SELECT stage_manifest_hash, stage_manifest_json,"
+                    " signed_stage_envelope_json FROM sealed_stages"
+                    " WHERE stage_id = :stage"
+                ),
+                {"stage": stage_manifest.stage_id},
+            ).first()
+            if existing is not None:
+                candidate = (
+                    stage_manifest.artifact_hash(),
+                    stage_manifest.model_dump_json(),
+                    signed_stage.model_dump_json(),
+                )
+                if tuple(existing) != candidate:
+                    raise GovernanceStoreError(
+                        "stage_seal_conflict",
+                        "stage already sealed with different content;"
+                        " the replay rolled back",
+                        stage_id=stage_manifest.stage_id,
+                    )
+                return stage_manifest.stage_id
             try:
                 conn.execute(
                     sa.text("INSERT INTO sealed_stages (stage_id, trial_id," " stage_manifest_hash, stage_manifest_json," " signed_stage_envelope_json, sealed_at)" " VALUES (:stage, :trial, :hash, :json, :signed, :at)"),
