@@ -107,8 +107,16 @@ def build_offline_evidence_rig(
     blobs_dir: Path,
     namespace: str,
     clock: Callable[[], datetime] | None = None,
+    trust_now: datetime | None = None,
 ) -> OfflineEvidenceRig:
-    now = datetime.now(timezone.utc)
+    """Build one rig; ``trust_now`` anchors the ephemeral trust windows.
+
+    信任窗 (anchor/issuer/bundle) 默认锚在真实墙钟; 需要冻结仓库时钟的
+    测试 (跨命名空间与其他固定窗口信任链共库, 如 session_batch) 传
+    ``trust_now`` 把窗口锚到同一时基 — 否则冻结钟早于真实锚点会被
+    "root key is not yet valid" 拒绝。默认行为不变。
+    """
+    now = trust_now if trust_now is not None else datetime.now(timezone.utc)
     valid_from = now - timedelta(hours=_VALID_FROM_HOURS)
     valid_until = now + timedelta(days=_VALID_UNTIL_DAYS)
 

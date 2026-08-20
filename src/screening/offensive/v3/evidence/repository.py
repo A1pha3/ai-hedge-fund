@@ -47,7 +47,7 @@ from src.screening.offensive.v3.contracts.evidence import (
     SnapshotEvidence,
 )
 from src.screening.offensive.v3.contracts.ports import ActiveEvidenceRecord
-from src.screening.offensive.v3.evidence.blob_store import BlobStore, BlobStoreError
+from src.screening.offensive.v3.evidence.blob_store import BlobStore
 from src.screening.offensive.v3.evidence.referenced_payloads import (
     ReferencedPayloadValidationError,
     validate_referenced_payload,
@@ -1436,6 +1436,23 @@ class EvidenceRepository:
     def commit_sequence(self) -> int:
         with self._engine.connect() as conn:
             return int(self._head(conn).last_commit_sequence)
+
+    def evidence_ids_by_kind(self, evidence_kind: str) -> tuple[str, ...]:
+        """All evidence ids of one kind in THIS issuer namespace (batch rule face).
+
+        只读枚举, 不解析载荷 — 会话批完备性校验 (session_batch) 用它枚举
+        可变成员集合, 逐个再走 ``active_revision`` 做 cutoff 正确解析。
+        """
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                sa.text(
+                    "SELECT DISTINCT evidence_id FROM evidence_records"
+                    " WHERE issuer_namespace = :ns AND evidence_kind = :kind"
+                    " ORDER BY evidence_id"
+                ),
+                {"ns": self._issuer_namespace, "kind": evidence_kind},
+            ).all()
+        return tuple(str(row[0]) for row in rows)
 
     def dependency_root(self) -> str:
         with self._engine.connect() as conn:
