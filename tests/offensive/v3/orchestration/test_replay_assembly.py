@@ -91,3 +91,17 @@ def test_court_csv_to_bars_conversion(tmp_path):
     assert bars["300001.SZ"].limit_up_cents == 1200  # 1000 × 1.20
     assert bars["300001.SZ"].limit_down_cents == 800  # 1000 × 0.80
     assert bars["300001.SZ"].close_cents == 1190
+
+
+def test_fence_rounding_is_exchange_half_up(tmp_path):
+    """.5 边界钉死: 1015×1.1=1116.5 → 1117 (交易所), 非银行家 1116."""
+    from scripts.v3_seed_market_bars import bars_from_court_csv
+
+    csv = tmp_path / "daily_20260820.csv"
+    csv.write_text(
+        "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,vol,amount\n"
+        "000001.SZ,20260820,10.15,10.20,10.10,10.15,10.15,0.0,1,1\n",
+        encoding="utf-8",
+    )
+    bars = bars_from_court_csv(csv, SESSION)
+    assert bars["000001.SZ"].limit_up_cents == 1117  # half-up, 不是 round() 的 1116

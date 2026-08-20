@@ -42,11 +42,17 @@ def bars_from_court_csv(csv_path: Path, session: date) -> dict[str, DailyBar]:
         close_c = round(float(row.close) * 100)
         pre_c = round(float(row.pre_close) * 100)
         cap = limit_up_cap_pct_for_ticker(symbol)
+
+        def _half_up(x: float) -> int:
+            # 交易所规则四舍五入; Python round 是银行家舍入, .5 边界会差 1 分
+            # (对抗审查 2026-08-20: 1015×1.1 银行家 1116 vs 交易所 1117)
+            return int(x + 0.5)
+
         out[ts_code] = DailyBar(
             security_id=ts_code, session=session,
             open_cents=open_c, high_cents=high_c, low_cents=low_c, close_cents=close_c,
-            limit_up_cents=round(pre_c * (1 + cap / 100)),
-            limit_down_cents=round(pre_c * (1 - cap / 100)),
+            limit_up_cents=_half_up(pre_c * (1 + cap / 100)),
+            limit_down_cents=_half_up(pre_c * (1 - cap / 100)),
         )
     return out
 
