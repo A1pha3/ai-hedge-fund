@@ -105,3 +105,23 @@ def test_fence_rounding_is_exchange_half_up(tmp_path):
     )
     bars = bars_from_court_csv(csv, SESSION)
     assert bars["000001.SZ"].limit_up_cents == 1117  # half-up, 不是 round() 的 1116
+
+
+def test_marks_filter_and_missing_marked_bar(rig):
+    import pytest as _pytest
+
+    from src.screening.offensive.v3.orchestration.replay_assembly import ReplayAssemblyError as E
+
+    rec = rig.bar_publisher.publish(session=SESSION, bars={"000001.SZ": _bar(), "600000.SH": _bar("600000.SH")})
+    facts = assemble_replay_session_facts(
+        repository=rig.repository, session=SESSION, bar_record=rec,
+        selected_candidates=(), marked_securities={"000001.SZ"},
+    )
+    assert set(facts.marks) == {"000001.SZ"}  # 持仓集过滤, flat 证券无 mark
+    assert set(facts.bars) == {"000001.SZ", "600000.SH"}  # bars 不受过滤
+    with _pytest.raises(E) as ei:
+        assemble_replay_session_facts(
+            repository=rig.repository, session=SESSION, bar_record=rec,
+            selected_candidates=(), marked_securities={"NOBAR.SZ"},
+        )
+    assert ei.value.code == "marked_security_bar_missing"

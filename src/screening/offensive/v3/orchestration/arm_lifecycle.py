@@ -63,6 +63,9 @@ def drive_open_fill(
     """
     if quantity <= 0:
         raise ArmLifecycleError("quantity_not_positive", f"quantity {quantity} must be positive")
+    # 宪法 #9 纪律 (对抗审查 2026-08-20): EXIT 的 quantity 必须取自资本仓位的
+    # 当前投影 (未知可卖量不得卖出/超卖); 台账原语是最后防线, 本签名要求
+    # 调用方 (顺序重放驱动) 先查投影再传量。
     resolution = resolve_open_execution(
         side=side,
         limit_price_cents=limit_price_cents,

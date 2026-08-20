@@ -40,6 +40,7 @@ def assemble_replay_session_facts(
     bar_record,
     regime_observation: ActiveRegimeObservation | None = None,
     selected_candidates: tuple[CommittedBtstCandidate, ...] | None = None,
+    marked_securities: frozenset[str] | set[str] | None = None,
 ) -> ReplaySessionFacts:
     """Assemble one session's PIT facts from published evidence.
 
@@ -66,7 +67,21 @@ def assemble_replay_session_facts(
                     f"{candidate.payload.signal_session}; facts are for {session}",
                 )
     bars = bars_from_record(repository, bar_record, expected_session=session)
-    marks = {security: bar.close_cents * _CENTS_TO_MICROS for security, bar in bars.items()}
+    # marks 纪律 (对抗审查 2026-08-20): 退出结算后 flat 证券的 mark 是冲突 —
+    # 顺序重放的驱动层按当期持仓集传 marked_securities; None = 全量 (仅限
+    # 尚无持仓维度的构建期/测试用途)。
+    if marked_securities is not None:
+        missing = set(marked_securities) - set(bars)
+        if missing:
+            raise ReplayAssemblyError(
+                "marked_security_bar_missing",
+                f"marked securities without bars in session {session}: {sorted(missing)[:5]}",
+            )
+    marks = {
+        security: bar.close_cents * _CENTS_TO_MICROS
+        for security, bar in bars.items()
+        if marked_securities is None or security in marked_securities
+    }
     return ReplaySessionFacts(
         session=session,
         snapshot_evidence=bar_record,

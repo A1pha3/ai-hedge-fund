@@ -107,3 +107,37 @@ def test_deterministic_execution_identity_replay_idempotent(repo):
     assert res2.verdict is OpenExecutionVerdict.FILLED
     # fill 幂等键: 同 execution_id+revision 重放不膨胀事件流 (宪法 15)
     assert repo.rebuild_projections()[0] is True
+
+
+def test_exit_semantics_position_defense_and_one_price_down(repo):
+    """三段: 无持仓卖出被资本投影拒 (#9) / 有持仓 max(open,limit) 成交 / 一字 UNKNOWN 零写入."""
+    from src.screening.offensive.v3.capital.repository import CapitalConflict
+    from src.screening.offensive.v3.execution.lifecycle import DailyBar
+
+    def _sell_bar(open_c, one_price_down=False):
+        return DailyBar(
+            security_id="600000.SH", session=SESSION,
+            open_cents=open_c, high_cents=open_c + 20 if not one_price_down else open_c,
+            low_cents=open_c - 20 if not one_price_down else open_c,
+            close_cents=open_c - 5 if not one_price_down else open_c,
+            limit_up_cents=1221, limit_down_cents=999, suspended=False,
+        )
+
+    # ① 无持仓的 FILLED 卖出: 资本投影拒绝 (不得超卖 — 宪法 #9 原语防线)
+    with pytest.raises(CapitalConflict):
+        _drive(repo, _sell_bar(1105), side=ExecutionSide.EXIT, limit=1000)
+
+    # ② 入场后卖出: max(open, limit) 成交, 台账推进
+    _drive(repo, _bar(open_c=1000), limit=1100)
+    v0 = repo.stream_version()
+    res = _drive(repo, _sell_bar(1105), side=ExecutionSide.EXIT, limit=1000)
+    assert res.verdict is OpenExecutionVerdict.FILLED
+    assert res.fill_price_cents == 1105  # max(1105, 1000)
+    assert repo.stream_version() > v0
+
+    # ③ 一字跌停: 卖出模糊 → UNKNOWN, 零写入 (无需持仓)
+    v1 = repo.stream_version()
+    locked = _sell_bar(999, one_price_down=True)
+    res2 = _drive(repo, locked, side=ExecutionSide.EXIT, limit=900)
+    assert res2.verdict is OpenExecutionVerdict.UNKNOWN
+    assert repo.stream_version() == v1
