@@ -261,3 +261,16 @@ def test_schedule_from_record_rejects_session_mismatch(rig, tmp_path):
     with pytest.raises(TradingScheduleError) as ei:
         schedule_from_record(rig["repository"], rec, expected_signal_session=SIGNAL + timedelta(days=1))
     assert ei.value.code == "signal_session_mismatch"
+
+
+def test_malformed_calendar_entry_fails_closed(rig, tmp_path):
+    from src.screening.offensive.v3.evidence.trading_schedule import (
+        TradingScheduleError as TSE,
+        load_authoritative_dates,
+    )
+
+    bad = tmp_path / "bad_calendar.json"
+    bad.write_text('["20260820", "2026/08/21"]', encoding="utf-8")
+    with pytest.raises(TSE) as ei:
+        load_authoritative_dates(bad)
+    assert ei.value.code == "calendar_date_malformed"

@@ -47,3 +47,14 @@ def test_dry_run_writes_nothing(tmp_path, monkeypatch):
     r = _run("--capital", str(capital), "--root", str(tmp_path / "root"), "--trial-id", "btst-regime-1")
     assert r.returncode != 0
     assert not (tmp_path / "root").exists()
+
+
+def test_symlink_root_component_rejected(tmp_path):
+    (tmp_path / "c.sqlite3").write_bytes(b"x")
+    real = tmp_path / "real-root"
+    real.mkdir()
+    link = tmp_path / "link-root"
+    link.symlink_to(real)
+    r = _run("--capital", str(tmp_path / "c.sqlite3"), "--root", str(link), "--trial-id", "btst-regime-1")
+    assert r.returncode == 1
+    assert json.loads(r.stderr)["error"] == "root_symlink_rejected"

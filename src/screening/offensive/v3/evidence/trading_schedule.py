@@ -104,7 +104,15 @@ def load_authoritative_dates(calendar_path: Path | str) -> set[date]:
     dates = json.loads(text)
     if not isinstance(dates, list):
         raise TradingScheduleError("calendar_format_unexpected", "expected a list of YYYYMMDD strings")
-    return {date(int(s[:4]), int(s[4:6]), int(s[6:8])) for s in dates if isinstance(s, str) and len(s) == 8}
+    out: set[date] = set()
+    for s in dates:
+        try:  # 畸形行 fail-closed: 静默跳过可能掩盖日历损坏 (对抗审查 2026-08-20)
+            out.add(date(int(s[:4]), int(s[4:6]), int(s[6:8])))
+        except (TypeError, ValueError) as exc:
+            raise TradingScheduleError(
+                "calendar_date_malformed", f"calendar entry {s!r} is not YYYYMMDD"
+            ) from exc
+    return out
 
 
 def build_schedule_envelope(schedule: FrozenTradingSessionSchedule, *, observed_at: datetime) -> SnapshotEvidence:

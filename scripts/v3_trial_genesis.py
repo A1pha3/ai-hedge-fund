@@ -32,13 +32,14 @@ _TRIAL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 
 
 def _validate_root(root: Path) -> None:
+    """Canonical 绝对路径, 逐组件 lstat 拒 symlink (镜像 v3_regime_trial 守卫)."""
     if not root.is_absolute():
         raise SystemExit(json.dumps({"error": "root_not_absolute", "root": str(root)}))
-    resolved = root.resolve()
+    probe = Path(root.anchor)
     for part in root.parts[1:]:
-        probe = resolved  # canonical check: every existing component must not be a symlink
+        probe = probe / part
         if probe.is_symlink():
-            raise SystemExit(json.dumps({"error": "root_symlink_rejected", "component": part}))
+            raise SystemExit(json.dumps({"error": "root_symlink_rejected", "component": str(probe)}))
 
 
 def dry_run_report(capital_path: Path) -> dict:
