@@ -44,6 +44,7 @@ from src.screening.offensive.v3.contracts.evidence import (
 )
 from src.screening.offensive.v3.evidence.repository import EvidenceRepository
 from src.screening.offensive.v3.kernel.models import FrozenTradingSessionSchedule
+from src.screening.offensive.v3.contracts.base import domain_hash
 from src.screening.offensive.v3.trust import SignedEnvelope, canonical_json_bytes
 
 CALENDAR_ID: Final[str] = "SSE"
@@ -125,8 +126,18 @@ def build_schedule_envelope(schedule: FrozenTradingSessionSchedule, *, observed_
         subject_scope=EvidenceScope.GLOBAL,
         subject_producer=SCHEDULE_PRODUCER,
         family_id=None,
-        strategy_semver=CALENDAR_VERSION,
-        behavior_fingerprint=schedule.calendar_artifact_hash,
+        strategy_semver="1.0.0",
+        behavior_fingerprint=domain_hash(
+            "v3.trading-schedule.derive.v1",
+            2,
+            {
+                "calendar_id": CALENDAR_ID,
+                "calendar_version": CALENDAR_VERSION,
+                "following_session_count": FOLLOWING_SESSION_COUNT,
+                "ordering": "ascending-strict-after-signal",
+                "slice_fingerprint_domain": "signal+following-sessions",
+            },
+        ),  # 推导规则指纹: 消费方可由同一规则常数复算 (对抗审查 2026-08-20 语义修正)
         policy_epoch=1,
         execution_version="t1-open-t10-open.v1",
         cost_version="cn-a-share-costs.v1",

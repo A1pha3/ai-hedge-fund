@@ -701,8 +701,6 @@ def _commit_clear_run_pair(rig: _Rig) -> None:
     )
     regime = _regime_observation(RegimeState.NORMAL)
     shared = paired_trial_module.freeze_shared_input(
-        portfolio_id=PORTFOLIO,
-        trial_id=TRIAL_ID,
         validated=validated,
         session=SIGNAL_DATE,
         cycle_id=rig.decision_cycle_id(),
@@ -819,13 +817,10 @@ def test_typed_candidate_drives_exchange_price_industry_and_raw_weight(
         trusted_at=trusted_at,
     )
     shared = paired_trial_module.freeze_shared_input(
-        portfolio_id=PORTFOLIO,
-        trial_id=TRIAL_ID,
         validated=validated,
         session=SIGNAL_DATE,
         cycle_id=rig.decision_cycle_id(),
         regime=_regime_observation(RegimeState.NORMAL),
-        regime_hash=HASH,
         trusted_at=trusted_at,
     )
 
@@ -1321,13 +1316,10 @@ def _freeze_with_schedule(rig, cutoff):
         available_at=trusted_at,
     )
     return paired_trial_module.freeze_shared_input(
-        portfolio_id=PORTFOLIO,
-        trial_id=TRIAL_ID,
         validated=validated,
         session=SIGNAL_DATE,
         cycle_id=rig.decision_cycle_id(),
         regime=_regime_observation(RegimeState.NORMAL),
-        regime_hash=HASH,
         trusted_at=trusted_at,
         trading_schedule=schedule,
         evidence_set_merkle_root=HASH,

@@ -237,13 +237,10 @@ class ForwardPairedTrialRunner:
 
 def freeze_shared_input(
     *,
-    portfolio_id: str,
-    trial_id: str,
     validated: ValidatedRegimeTrialBundle,
     session: date,
     cycle_id: str,
     regime: RegimeObservation,
-    regime_hash: str,
     trusted_at: datetime,
     trading_schedule: "FrozenTradingSessionSchedule",
     evidence_set_merkle_root: str,
