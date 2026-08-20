@@ -28,23 +28,14 @@ from src.screening.offensive.v3.execution.proxy_core import (
     ProxyOpenSettlement,
     settle_proxy_open,
 )
-from src.screening.offensive.v3.orchestration.replay import REPLAY_FEE_POLICY
 
-#: Official current-cost scenario: 30bps single-side adverse slippage.
-CURRENT_COST_SCENARIO: ProxyCostScenario = ProxyCostScenario(
-    scenario_id="CURRENT_COST",
-    entry_slippage_bps=30,
-    exit_slippage_bps=30,
-    fee_policy=REPLAY_FEE_POLICY,
-)
+#: Scenario parameters come from the engine's own factory (single source of
+#: truth — 审查 2026-08-20: 此前本地硬编码 30/60bps 与 replay._scenario_cost
+#: 重复, 属漂移温床).
+from src.screening.offensive.v3.orchestration.replay import ReplayScenario, _scenario_cost
 
-#: Pre-registered stress scenario: 2x slippage (60bps single-side).
-DOUBLE_SLIPPAGE_SCENARIO: ProxyCostScenario = ProxyCostScenario(
-    scenario_id="DOUBLE_SLIPPAGE",
-    entry_slippage_bps=60,
-    exit_slippage_bps=60,
-    fee_policy=REPLAY_FEE_POLICY,
-)
+CURRENT_COST_SCENARIO: ProxyCostScenario = _scenario_cost(ReplayScenario.CURRENT_COST)
+DOUBLE_SLIPPAGE_SCENARIO: ProxyCostScenario = _scenario_cost(ReplayScenario.DOUBLE_SLIPPAGE)
 
 _LOT_SIZE_UNITS = 100
 
