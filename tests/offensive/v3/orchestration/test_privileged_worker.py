@@ -347,3 +347,18 @@ def test_stage_archive_write_read_idempotent_and_guards(worker_world):
     link.symlink_to(target)
     with pytest.raises(StageArchiveError):
         read_stage_issuance_receipt(link)
+
+
+def test_stage_archive_rejects_hostile_tmp(worker_world):
+    """预置 tmp symlink → 类型化拒绝且不写穿 (P2-2 修复)。"""
+    receipt, root = worker_world["receipt"], worker_world["root"]
+    target = stage_receipt_path(root, receipt)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    sentinel = root / "sentinel.txt"
+    sentinel.write_text("innocent", encoding="utf-8")
+    tmp = target.parent / f".{receipt.stage_id}.json.tmp"
+    tmp.symlink_to(sentinel)
+    with pytest.raises(StageArchiveError) as ei:
+        write_stage_issuance_receipt(root, receipt)
+    assert ei.value.code == "archive_tmp_conflict"
+    assert sentinel.read_text(encoding="utf-8") == "innocent"  # 未写穿

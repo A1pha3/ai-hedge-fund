@@ -74,7 +74,28 @@ def write_stage_issuance_receipt(
             )
         return target  # 恰等重放幂等
     tmp = target.parent / f".{receipt.stage_id}.json.tmp"
-    with open(tmp, "wb") as handle:
+    try:
+        # O_EXCL|O_NOFOLLOW (Phase A 审查 P2-2): 预置的常规文件或 symlink
+        # 都会在打开前被拒绝 — 绝不跟随敌方 tmp 写穿到任意文件。
+        fd = os.open(
+            tmp,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+    except FileExistsError as exc:
+        raise StageArchiveError(
+            "archive_tmp_conflict",
+            "a stale or hostile temp artifact already exists",
+            target=str(tmp),
+        ) from exc
+    except OSError as exc:
+        raise StageArchiveError(
+            "archive_tmp_open_failed",
+            "cannot open the receipt temp file",
+            target=str(tmp),
+            reason=str(exc),
+        ) from exc
+    with os.fdopen(fd, "wb") as handle:
         handle.write(receipt.model_dump_json().encode("utf-8"))
         handle.flush()
         os.fsync(handle.fileno())

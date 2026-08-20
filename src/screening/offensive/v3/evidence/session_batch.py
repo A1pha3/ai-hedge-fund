@@ -25,13 +25,13 @@ from collections.abc import Callable, Mapping
 from datetime import date, datetime
 from typing import ClassVar, Self
 
-from pydantic import model_validator
+from pydantic import ValidationError, model_validator
 
 from src.screening.offensive.v3.contracts import CanonicalModel, Sha256
 from src.screening.offensive.v3.contracts.base import SignalStage, UtcInstant
 from src.screening.offensive.v3.contracts.evidence import SignalEvidence
 from src.screening.offensive.v3.evidence.merkle import evidence_set_merkle_root
-from src.screening.offensive.v3.evidence.repository import EvidenceRepository
+from src.screening.offensive.v3.evidence.repository import EvidenceRepository, EvidenceStoreError
 from src.screening.offensive.v3.evidence.trading_schedule import SCHEDULE_PRODUCER
 from src.screening.offensive.v3.orchestration.paired_trial import REGIME_EVIDENCE_ID
 
@@ -237,6 +237,39 @@ class SessionBatchSealer:
             sealed_at=self._clock(),
         )
 
+    def sealed_batch(
+        self, session: date, rule_version: str = DECISION_BATCH_RULE_VERSION
+    ) -> SessionBatchAuthority:
+        """Read one previously sealed batch authority back (worker/audit face).
+
+        Phase A 审查 P2-3: 封存事实此前只能"重推导验证", 不能读回证明
+        "曾封存过且封存的是什么" — 幂等重放/审计需要此读面。
+        """
+        with sqlite3.connect(self._database_path) as conn:
+            row = conn.execute(
+                "SELECT authority_json FROM session_batch_seals"
+                " WHERE session = ? AND rule_version = ?",
+                (session.isoformat(), rule_version),
+            ).fetchone()
+        if row is None:
+            raise SessionBatchError(
+                "batch_seal_unknown",
+                "no sealed batch for this session/rule",
+                session=session.isoformat(),
+                rule_version=rule_version,
+            )
+        try:
+            return SessionBatchAuthority.model_validate_json(
+                str(row[0]), strict=True
+            )
+        except ValidationError as exc:
+            raise SessionBatchError(
+                "batch_seal_corrupt",
+                "sealed batch authority failed strict revalidation",
+                session=session.isoformat(),
+                rule_version=rule_version,
+            ) from exc
+
     def verify_decision_batch(self, authority: SessionBatchAuthority) -> None:
         """Re-derive the whole authority from store truth; mismatch fails.
 
@@ -343,7 +376,11 @@ class SessionBatchSealer:
                 record = self._repositories[BTST_NAMESPACE].active_revision(
                     evidence_id, cutoff
                 )
-            except Exception:  # noqa: BLE001 - cutoff 前未提交 = 批外证据, 跳过
+            except EvidenceStoreError as exc:
+                # 只吞"cutoff 前未提交"= 该 id 是批外证据; 其余异常必须
+                # propagate (Phase A 审查 P2-1: 宽吞会假装"没看到"坏记录).
+                if exc.code != "evidence_not_committed_before_cutoff":
+                    raise
                 continue
             envelope = record.evidence
             if (

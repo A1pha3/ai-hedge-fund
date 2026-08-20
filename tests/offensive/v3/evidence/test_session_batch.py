@@ -217,10 +217,11 @@ def publish_schedule(world, *, session: date = SESSION) -> EvidenceRecord:
 
 
 def publish_candidate(
-    world, ticker: str, *, session: date = SESSION, snapshot_id: str = "snap-1"
+    world, ticker: str, *, session: date = SESSION, snapshot_id: str = "snap-1",
+    stage: SignalStage = SignalStage.SELECTED,
 ) -> EvidenceRecord:
     """ticker 驱动全部身份 (candidate_id/security/family — referenced-payload
-    绑定校验器逐段核对, 三者必须同源)。"""
+    绑定校验器逐段核对, 三者必须同源); stage 决定证据 id 后缀。"""
     now = world.now()
     candidate_id = f"btst:{snapshot_id}:{ticker}:btst_breakout"
     payload = BtstRawCandidatePayload(
@@ -229,7 +230,7 @@ def publish_candidate(
         candidate_id=candidate_id,
         producer_namespace=BTST_NAMESPACE,
         security_id=f"{ticker}.SZ",
-        signal_stage=SignalStage.SELECTED,
+        signal_stage=stage,
         signal_session=session,
         entry_price_micros=1_000_000,
         setup="btst_breakout",
@@ -247,7 +248,7 @@ def publish_candidate(
         cost_version="cn-a-share-costs.v1",
     )
     envelope = SignalEvidence(
-        evidence_id=f"{candidate_id}:selected",
+        evidence_id=f"{candidate_id}:{stage.value}",
         subject_scope=EvidenceScope.STRATEGY_LINEAGE,
         subject_producer=BTST_NAMESPACE,
         family_id=f"btst:{snapshot_id}",
@@ -265,7 +266,7 @@ def publish_candidate(
         payload_content_hash=payload.content_hash(),
         schema_major=SUPPORTED_SCHEMA_MAJOR,
         evidence_kind="signal",
-        stage=SignalStage.SELECTED,
+        stage=stage,
     )
     world.btst_repository.persist_payload(payload.canonical_bytes())
     envelope_bytes = envelope.model_dump_json().encode("utf-8")
@@ -438,3 +439,72 @@ def test_verify_detects_store_drift(tmp_path):
     with pytest.raises(SessionBatchError) as ei:
         world.sealer.verify_decision_batch(authority)
     assert ei.value.code == "batch_completeness_violation"
+
+
+def test_undeclared_non_selected_signal_is_not_a_completeness_violation(tmp_path):
+    """CANDIDATE 阶段 (非 SELECTED) 的 signal 证据枚举到但跳过 — 批外不冲突。"""
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    schedule = publish_schedule(world)
+    publish_candidate(
+        world, "300001", stage=SignalStage.CANDIDATE
+    )  # 未声明的 CANDIDATE — 完备性应跳过
+    authority = world.sealer.seal_decision_batch(
+        session=SESSION, cutoff=CUTOFF,
+        schedule_evidence_id=schedule.evidence.evidence_id,
+        candidate_evidence_ids=(),
+    )
+    assert len(authority.bindings) == 2  # regime + schedule, 无候选
+
+
+def test_completeness_propagates_unexpected_store_errors(tmp_path):
+    """完备性遇非"cutoff 前未提交"的仓库错误必须 propagate (P2-1 宽吞修复)。"""
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    schedule = publish_schedule(world)
+
+    from src.screening.offensive.v3.evidence.repository import EvidenceStoreError
+
+    class _ExplodingRepo:
+        def active_revision(self, evidence_id, cutoff):
+            raise EvidenceStoreError("active_record_missing", "boom")
+
+        def commit_sequence(self):
+            return 1
+
+        def evidence_ids_by_kind(self, evidence_kind):
+            return ("btst:snap-1:300001:btst_breakout:selected",)
+
+    sealer = SessionBatchSealer(
+        database_path=str(tmp_path / "seal.sqlite3"),
+        repositories={
+            REGIME_NAMESPACE: world.regime_rig.repository,
+            SCHEDULE_NAMESPACE: world.schedule_rig.repository,
+            BTST_NAMESPACE: _ExplodingRepo(),
+        },
+        clock=lambda: PUBLISH_AT,
+    )
+    with pytest.raises(EvidenceStoreError) as ei:
+        sealer.seal_decision_batch(
+            session=SESSION, cutoff=CUTOFF,
+            schedule_evidence_id=schedule.evidence.evidence_id,
+            candidate_evidence_ids=(),
+        )
+    assert ei.value.code == "active_record_missing"
+
+
+def test_sealed_batch_reader_round_trips(tmp_path):
+    """sealed_batch 读面: 读回 == 封存 authority; 未知会话类型化拒绝。"""
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    schedule = publish_schedule(world)
+    candidate = publish_candidate(world, "300001")
+    authority = world.sealer.seal_decision_batch(
+        session=SESSION, cutoff=CUTOFF,
+        schedule_evidence_id=schedule.evidence.evidence_id,
+        candidate_evidence_ids=(candidate.evidence.evidence_id,),
+    )
+    assert world.sealer.sealed_batch(SESSION) == authority
+    with pytest.raises(SessionBatchError) as ei:
+        world.sealer.sealed_batch(SESSION + timedelta(days=1))
+    assert ei.value.code == "batch_seal_unknown"
