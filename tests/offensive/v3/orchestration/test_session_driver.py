@@ -163,3 +163,34 @@ def test_open_line_from_shadow_line_mapping():
     assert o.exit_limit_price_cents == UNCONDITIONAL_EXIT_LIMIT_CENTS  # 无条件卖
     assert o.exit_session == date(2026, 9, 3)  # kernel 冻结排程日期是权威
     assert o.economic_lot_id == "lot:shadow-1"  # 确定性资本身份
+
+
+def test_suspended_exit_defers_to_next_session(tmp_path):
+    """出场日停牌 → 义务顺延: 下一会话可成交时出场, 不搁浅不丢弃."""
+    sessions = _sessions(13)
+    line = _line("600000.SH", "cyc-1", sessions=sessions)
+    exit_session = line.exit_session
+    bars = {}
+
+    def bar_for(s, sec):
+        if s == exit_session:
+            return DailyBar(security_id=sec, session=s, open_cents=1000, high_cents=1000,
+                            low_cents=1000, close_cents=1000, limit_up_cents=1100,
+                            limit_down_cents=900, suspended=True)  # 停牌日
+        return _bar(s, sec)
+
+    driver = SessionLifecycleDriver(
+        repository=_repo(tmp_path, "defer"), arm="champion",
+        scenario=CURRENT_COST_SCENARIO, sessions=sessions,
+        entries_by_session={sessions[1]: (line,)}, attribution=ATTR,
+        command_at=lambda s: datetime(s.year, s.month, s.day, 9, 30, tzinfo=UTC),
+        send_deadline=lambda s: datetime(s.year, s.month, s.day, 10, 0, tzinfo=UTC),
+        bar_for=bar_for,
+    )
+    result = driver.run()
+    suspended_try = result.settlements[(exit_session, "600000.SH", "exit")]
+    assert suspended_try.verdict is OpenExecutionVerdict.UNKNOWN  # 停牌日零成交
+    deferred = result.settlements[(sessions[12], "600000.SH", "exit")]  # 窗口末会话补出场
+    assert deferred.verdict is OpenExecutionVerdict.FILLED
+    assert result.open_at_end == {}
+    assert result.conservation_ok

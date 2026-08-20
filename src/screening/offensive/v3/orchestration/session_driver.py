@@ -111,7 +111,10 @@ class SessionLifecycleDriver:
             # ① 到期出场先于入场 (T+10 位 = 入场结算位 + 10)
             for security in sorted(holdings):
                 holding = holdings[security]
-                if session == holding.line.exit_session:
+                # >= 而非 ==: 出场日停牌/一字 UNKNOWN 时持仓保留, 下一会话
+                # 继续重试 — 退出义务持续到成交 (宪法 #9 顺延语义; 审查
+                # 2026-08-20: == 会把 UNKNOWN 后的仓位永久搁浅).
+                if session >= holding.line.exit_session:
                     settlement = drive_open_settlement(
                         self._repository,
                         arm=self._arm,
