@@ -52,6 +52,9 @@ class OpenLine:
     #: (审查 2026-08-20: 出场复用入场限价把买上限当卖下限, 永不触及).
     limit_price_cents: int
     exit_limit_price_cents: int
+    #: 出场会话由冻结排程日期驱动 (kernel 行的 target_exit_session) — 排程是
+    #: 权威, 驱动器不做位次算术 (kernel 接线审查 2026-08-20).
+    exit_session: date
     position_lineage_id: str
     economic_lot_id: str
 
@@ -108,7 +111,7 @@ class SessionLifecycleDriver:
             # ① 到期出场先于入场 (T+10 位 = 入场结算位 + 10)
             for security in sorted(holdings):
                 holding = holdings[security]
-                if index_of[session] - holding.entry_session_index == EXIT_SESSION_OFFSET:
+                if session == holding.line.exit_session:
                     settlement = drive_open_settlement(
                         self._repository,
                         arm=self._arm,
@@ -161,10 +164,38 @@ class SessionLifecycleDriver:
         return result
 
 
+#: T+10 无条件开盘卖出的限价表达: 卖出下限取 1 分 = 恒触及、按开盘价成交
+#: (执行合约: 到期无条件卖出 — 映射审查 2026-08-20).
+UNCONDITIONAL_EXIT_LIMIT_CENTS: int = 1
+
+
+def open_line_from_shadow_line(line, *, entry_session: date) -> OpenLine:
+    """Map one kernel ``ShadowOrderLine`` to a driver ``OpenLine``.
+
+    Kernel line is authority for identity/quantity/limits/dates; lot and
+    lineage ids derive deterministically from the shadow line id so replays
+    reproduce identical capital identities. Entry limit = the line's buy
+    ceiling; exit = the frozen ``target_exit_session`` at an unconditional
+    open sell (1-cent floor fills at open).
+    """
+    return OpenLine(
+        decision_id=line.shadow_line_id,
+        security_id=line.security_id,
+        quantity=int(line.target_quantity_units),
+        limit_price_cents=int(line.limit_price_cents),
+        exit_limit_price_cents=UNCONDITIONAL_EXIT_LIMIT_CENTS,
+        exit_session=line.target_exit_session,
+        position_lineage_id=f"shadow:{line.shadow_line_id}",
+        economic_lot_id=f"lot:{line.shadow_line_id}",
+    )
+
+
 __all__ = [
     "EXIT_SESSION_OFFSET",
     "OpenLine",
     "SessionDriverError",
-    "SessionLifecycleDriver",
     "SessionDriverResult",
+    "SessionLifecycleDriver",
+    "UNCONDITIONAL_EXIT_LIMIT_CENTS",
+    "open_line_from_shadow_line",
 ]

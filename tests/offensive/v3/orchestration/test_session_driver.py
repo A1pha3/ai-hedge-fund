@@ -76,10 +76,12 @@ def _driver(repo, sessions, entries, scenario=CURRENT_COST_SCENARIO):
     )
 
 
-def _line(sec: str, decision: str, limit: int = 1050, exit_limit: int = 900) -> OpenLine:
+def _line(sec: str, decision: str, limit: int = 1050, exit_limit: int = 900,
+           exit_session: date | None = None, sessions=None) -> OpenLine:
     return OpenLine(
         decision_id=decision, security_id=sec, quantity=100, limit_price_cents=limit,
         exit_limit_price_cents=exit_limit,
+        exit_session=exit_session or sessions[1 + EXIT_SESSION_OFFSET],
         position_lineage_id=f"lin-{sec}", economic_lot_id=f"lot-{sec}",
     )
 
@@ -87,7 +89,7 @@ def _line(sec: str, decision: str, limit: int = 1050, exit_limit: int = 900) -> 
 def test_full_cycle_entry_exit_conservation(tmp_path):
     sessions = _sessions(13)
     entry_session = sessions[1]  # T+1
-    entries = {entry_session: (_line("600000.SH", "cyc-1"),)}
+    entries = {entry_session: (_line("600000.SH", "cyc-1", sessions=sessions),)}
     result = _driver(_repo(tmp_path, "full"), sessions, entries).run()
     exit_session = sessions[1 + EXIT_SESSION_OFFSET]  # T+11 位 = 入场 + 10 位
     entry = result.settlements[(entry_session, "600000.SH", "entry")]
@@ -104,7 +106,7 @@ def test_full_cycle_entry_exit_conservation(tmp_path):
 
 def test_open_at_end_disclosed_not_force_closed(tmp_path):
     sessions = _sessions(5)  # 窗口不足 T+10
-    entries = {sessions[1]: (_line("600000.SH", "cyc-1"),)}
+    entries = {sessions[1]: (_line("600000.SH", "cyc-1", exit_session=sessions[99] if len(sessions) > 99 else date(2027, 1, 1), sessions=sessions),)}
     result = _driver(_repo(tmp_path, "open"), sessions, entries).run()
     assert result.open_at_end == {"600000.SH": "cyc-1"}
     assert "exit" not in [k[2] for k in result.settlements]
@@ -113,17 +115,51 @@ def test_open_at_end_disclosed_not_force_closed(tmp_path):
 
 def test_duplicate_holding_rejected_and_scenarios_independent(tmp_path):
     sessions = _sessions(4)
-    entries = {sessions[1]: (_line("600000.SH", "cyc-1"),), sessions[2]: (_line("600000.SH", "cyc-2"),)}
+    far = date(2027, 1, 1)
+    entries = {sessions[1]: (_line("600000.SH", "cyc-1", exit_session=far),), sessions[2]: (_line("600000.SH", "cyc-2", exit_session=far),)}
     with pytest.raises(SessionDriverError) as ei:
         _driver(_repo(tmp_path, "dup"), sessions, entries).run()
     assert ei.value.code == "duplicate_holding"
     # 双情景各自独立台账运行
-    r30 = _driver(_repo(tmp_path, "s30"), _sessions(13), {sessions[1]: (_line("600000.SH", "cyc-1"),)}).run()
+    long_sessions = _sessions(13)
+    r30 = _driver(_repo(tmp_path, "s30"), long_sessions,
+                  {long_sessions[1]: (_line("600000.SH", "cyc-1", sessions=long_sessions),)}).run()
     r60 = _driver(
-        _repo(tmp_path, "s60"), _sessions(13), {sessions[1]: (_line("600000.SH", "cyc-1"),)},
+        _repo(tmp_path, "s60"), long_sessions,
+        {long_sessions[1]: (_line("600000.SH", "cyc-1", sessions=long_sessions),)},
         scenario=DOUBLE_SLIPPAGE_SCENARIO,
     ).run()
-    e30 = r30.settlements[(sessions[1], "600000.SH", "entry")].fill_price_cents
-    e60 = r60.settlements[(sessions[1], "600000.SH", "entry")].fill_price_cents
+    e30 = r30.settlements[(long_sessions[1], "600000.SH", "entry")].fill_price_cents
+    e60 = r60.settlements[(long_sessions[1], "600000.SH", "entry")].fill_price_cents
     assert e60 > e30  # 60bps 买入更不利
     assert r30.conservation_ok and r60.conservation_ok
+
+
+def test_open_line_from_shadow_line_mapping():
+    """kernel 行 → OpenLine: 身份/量/限价/日期逐字段映射, 无条件出场=1分下限."""
+    from src.screening.offensive.v3.contracts.decision import ShadowOrderLine
+    from src.screening.offensive.v3.orchestration.session_driver import (
+        UNCONDITIONAL_EXIT_LIMIT_CENTS,
+        open_line_from_shadow_line,
+    )
+
+    H = "a" * 64
+    line = ShadowOrderLine(
+        shadow_line_id="shadow-1", security_id="600000.SH", producer_namespace="btst",
+        family_id="btst.limit-up-breakout", economic_lineage_id="eline-1",
+        research_program_id="prog-1", stage_id="stage-1", trial_id="trial-1",
+        stage_manifest_hash=H, evidence_id="btst:snap:1", evidence_artifact_hash=H,
+        evidence_payload_hash=H, target_quantity_units=200, lot_size_units=100,
+        lot_rule_version="lots.v1", order_type="limit", limit_price_cents=1100,
+        worst_case_price_cents=1100, price_boundary_version="pb.v1",
+        time_in_force="DAY", exit_session_ordinal=10, estimated_fee_cents=60,
+        estimated_cash_reserve_cents=220_060, cost_assumption_version="cn.v1",
+        execution_assumption_version="t1-open-t10-open.v1",
+        target_exit_session=date(2026, 9, 3),
+    )
+    o = open_line_from_shadow_line(line, entry_session=date(2026, 8, 21))
+    assert o.decision_id == "shadow-1" and o.security_id == "600000.SH"
+    assert o.quantity == 200 and o.limit_price_cents == 1100  # 买上限
+    assert o.exit_limit_price_cents == UNCONDITIONAL_EXIT_LIMIT_CENTS  # 无条件卖
+    assert o.exit_session == date(2026, 9, 3)  # kernel 冻结排程日期是权威
+    assert o.economic_lot_id == "lot:shadow-1"  # 确定性资本身份
