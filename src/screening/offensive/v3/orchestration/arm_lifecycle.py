@@ -30,12 +30,12 @@ from src.screening.offensive.v3.execution.proxy_core import (
 )
 
 #: Scenario parameters come from the engine's own factory (single source of
-#: truth — 审查 2026-08-20: 此前本地硬编码 30/60bps 与 replay._scenario_cost
+#: truth — 审查 2026-08-20: 此前本地硬编码 30/60bps 与 replay.scenario_cost
 #: 重复, 属漂移温床).
-from src.screening.offensive.v3.orchestration.replay import ReplayScenario, _scenario_cost
+from src.screening.offensive.v3.orchestration.replay import ReplayScenario, scenario_cost
 
-CURRENT_COST_SCENARIO: ProxyCostScenario = _scenario_cost(ReplayScenario.CURRENT_COST)
-DOUBLE_SLIPPAGE_SCENARIO: ProxyCostScenario = _scenario_cost(ReplayScenario.DOUBLE_SLIPPAGE)
+CURRENT_COST_SCENARIO: ProxyCostScenario = scenario_cost(ReplayScenario.CURRENT_COST)
+DOUBLE_SLIPPAGE_SCENARIO: ProxyCostScenario = scenario_cost(ReplayScenario.DOUBLE_SLIPPAGE)
 
 _LOT_SIZE_UNITS = 100
 

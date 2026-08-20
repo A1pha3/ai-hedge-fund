@@ -128,3 +128,59 @@ def test_replay_same_identity_idempotent(repo):
     _drive(repo, _bar(open_c=1105), limit=1200)
     ok, _ = repo.rebuild_projections()
     assert ok  # 守恒重验通过 (fill/fee 幂等键语义由原语承担)
+
+
+def test_seam_evidence_to_assembly_to_settlement(tmp_path):
+    """组合接缝 (四轮审查补): bar 证据 → 组装 facts → 双情景结算 → 守恒.
+
+    三部件分测皆绿不等于链路可组合 — 本测试钉死整条链。
+    """
+    from src.screening.offensive.v3.evidence.offline_rig import build_offline_evidence_rig
+    from src.screening.offensive.v3.orchestration.replay_assembly import (
+        assemble_replay_session_facts,
+    )
+
+    rig = build_offline_evidence_rig(
+        database_path=tmp_path / "ev.sqlite3", blobs_dir=tmp_path / "blobs",
+        namespace="market-bars",
+    )
+    rec = rig.bar_publisher.publish(session=SESSION, bars={"600000.SH": _bar(open_c=1000)})
+    facts = assemble_replay_session_facts(
+        repository=rig.repository, session=SESSION, bar_record=rec,
+        selected_candidates=(), marked_securities={"600000.SH"},
+    )
+    repo2 = None
+    from src.screening.offensive.v3.capital.repository import CapitalRepository
+
+    repo2 = CapitalRepository.initialize(tmp_path / "seam.sqlite3")
+    repo2.initialize_genesis(
+        GenesisRequest(
+            idempotency_key="genesis-seam",
+            account_binding=AccountBinding(
+                portfolio_id="trial-portfolio", mode=ExecutionMode.DAILY_BAR_PROXY,
+                broker_account_id=None, base_currency="CNY", environment_fingerprint=None,
+            ),
+            unit_quanta=10_000, unit_price_numerator=1_000, unit_price_denominator=1,
+            source_authority="test.seed", authorization_reference="auth-1",
+            effective_at=T, as_of=T,
+        )
+    )
+    bar = facts.bars["600000.SH"]  # 结算消费组装器输出的证据派生 bar
+    entry = drive_open_settlement(
+        repo2, arm="champion", decision_id="seam-1", side=ExecutionSide.ENTRY,
+        security_id="600000.SH", position_lineage_id="lin-1", economic_lot_id="lot-1",
+        limit_price_cents=1100, quantity=100, bar=bar,
+        command_at=T, send_deadline=DEADLINE, attribution=ATTR,
+        scenario=CURRENT_COST_SCENARIO,
+    )
+    assert entry.verdict is OpenExecutionVerdict.FILLED and entry.fee_receipt is not None
+    exit_s = drive_open_settlement(
+        repo2, arm="champion", decision_id="seam-1", side=ExecutionSide.EXIT,
+        security_id="600000.SH", position_lineage_id="lin-1", economic_lot_id="lot-1",
+        limit_price_cents=900, quantity=100, bar=bar,
+        command_at=T, send_deadline=DEADLINE, attribution=ATTR,
+        scenario=DOUBLE_SLIPPAGE_SCENARIO,  # 同一会话双情景分别结算 (入场30/出场60)
+    )
+    assert exit_s.verdict is OpenExecutionVerdict.FILLED
+    ok, details = repo2.rebuild_projections()
+    assert ok, details  # 全链守恒: 证据→组装→入场→出场→重验

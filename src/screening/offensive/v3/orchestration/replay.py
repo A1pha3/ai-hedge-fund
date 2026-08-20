@@ -531,7 +531,7 @@ def _as_observed_event_id(
 # ===================================================================
 
 
-def _scenario_cost(scenario: ReplayScenario) -> ProxyCostScenario:
+def scenario_cost(scenario: ReplayScenario) -> ProxyCostScenario:
     if scenario is ReplayScenario.DOUBLE_SLIPPAGE:
         return ProxyCostScenario(
             scenario_id="double-slippage",
