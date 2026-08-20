@@ -36,6 +36,7 @@ _TRIAL_MODULES = (
     "src/screening/offensive/v3/evidence/market_bars.py",
     "src/screening/offensive/v3/evidence/offline_rig.py",
     "src/screening/offensive/v3/orchestration/replay_assembly.py",
+    "src/screening/offensive/v3/orchestration/arm_lifecycle.py",
     "src/screening/offensive/v3/orchestration/replay.py",
     "src/screening/offensive/v3/execution/shadow_proxy.py",
     "src/screening/offensive/v3/execution/shadow_lifecycle.py",
