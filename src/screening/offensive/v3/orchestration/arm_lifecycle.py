@@ -1,17 +1,17 @@
-"""Per-arm open-fill lifecycle driver — Phase 5c of the paired BTST forward trial.
+"""Per-arm open settlement driver — Phase 5c/5d merged (2026-08-20, adversarial review).
 
-Ownership layering (2026-08-20 adversarial-review ruling): the market judgment
-(UNKNOWN/NO_FILL/FILLED and the fill price) belongs to
-``execution.lifecycle.resolve_open_execution`` — the locked decision table with
-its defensive ordering; the ledger truth belongs to the capital repository's
-fill-revision primitive. This driver only MAPS one to the other. It contains no
-market math and no fence derivation; the withdrawn replay mutation helpers stay
-withdrawn (the capital repository owns lifecycle mutation).
+The complete settlement primitive already exists:
+``execution.proxy_core.settle_proxy_open`` resolves the locked decision table,
+applies the scenario's adverse slippage (CURRENT_COST 30bps / DOUBLE_SLIPPAGE
+60bps per side), books the fill AND its fee under the scenario fee policy, and
+consumes/releases the entry reserve — one call, capital truth intact. This
+module therefore only constructs the ``NormalizedProxyOpenIntent`` (with the
+trial's deterministic execution identity) and delegates. It contains no market
+math, no fee math and no reserve logic.
 
-Deterministic execution identity ``{arm}:{decision_id}:{side}`` makes replays
-idempotent by construction; fills are appended only for ``FILLED`` verdicts —
-UNKNOWN keeps the cash and NO_FILL is a legal empty (both per the constitution's
-locked daily-bar-proxy semantics).
+Discipline: EXIT quantity must come from the capital position projection
+(constitution #9 — never oversell); the repository is the last line of defense
+and rejects security debits against unknown positions.
 """
 
 from __future__ import annotations
@@ -19,16 +19,34 @@ from __future__ import annotations
 from datetime import datetime
 
 from src.screening.offensive.v3.capital.fills import FillAttribution
-from src.screening.offensive.v3.capital.fills import FillRevisionRequest
 from src.screening.offensive.v3.capital.repository import CapitalRepository
 from src.screening.offensive.v3.contracts.execution import ExecutionSide
-from src.screening.offensive.v3.execution.lifecycle import (
-    DailyBar,
-    OpenExecutionResolution,
-    resolve_open_execution,
+from src.screening.offensive.v3.execution.lifecycle import DailyBar
+from src.screening.offensive.v3.execution.proxy_core import (
+    NormalizedProxyOpenIntent,
+    ProxyCostScenario,
+    ProxyOpenSettlement,
+    settle_proxy_open,
+)
+from src.screening.offensive.v3.orchestration.replay import REPLAY_FEE_POLICY
+
+#: Official current-cost scenario: 30bps single-side adverse slippage.
+CURRENT_COST_SCENARIO: ProxyCostScenario = ProxyCostScenario(
+    scenario_id="CURRENT_COST",
+    entry_slippage_bps=30,
+    exit_slippage_bps=30,
+    fee_policy=REPLAY_FEE_POLICY,
 )
 
-_PROXY_AUTHORITY = "daily-bar-proxy.trial"
+#: Pre-registered stress scenario: 2x slippage (60bps single-side).
+DOUBLE_SLIPPAGE_SCENARIO: ProxyCostScenario = ProxyCostScenario(
+    scenario_id="DOUBLE_SLIPPAGE",
+    entry_slippage_bps=60,
+    exit_slippage_bps=60,
+    fee_policy=REPLAY_FEE_POLICY,
+)
+
+_LOT_SIZE_UNITS = 100
 
 
 class ArmLifecycleError(RuntimeError):
@@ -38,7 +56,7 @@ class ArmLifecycleError(RuntimeError):
         self.details = details
 
 
-def drive_open_fill(
+def drive_open_settlement(
     repository: CapitalRepository,
     *,
     arm: str,
@@ -53,47 +71,50 @@ def drive_open_fill(
     command_at: datetime,
     send_deadline: datetime,
     attribution: FillAttribution,
-    as_of: datetime,
-) -> OpenExecutionResolution:
-    """Resolve one open execution and, only on FILLED, append the fill.
+    scenario: ProxyCostScenario,
+    reserve_source_id: str | None = None,
+    reserve_remaining_cents: int = 0,
+) -> ProxyOpenSettlement:
+    """Settle one open line through the complete proxy primitive.
 
-    Returns the resolution unchanged so callers record UNKNOWN/NO_FILL
-    outcomes in their own journals without touching the ledger (UNKNOWN keeps
-    the cash; NO_FILL means the limit was never touched).
+    Deterministic identity ``{arm}:{decision_id}:{side.value}`` keeps replays
+    idempotent (fill/fee idempotency keys). ``reserve_source_id``/
+    ``reserve_remaining_cents`` bind the entry reserve the kernel holds
+    (None/0 when the caller's framework has no live reserve to consume).
     """
     if quantity <= 0:
         raise ArmLifecycleError("quantity_not_positive", f"quantity {quantity} must be positive")
-    # 宪法 #9 纪律 (对抗审查 2026-08-20): EXIT 的 quantity 必须取自资本仓位的
-    # 当前投影 (未知可卖量不得卖出/超卖); 台账原语是最后防线, 本签名要求
-    # 调用方 (顺序重放驱动) 先查投影再传量。
-    resolution = resolve_open_execution(
-        side=side,
-        limit_price_cents=limit_price_cents,
-        bar=bar,
-        command_at=command_at,
-        send_deadline=send_deadline,
-    )
-    if resolution.fill_price_cents is None:
-        return resolution
     execution_id = f"{arm}:{decision_id}:{side.value}"
-    request = FillRevisionRequest(
-        execution_id=execution_id,
-        revision=1,
-        order_id=f"ord-{execution_id}",
+    intent = NormalizedProxyOpenIntent(
         side=side,
         security_id=security_id,
-        price_micros=resolution.fill_price_cents * 10_000,
-        quantity=quantity,
+        limit_price_cents=limit_price_cents,
+        quantity_units=quantity,
+        lot_size_units=_LOT_SIZE_UNITS,
+        execution_id=execution_id,
+        order_id=f"ord-{execution_id}",
+        reserve_source_id=reserve_source_id,
+        reserve_remaining_cents=reserve_remaining_cents,
         position_lineage_id=position_lineage_id,
         economic_lot_id=economic_lot_id,
         attribution=attribution,
-        source_authority=_PROXY_AUTHORITY,
-        effective_at=command_at,
-        as_of=as_of,
-        expected_stream_version=repository.stream_version(),
+        source_authority="daily-bar-proxy.trial",
+        source_binding=None,
+        recorded_at=command_at,
     )
-    repository.record_fill_revision(request)
-    return resolution
+    return settle_proxy_open(
+        intent,
+        bar=bar,
+        repository=repository,
+        scenario=scenario,
+        command_at=command_at,
+        send_deadline=send_deadline,
+    )
 
 
-__all__ = ["ArmLifecycleError", "drive_open_fill"]
+__all__ = [
+    "ArmLifecycleError",
+    "CURRENT_COST_SCENARIO",
+    "DOUBLE_SLIPPAGE_SCENARIO",
+    "drive_open_settlement",
+]
