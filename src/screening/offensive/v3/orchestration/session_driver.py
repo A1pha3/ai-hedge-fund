@@ -29,6 +29,7 @@ from src.screening.offensive.v3.execution.proxy_core import (
     ProxyCostScenario,
     ProxyOpenSettlement,
 )
+from src.screening.offensive.v3.capital.nav import ValuationMarkInput, ValuationRequest
 from src.screening.offensive.v3.orchestration.arm_lifecycle import drive_open_settlement
 
 EXIT_SESSION_OFFSET = 10  # T+10 open exit (the fixed executable contract)
@@ -101,6 +102,7 @@ class SessionLifecycleDriver:
         self._command_at = command_at
         self._send_deadline = send_deadline
         self._bar_for = bar_for
+        self._last_close: dict[str, int] = {}
 
     def run(self) -> SessionDriverResult:
         result = SessionDriverResult()
@@ -161,6 +163,35 @@ class SessionLifecycleDriver:
                 if settlement.fill_receipt is not None:
                     holdings[line.security_id] = _Holding(line=line, entry_session_index=index_of[session])
             result.held_by_session[session] = frozenset(holdings)
+            # ③ 每会话收盘估值: mark-only VALUATION 事件 + AS_OBSERVED NAV
+            # (close_valuation 权威原语; marks=当期持仓集的收盘价, 与 bars 同源
+            # — marks/NAV 驱动属主审查 2026-08-20 的裁决落地)
+            marks = []
+            for security in sorted(holdings):
+                bar = self._bar_for(session, security)
+                if bar is not None and not bar.suspended:
+                    self._last_close[security] = bar.close_cents
+                # 停牌日顺延上次已知收盘 (持仓不可交易, NAV 用最后可观测价);
+                # 从未见过 bar 的持仓不可能存在 (入场成交必先有 bar).
+                last = self._last_close.get(security)
+                if last is None:
+                    raise SessionDriverError(
+                        "held_security_never_marked",
+                        f"{security} held at {session} with no observable close ever",
+                    )
+                marks.append(
+                    ValuationMarkInput(security_id=security, price_micros=last * 10_000)
+                )
+            self._repository.close_valuation(
+                ValuationRequest(
+                    idempotency_key=f"{self._arm}:valuation:{session:%Y%m%d}",
+                    source_authority="daily-bar-proxy.trial",
+                    effective_at=self._command_at(session),
+                    as_of=self._command_at(session),
+                    expected_stream_version=self._repository.stream_version(),
+                    marks=tuple(marks),
+                )
+            )
         result.open_at_end = {sec: h.line.decision_id for sec, h in holdings.items()}
         result.conservation_ok, details = self._repository.rebuild_projections()
         result.conservation_details = tuple(details)
