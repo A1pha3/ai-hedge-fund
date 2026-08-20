@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 from base64 import b64encode
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -274,3 +275,29 @@ def test_malformed_calendar_entry_fails_closed(rig, tmp_path):
     with pytest.raises(TSE) as ei:
         load_authoritative_dates(bad)
     assert ei.value.code == "calendar_date_malformed"
+
+
+def test_two_issuer_namespaces_share_one_sqlite(tmp_path):
+    """Phase 6 接线契约: trial root 单 evidence.sqlite3 承载多 issuer 命名空间.
+
+    排程 (exchange-calendar) 与 bars (market-bars) 各自句柄同库读写互不
+    干扰 — store 行级命名空间模型的集成验证 (2026-08-20 审查遗留项).
+    """
+    from datetime import timedelta
+
+    from src.screening.offensive.v3.evidence.market_bars import bars_from_record
+    from src.screening.offensive.v3.evidence.offline_rig import build_offline_evidence_rig
+    from src.screening.offensive.v3.execution.lifecycle import DailyBar
+
+    db = tmp_path / "evidence.sqlite3"
+    cal = tmp_path / "cal.json"
+    dates = [(SIGNAL + timedelta(days=i)).strftime("%Y%m%d") for i in range(-2, 14)]
+    cal.write_text(json.dumps(dates), encoding="utf-8")
+    cal_rig = build_offline_evidence_rig(database_path=db, blobs_dir=tmp_path/"blobs", namespace="exchange-calendar")
+    bar_rig = build_offline_evidence_rig(database_path=db, blobs_dir=tmp_path/"blobs", namespace="market-bars")
+    rec1 = cal_rig.schedule_publisher.publish(signal_session=SIGNAL, calendar_path=cal)
+    bar = DailyBar(security_id="600000.SH", session=SIGNAL, open_cents=1000, high_cents=1020,
+                   low_cents=980, close_cents=1005, limit_up_cents=1100, limit_down_cents=900)
+    rec2 = bar_rig.bar_publisher.publish(session=SIGNAL, bars={"600000.SH": bar})
+    assert len(schedule_from_record(cal_rig.repository, rec1, expected_signal_session=SIGNAL).following_sessions) == 10
+    assert "600000.SH" in bars_from_record(bar_rig.repository, rec2, expected_session=SIGNAL)
