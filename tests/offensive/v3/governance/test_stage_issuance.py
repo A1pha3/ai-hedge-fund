@@ -12,11 +12,15 @@ crib: test_regime_trial_governance 的信任链/封存夹具 (真实 Ed25519 链
 
 from __future__ import annotations
 
+import json
+import sys
 from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
+from src.screening.offensive.v3.contracts.decision import ShadowDecision
 from src.screening.offensive.v3.contracts.governance import StageManifest
 from src.screening.offensive.v3.contracts.regime import (
     RegimeObservation,
@@ -24,6 +28,7 @@ from src.screening.offensive.v3.contracts.regime import (
     RegimeSourceRevision,
     RegimeState,
 )
+from src.screening.offensive.v3.contracts.trial import TrialArm
 from src.screening.offensive.v3.evidence.merkle import evidence_set_merkle_root
 from src.screening.offensive.v3.evidence.offline_rig import build_offline_evidence_rig
 from src.screening.offensive.v3.execution.lifecycle import DailyBar
@@ -38,19 +43,42 @@ from src.screening.offensive.v3.governance.stage_issuance import (
     STAGE_ISSUER_CAPABILITY,
     GovernanceStageIssuer,
     StageIssuanceError,
+    StageIssuanceReceipt,
     StageIssuanceRequest,
 )
+from src.screening.offensive.v3.kernel.decide import GrowthKernel
 from src.screening.offensive.v3.kernel.models import (
     FrozenTradingSessionSchedule,
+    ShadowCapitalCheckpoint,
     ShadowSharedInput,
 )
-from src.screening.offensive.v3.orchestration.paired_trial import freeze_shared_input
+from src.screening.offensive.v3.orchestration.paired_trial import (
+    build_arm_kernel_inputs,
+    freeze_shared_input,
+)
 
 from test_regime_trial_governance import (  # noqa: E402 - sibling crib
     ENROLLMENT_START,
     HASH,
     NOW,
     _seal_request,
+)
+
+# 跨目录 crib (test_trial_arm_store 先例): kernel 冻结世界构造器 + 胶水
+# 测试的候选构造器 — 最后一米断言需要真实 kernel 决策。
+for _dir in (
+    Path(__file__).resolve().parents[1] / "kernel",
+    Path(__file__).resolve().parents[1] / "orchestration",
+):
+    if str(_dir) not in sys.path:
+        sys.path.insert(0, str(_dir))
+from test_shadow_kernel import (  # noqa: E402
+    _capital_checkpoint,
+    _config,
+    _deadlines,
+)
+from test_glue_replay_assembly_session_driver import (  # noqa: E402
+    _committed_candidate,
 )
 
 TRIAL_ID = "trial-regime-001"
@@ -140,7 +168,25 @@ def test_issue_derives_every_field_from_sealed_truth(sealed) -> None:
     assert receipt.trial_manifest_hash == trial.artifact_hash()
     assert receipt.statistical_analysis_plan_hash == sap.artifact_hash()
     assert receipt.execution_mode is trial.execution_mode
-    assert receipt.sealed_at == NOW
+    assert receipt.issued_at == NOW  # 签发时刻 (与 manifest.issued_at 同源, 非 store 落库时刻)
+    # 冻结参数集自足 (P2-d): registry_epoch / trust_bundle_hash 来自封存 trial
+    assert receipt.registry_epoch == trial.registry_epoch
+    assert receipt.trust_bundle_hash == trial.trust_bundle_hash
+
+
+def test_receipt_is_hash_bound_and_drift_proof(sealed) -> None:
+    """回执 = frozen CanonicalModel: 严格往返、content_hash 稳定、与签名
+    manifest 的任何漂移在构造时拒绝 — 冗余字段不可被单独篡改。"""
+    receipt = _issuer(sealed).issue(_request())
+    rebuilt = StageIssuanceReceipt.model_validate_json(
+        receipt.model_dump_json(), strict=True
+    )
+    assert rebuilt == receipt
+    assert rebuilt.content_hash() == receipt.content_hash()
+    tampered = json.loads(receipt.model_dump_json())
+    tampered["execution_version"] = "drifted.v9"
+    with pytest.raises(ValidationError, match="does not match the signed manifest"):
+        StageIssuanceReceipt.model_validate_json(json.dumps(tampered), strict=True)
 
 
 def test_exact_replay_is_idempotent(sealed) -> None:
@@ -221,7 +267,7 @@ def test_receipt_and_merkle_root_freeze_the_shared_input(sealed, tmp_path: Path)
         sap_manifest=bundle.sap_manifest,
         admission_delta=("producers.btst_regime_admission_mode",),
     )
-    cutoff = NOW + timedelta(hours=6)
+    cutoff = NOW + timedelta(hours=5)  # 14:00 < kernel 世界 close_finalized 15:00
     regime = RegimeObservation(
         signal_session=SIGNAL_SESSION,
         state=RegimeState.NORMAL,
@@ -244,7 +290,7 @@ def test_receipt_and_merkle_root_freeze_the_shared_input(sealed, tmp_path: Path)
         session=SIGNAL_SESSION,
         cycle_id="daily-action-20260806",
         regime=regime,
-        trusted_at=NOW + timedelta(hours=7),
+        trusted_at=NOW + timedelta(hours=5, minutes=30),
         trading_schedule=FrozenTradingSessionSchedule(
             calendar_id="sse-szse",
             calendar_version="sse-szse-official-sessions.v1",
@@ -258,7 +304,7 @@ def test_receipt_and_merkle_root_freeze_the_shared_input(sealed, tmp_path: Path)
         evidence_set_merkle_root=root,
         stage_id=receipt.stage_id,
         stage_manifest_hash=receipt.stage_manifest_hash,
-        registry_epoch=1,
+        registry_epoch=receipt.registry_epoch,  # 回执自足, 不再硬编码
         trusted_evidence_cutoff=cutoff,
     )
     # 治理签发与证据时间轴在冻结共享输入处逐字段汇合
@@ -269,3 +315,35 @@ def test_receipt_and_merkle_root_freeze_the_shared_input(sealed, tmp_path: Path)
     assert shared.sap_manifest_hash == receipt.statistical_analysis_plan_hash
     assert shared.trial_id == receipt.trial_id
     assert ShadowSharedInput.model_validate_json(shared.model_dump_json(), strict=True) == shared
+
+    # 最后一米 (P2-e, 第二轮审查): 治理签发的 stage 哈希活着进入 kernel
+    # 决策工件 — 签名 → 冻结输入 → ShadowStageBinding 全链钉死。
+    capital = _capital_checkpoint()
+    checkpoints = {}
+    for arm, genesis_root in ((TrialArm.CHAMPION, "2" * 64), (TrialArm.CHALLENGER, "3" * 64)):
+        checkpoints[arm] = ShadowCapitalCheckpoint(
+            trial_id=shared.trial_id,
+            arm=arm,
+            portfolio_id="paper-v3",
+            mode=shared.mode,
+            capital_store_id=f"{shared.trial_id}:{arm.value}:capital",
+            trial_genesis_manifest_hash="1" * 64,
+            arm_capital_genesis_root=genesis_root,
+            capital_snapshot_hash=capital.content_hash(),
+            capital_snapshot=capital,
+        )
+    sizing = _config()
+    champion_input, _challenger_input = build_arm_kernel_inputs(
+        validated=validated,
+        shared_input=shared,
+        candidates=(_committed_candidate(),),
+        champion_capital_checkpoint=checkpoints[TrialArm.CHAMPION],
+        challenger_capital_checkpoint=checkpoints[TrialArm.CHALLENGER],
+        deadlines=_deadlines(),
+        sizing_config=sizing,
+    )
+    decision = GrowthKernel(sizing).decide_shadow(champion_input)
+    assert isinstance(decision, ShadowDecision)
+    assert decision.shadow_stage_binding.stage_manifest_hash == receipt.stage_manifest_hash
+    assert decision.shadow_stage_binding.stage_id == receipt.stage_id
+    assert decision.shadow_stage_binding.trial_id == receipt.trial_id

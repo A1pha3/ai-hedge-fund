@@ -17,11 +17,18 @@ attempt checkpoint / 消费 id / loss budget 是**外部台账事实**, 本层�
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import ClassVar, Self
 
-from src.screening.offensive.v3.contracts.base import ExecutionMode
+from pydantic import ValidationError, model_validator
+
+from src.screening.offensive.v3.contracts import CanonicalModel, Sha256
+from src.screening.offensive.v3.contracts.base import ExecutionMode, UtcInstant
+from src.screening.offensive.v3.contracts.capital import PositiveExactInt
+from src.screening.offensive.v3.contracts.evidence import NonEmptyStr
 from src.screening.offensive.v3.contracts.governance import StageManifest
 from src.screening.offensive.v3.governance.regime_trial import (
     GovernanceArtifactVerifierPort,
@@ -67,48 +74,89 @@ class StageIssuanceRequest:
     issuer_id: str
 
 
-class StageIssuanceReceipt:
-    """签发回执: 恰是 ``freeze_shared_input`` 需要的冻结参数集。
+#: 回执与签名 StageManifest 同名的字段 — 校验器逐一钉死两者不可漂移
+_RECEIPT_MANIFEST_FIELDS: tuple[str, ...] = (
+    "stage_id",
+    "trial_manifest_hash",
+    "statistical_analysis_plan_hash",
+    "baseline_portfolio_policy_fingerprint",
+    "target_portfolio_policy_fingerprint",
+    "execution_version",
+    "cost_version",
+    "execution_mode",
+    "enrollment_start",
+    "followup_finality_date",
+    "fixed_assessment_date",
+    "issued_at",
+)
 
-    冻结参数 (stage_id / stage_manifest_hash / trial/SAP 哈希 / 版本 /
-    enrollment 窗口) 全部派生自已封存真相, 回执自身不可变; 它不是权限,
-    是未来特权 worker 组装 ``ShadowSharedInput`` 时的唯一合法来源。
+
+class StageIssuanceReceipt(CanonicalModel):
+    """签发回执: ``freeze_shared_input`` 冻结参数集的自足哈希绑定工件。
+
+    第二轮对抗审查返工 (2026-08-20): frozen CanonicalModel (可 content_hash /
+    严格往返, 归宿是 trial root archive 的耐久工件); 补齐 ``registry_epoch``
+    与 ``trust_bundle_hash`` (冻结参数集自足, 不再要求消费方回封存库取);
+    时间戳字段是 ``issued_at`` — 与 manifest 签发时刻同源同义, **不是**
+    store 落库时刻 (seal_stage 内部自读时钟, 本回执不代述)。签名信封以
+    canonical JSON 字符串入模 (镜像 store 的 TEXT 列表示 — 信封 payload
+    是 bytes, 直接嵌套会使 content_hash 的 canonical JSON 失败)。校验器
+    解析信封 + 严格解析其中 StageManifest 并逐一核对同名字段 — 回执与
+    签名 manifest 的任何漂移在构造时即拒绝, 冗余字段因此不可被单独篡改。
     """
 
-    def __init__(
-        self,
-        *,
-        stage_id: str,
-        trial_id: str,
-        stage_manifest_hash: str,
-        trial_manifest_hash: str,
-        statistical_analysis_plan_hash: str,
-        baseline_portfolio_policy_fingerprint: str,
-        target_portfolio_policy_fingerprint: str,
-        execution_version: str,
-        cost_version: str,
-        execution_mode: ExecutionMode,
-        enrollment_start: datetime,
-        followup_finality_date: datetime,
-        fixed_assessment_date: datetime,
-        sealed_at: datetime,
-        signed_stage_envelope: SignedEnvelope,
-    ) -> None:
-        self.stage_id = stage_id
-        self.trial_id = trial_id
-        self.stage_manifest_hash = stage_manifest_hash
-        self.trial_manifest_hash = trial_manifest_hash
-        self.statistical_analysis_plan_hash = statistical_analysis_plan_hash
-        self.baseline_portfolio_policy_fingerprint = baseline_portfolio_policy_fingerprint
-        self.target_portfolio_policy_fingerprint = target_portfolio_policy_fingerprint
-        self.execution_version = execution_version
-        self.cost_version = cost_version
-        self.execution_mode = execution_mode
-        self.enrollment_start = enrollment_start
-        self.followup_finality_date = followup_finality_date
-        self.fixed_assessment_date = fixed_assessment_date
-        self.sealed_at = sealed_at
-        self.signed_stage_envelope = signed_stage_envelope
+    HASH_DOMAIN: ClassVar[str] = (
+        "ai-hedge-fund.v3.governance.stage-issuance-receipt.v1"
+    )
+
+    stage_id: NonEmptyStr
+    trial_id: NonEmptyStr
+    stage_manifest_hash: Sha256
+    trial_manifest_hash: Sha256
+    statistical_analysis_plan_hash: Sha256
+    trust_bundle_hash: Sha256
+    registry_epoch: PositiveExactInt
+    baseline_portfolio_policy_fingerprint: Sha256
+    target_portfolio_policy_fingerprint: Sha256
+    execution_version: NonEmptyStr
+    cost_version: NonEmptyStr
+    execution_mode: ExecutionMode
+    enrollment_start: UtcInstant
+    followup_finality_date: UtcInstant
+    fixed_assessment_date: UtcInstant
+    issued_at: UtcInstant
+    signed_stage_envelope_json: str
+
+    @property
+    def signed_stage_envelope(self) -> SignedEnvelope:
+        return SignedEnvelope.model_validate_json(
+            self.signed_stage_envelope_json, strict=True
+        )
+
+    @model_validator(mode="after")
+    def validate_receipt(self) -> Self:
+        try:
+            envelope = self.signed_stage_envelope
+        except ValidationError as exc:
+            raise ValueError(
+                "signed stage envelope field is not a strict SignedEnvelope"
+            ) from exc
+        if hashlib.sha256(envelope.payload).hexdigest() != envelope.payload_hash:
+            raise ValueError("signed envelope payload_hash does not bind its payload")
+        try:
+            manifest = StageManifest.model_validate_json(envelope.payload, strict=True)
+        except ValidationError as exc:
+            raise ValueError(
+                "signed stage envelope does not carry a strict StageManifest"
+            ) from exc
+        if manifest.artifact_hash() != self.stage_manifest_hash:
+            raise ValueError("receipt stage hash does not bind the signed manifest")
+        for name in _RECEIPT_MANIFEST_FIELDS:
+            if getattr(manifest, name) != getattr(self, name):
+                raise ValueError(
+                    f"receipt field {name} does not match the signed manifest"
+                )
+        return self
 
 
 class GovernanceStageIssuer:
@@ -139,7 +187,11 @@ class GovernanceStageIssuer:
         ``regime_trial_bundle`` 严格重解析的封存字节; governance_policy_version
         取自封存 baseline policy 的 versions (语义单 delta 契约保证双臂一致)。
         契约校验器另钉死 ``issued_at < enrollment_start`` — 入场窗口开始后
-        不可能补签 stage。
+        不可能补签。重试语义 (对抗审查 P2-c, 2026-08-20): ``seal_stage``
+        的幂等收敛仅对**逐字节相同**的重放成立 — 真实墙钟下重跑会产生新
+        ``issued_at`` → 新 manifest 字节 → 同 ``stage_id`` 的
+        ``stage_seal_conflict`` (保守安全: 强制操作者显式调查而非静默吸收;
+        确定性重试需调用方冻结签发时钟)。
         """
         bundle = self._repository.regime_trial_bundle(request.trial_id)
         trial = bundle.trial_manifest
@@ -198,6 +250,8 @@ class GovernanceStageIssuer:
             stage_manifest_hash=manifest.artifact_hash(),
             trial_manifest_hash=trial.artifact_hash(),
             statistical_analysis_plan_hash=sap.artifact_hash(),
+            trust_bundle_hash=trial.trust_bundle_hash,
+            registry_epoch=trial.registry_epoch,
             baseline_portfolio_policy_fingerprint=trial.baseline_portfolio_policy_fingerprint,
             target_portfolio_policy_fingerprint=trial.target_portfolio_policy_fingerprint,
             execution_version=trial.execution_version,
@@ -206,8 +260,8 @@ class GovernanceStageIssuer:
             enrollment_start=trial.enrollment_start,
             followup_finality_date=trial.followup_finality_date,
             fixed_assessment_date=trial.fixed_assessment_date,
-            sealed_at=now,
-            signed_stage_envelope=signed,
+            issued_at=now,
+            signed_stage_envelope_json=signed.model_dump_json(),
         )
 
 

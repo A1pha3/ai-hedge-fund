@@ -8,6 +8,14 @@ evidence_id 排序, 奇数节点复制末位, 空集 fail-closed, 叶/节点域�
 
 纯函数、零 I/O: 不读 store、不判证据内容 — 调用方 (未来的特权 worker)
 负责传入的正是证据时间轴上 active 的记录。
+
+信任模型 (第二轮对抗审查精修, 2026-08-20): 本函数绑定的是**调用方声明
+的集合** — 它不证明集合成员恰好是决策消费的证据。纯 store 侧派生同样
+不可行 (store 不知道决策的消费选择)。正确的官方形态是三段式: 特权
+worker 声明消费集 → Evidence Store 逐成员背书 (active 修订 +
+``available_at <= cutoff``) → 背书集上计算本根。"哪些 evidence_id 构成
+一次决策的证据集" (成员规则) 必须在特权 worker 落地前**预注册成文** —
+没有成员规则, 根绑定的是一个任意集合。
 """
 
 from __future__ import annotations
