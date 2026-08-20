@@ -29,11 +29,20 @@ from src.screening.offensive.v3.contracts.capital import (
     RiskExposureBucket,
 )
 from src.screening.offensive.v3.gateway.exits import ExitLane
+from src.screening.offensive.v3.orchestration.path_guards import (
+    require_safe_segment,
+    walk_components,
+)
 
 SCHEMA_MAJOR = 2
 
 _IDENTITY_EXCLUDED = "identity-excluded"
 _ZERO_HASH = "0" * 64
+
+
+def _genesis_fail(code: str, detail: str, **_details: object) -> Exception:
+    """path_guards 守卫错误 → TrialGenesisError (两参签名的族适配)。"""
+    return TrialGenesisError(code, detail)
 #: Fixed observation window for the normalized snapshot. The two arm reads
 #: happen at slightly different wall-clock instants; the as-of window is
 #: identity, not economics, so it normalizes to one canonical window.
@@ -384,6 +393,9 @@ class TrialGenesisArchive:
         champion_source: TrialArmGenesisSource,
         challenger_source: TrialArmGenesisSource,
     ) -> TrialGenesisManifest:
+        # 拼任何路径前拒绝非法 trial_id (2026-08-21 对抗性审查: 此前
+        # driver 侧有 _TRIAL_ID_RE 而本类裸拼 root/<trial_id>/...)。
+        require_safe_segment(trial_id, field="trial_id", fail=_genesis_fail)
         champion_state = champion_source.normalized_state()
         challenger_state = challenger_source.normalized_state()
         if champion_state != challenger_state:
@@ -554,7 +566,19 @@ def restore_genesis_arm(
         if arm == "CHAMPION"
         else manifest.challenger_backup_root
     )
+    # 路径纵深 (2026-08-21 对抗性审查): 内容哈希绑定的是字节, 不是路径 —
+    # symlink 预置可让 read_bytes 发生在 archive root 之外。读取前对全部
+    # 组件逐级 lstat 拒 symlink/穿越; backup root 本身是内容哈希段, 同样
+    # 走形状校验。
+    require_safe_segment(manifest.trial_id, field="trial_id", fail=_genesis_fail)
+    require_safe_segment(root, field="backup_root", fail=_genesis_fail)
     backup_path = Path(archive_root) / manifest.trial_id / root / "capital.sqlite3"
+    walk_components(
+        backup_path.parent,
+        fail=_genesis_fail,
+        missing_code="archive_component_missing",
+        rejected_code="archive_component_rejected",
+    )
     actual_root = hashlib.sha256(backup_path.read_bytes()).hexdigest()
     if actual_root != root:
         raise TrialGenesisError(

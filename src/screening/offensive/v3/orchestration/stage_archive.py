@@ -18,6 +18,10 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from src.screening.offensive.v3.governance.stage_issuance import StageIssuanceReceipt
+from src.screening.offensive.v3.orchestration.path_guards import (
+    require_safe_segment,
+    walk_components,
+)
 
 
 class StageArchiveError(RuntimeError):
@@ -28,6 +32,10 @@ class StageArchiveError(RuntimeError):
 
 
 def stage_receipt_path(root: Path, receipt: StageIssuanceReceipt) -> Path:
+    # 拼路径前拒绝非法段: 穿越与绝对注入不允许到达 lstat (2026-08-21
+    # 对抗性审查 — pathlib ``root / '/abs'`` 会整体替换 root)。
+    require_safe_segment(receipt.trial_id, field="trial_id", fail=StageArchiveError)
+    require_safe_segment(receipt.stage_id, field="stage_id", fail=StageArchiveError)
     return (
         root
         / "archive"
@@ -44,7 +52,16 @@ def write_stage_issuance_receipt(
     _validate_root(root)
     target = stage_receipt_path(root, receipt)
     target.parent.mkdir(parents=True, exist_ok=True)
-    _validate_root(root)  # 新建目录组件也不得是 symlink/穿越
+    # root 之下的全部组件 (含 mkdir 新建的 archive/stage-issuance/<trial_id>)
+    # 逐级 lstat 拒 symlink/穿越 (2026-08-21 对抗性审查: 此前的二次
+    # _validate_root 只重复验证 root 自身 — 新建组件从未被 walk, symlink
+    # 预置可写穿)。
+    walk_components(
+        target.parent,
+        fail=StageArchiveError,
+        missing_code="archive_component_missing",
+        rejected_code="archive_component_rejected",
+    )
     try:
         mode = target.lstat().st_mode
     except FileNotFoundError:
@@ -105,6 +122,14 @@ def write_stage_issuance_receipt(
 
 def read_stage_issuance_receipt(path: Path) -> StageIssuanceReceipt:
     """Cold read face: strict parse + regular-file/symlink guard."""
+    # 最终文件之前的每个父组件同样不得是 symlink (2026-08-21 对抗性
+    # 审查: 中间 symlink 预置可让冷读面读到 root 之外的伪造工件)。
+    walk_components(
+        path.parent,
+        fail=StageArchiveError,
+        missing_code="archive_component_missing",
+        rejected_code="archive_component_rejected",
+    )
     try:
         mode = path.lstat().st_mode
     except FileNotFoundError as exc:

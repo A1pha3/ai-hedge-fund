@@ -29,6 +29,10 @@ from src.screening.offensive.v3.contracts.trial import TrialArm
 from src.screening.offensive.v3.capital.repository import CapitalRepository
 from src.screening.offensive.v3.kernel.models import ShadowCapitalCheckpoint
 from src.screening.offensive.v3.orchestration.genesis import TrialGenesisManifest
+from src.screening.offensive.v3.orchestration.path_guards import (
+    require_safe_segment,
+    walk_components,
+)
 
 
 class ArmCapitalError(RuntimeError):
@@ -72,6 +76,9 @@ def _validate_root(root: Path) -> None:
 
 
 def genesis_manifest_path(root: Path, trial_id: str) -> Path:
+    # 拼路径前拒绝非法段 (2026-08-21 对抗性审查): 穿越 (``..``) 与绝对
+    # 注入 (pathlib ``root / '/abs'`` 整体替换 root) 不允许到达 lstat。
+    require_safe_segment(trial_id, field="trial_id", fail=ArmCapitalError)
     return root / trial_id / "genesis-manifest.json"
 
 
@@ -79,6 +86,15 @@ def read_genesis_manifest(root: Path, trial_id: str) -> TrialGenesisManifest:
     """Cold-read the sealed genesis manifest of one trial."""
     _validate_root(root)
     target = genesis_manifest_path(root, trial_id)
+    # root 之下的 trial 目录组件同样逐级 lstat (2026-08-21 对抗性审查:
+    # 此前只验 root 与最终文件, ``root/<trial_id>`` 的 symlink 预置可
+    # 穿透读取另一目录的 manifest — 跨 trial 混淆)。
+    walk_components(
+        target.parent,
+        fail=ArmCapitalError,
+        missing_code="trial_directory_missing",
+        rejected_code="trial_directory_rejected",
+    )
     try:
         mode = target.lstat().st_mode
     except FileNotFoundError as exc:
