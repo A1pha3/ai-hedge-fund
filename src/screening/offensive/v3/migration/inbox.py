@@ -16,9 +16,13 @@ from decimal import Decimal
 import json
 from pathlib import Path
 import sqlite3
+import stat
 from typing import Any, Callable, Mapping
 
 from src.screening.offensive.v3.contracts import CanonicalModel
+from src.screening.offensive.v3.orchestration.path_guards import (
+    ensure_directory_components,
+)
 
 from src.screening.offensive.v3.migration.models import SourceToken
 
@@ -91,6 +95,14 @@ CREATE TABLE IF NOT EXISTS inbox_meta (
 """
 
 
+class InboxError(ValueError):
+    """Fail-closed inbox state-path rejection (code + message)."""
+
+    def __init__(self, code: str, message: str, **_details: object) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+
+
 class DurableCapitalInbox:
     """共享 durable inbox: 单一 SQLite 存储, 与 v2/v3 库物理分离."""
 
@@ -102,7 +114,23 @@ class DurableCapitalInbox:
     ) -> None:
         self.path = Path(path)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        # 逐段创建 + 逐段验证 (第五轮): mkdir(parents=True) 穿透语义根除;
+        # db 最终组件预置 symlink 时 sqlite connect 跟随读写穿 — lstat 拒。
+        ensure_directory_components(
+            self.path.parent,
+            fail=InboxError,
+            missing_code="inbox_component_missing",
+            rejected_code="inbox_component_rejected",
+        )
+        try:
+            db_mode = self.path.lstat().st_mode
+        except FileNotFoundError:
+            db_mode = None
+        if db_mode is not None and not stat.S_ISREG(db_mode):
+            raise InboxError(
+                "inbox_path_rejected",
+                "the inbox database must be a regular file or absent",
+            )
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
 

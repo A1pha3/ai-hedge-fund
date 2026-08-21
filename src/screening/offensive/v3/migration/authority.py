@@ -16,11 +16,15 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 import sqlite3
+import stat
 from typing import Any, Callable, Mapping
 
 from src.screening.offensive.v3.contracts import CanonicalModel
 
 from src.screening.offensive.v3.migration.inbox import DurableCapitalInbox
+from src.screening.offensive.v3.orchestration.path_guards import (
+    ensure_directory_components,
+)
 
 PREIMAGE_MISMATCH = "PREIMAGE_MISMATCH"
 AUTHORITY_CONFLICT = "AUTHORITY_CONFLICT"
@@ -29,7 +33,7 @@ NOT_FLIPPED = "NOT_FLIPPED"
 
 
 class AuthorityError(ValueError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, **_details: object) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
 
@@ -104,7 +108,23 @@ class AuthorityRegistry:
         self._path = Path(path)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._inbox: DurableCapitalInbox | None = None
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        # 逐段创建 + 逐段验证 (第五轮): 权威 CAS 库不得经预置 symlink 在
+        # root 外创建/读写; db 最终组件 symlink 同拒。
+        ensure_directory_components(
+            self._path.parent,
+            fail=AuthorityError,
+            missing_code="authority_component_missing",
+            rejected_code="authority_component_rejected",
+        )
+        try:
+            db_mode = self._path.lstat().st_mode
+        except FileNotFoundError:
+            db_mode = None
+        if db_mode is not None and not stat.S_ISREG(db_mode):
+            raise AuthorityError(
+                "authority_path_rejected",
+                "the authority database must be a regular file or absent",
+            )
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
             conn.execute(
