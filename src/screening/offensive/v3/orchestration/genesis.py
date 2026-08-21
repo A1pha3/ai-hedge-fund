@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import stat
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from src.screening.offensive.v3.contracts.capital import (
 )
 from src.screening.offensive.v3.gateway.exits import ExitLane
 from src.screening.offensive.v3.orchestration.path_guards import (
+    ensure_directory_components,
     require_safe_segment,
     walk_components,
 )
@@ -343,7 +345,25 @@ class _ExitLaneReader:
         )
 
     def export_backup(self, destination: Path) -> None:
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        # 逐段创建 + 逐段验证 (第五轮): sqlite backup 会经预置 symlink
+        # 中间段把备份写到 root 之外 — ensure 原语根除 mkdir(parents=True)
+        # 的穿透创建语义。对抗审查增量: destination 最终组件本身预置
+        # symlink 时 sqlite connect 同样跟随写穿 — lstat 拒绝非 regular。
+        ensure_directory_components(
+            destination.parent,
+            fail=_genesis_fail,
+            missing_code="archive_component_missing",
+            rejected_code="archive_component_rejected",
+        )
+        try:
+            dest_mode = destination.lstat().st_mode
+        except FileNotFoundError:
+            dest_mode = None
+        if dest_mode is not None and not stat.S_ISREG(dest_mode):
+            raise TrialGenesisError(
+                "archive_component_rejected",
+                "the backup destination must be a regular file or absent",
+            )
         source = sqlite3.connect(str(self._lane._database_path))
         try:
             target = sqlite3.connect(str(destination))
@@ -481,8 +501,21 @@ class TrialGenesisArchive:
 
     def _finalize_backup(self, trial_id: str, arm: str, root: str) -> Path:
         staging = self._staging_path(trial_id, arm)
+        # content root 段必须先过形状校验 (第五轮对抗审查): pathlib
+        # ``root / trial_id / '/abs'`` 会整体替换 root — 绝对注入与穿越
+        # 不允许到达路径拼接。
+        require_safe_segment(root, field="backup_root", fail=_genesis_fail)
         final = self._capital_backup_path(trial_id, arm, root)
-        final.parent.mkdir(parents=True, exist_ok=True)
+        # 逐段创建 + 逐段验证 (第五轮): staging.replace 经预置 symlink
+        # 中间段会把封存备份移到 root 之外 — ensure 原语根除穿透创建。
+        # content root 是 sha256 hex (require_safe_segment 已在 seal 入口
+        # 校验 trial_id; root 段来自 backup_consistent 返回的哈希)。
+        ensure_directory_components(
+            final.parent,
+            fail=_genesis_fail,
+            missing_code="archive_component_missing",
+            rejected_code="archive_component_rejected",
+        )
         staging.replace(final)
         # ``backup_consistent`` writes a sibling ``.manifest.json`` next to
         # the staging name; it is a seal-time artifact, not part of the
@@ -586,7 +619,14 @@ def restore_genesis_arm(
             "backup bytes do not hash to the manifest content root",
         )
     new_path = Path(new_path)
-    new_path.parent.mkdir(parents=True, exist_ok=True)
+    # 恢复目的地是调用方供给的路径 (非 archive 域): 同样走 ensure 原语 —
+    # write_bytes 经预置 symlink 中间段会落到预期 root 之外 (第五轮)。
+    ensure_directory_components(
+        new_path.parent,
+        fail=_genesis_fail,
+        missing_code="restore_destination_missing",
+        rejected_code="restore_destination_rejected",
+    )
     new_path.write_bytes(backup_path.read_bytes())
     return CapitalRepository.initialize(new_path)
 

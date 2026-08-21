@@ -14,7 +14,12 @@ lstat — 四类穿透实锤: symlink 组件读穿 (跨 trial 混淆)、``..`` �
   ``.``/``..``、不以点开头、无分隔符与盘符冒号) — 绝对注入与穿越在
   **构造路径时**即拒绝, 不留给 lstat;
 - ``walk_components``: anchor → directory 逐组件 lstat, 拒 symlink 与
-  非目录组件 (mkdir 新建组件同样覆盖 — 不再有"只验 root"的盲区)。
+  非目录组件 (mkdir 新建组件同样覆盖 — 不再有"只验 root"的盲区);
+- ``ensure_directory_components`` (第五轮): 逐段创建 + 逐段验证 —
+  根除 ``mkdir(parents=True)`` 的穿透语义 (它会静默跟随预置 symlink
+  在 root 之外创建目录)。已存在祖先段全组件 walk; 缺失段逐个
+  ``mkdir()`` 后立即 lstat 复验; 并发同伴竞态创建的真实目录收敛
+  放行。自 ``blob_store._ensure_directory`` 推广为单一实现。
 
 错误码语义跨模块共享 (trial_id_rejected / path_traversal /
 path_component_missing / path_component_rejected); 接线面通过 ``fail``
@@ -114,9 +119,103 @@ def walk_components(
             )
 
 
+def ensure_directory_components(
+    directory: Path,
+    *,
+    fail: Fail | None = None,
+    missing_code: str = "path_component_missing",
+    rejected_code: str = "path_component_rejected",
+) -> None:
+    """逐段创建目录并逐段验证 — 绝不穿过 symlink 预置创建 (第五轮).
+
+    ``Path.mkdir(parents=True, exist_ok=True)`` 会静默跟随路径上已有的
+    symlink 在 root 之外创建目录 (对抗性审查 PoC: victim 侧目录落盘的
+    元数据副作用 — 即使后续 walk 拒绝, 穿出创建已经发生)。本原语把
+    创建拆成单段步进:
+
+    1. 前置: ``directory`` 必须是 canonical 绝对路径且不含 ``..``
+       (与 ``walk_components`` 同一前置);
+    2. 自 ``directory`` 上溯至首个**已存在**祖先: 途中任何 symlink/
+       非目录组件即刻拒绝 (rejected_code);
+    3. 该祖先再经 ``walk_components`` 自 anchor 全组件复验;
+    4. 缺失段按路径序逐个 ``mkdir()`` (无 parents/exist_ok), 每次
+       创建后立即 lstat 复验; ``FileExistsError`` 时重验为真实目录
+       则收敛放行 (并发同伴竞态), 预置 symlink/文件仍然拒绝。
+
+    与仓库的恰等重放幂等/并发收敛纪律一致 (services 并发 publish
+    收敛测试锁定)。
+    """
+    raiser = _raiser(fail)
+    if not isinstance(directory, Path) or not directory.is_absolute():
+        raise raiser(
+            "path_not_canonical",
+            "a guarded directory path must be a canonical absolute path",
+            path=str(directory),
+        )
+    if ".." in directory.parts:
+        raise raiser(
+            "path_traversal",
+            "a guarded directory path must not contain a '..' path segment",
+            path=str(directory),
+        )
+    missing: list[str] = []
+    probe = directory
+    while True:
+        try:
+            mode = probe.lstat().st_mode
+        except FileNotFoundError:
+            missing.append(probe.name)
+            probe = probe.parent
+            continue
+        except NotADirectoryError:
+            # 某个祖先段是文件 (POSIX ENOTDIR, 非缺失): 该深度不可能有
+            # 目录 — 不计入缺失, 上溯一层后由 S_ISREG 检查拒绝。
+            probe = probe.parent
+            continue
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            raise raiser(
+                rejected_code,
+                "a guarded directory path must have no symlinked or "
+                "non-directory component",
+                component=str(probe),
+            )
+        break
+    walk_components(
+        probe,
+        fail=fail,
+        missing_code=missing_code,
+        rejected_code=rejected_code,
+    )
+    for name in reversed(missing):
+        probe = probe / name
+        try:
+            probe.mkdir()
+        except FileExistsError:
+            # 竞态同伴可能刚创建了真实目录 — 重验后收敛; 预置的
+            # symlink/文件仍然拒绝。
+            mode = probe.lstat().st_mode
+            if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+                raise raiser(
+                    rejected_code,
+                    "a guarded directory path component was preset to a "
+                    "non-directory",
+                    component=str(probe),
+                ) from None
+            continue
+        mode = probe.lstat().st_mode
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            raise raiser(
+                rejected_code,
+                "a guarded directory path must have no symlinked or "
+                "non-directory component",
+                component=str(probe),
+            )
+
+
 __all__ = [
     "Fail",
     "PathGuardError",
+    "ensure_directory_components",
     "require_safe_segment",
     "walk_components",
 ]

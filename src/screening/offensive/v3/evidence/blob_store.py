@@ -22,7 +22,10 @@ import stat
 import tempfile
 from pathlib import Path
 
-from src.screening.offensive.v3.orchestration.path_guards import walk_components
+from src.screening.offensive.v3.orchestration.path_guards import (
+    ensure_directory_components,
+    walk_components,
+)
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 
@@ -41,59 +44,14 @@ def _blob_fail(code: str, message: str, **_details: object) -> Exception:
 
 
 def _ensure_directory(path: Path, *, code: str = "blob_component_rejected") -> None:
-    """逐段创建目录并逐段验证 — 绝不穿过 symlink 预置创建。
+    """逐段创建目录并逐段验证 — 委托共享原语 (单一实现原则, 第五轮)。
 
-    ``Path.mkdir(parents=True, exist_ok=True)`` 会静默跟随路径上已有的
-    symlink 在 root 之外创建目录 (对抗性审查 PoC-C: victim 落盘的元数据
-    副作用)。本原语把创建拆成单段步进: 已存在的祖先段先全组件 walk,
-    缺失段逐个 mkdir() (无 parents/exist_ok): 预置 symlink 触发拒绝,
-    但**并发同伴竞态创建的真实目录收敛放行** — 与仓库的恰等重放幂等/
-    并发收敛纪律一致 (services 并发 publish 收敛测试锁定)。
+    语义自本模块 2026-08-21 第二连修复原样推广至
+    ``path_guards.ensure_directory_components``: ``mkdir(parents=True)``
+    的穿透语义根除, 并发同伴真实目录竞态收敛放行; 本包装只把两个
+    错误码 (missing/rejected) 统一映射为 blob 族单一 ``code``。
     """
-    missing: list[str] = []
-    probe = path
-    while True:
-        try:
-            mode = probe.lstat().st_mode
-        except FileNotFoundError:
-            missing.append(probe.name)
-            probe = probe.parent
-            continue
-        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
-            raise BlobStoreError(
-                code,
-                "blob store path must have no symlinked or non-directory "
-                "component",
-            )
-        break
-    walk_components(
-        probe,
-        fail=_blob_fail,
-        missing_code=code,
-        rejected_code=code,
-    )
-    for name in reversed(missing):
-        probe = probe / name
-        try:
-            probe.mkdir()
-        except FileExistsError:
-            # 竞态同伴可能刚创建了真实目录 — 重验后收敛; 预置的
-            # symlink/文件仍然拒绝。
-            mode = probe.lstat().st_mode
-            if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
-                raise BlobStoreError(
-                    code,
-                    "blob store path component was preset to a "
-                    "non-directory",
-                ) from None
-            continue
-        mode = probe.lstat().st_mode
-        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
-            raise BlobStoreError(
-                code,
-                "blob store path must have no symlinked or non-directory "
-                "component",
-            )
+    ensure_directory_components(path, fail=_blob_fail, missing_code=code, rejected_code=code)
 
 
 class BlobStore:

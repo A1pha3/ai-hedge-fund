@@ -19,6 +19,7 @@ from pydantic import ValidationError
 
 from src.screening.offensive.v3.governance.stage_issuance import StageIssuanceReceipt
 from src.screening.offensive.v3.orchestration.path_guards import (
+    ensure_directory_components,
     require_safe_segment,
     walk_components,
 )
@@ -51,12 +52,12 @@ def write_stage_issuance_receipt(
     """Write one receipt into the root archive; idempotent, conflict-divergent."""
     _validate_root(root)
     target = stage_receipt_path(root, receipt)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    # root 之下的全部组件 (含 mkdir 新建的 archive/stage-issuance/<trial_id>)
-    # 逐级 lstat 拒 symlink/穿越 (2026-08-21 对抗性审查: 此前的二次
-    # _validate_root 只重复验证 root 自身 — 新建组件从未被 walk, symlink
-    # 预置可写穿)。
-    walk_components(
+    # 逐段创建 + 逐段验证 (第五轮): 此前 ``mkdir(parents=True)`` 先于
+    # walk 执行 — 预置 symlink 中间段时目录已穿出到 root 外创建, walk
+    # 事后才拒绝。ensure 原语把创建本身拆成单段步进, 穿出创建不可能
+    # 发生; root 下全部组件 (含新建的 archive/stage-issuance/<trial_id>)
+    # 同步覆盖。
+    ensure_directory_components(
         target.parent,
         fail=StageArchiveError,
         missing_code="archive_component_missing",
