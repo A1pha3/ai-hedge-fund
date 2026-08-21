@@ -38,15 +38,23 @@ DIFFERENT_LOGICAL_KEY = object()
 # derived from the production model under test.  Re-approved for the official
 # Trial execution/cost versions (t1-open-t10-open-slippage.v2 /
 # cn-a-share-30bps-tax.v2); the field-level diff vs the v1 approval touches
-# only those version strings and the artifact hashes they feed.
+# only those version strings and the artifact hashes they feed.  Re-approved
+# again (2026-08-21) for the calendar identity alignment of the "shadow"
+# artifact: its trading_session_schedule_binding now binds the authoritative
+# calendar_version (sse-sessions-v1, trading_schedule.CALENDAR_VERSION)
+# instead of the dangling official-sessions identifier it replaced; the
+# field-level diff
+# vs the previous approval touches only that identity string and the
+# schedule/canonical/artifact hashes it feeds.  seal/permit/receipt digests
+# are unchanged by this alignment.
 APPROVED_SERIALIZATION_DIGESTS = {
     "seal": (
         "4952edac2f11b57b14bd3c4890d30ba5584144ab27677740f4c7075dc0588ffb",
         "f60ce29b40a8f2fd55e893b0d3b5959d151ef004195ffa067c783513c28f39e7",
     ),
     "shadow": (
-        "b7f6f30cdcdb8b17e3b395d53a582b799035436d30f9c6b80f199c21b53be9d9",
-        "92f47a6078f09f973fbd7b1497b86c6d86d4fc25bd1edf414b6dff4e47358fae",
+        "8d354e6c808917c65dae00e47e84f2bc439ad3b33e8dc5eb99e87ff1e7440980",
+        "64b50258a9d360e18e08cafdff7384f5caf144e8c934eee256333697bc036db8",
     ),
     "permit": (
         "559cd93df4056284cde96eb0fbc5a3af3a5f3513eb6f39e26ee69a2818f7ce5c",
@@ -670,7 +678,7 @@ def _shadow_schedule_binding(api):
     )
     payload = {
         "calendar_id": "sse-szse",
-        "calendar_version": "sse-szse-official-sessions.v1",
+        "calendar_version": "sse-sessions-v1",
         "calendar_artifact_hash": HASH_C,
         "signal_session": SIGNAL_SESSION,
         "following_sessions": following_sessions,

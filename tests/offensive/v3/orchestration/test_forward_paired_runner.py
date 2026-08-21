@@ -299,7 +299,7 @@ def _champion_decision():
     )
     schedule_payload = {
         "calendar_id": "sse-szse",
-        "calendar_version": "sse-szse-official-sessions.v1",
+        "calendar_version": "sse-sessions-v1",
         "calendar_artifact_hash": HASH,
         "signal_session": SIGNAL_DATE,
         "following_sessions": following_sessions,

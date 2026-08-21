@@ -111,7 +111,7 @@ BEHAVIOUR_FINGERPRINT_POLICY_KEYS = (
 EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
     "src.screening.offensive.v3.contracts.decision.ShadowTradingScheduleBinding": {
         "calendar_id": "sse-szse",
-        "calendar_version": "sse-szse-official-sessions.v1",
+        "calendar_version": "sse-sessions-v1",
         "calendar_artifact_hash": "c" * 64,
         "signal_session": "2026-07-29",
         "following_sessions": [
@@ -120,7 +120,7 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
             "2026-08-11", "2026-08-12",
         ],
         "available_at": "2026-07-29T07:59:00Z",
-        "schedule_hash": "507ff12da013f93b8b04d5b80b88973e51e3628734227c786903b3a1ad170246",
+        "schedule_hash": "64ba5d8417a1f0f57ccc59930ff25b1e480c60af2908647b1769fd10cd9eadb5",
     },
     "src.screening.offensive.v3.contracts.compatibility.LegacyShadowOrderLineV3": {
         "shadow_line_id": "shadow-line-1",
@@ -537,7 +537,7 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
         "shadow_decision_id": "shadow-decision-1",
         "trading_session_schedule_binding": {
             "calendar_id": "sse-szse",
-            "calendar_version": "sse-szse-official-sessions.v1",
+            "calendar_version": "sse-sessions-v1",
             "calendar_artifact_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             "signal_session": "2026-07-29",
             "following_sessions": [
@@ -546,7 +546,7 @@ EXEMPLAR_OVERRIDES: dict[str, dict[str, Any]] = {
                 "2026-08-11", "2026-08-12"
             ],
             "available_at": "2026-07-29T07:59:00Z",
-            "schedule_hash": "507ff12da013f93b8b04d5b80b88973e51e3628734227c786903b3a1ad170246"
+            "schedule_hash": "64ba5d8417a1f0f57ccc59930ff25b1e480c60af2908647b1769fd10cd9eadb5"
         },
         "shadow_stage_binding": {
             "economic_lineage_id": "auto-lineage",

@@ -87,7 +87,7 @@ def _schedule_binding(
     sessions = _next_trading_sessions(signal_session)
     payload = {
         "calendar_id": "sse-szse",
-        "calendar_version": "sse-szse-official-sessions.v1",
+        "calendar_version": "sse-sessions-v1",
         "calendar_artifact_hash": HASH,
         "signal_session": signal_session,
         "following_sessions": sessions,

@@ -23,7 +23,6 @@ import pytest
 from src.screening.offensive.v3.contracts.decision import ShadowDecision
 from src.screening.offensive.v3.contracts.regime import RegimeAdmissionMode
 from src.screening.offensive.v3.contracts.trial import TrialArm
-from src.screening.offensive.v3.evidence.trading_schedule import CALENDAR_VERSION
 from src.screening.offensive.v3.governance.regime_trial import (
     RegimeTrialBundle,
 )
@@ -55,7 +54,6 @@ from src.screening.offensive.v3.orchestration.stage_archive import (
 from src.screening.offensive.v3.orchestration.trial_store import (
     TrialArmDecisionStore,
 )
-from src.screening.offensive.v3.policy.models import PolicySnapshot
 
 # 跨目录 crib: 治理信任链/封存请求 (governance)、kernel 冻结世界 (kernel)、
 # 批授权证据栈 (evidence)
@@ -94,23 +92,10 @@ UTC = timezone.utc
 TRIAL_ID = "trial-regime-001"
 
 
-def _policy_with_authoritative_calendar(policy: PolicySnapshot) -> PolicySnapshot:
-    """夹具 policy 钉的 ``sse-szse-official-sessions.v1`` 从未被排程发布器
-    产出 (权威身份是 ``sse-sessions-v1``); 本测试把版本对齐权威后再封存。
-    夹具与冻结 goldens 的全面对齐是独立的后续项 (触碰 Plan 01 完成门)。"""
-    values = json.loads(policy.model_dump_json())
-    values["versions"]["calendar_version"] = CALENDAR_VERSION
-    return PolicySnapshot.model_validate_json(json.dumps(values), strict=True)
-
-
-def _seal_request_authoritative_calendar():
+def _seal_request():
     sign, verifier, current_head, caps = _governance_trust()
-    baseline = _policy_with_authoritative_calendar(
-        _trial_policy(RegimeAdmissionMode.IGNORE)
-    )
-    target = _policy_with_authoritative_calendar(
-        _trial_policy(RegimeAdmissionMode.NORMAL_ONLY)
-    )
+    baseline = _trial_policy(RegimeAdmissionMode.IGNORE)
+    target = _trial_policy(RegimeAdmissionMode.NORMAL_ONLY)
     trial = _trial_manifest(baseline, target)
     sap = _sap_manifest(trial)
     activation = _baseline_activation(baseline)
@@ -167,7 +152,7 @@ def worker_world(tmp_path: Path):
         database_path=str(tmp_path / "governance.sqlite3"), clock=lambda: GOV_NOW
     )
     request, sign, verifier, current_head, caps, bundle = (
-        _seal_request_authoritative_calendar()
+        _seal_request()
     )
     governance.seal_regime_trial(
         request, verifier=verifier, current_head=current_head,

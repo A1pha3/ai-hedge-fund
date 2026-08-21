@@ -414,7 +414,7 @@ def test_initial_policy_binds_adv_execution_and_governance_versions() -> None:
     assert policy.execution.broker_auction_submission_cutoff_cn == "09:20:00"
     assert policy.versions.cost_version == "cn-a-share-costs-30bps-tax.v2"
     assert policy.versions.board_rule_version == "ashare-board-prefix-v1"
-    assert policy.versions.calendar_version == "sse-szse-official-sessions.v1"
+    assert policy.versions.calendar_version == "sse-sessions-v1"
     assert policy.versions.lot_rule_version == "cn-board-lot.v1"
     assert policy.versions.setup_version == "daily-action-setups-v1"
     assert policy.versions.execution_contract_version == "t0-close-t1-open-t10-open-slippage.v2"

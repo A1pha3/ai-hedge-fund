@@ -167,7 +167,7 @@ def _trial_policy(admission: RegimeAdmissionMode) -> PolicySnapshot:
                     "execution_contract_version": "t0-close-t1-open-t10-open.v1",
                     "cost_version": "cn-a-share-costs.v1",
                     "board_rule_version": "ashare-board-prefix-v1",
-                    "calendar_version": "sse-szse-official-sessions.v1",
+                    "calendar_version": "sse-sessions-v1",
                     "lot_rule_version": "cn-board-lot.v1",
                     "price_boundary_version": "sse-szse-price-limits.v1",
                     "setup_version": "daily-action-setups-v1",
@@ -405,7 +405,7 @@ def _shared(
         "trusted_at": NOW,
         "trading_session_schedule": FrozenTradingSessionSchedule(
             calendar_id="sse-szse",
-            calendar_version="sse-szse-official-sessions.v1",
+            calendar_version="sse-sessions-v1",
             calendar_artifact_hash="c" * 64,
             signal_session=SIGNAL_DATE,
             following_sessions=TRADING_SESSIONS,

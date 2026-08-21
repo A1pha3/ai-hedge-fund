@@ -1,6 +1,6 @@
 {
   "behavior_fingerprint": {
-    "fingerprint": "eb97f5d77feadc2cc5c687d3d59c992b3ed56a62edaffc5fd87dacf3540136e9",
+    "fingerprint": "b7fa8d5ab24e268ba319ef0897433569f2edc45968050455e8fd5ac3ed917f22",
     "preimage": {
       "policy": {
         "adv": {
@@ -66,7 +66,7 @@
         "runtime_mode": "off",
         "versions": {
           "board_rule_version": "ashare-board-prefix-v1",
-          "calendar_version": "sse-szse-official-sessions.v1",
+          "calendar_version": "sse-sessions-v1",
           "cost_version": "cn-a-share-costs-30bps-tax.v2",
           "execution_contract_version": "t0-close-t1-open-t10-open-slippage.v2",
           "exit_policy_version": "t10-open.v1",
@@ -81,7 +81,7 @@
         "strategy_semver": "3.0.0"
       }
     },
-    "sha256": "eb97f5d77feadc2cc5c687d3d59c992b3ed56a62edaffc5fd87dacf3540136e9"
+    "sha256": "b7fa8d5ab24e268ba319ef0897433569f2edc45968050455e8fd5ac3ed917f22"
   },
   "broker_enablement_approval_preimage": {
     "approval_preimage_hash": "9e90723c9039dcb65ab0a055fca1c4245fe8177a704aa6efa21d3bcb2eaa6728",
@@ -247,7 +247,7 @@
     "sha256": "eb7c310bd4078a44cae3766a650e66e28f6373fd72b196e02179d5720b5cef71"
   },
   "policy_fingerprint": {
-    "fingerprint": "9131e1668e387396894ee6fd8dd2d40561562016f9279bd69756ea6a18ece04b",
+    "fingerprint": "84567139ad6e487079a561da639d9bcdc33909adc1144d62f42f1d39c7885e11",
     "preimage": {
       "adv": {
         "lookback_sessions": 20,
@@ -317,7 +317,7 @@
       "schema_major": 2,
       "versions": {
         "board_rule_version": "ashare-board-prefix-v1",
-        "calendar_version": "sse-szse-official-sessions.v1",
+        "calendar_version": "sse-sessions-v1",
         "cost_version": "cn-a-share-costs-30bps-tax.v2",
         "execution_contract_version": "t0-close-t1-open-t10-open-slippage.v2",
         "exit_policy_version": "t10-open.v1",
@@ -327,7 +327,7 @@
         "setup_version": "daily-action-setups-v1"
       }
     },
-    "sha256": "9131e1668e387396894ee6fd8dd2d40561562016f9279bd69756ea6a18ece04b"
+    "sha256": "84567139ad6e487079a561da639d9bcdc33909adc1144d62f42f1d39c7885e11"
   },
   "signed_envelope_signing_input": {
     "preimage": {

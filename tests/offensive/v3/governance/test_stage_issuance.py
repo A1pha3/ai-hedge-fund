@@ -326,7 +326,7 @@ def test_receipt_and_merkle_root_freeze_the_shared_input(sealed, tmp_path: Path)
         trusted_at=NOW + timedelta(hours=5, minutes=30),
         trading_schedule=FrozenTradingSessionSchedule(
             calendar_id="sse-szse",
-            calendar_version="sse-szse-official-sessions.v1",
+            calendar_version="sse-sessions-v1",
             calendar_artifact_hash="c" * 64,
             signal_session=SIGNAL_SESSION,
             following_sessions=tuple(
