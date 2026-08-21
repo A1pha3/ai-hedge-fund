@@ -22,7 +22,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 
+from src.screening.offensive.v3.contracts.base import SignalStage
 from src.screening.offensive.v3.contracts.btst_candidate import BtstRawCandidatePayload
+from src.screening.offensive.v3.contracts.evidence import SignalEvidence
 from src.screening.offensive.v3.evidence.regime import (
     ActiveRegimeObservation,
     RegimeObservationReader,
@@ -136,7 +138,7 @@ class ForwardSessionAssembler:
             expected_signal_session=session,
         )
         candidates = tuple(
-            self._committed_candidate(evidence_id, cutoff)
+            self._committed_candidate(evidence_id, cutoff, session)
             for evidence_id in candidate_evidence_ids
         )
         # ④ 冻结共享输入: 全部外部参数取自回执与批授权, 调用方零供给
@@ -173,10 +175,38 @@ class ForwardSessionAssembler:
         )
 
     def _committed_candidate(
-        self, evidence_id: str, cutoff: datetime
+        self, evidence_id: str, cutoff: datetime, session: date
     ) -> CommittedBtstCandidate:
+        """消费面二次断言 — 镜像 sealer ``_candidate_binding`` 三重检查。
+
+        排程侧自始双层防御 (sealer 断言 + ``schedule_from_record`` 的
+        ``expected_signal_session`` 复核); 候选侧此前只有 sealer 单层, 而
+        sealer 与本仓库是构造时分别注入的实例, 错接线 (指向不同 evidence
+        库) 时 seal 在干净库上完备通过、本面从污染库消费非 SELECTED/错
+        会话候选进入 kernel 输入 (第七轮 Op2 排程侧 P1 的镜像面)。
+        """
         record = self._btst_repository.active_revision(evidence_id, cutoff)
         envelope = record.evidence
+        if not isinstance(envelope, SignalEvidence):
+            raise PrivilegedWorkerError(
+                "candidate_kind_mismatch",
+                "a declared candidate must carry SignalEvidence",
+                evidence_id=evidence_id,
+            )
+        if envelope.stage is not SignalStage.SELECTED:
+            raise PrivilegedWorkerError(
+                "candidate_stage_mismatch",
+                "a declared candidate must be SELECTED",
+                evidence_id=evidence_id,
+                stage=envelope.stage.value,
+            )
+        if envelope.effective_at.date() != session:
+            raise PrivilegedWorkerError(
+                "candidate_session_mismatch",
+                "a declared candidate belongs to another signal session",
+                evidence_id=evidence_id,
+                candidate_session=envelope.effective_at.date().isoformat(),
+            )
         payload = BtstRawCandidatePayload.model_validate_json(
             self._btst_repository.raw_payload(envelope.payload_content_hash),
             strict=True,

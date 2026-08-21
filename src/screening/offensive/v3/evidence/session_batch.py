@@ -271,9 +271,18 @@ class SessionBatchSealer:
     def _parse_sealed_row(
         self, row_json: str, *, session: date, rule_version: str
     ) -> SessionBatchAuthority:
-        """严格重解析已封存行 — 与 ``sealed_batch`` 读面同款 fail-closed 纪律。"""
+        """严格重解析已封存行 + 行内容↔行键交叉断言。
+
+        解析失败 fail-closed 为 ``batch_seal_corrupt``; 解析成功但行内
+        ``session``/``rule_version`` 与查询键不一致 (行键与内容分叉 —
+        预置库/未来写路径缺陷) fail-closed 为 ``batch_seal_key_mismatch``,
+        绝不静默返回键与内容不一致的"封存事实" — 镜像 arm_capital
+        ``genesis_trial_mismatch`` 的"构造即拒, 不依赖写入路径兜底"纪律。
+        """
         try:
-            return SessionBatchAuthority.model_validate_json(row_json, strict=True)
+            authority = SessionBatchAuthority.model_validate_json(
+                row_json, strict=True
+            )
         except ValidationError as exc:
             raise SessionBatchError(
                 "batch_seal_corrupt",
@@ -281,6 +290,16 @@ class SessionBatchSealer:
                 session=session.isoformat(),
                 rule_version=rule_version,
             ) from exc
+        if authority.session != session or authority.rule_version != rule_version:
+            raise SessionBatchError(
+                "batch_seal_key_mismatch",
+                "a sealed batch row's content does not match its row key",
+                row_key_session=session.isoformat(),
+                content_session=authority.session.isoformat(),
+                row_key_rule_version=rule_version,
+                content_rule_version=authority.rule_version,
+            )
+        return authority
 
     def sealed_batch(
         self, session: date, rule_version: str = DECISION_BATCH_RULE_VERSION

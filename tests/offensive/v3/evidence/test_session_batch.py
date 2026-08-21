@@ -889,3 +889,41 @@ def test_declared_schedule_blob_decode_failure_is_fail_closed(tmp_path):
             candidate_evidence_ids=(),
         )
     assert ei.value.code == "schedule_decode_failed"
+
+
+def test_sealed_batch_rejects_row_key_mismatch(tmp_path):
+    """第九轮 B: 行内容与行键分叉 → 读面 fail-closed, 不静默返回键内容
+    不一致的"封存事实" (镜像 arm_capital genesis_trial_mismatch 纪律)。
+
+    UPDATE/DELETE 被触发器拒绝, 但 INSERT 不受拦 — 预置错配行模拟行键
+    与内容分叉的未来写路径/外部直写。
+    """
+    import sqlite3
+
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    schedule = publish_schedule(world, session=date(2026, 8, 7))
+    authority = world.sealer.seal_decision_batch(
+        session=date(2026, 8, 7),  # 内容属于 08-07
+        cutoff=CUTOFF,
+        schedule_evidence_id=schedule.evidence.evidence_id,
+    )
+    # 以 08-06 行键 INSERT 08-07 的 authority_json (绕过 API 的外部直写)
+    with sqlite3.connect(world.database_path) as conn:
+        conn.execute(
+            "INSERT INTO session_batch_seals (session, rule_version,"
+            " authority_json, sealed_at) VALUES (?, ?, ?, ?)",
+            (
+                SESSION.isoformat(),  # 行键 08-06
+                DECISION_BATCH_RULE_VERSION,
+                authority.model_dump_json(),
+                authority.sealed_at.isoformat(),
+            ),
+        )
+        conn.commit()
+    with pytest.raises(SessionBatchError) as ei:
+        world.sealer.sealed_batch(SESSION)  # 按行键 08-06 读
+    assert ei.value.code == "batch_seal_key_mismatch"
+    # 正常键照常读回 (恰等封存行不受影响)
+    ok = world.sealer.sealed_batch(date(2026, 8, 7))
+    assert ok == authority

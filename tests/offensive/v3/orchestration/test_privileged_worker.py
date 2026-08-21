@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -44,6 +44,7 @@ from src.screening.offensive.v3.orchestration.paired_trial import (
 )
 from src.screening.offensive.v3.orchestration.privileged_worker import (
     ForwardSessionAssembler,
+    PrivilegedWorkerError,
 )
 from src.screening.offensive.v3.orchestration.stage_archive import (
     StageArchiveError,
@@ -347,3 +348,100 @@ def test_stage_archive_rejects_hostile_tmp(worker_world):
         write_stage_issuance_receipt(root, receipt)
     assert ei.value.code == "archive_tmp_conflict"
     assert sentinel.read_text(encoding="utf-8") == "innocent"  # 未写穿
+
+
+# --- 第九轮: 候选消费面防御断言 (排程侧双层/候选侧单层不对称的收口) ----------
+
+
+class _DuckRepo:
+    """鸭子 btst 仓库: 直接返回构造好的 active 记录 (镜像第七轮 Op2 手法,
+    不依赖上游信任层兜底 — 消费面断言独立于 sealer 层可达性)。"""
+
+    def __init__(self, record) -> None:
+        self._record = record
+
+    def active_revision(self, evidence_id, cutoff):
+        del evidence_id, cutoff
+        return self._record
+
+    def raw_payload(self, content_hash):
+        del content_hash
+        raise AssertionError("face assertions must fire before payload decode")
+
+
+def _face(assembler, record):
+    return assembler._committed_candidate("whatever-id", CUTOFF, SESSION)
+
+
+def test_candidate_face_rejects_non_signal_envelope(worker_world):
+    """kind 断言: 非 SignalEvidence 信封在 worker 面即拒 (candidate_kind_mismatch,
+    与 sealer _candidate_binding 同码)。"""
+    schedule_record = publish_schedule(worker_world["batch"])
+    assembler = ForwardSessionAssembler(
+        sealer=worker_world["batch"].sealer,
+        governance=worker_world["governance"],
+        trial_id=TRIAL_ID,
+        stage_receipt=worker_world["receipt"],
+        regime_repository=worker_world["batch"].regime_rig.repository,
+        schedule_repository=worker_world["batch"].schedule_rig.repository,
+        btst_repository=_DuckRepo(schedule_record),
+    )
+    with pytest.raises(PrivilegedWorkerError) as ei:
+        _face(assembler, schedule_record)
+    assert ei.value.code == "candidate_kind_mismatch"
+
+
+def test_candidate_face_rejects_non_selected_stage(worker_world):
+    """stage 断言: 非 SELECTED 候选在 worker 面即拒 (candidate_stage_mismatch)。"""
+    from src.screening.offensive.v3.contracts.base import SignalStage
+
+    record = publish_candidate(
+        worker_world["batch"], "300002", stage=SignalStage.CANDIDATE
+    )
+    assembler = ForwardSessionAssembler(
+        sealer=worker_world["batch"].sealer,
+        governance=worker_world["governance"],
+        trial_id=TRIAL_ID,
+        stage_receipt=worker_world["receipt"],
+        regime_repository=worker_world["batch"].regime_rig.repository,
+        schedule_repository=worker_world["batch"].schedule_rig.repository,
+        btst_repository=_DuckRepo(record),
+    )
+    with pytest.raises(PrivilegedWorkerError) as ei:
+        _face(assembler, record.evidence)
+    assert ei.value.code == "candidate_stage_mismatch"
+
+
+def test_assemble_rejects_cross_wired_candidate_session(worker_world, tmp_path):
+    """端到端 PoC (错接线, RED 主证): sealer/库 X 完备通过, worker 的
+    btst_repository 指向库 Y — 同 evidence_id 在 Y 上属于另一信号会话
+    (publish_candidate 的 id 不含 session)。修复前 assemble 放行错位
+    候选进入 kernel 输入, 修复后 worker 面类型化拒绝。"""
+    clean = build_batch_world(tmp_path / "clean")
+    cross_wired = build_batch_world(tmp_path / "cross")
+    publish_regime(clean)
+    schedule = publish_schedule(clean)
+    candidate = publish_candidate(clean, "300001")
+
+    # 库 Y: 同 evidence_id, effective_at 属 2026-08-13 (T+1..T+10 整体错位)
+    publish_candidate(cross_wired, "300001", session=date(2026, 8, 13))
+
+    assembler = ForwardSessionAssembler(
+        sealer=clean.sealer,
+        governance=worker_world["governance"],
+        trial_id=TRIAL_ID,
+        stage_receipt=worker_world["receipt"],
+        regime_repository=clean.regime_rig.repository,
+        schedule_repository=clean.schedule_rig.repository,
+        btst_repository=cross_wired.btst_repository,
+    )
+    with pytest.raises(PrivilegedWorkerError) as ei:
+        assembler.assemble(
+            session=SESSION,
+            cutoff=CUTOFF,
+            cycle_id="daily-action-20260806",
+            trusted_at=datetime(2026, 8, 6, 15, 30, tzinfo=UTC),
+            schedule_evidence_id=schedule.evidence.evidence_id,
+            candidate_evidence_ids=(candidate.evidence.evidence_id,),
+        )
+    assert ei.value.code == "candidate_session_mismatch"
