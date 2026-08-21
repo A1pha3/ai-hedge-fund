@@ -9,12 +9,16 @@ store 已提交真相派生; 候选集 (规则的可变部分) 另做**完备性
 
 成员规则 v2 (预注册成文 — worker 落地前不许静默改, 改即新 rule_version):
 一次 BTST 配对 Trial 决策会话的证据集 = ``regime:csi300:1.0`` (固定) +
-该信号会话的排程证据 (worker 声明, 单条; **v2 起同会话全部排程证据必须
-恰被声明, 多出即冲突 — 与候选完备性对称**; 会话归属由绑定 blob 严格解码
-的 ``signal_session`` 权威判定, 不解析 evidence_id 词法) + 该会话全部
-SELECTED btst 候选 (完备性强制)。bar-set 证据**不在**决策批内 (执行层,
-cutoff 后才存在)。v1 历史: 排程完备性缺位 — worker 可在同会话多条排程
-证据间选择性声明 (v1 落地时登记为 "升级规则版本时补", 2026-08-21 v2 收口)。
+该信号会话的排程证据 (worker 声明, 单条; **声明的排程信封必须为
+SnapshotEvidence 且绑定 blob 解码出的 ``signal_session == session`` —
+错位声明使 T+1..T+10 执行窗口整体错位, 镜像候选侧会话断言**; **v2 起
+同会话全部排程证据必须恰被声明, 多出即冲突 — 与候选完备性对称**; 会话
+归属一律由绑定 blob 严格解码的 ``signal_session`` 权威判定, 不解析
+evidence_id 词法) + 该会话全部 SELECTED btst 候选 (完备性强制)。bar-set
+证据**不在**决策批内 (执行层, cutoff 后才存在)。v1 历史: 排程完备性缺位
+— worker 可在同会话多条排程证据间选择性声明 (v1 落地时登记为 "升级规则
+版本时补", 2026-08-21 v2 收口); declared 排程的会话/类型断言为 v1 起实现
+即漏的不对称缺陷, 同日 Op2 按 bug fix 修复 (规则文本本就如此, 版本不动)。
 
 封存表 ``session_batch_seals`` 与证据时间轴同库 (单 sqlite), append-only
 (UPDATE/DELETE 触发器拒绝), (session, rule_version) 唯一键, 恰等重放幂等、
@@ -215,7 +219,7 @@ class SessionBatchSealer:
         """Store-side derivation only — no persistence (verify 复用, 零写入)."""
         bindings: list[BatchBinding] = [
             self._regime_binding(cutoff),
-            self._resolve(SCHEDULE_NAMESPACE, schedule_evidence_id, cutoff),
+            self._schedule_binding(session, schedule_evidence_id, cutoff),
         ]
         declared = set(candidate_evidence_ids)
         if len(declared) != len(candidate_evidence_ids):
@@ -326,6 +330,40 @@ class SessionBatchSealer:
 
     def _regime_binding(self, cutoff: datetime) -> BatchBinding:
         return self._resolve(REGIME_NAMESPACE, REGIME_EVIDENCE_ID, cutoff)
+
+    def _schedule_binding(
+        self, session: date, evidence_id: str, cutoff: datetime
+    ) -> BatchBinding:
+        """Declared schedule binding: cutoff 正确背书 + 类型/会话断言。
+
+        声明的排程必须信封为 SnapshotEvidence 且绑定 blob 严格解码出的
+        ``signal_session == session`` — 错位声明使 T+1..T+10 执行窗口整体
+        错位 (Op2 对抗审查 P1), 镜像候选侧 ``candidate_session_mismatch``。
+        """
+        record = self._repositories[SCHEDULE_NAMESPACE].active_revision(
+            evidence_id, cutoff
+        )
+        envelope = record.evidence
+        if not isinstance(envelope, SnapshotEvidence):
+            raise SessionBatchError(
+                "schedule_kind_mismatch",
+                "the declared schedule evidence must carry a SnapshotEvidence"
+                " envelope",
+                evidence_id=evidence_id,
+            )
+        schedule = self._decode_schedule(evidence_id, envelope)
+        if schedule.signal_session != session:
+            raise SessionBatchError(
+                "schedule_session_mismatch",
+                "the declared trading schedule belongs to another signal session",
+                evidence_id=evidence_id,
+                schedule_session=schedule.signal_session.isoformat(),
+            )
+        return BatchBinding(
+            issuer_namespace=SCHEDULE_NAMESPACE,
+            evidence_id=evidence_id,
+            artifact_hash=record.artifact_hash(),
+        )
 
     def _resolve(
         self, namespace: str, evidence_id: str, cutoff: datetime

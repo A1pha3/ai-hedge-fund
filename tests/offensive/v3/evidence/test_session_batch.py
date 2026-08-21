@@ -586,3 +586,202 @@ def test_verify_detects_late_second_same_session_schedule(tmp_path):
     with pytest.raises(SessionBatchError) as ei:
         world.sealer.verify_decision_batch(authority)
     assert ei.value.code == "schedule_completeness_violation"
+
+
+def test_declared_schedule_of_other_session_rejected(tmp_path):
+    """Op2 P1: worker 声明另一会话的排程 → seal 拒绝 (镜像 candidate_session_mismatch)。
+
+    PoC 实锤的洞: 错位排程使 T+1..T+10 执行窗口整体错位, v1/v2 实现均放行。
+    """
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    other = publish_schedule(world, session=SESSION + timedelta(days=7))
+    with pytest.raises(SessionBatchError) as ei:
+        world.sealer.seal_decision_batch(
+            session=SESSION, cutoff=CUTOFF,
+            schedule_evidence_id=other.evidence.evidence_id,
+            candidate_evidence_ids=(),
+        )
+    assert ei.value.code == "schedule_session_mismatch"
+    assert ei.value.details["schedule_session"] == (
+        SESSION + timedelta(days=7)
+    ).isoformat()
+
+
+def test_verify_rejects_divergent_schedule_binding(tmp_path):
+    """Op2 verify 面: merkle 自洽但排程 binding 错位会话的 authority → 重推导拒绝。"""
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    own = publish_schedule(world)
+    other = publish_schedule(world, session=SESSION + timedelta(days=7))
+    # 手工构造自洽 authority (merkle 根对 bindings 复算通过), 但排程成员是错位会话的
+    other_binding_record = world.schedule_rig.repository.active_revision(
+        other.evidence.evidence_id, CUTOFF
+    )
+    regime_binding = next(
+        b for b in _seal(world).bindings if b.issuer_namespace == REGIME_NAMESPACE
+    )  # 仅取 regime 成员做底 — seal 本身用的是 own 排程 (正常路径先封存)
+    from src.screening.offensive.v3.evidence.session_batch import BatchBinding
+    schedule_binding = BatchBinding(
+        issuer_namespace=SCHEDULE_NAMESPACE,
+        evidence_id=other.evidence.evidence_id,
+        artifact_hash=other_binding_record.artifact_hash(),
+    )
+    divergent = SessionBatchAuthority(
+        session=SESSION,
+        rule_version="btst-decision.v2",
+        trusted_evidence_cutoff=CUTOFF,
+        bindings=tuple(sorted(
+            (regime_binding, schedule_binding),
+            key=lambda b: (b.issuer_namespace, b.evidence_id),
+        )),
+        evidence_set_merkle_root=evidence_set_merkle_root(
+            (
+                (regime_binding.evidence_id, regime_binding.artifact_hash),
+                (other.evidence.evidence_id, other_binding_record.artifact_hash()),
+            )
+        ),
+        commit_sequence_watermark=world.schedule_rig.repository.commit_sequence(),
+        sealed_at=own.evidence.observed_at,
+    )
+    with pytest.raises(SessionBatchError) as ei:
+        world.sealer.verify_decision_batch(divergent)
+    assert ei.value.code == "schedule_session_mismatch"
+
+
+def test_declared_non_snapshot_envelope_rejected(tmp_path):
+    """Op2: 声明的排程库证据信封不是 SnapshotEvidence → schedule_kind_mismatch。
+
+    信任层通常先挡 (排程链是 SNAPSHOT 能力), 此处用鸭子仓库钉死 sealer
+    自身的类型断言不依赖上游信任层兜底。
+    """
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    schedule = publish_schedule(world)
+    real = world.schedule_rig.repository
+
+    class _SignalShapedRepo:
+        def active_revision(self, evidence_id, cutoff):
+            # 无论 id: 返回真实排程 record 但信封伪装成非 snapshot 类型
+            record = real.active_revision(schedule.evidence.evidence_id, cutoff)
+            object.__setattr__(
+                record, "evidence", publish_candidate(world, "300001").evidence
+            )
+            object.__setattr__(record, "evidence_id", evidence_id)
+            return record
+
+        def evidence_ids_by_kind(self, kind):
+            return ()
+
+        def raw_payload(self, content_hash):
+            return real.raw_payload(content_hash)
+
+        def commit_sequence(self):
+            return real.commit_sequence()
+
+    sealer = SessionBatchSealer(
+        database_path=str(world.database_path),
+        repositories={
+            REGIME_NAMESPACE: world.regime_rig.repository,
+            SCHEDULE_NAMESPACE: _SignalShapedRepo(),
+            BTST_NAMESPACE: world.btst_repository,
+        },
+        clock=lambda: PUBLISH_AT,
+    )
+    with pytest.raises(SessionBatchError) as ei:
+        sealer.seal_decision_batch(
+            session=SESSION, cutoff=CUTOFF,
+            schedule_evidence_id="calendar:sse:whatever:20260806",
+            candidate_evidence_ids=(),
+        )
+    assert ei.value.code == "schedule_kind_mismatch"
+
+
+def test_completeness_enum_hits_non_snapshot_envelope(tmp_path):
+    """Op2: 完备性枚举撞见非 SnapshotEvidence 信封 → schedule_namespace_polluted。"""
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    schedule = publish_schedule(world)
+    real = world.schedule_rig.repository
+    polluted_id = "calendar:sse:polluted:20260806"
+
+    class _PollutedRepo:
+        def active_revision(self, evidence_id, cutoff):
+            if evidence_id == polluted_id:
+                record = real.active_revision(
+                    schedule.evidence.evidence_id, cutoff
+                )
+                object.__setattr__(
+                    record, "evidence", publish_candidate(world, "300001").evidence
+                )
+                object.__setattr__(record, "evidence_id", polluted_id)
+                return record
+            return real.active_revision(evidence_id, cutoff)
+
+        def evidence_ids_by_kind(self, kind):
+            return (schedule.evidence.evidence_id, polluted_id)
+
+        def raw_payload(self, content_hash):
+            return real.raw_payload(content_hash)
+
+        def commit_sequence(self):
+            return real.commit_sequence()
+
+    sealer = SessionBatchSealer(
+        database_path=str(world.database_path),
+        repositories={
+            REGIME_NAMESPACE: world.regime_rig.repository,
+            SCHEDULE_NAMESPACE: _PollutedRepo(),
+            BTST_NAMESPACE: world.btst_repository,
+        },
+        clock=lambda: PUBLISH_AT,
+    )
+    with pytest.raises(SessionBatchError) as ei:
+        sealer.seal_decision_batch(
+            session=SESSION, cutoff=CUTOFF,
+            schedule_evidence_id=schedule.evidence.evidence_id,
+            candidate_evidence_ids=(),
+        )
+    assert ei.value.code == "schedule_namespace_polluted"
+
+
+def test_declared_schedule_blob_decode_failure_is_fail_closed(tmp_path):
+    """Op2: 声明的排程证据 blob 解不出 FrozenTradingSessionSchedule → fail-closed。"""
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    real = world.schedule_rig.repository
+    # 在排程库发布一个信封合法但 blob 是 regime observation 字节的"排程"
+    observation_bytes = b'{"not":"a schedule"}'
+    blob_hash = real.persist_payload(observation_bytes)
+    now = world.now()
+    envelope = SnapshotEvidence(
+        evidence_id="calendar:sse:fakedecode:20260806",
+        subject_scope=EvidenceScope.GLOBAL,
+        subject_producer=world.schedule_rig.repository.issuer_namespace,
+        family_id=None,
+        strategy_semver="1.0.0",
+        behavior_fingerprint="d" * 64,
+        policy_epoch=1,
+        execution_version="t1-open-t10-open.v1",
+        cost_version="cn-a-share-costs.v1",
+        effective_at=now,
+        provider_published_at=now,
+        observed_at=now,
+        available_at=now,
+        mode=ExecutionMode.DAILY_BAR_PROXY,
+        source_authority="exchange-calendar.publisher",
+        payload_content_hash=blob_hash,
+        schema_major=SUPPORTED_SCHEMA_MAJOR,
+        evidence_kind="snapshot",
+    )
+    envelope_bytes = envelope.model_dump_json().encode("utf-8")
+    real.publish(
+        world.schedule_rig.signer(envelope_bytes), envelope_bytes
+    )
+    with pytest.raises(SessionBatchError) as ei:
+        world.sealer.seal_decision_batch(
+            session=SESSION, cutoff=CUTOFF,
+            schedule_evidence_id=envelope.evidence_id,
+            candidate_evidence_ids=(),
+        )
+    assert ei.value.code == "schedule_decode_failed"
