@@ -132,7 +132,7 @@ def build_batch_world(tmp_path: Path, *, clock_at: datetime = PUBLISH_AT) -> Sim
             SCHEDULE_NAMESPACE: schedule_rig.repository,
             BTST_NAMESPACE: btst_repository,
         },
-        clock=lambda: clock_at,
+        clock=tick,  # 可推进钟 — 冻钟曾掩盖 seal 面重放幂等缺陷 (第八轮解冻)
     )
     return SimpleNamespace(
         database_path=database_path,
@@ -155,7 +155,9 @@ class _RegimeSignerPort:
         return self._signer(payload)
 
 
-def publish_regime(world, *, session: date = SESSION) -> EvidenceRecord:
+def publish_regime(
+    world, *, session: date = SESSION, evidence_id: str = REGIME_EVIDENCE_ID
+) -> EvidenceRecord:
     now = world.now()
     observation = RegimeObservation(
         signal_session=session,
@@ -164,7 +166,7 @@ def publish_regime(world, *, session: date = SESSION) -> EvidenceRecord:
         raw_state="normal",
         source_revisions=(
             RegimeSourceRevision(
-                evidence_id=REGIME_EVIDENCE_ID, revision=1, artifact_hash="d" * 64
+                evidence_id=evidence_id, revision=1, artifact_hash="d" * 64
             ),
         ),
         effective_at=now,
@@ -175,7 +177,7 @@ def publish_regime(world, *, session: date = SESSION) -> EvidenceRecord:
         input_schema_hash="d" * 64,
     )
     snapshot = SnapshotEvidence(
-        evidence_id=REGIME_EVIDENCE_ID,
+        evidence_id=evidence_id,
         subject_scope=EvidenceScope.GLOBAL,
         subject_producer=REGIME_NAMESPACE,
         family_id=None,
@@ -349,7 +351,109 @@ def test_exact_replay_is_idempotent(tmp_path):
         schedule_evidence_id=schedule.evidence.evidence_id,
         candidate_evidence_ids=(cid,),
     )
-    assert second.model_dump_json() == first.model_dump_json()  # 冻结钟 → 同字节
+    assert second.model_dump_json() == first.model_dump_json()  # 同钟重放逐字节相等
+
+
+def test_replay_with_advanced_sealer_clock_converges(tmp_path):
+    """第八轮 A: crash-retry 时钟前进不得把幂等重放误报为冲突。
+
+    sealed_at 是封存时刻 (非语义字段, verify 面自身比较即排除它); 幂等
+    收敛语义与墙钟无关 — 镜像 stage issuance P2-c 纪律。夹具 sealer 钟曾
+    被冻结 (clock=lambda: clock_at), 该洞因此从未被测试见过。
+    """
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    schedule = publish_schedule(world)
+    cid = publish_candidate(world, "300001").evidence.evidence_id
+    first = world.sealer.seal_decision_batch(
+        session=SESSION, cutoff=CUTOFF,
+        schedule_evidence_id=schedule.evidence.evidence_id,
+        candidate_evidence_ids=(cid,),
+    )
+    world.advance_clock(datetime(2026, 8, 6, 14, 0, tzinfo=UTC))  # crash-retry 晚 5 小时
+    second = world.sealer.seal_decision_batch(
+        session=SESSION, cutoff=CUTOFF,
+        schedule_evidence_id=schedule.evidence.evidence_id,
+        candidate_evidence_ids=(cid,),
+    )
+    assert second == first  # 收敛到已封存 authority
+    assert second.sealed_at == first.sealed_at  # 返回的是封存时刻, 不是重放时刻
+
+
+def test_corrupt_sealed_row_fails_closed_on_replay(tmp_path):
+    """第八轮 A 纵深: 已封存行损坏 → 重放 fail-closed 为 batch_seal_corrupt。
+
+    不能把行损坏与真实背离 (batch_seal_conflict) 混为一谈 — 修复前损坏
+    行走 != sealed_json 分支被误报为冲突。
+    """
+    import sqlite3
+
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    schedule = publish_schedule(world)
+    world.sealer.seal_decision_batch(
+        session=SESSION, cutoff=CUTOFF,
+        schedule_evidence_id=schedule.evidence.evidence_id,
+        candidate_evidence_ids=(),
+    )
+    with sqlite3.connect(world.database_path) as conn:
+        conn.execute("DROP TRIGGER no_update_session_batch_seals")
+        conn.execute(
+            "UPDATE session_batch_seals SET authority_json = 'not-json' "
+            "WHERE session = ?",
+            (SESSION.isoformat(),),
+        )
+        conn.commit()
+    with pytest.raises(SessionBatchError) as ei:
+        world.sealer.seal_decision_batch(
+            session=SESSION, cutoff=CUTOFF,
+            schedule_evidence_id=schedule.evidence.evidence_id,
+            candidate_evidence_ids=(),
+        )
+    assert ei.value.code == "batch_seal_corrupt"
+
+
+def test_verify_stable_after_post_cutoff_regime_commit(tmp_path):
+    """第八轮 B: 封存后 regime 命名空间 cutoff 外新提交 → verify 仍稳定。
+
+    修复前 watermark 读 regime 命名空间当前 head (非 cutoff 过滤): head
+    前进使 verify 重推导出不同 watermark → batch_authority_mismatch 假阳
+    性, 违反 'cutoff 正确的重推导稳定' 承诺。批成员 cutoff 投影一个字节
+    都没变。
+    """
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    schedule = publish_schedule(world)
+    candidate = publish_candidate(world, "300001")
+    authority = world.sealer.seal_decision_batch(
+        session=SESSION, cutoff=CUTOFF,
+        schedule_evidence_id=schedule.evidence.evidence_id,
+        candidate_evidence_ids=(candidate.evidence.evidence_id,),
+    )
+    # cutoff 后, regime 命名空间发布第二条 id (后续观察/修正的机械同构)
+    world.advance_clock(datetime(2026, 8, 6, 13, 0, tzinfo=UTC))
+    publish_regime(world, evidence_id="regime:csi300:1.0:next-session")
+    world.sealer.verify_decision_batch(authority)  # 不抛即通过
+
+
+def test_watermark_is_max_member_commit_sequence(tmp_path):
+    """第八轮 B: watermark = 批成员 active 记录 commit_sequence 最大值。
+
+    修复前读 regime 命名空间 head — 不约束 schedule/btst 成员命名空间,
+    名不副实; 成员记录自身序列 cutoff 稳定、重推导逐字节复现。
+    """
+    world = build_batch_world(tmp_path)
+    publish_regime(world)  # regime ns seq 1
+    schedule = publish_schedule(world)  # schedule ns seq 1
+    first = publish_candidate(world, "300001")  # btst ns seq 1
+    second = publish_candidate(world, "300002")  # btst ns seq 2
+    authority = world.sealer.seal_decision_batch(
+        session=SESSION, cutoff=CUTOFF,
+        schedule_evidence_id=schedule.evidence.evidence_id,
+        candidate_evidence_ids=(first.evidence.evidence_id, second.evidence.evidence_id),
+    )
+    assert authority.commit_sequence_watermark == 2  # max(1, 1, 1, 2)
+    world.sealer.verify_decision_batch(authority)
 
 
 def test_completeness_violation_for_undeclared_selected(tmp_path):

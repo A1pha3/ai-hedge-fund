@@ -22,7 +22,15 @@ evidence_id 词法) + 该会话全部 SELECTED btst 候选 (完备性强制)。b
 
 封存表 ``session_batch_seals`` 与证据时间轴同库 (单 sqlite), append-only
 (UPDATE/DELETE 触发器拒绝), (session, rule_version) 唯一键, 恰等重放幂等、
-背离冲突。offline primitive: 不解锁 runner fail-closed、不构成权限。
+背离冲突。重放收敛与墙钟无关: 已封存行严格重解析后除 ``sealed_at`` (封存
+时刻, 非语义字段 — verify 面比较同样排除它) 逐字段相等即返回**已封存**
+authority (镜像 stage issuance P2-c 纪律); 行损坏 fail-closed 为
+``batch_seal_corrupt``, 不与真实背离混报。``commit_sequence_watermark``
+是批成员 active 记录自身 ``commit_sequence`` 的最大值 (per-namespace 序列
+空间内的描述性水位; 成员资格由完备性校验约束, 内容由根绑定) — 不读任何
+命名空间当前 head, head 非 cutoff 过滤, 封存后的新提交会使重推导漂移出
+假阳性 ``batch_authority_mismatch``。offline primitive: 不解锁 runner
+fail-closed、不构成权限。
 """
 
 from __future__ import annotations
@@ -164,8 +172,11 @@ class SessionBatchSealer:
     ) -> SessionBatchAuthority:
         """Attest the declared set store-side; completeness-enforced for btst.
 
-        恰等重放幂等 (同 session+rule 已封存且 authority 字节相同 → 原样
-        返回); 背离 (同键不同内容) 是类型化冲突, 整个事务回滚。
+        恰等重放幂等且与墙钟无关: 同 session+rule 已封存且 authority 除
+        ``sealed_at`` 外逐字段相同 → 原样返回**已封存**的 authority (crash
+        重试时钟已前进也收敛到封存时刻); 背离 (任何其他字段不同) 是类型化
+        冲突, 整个事务回滚; 已封存行损坏 fail-closed 为
+        ``batch_seal_corrupt``。
         """
         authority = self._derive_authority(
             session=session,
@@ -184,14 +195,22 @@ class SessionBatchSealer:
                     (session.isoformat(), DECISION_BATCH_RULE_VERSION),
                 ).fetchone()
                 if existing is not None:
-                    if str(existing[0]) != sealed_json:
+                    stored = self._parse_sealed_row(
+                        str(existing[0]),
+                        session=session,
+                        rule_version=DECISION_BATCH_RULE_VERSION,
+                    )
+                    if (
+                        stored.model_dump(exclude={"sealed_at"})
+                        != authority.model_dump(exclude={"sealed_at"})
+                    ):
                         raise SessionBatchError(
                             "batch_seal_conflict",
                             "this session already sealed a different batch;"
                             " the replay rolled back",
                             session=session.isoformat(),
                         )
-                    return authority  # 恰等重放幂等
+                    return stored  # 恰等重放幂等 (与墙钟无关)
                 conn.execute(
                     "INSERT INTO session_batch_seals (session, rule_version,"
                     " authority_json, sealed_at) VALUES (?, ?, ?, ?)",
@@ -217,7 +236,7 @@ class SessionBatchSealer:
         candidate_evidence_ids: tuple[str, ...],
     ) -> SessionBatchAuthority:
         """Store-side derivation only — no persistence (verify 复用, 零写入)."""
-        bindings: list[BatchBinding] = [
+        members: list[tuple[BatchBinding, int]] = [
             self._regime_binding(cutoff),
             self._schedule_binding(session, schedule_evidence_id, cutoff),
         ]
@@ -228,10 +247,13 @@ class SessionBatchSealer:
                 "the declared candidate set contains a duplicate id",
             )
         for evidence_id in candidate_evidence_ids:
-            bindings.append(self._candidate_binding(evidence_id, session, cutoff))
+            members.append(self._candidate_binding(evidence_id, session, cutoff))
         self._enforce_schedule_completeness(session, cutoff, schedule_evidence_id)
         self._enforce_candidate_completeness(session, cutoff, declared)
-        bindings.sort(key=lambda b: (b.issuer_namespace, b.evidence_id))
+        bindings = sorted(
+            (binding for binding, _ in members),
+            key=lambda b: (b.issuer_namespace, b.evidence_id),
+        )
         return SessionBatchAuthority(
             session=session,
             rule_version=DECISION_BATCH_RULE_VERSION,
@@ -240,11 +262,25 @@ class SessionBatchSealer:
             evidence_set_merkle_root=evidence_set_merkle_root(
                 (b.evidence_id, b.artifact_hash) for b in bindings
             ),
-            commit_sequence_watermark=self._repositories[
-                REGIME_NAMESPACE
-            ].commit_sequence(),
+            # 成员记录自身序列 (cutoff 稳定): 不读命名空间 head — head 非
+            # cutoff 过滤, 封存后新提交会使重推导漂移 (第八轮 B)。
+            commit_sequence_watermark=max(seq for _, seq in members),
             sealed_at=self._clock(),
         )
+
+    def _parse_sealed_row(
+        self, row_json: str, *, session: date, rule_version: str
+    ) -> SessionBatchAuthority:
+        """严格重解析已封存行 — 与 ``sealed_batch`` 读面同款 fail-closed 纪律。"""
+        try:
+            return SessionBatchAuthority.model_validate_json(row_json, strict=True)
+        except ValidationError as exc:
+            raise SessionBatchError(
+                "batch_seal_corrupt",
+                "a sealed batch row failed strict revalidation",
+                session=session.isoformat(),
+                rule_version=rule_version,
+            ) from exc
 
     def sealed_batch(
         self, session: date, rule_version: str = DECISION_BATCH_RULE_VERSION
@@ -267,17 +303,9 @@ class SessionBatchSealer:
                 session=session.isoformat(),
                 rule_version=rule_version,
             )
-        try:
-            return SessionBatchAuthority.model_validate_json(
-                str(row[0]), strict=True
-            )
-        except ValidationError as exc:
-            raise SessionBatchError(
-                "batch_seal_corrupt",
-                "sealed batch authority failed strict revalidation",
-                session=session.isoformat(),
-                rule_version=rule_version,
-            ) from exc
+        return self._parse_sealed_row(
+            str(row[0]), session=session, rule_version=rule_version
+        )
 
     def verify_decision_batch(self, authority: SessionBatchAuthority) -> None:
         """Re-derive the whole authority from store truth; mismatch fails.
@@ -328,12 +356,14 @@ class SessionBatchSealer:
 
     # -- members ---------------------------------------------------------------
 
-    def _regime_binding(self, cutoff: datetime) -> BatchBinding:
+    def _regime_binding(
+        self, cutoff: datetime
+    ) -> tuple[BatchBinding, int]:
         return self._resolve(REGIME_NAMESPACE, REGIME_EVIDENCE_ID, cutoff)
 
     def _schedule_binding(
         self, session: date, evidence_id: str, cutoff: datetime
-    ) -> BatchBinding:
+    ) -> tuple[BatchBinding, int]:
         """Declared schedule binding: cutoff 正确背书 + 类型/会话断言。
 
         声明的排程必须信封为 SnapshotEvidence 且绑定 blob 严格解码出的
@@ -359,25 +389,31 @@ class SessionBatchSealer:
                 evidence_id=evidence_id,
                 schedule_session=schedule.signal_session.isoformat(),
             )
-        return BatchBinding(
-            issuer_namespace=SCHEDULE_NAMESPACE,
-            evidence_id=evidence_id,
-            artifact_hash=record.artifact_hash(),
+        return (
+            BatchBinding(
+                issuer_namespace=SCHEDULE_NAMESPACE,
+                evidence_id=evidence_id,
+                artifact_hash=record.artifact_hash(),
+            ),
+            record.commit_sequence,
         )
 
     def _resolve(
         self, namespace: str, evidence_id: str, cutoff: datetime
-    ) -> BatchBinding:
+    ) -> tuple[BatchBinding, int]:
         record = self._repositories[namespace].active_revision(evidence_id, cutoff)
-        return BatchBinding(
-            issuer_namespace=namespace,
-            evidence_id=evidence_id,
-            artifact_hash=record.artifact_hash(),
+        return (
+            BatchBinding(
+                issuer_namespace=namespace,
+                evidence_id=evidence_id,
+                artifact_hash=record.artifact_hash(),
+            ),
+            record.commit_sequence,
         )
 
     def _candidate_binding(
         self, evidence_id: str, session: date, cutoff: datetime
-    ) -> BatchBinding:
+    ) -> tuple[BatchBinding, int]:
         record = self._repositories[BTST_NAMESPACE].active_revision(evidence_id, cutoff)
         envelope = record.evidence
         if not isinstance(envelope, SignalEvidence):
@@ -400,10 +436,13 @@ class SessionBatchSealer:
                 evidence_id=evidence_id,
                 candidate_session=envelope.effective_at.date().isoformat(),
             )
-        return BatchBinding(
-            issuer_namespace=BTST_NAMESPACE,
-            evidence_id=evidence_id,
-            artifact_hash=record.artifact_hash(),
+        return (
+            BatchBinding(
+                issuer_namespace=BTST_NAMESPACE,
+                evidence_id=evidence_id,
+                artifact_hash=record.artifact_hash(),
+            ),
+            record.commit_sequence,
         )
 
     def _enforce_schedule_completeness(
