@@ -199,11 +199,21 @@ def publish_regime(world, *, session: date = SESSION) -> EvidenceRecord:
     )
 
 
-def publish_schedule(world, *, session: date = SESSION) -> EvidenceRecord:
+def publish_schedule(
+    world, *, session: date = SESSION, day_offset: int = 1
+) -> EvidenceRecord:
+    """day_offset 平移日历窗口 → 不同 following 切片 → 不同 evidence_id。
+
+    同 signal_session 的第二条排程 (完备性 v2 的对抗样本) 与另一会话的
+    排程 (正例) 都由这一个参数化入口构造。
+    """
     now = world.now()
     schedule = derive_trading_schedule(
         signal_session=session,
-        calendar_dates=tuple(session + timedelta(days=d) for d in range(1, 16)),
+        calendar_dates=tuple(
+            session + timedelta(days=d)
+            for d in range(day_offset, day_offset + 15)
+        ),
         available_at=now,
     )
     blob = schedule.canonical_bytes()
@@ -508,3 +518,71 @@ def test_sealed_batch_reader_round_trips(tmp_path):
     with pytest.raises(SessionBatchError) as ei:
         world.sealer.sealed_batch(SESSION + timedelta(days=1))
     assert ei.value.code == "batch_seal_unknown"
+
+
+def test_schedule_completeness_violation_for_second_same_session_schedule(tmp_path):
+    """v2: 同会话第二条排程 (不同切片, cutoff 前提交) 存在 → seal 拒绝。
+
+    v1 登记缺口: worker 可在同会话多条排程间选择性声明, merkle 根绑定的
+    是声明集而非该会话排程真相 — 与候选完备性不对称。
+    """
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    declared = publish_schedule(world)  # 窗口 [s+1 .. s+15] 取前 10
+    second = publish_schedule(world, day_offset=2)  # 窗口 [s+2 .. s+16], 同 session
+    assert second.evidence.evidence_id != declared.evidence.evidence_id
+    with pytest.raises(SessionBatchError) as ei:
+        world.sealer.seal_decision_batch(
+            session=SESSION, cutoff=CUTOFF,
+            schedule_evidence_id=declared.evidence.evidence_id,
+            candidate_evidence_ids=(),
+        )
+    assert ei.value.code == "schedule_completeness_violation"
+    assert ei.value.details["evidence_id"] == second.evidence.evidence_id
+
+
+def test_schedule_of_other_session_is_not_a_completeness_violation(tmp_path):
+    """v2: 另一会话的排程证据同库共存 → 不冲突 (完备性只对本会话)。"""
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    schedule = publish_schedule(world)
+    publish_schedule(world, session=SESSION + timedelta(days=1))
+    authority = world.sealer.seal_decision_batch(
+        session=SESSION, cutoff=CUTOFF,
+        schedule_evidence_id=schedule.evidence.evidence_id,
+        candidate_evidence_ids=(),
+    )
+    assert len(authority.bindings) == 2  # regime + 本会话排程
+
+
+def test_second_schedule_published_after_cutoff_is_out_of_batch(tmp_path):
+    """v2: cutoff 后追加的同会话排程 → PIT 批外, 不构成冲突。"""
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    schedule = publish_schedule(world)
+    world.advance_clock(datetime(2026, 8, 6, 13, 0, tzinfo=UTC))  # 越过 cutoff
+    publish_schedule(world, day_offset=2)  # cutoff 后提交 → 批外不可见
+    authority = world.sealer.seal_decision_batch(
+        session=SESSION, cutoff=CUTOFF,
+        schedule_evidence_id=schedule.evidence.evidence_id,
+        candidate_evidence_ids=(),
+    )
+    assert len(authority.bindings) == 2
+
+
+def test_verify_detects_late_second_same_session_schedule(tmp_path):
+    """v2 verify 面: 封存后 cutoff 前窗口内出现同会话第二条排程 → 重推导拒绝。"""
+    world = build_batch_world(tmp_path)
+    publish_regime(world)
+    schedule = publish_schedule(world)
+    authority = world.sealer.seal_decision_batch(
+        session=SESSION, cutoff=CUTOFF,
+        schedule_evidence_id=schedule.evidence.evidence_id,
+        candidate_evidence_ids=(),
+    )
+    # 11:00 仍早于 cutoff 12:00 → cutoff 前可见的第二条同会话排程
+    world.advance_clock(datetime(2026, 8, 6, 11, 0, tzinfo=UTC))
+    publish_schedule(world, day_offset=2)
+    with pytest.raises(SessionBatchError) as ei:
+        world.sealer.verify_decision_batch(authority)
+    assert ei.value.code == "schedule_completeness_violation"

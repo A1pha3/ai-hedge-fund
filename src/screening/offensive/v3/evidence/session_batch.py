@@ -7,11 +7,14 @@
 store 已提交真相派生; 候选集 (规则的可变部分) 另做**完备性校验** — btst
 命名空间内该会话全部 SELECTED 信号证据必须恰被声明, 多出即冲突。
 
-成员规则 v1 (预注册成文 — worker 落地前不许静默改, 改即新 rule_version):
+成员规则 v2 (预注册成文 — worker 落地前不许静默改, 改即新 rule_version):
 一次 BTST 配对 Trial 决策会话的证据集 = ``regime:csi300:1.0`` (固定) +
-该信号会话的排程证据 (worker 声明, 单条) + 该会话全部 SELECTED btst 候选
-(完备性强制)。bar-set 证据**不在**决策批内 (执行层, cutoff 后才存在);
-排程的第二条同会话证据 v1 不校完备 (升级规则版本时补)。
+该信号会话的排程证据 (worker 声明, 单条; **v2 起同会话全部排程证据必须
+恰被声明, 多出即冲突 — 与候选完备性对称**; 会话归属由绑定 blob 严格解码
+的 ``signal_session`` 权威判定, 不解析 evidence_id 词法) + 该会话全部
+SELECTED btst 候选 (完备性强制)。bar-set 证据**不在**决策批内 (执行层,
+cutoff 后才存在)。v1 历史: 排程完备性缺位 — worker 可在同会话多条排程
+证据间选择性声明 (v1 落地时登记为 "升级规则版本时补", 2026-08-21 v2 收口)。
 
 封存表 ``session_batch_seals`` 与证据时间轴同库 (单 sqlite), append-only
 (UPDATE/DELETE 触发器拒绝), (session, rule_version) 唯一键, 恰等重放幂等、
@@ -29,14 +32,15 @@ from pydantic import ValidationError, model_validator
 
 from src.screening.offensive.v3.contracts import CanonicalModel, Sha256
 from src.screening.offensive.v3.contracts.base import SignalStage, UtcInstant
-from src.screening.offensive.v3.contracts.evidence import SignalEvidence
+from src.screening.offensive.v3.contracts.evidence import SignalEvidence, SnapshotEvidence
 from src.screening.offensive.v3.evidence.merkle import evidence_set_merkle_root
 from src.screening.offensive.v3.evidence.repository import EvidenceRepository, EvidenceStoreError
 from src.screening.offensive.v3.evidence.trading_schedule import SCHEDULE_PRODUCER
+from src.screening.offensive.v3.kernel.models import FrozenTradingSessionSchedule
 from src.screening.offensive.v3.orchestration.paired_trial import REGIME_EVIDENCE_ID
 
 #: 预注册成员规则版本 (成员集合构成变化 = 新版本, 不许原地改)
-DECISION_BATCH_RULE_VERSION: str = "btst-decision.v1"
+DECISION_BATCH_RULE_VERSION: str = "btst-decision.v2"
 REGIME_NAMESPACE: str = "regime"
 SCHEDULE_NAMESPACE: str = SCHEDULE_PRODUCER
 BTST_NAMESPACE: str = "btst"
@@ -221,6 +225,7 @@ class SessionBatchSealer:
             )
         for evidence_id in candidate_evidence_ids:
             bindings.append(self._candidate_binding(evidence_id, session, cutoff))
+        self._enforce_schedule_completeness(session, cutoff, schedule_evidence_id)
         self._enforce_candidate_completeness(session, cutoff, declared)
         bindings.sort(key=lambda b: (b.issuer_namespace, b.evidence_id))
         return SessionBatchAuthority(
@@ -291,7 +296,7 @@ class SessionBatchSealer:
         if len(schedule_ids) != 1:
             raise SessionBatchError(
                 "authority_shape_invalid",
-                "rule v1 requires exactly one schedule binding",
+                "the decision-batch rule requires exactly one schedule binding",
             )
         if authority.rule_version != DECISION_BATCH_RULE_VERSION:
             raise SessionBatchError(
@@ -362,6 +367,64 @@ class SessionBatchSealer:
             evidence_id=evidence_id,
             artifact_hash=record.artifact_hash(),
         )
+
+    def _enforce_schedule_completeness(
+        self, session: date, cutoff: datetime, declared_id: str
+    ) -> None:
+        """排程命名空间内该会话的排程证据必须恰被声明 (v2 补强, 镜像候选侧)。
+
+        会话归属的唯一权威是绑定 blob 严格解码出的 ``signal_session`` —
+        与 ``schedule_from_record`` 复核面同源, 不做 evidence_id 词法解析
+        (id 格式演化不改变完备性语义)。
+        """
+        for evidence_id in self._repositories[SCHEDULE_NAMESPACE].evidence_ids_by_kind(
+            "snapshot"
+        ):
+            if evidence_id == declared_id:
+                continue
+            try:
+                record = self._repositories[SCHEDULE_NAMESPACE].active_revision(
+                    evidence_id, cutoff
+                )
+            except EvidenceStoreError as exc:
+                # 只吞"cutoff 前未提交"= 该 id 是批外证据; 其余仓库错误必须
+                # propagate (与候选完备性同款 P2-1 纪律: 宽吞会假装没看到坏记录).
+                if exc.code != "evidence_not_committed_before_cutoff":
+                    raise
+                continue
+            envelope = record.evidence
+            if not isinstance(envelope, SnapshotEvidence):
+                raise SessionBatchError(
+                    "schedule_namespace_polluted",
+                    "a snapshot-kind envelope in the schedule namespace is not"
+                    " a SnapshotEvidence",
+                    evidence_id=evidence_id,
+                )
+            schedule = self._decode_schedule(evidence_id, envelope)
+            if schedule.signal_session == session:
+                raise SessionBatchError(
+                    "schedule_completeness_violation",
+                    "an undeclared trading schedule exists for this session",
+                    evidence_id=evidence_id,
+                    session=session.isoformat(),
+                )
+
+    def _decode_schedule(
+        self, evidence_id: str, envelope: SnapshotEvidence
+    ) -> FrozenTradingSessionSchedule:
+        """Strict decode of the bound blob; 命名空间污染 fail-closed。"""
+        blob = self._repositories[SCHEDULE_NAMESPACE].raw_payload(
+            envelope.payload_content_hash
+        )
+        try:
+            return FrozenTradingSessionSchedule.model_validate_json(blob, strict=True)
+        except Exception as exc:  # noqa: BLE001 - decode failure is fail-closed
+            raise SessionBatchError(
+                "schedule_decode_failed",
+                "a snapshot in the schedule namespace does not decode into a"
+                " strict FrozenTradingSessionSchedule",
+                evidence_id=evidence_id,
+            ) from exc
 
     def _enforce_candidate_completeness(
         self, session: date, cutoff: datetime, declared: set[str]
