@@ -150,6 +150,21 @@ def test_arm_capital_checkpoint_binds_snapshot_and_genesis_per_arm(tmp_path):
         champion.capital_snapshot.as_observed_nav_cents
         == challenger.capital_snapshot.as_observed_nav_cents
     )
+    # P2-1 (第四轮审查): 跨 trial manifest 在 checkpoint 构造即拒 —
+    # 不等下游 build_pair_records 兜底
+    with pytest.raises(ArmCapitalError) as ei:
+        arm_capital_checkpoint(
+            repository=_repo(tmp_path, "xtrial"),
+            trial_id=TRIAL_ID,
+            arm=TrialArm.CHAMPION,
+            portfolio_id="trial-portfolio",
+            mode=ExecutionMode.DAILY_BAR_PROXY,
+            as_of=AS_OF,
+            capital_store_id="x",
+            genesis_manifest=_genesis_manifest(trial_id="trial-other"),
+        )
+    assert ei.value.code == "genesis_trial_mismatch"
+
     # checkpoint 校验器背书: portfolio/mode 一致性, 漂移即构造失败
     with pytest.raises(Exception):
         arm_capital_checkpoint(

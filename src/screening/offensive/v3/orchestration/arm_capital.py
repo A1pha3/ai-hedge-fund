@@ -148,7 +148,23 @@ def arm_capital_checkpoint(
     manifest 派生, 调用方零供给。checkpoint 校验器 (shadow-capital-
     checkpoint.v2) 钉死 snapshot 哈希绑定与 portfolio/mode 一致性 —
     任何漂移在构造时即失败。
+
+    语义钉死 (第四轮审查): ① ``manifest.trial_id`` 必须等于 ``trial_id``
+    (跨 trial 错配在此拒绝, 不等下游 build_pair_records 兜底); ② ``as_of``
+    是决策时刻的 PIT 资本版本 (通常 = trusted_at 前最后资本版本) — 传错
+    时刻会拿到合法但错误的快照, 时刻选择是 worker 排程职责; ③ 台账与臂
+    的对应关系是 worker 编排约定 (台账无臂标记, genesis 相同、运行态才
+    分化), 本层只绑定传入的台账; ④ ``genesis_manifest`` 应来自
+    ``read_genesis_manifest`` — 任何其他来源的 manifest 不构成 archive
+    背书。
     """
+    if genesis_manifest.trial_id != trial_id:
+        raise ArmCapitalError(
+            "genesis_trial_mismatch",
+            "the genesis manifest belongs to another trial",
+            manifest_trial_id=genesis_manifest.trial_id,
+            requested=trial_id,
+        )
     snapshot = repository.capital_risk_snapshot(as_of)
     genesis_root = (
         genesis_manifest.champion_backup_root
