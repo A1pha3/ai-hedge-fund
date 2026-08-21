@@ -160,7 +160,11 @@ class TestEndToEndFixture:
     def test_end_to_end_generates_report(self, tmp_path, monkeypatch, capsys):
         from scripts import winrate_payoff_decomposition as mod
         table = self._fixture_table(tmp_path)
-        rc = mod.main(["--court-table", str(table), "--report-dir", str(tmp_path / "rep")])
+        # fixture 是最小列集 (不含生产过滤列) — 端到端只走全候选口径;
+        # 生产对齐口径的过滤正确性由 TestProductionAlignedUniverse 专测。
+        rc = mod.main(["--court-table", str(table),
+                       "--report-dir", str(tmp_path / "rep"),
+                       "--universes", "all_candidates"])
         assert rc == 0
         out = tmp_path / "rep"
         from datetime import date as _date
@@ -184,3 +188,53 @@ class TestEndToEndFixture:
         with pytest.raises(SystemExit, match="court 事件表缺失"):
             mod.main(["--court-table", str(tmp_path / "nope.csv.gz"),
                       "--report-dir", str(tmp_path / "rep")])
+
+
+class TestProductionAlignedUniverse:
+    """双口径: 全候选 vs 生产对齐 (复用 review_btst_prior_court 单一实现)。"""
+
+    def _fixture_ev(self, tmp_path):
+        import pandas as pd
+        rows = []
+        for i in range(12):
+            rows.append({
+                "symbol": f"{600000+i}",
+                "signal_date": f"2026-01-{(i % 5) + 1:02d}",
+                "regime": "normal" if i % 3 else "crisis",
+                "trigger_strength": 0.55 + (i % 3) * 0.1,
+                "gross_ret_t10": 0.05 * (1 if i % 2 else -1),
+                "gross_ret_t5": 0.02,
+                "fillable": True,
+                "gate_blocked": i == 10,       # 1 行 gate 拦截
+                "degraded": i == 11,           # 1 行降级
+                "st_name": False,
+                "industry_missing": False,
+                "excluded_ticker": False,
+                "price_ge_3": True,
+            })
+        return pd.DataFrame(rows)
+
+    def test_aligned_excludes_gate_and_degraded(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import production_aligned
+        ev = self._fixture_ev(tmp_path)
+        aligned = production_aligned(ev)
+        assert len(ev) == 12
+        assert len(aligned) == 10  # 排除 gate_blocked(1) + degraded(1)
+        assert "600010" not in set(aligned["symbol"])
+        assert "600011" not in set(aligned["symbol"])
+
+    def test_missing_filter_column_fails_closed(self, tmp_path):
+        """列缺失 = 口径理解错误, fail-closed 不静默当作不过滤 (镜像 review 纪律)。"""
+        from scripts.winrate_payoff_decomposition import production_aligned
+        ev = self._fixture_ev(tmp_path).drop(columns=["degraded"])
+        with pytest.raises(SystemExit, match="court 事件表缺少生产过滤列"):
+            production_aligned(ev)
+
+    def test_decompose_dual_universe_payload(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import decompose
+        ev = self._fixture_ev(tmp_path)
+        payload = decompose(ev, universes=("all_candidates", "production_aligned"))
+        assert set(payload["universes"]) == {"all_candidates", "production_aligned"}
+        all_n = payload["universes"]["all_candidates"]["horizons"]["t10"][0]["n"]
+        aligned_n = payload["universes"]["production_aligned"]["horizons"]["t10"][0]["n"]
+        assert all_n == 12 and aligned_n == 10

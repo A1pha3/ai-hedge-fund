@@ -57,6 +57,33 @@ STRENGTH_BUCKETS: tuple[tuple[float, str], ...] = (
 )
 
 
+def production_aligned(ev) -> "pd.DataFrame":
+    """生产对齐宇宙 — 复用 review_btst_prior_court 单一实现 (防口径漂移)。
+
+    candidate_universe (fillable & !gate_blocked & ret 非空) 再排除
+    degraded/ST/行业缺失/排除名单/price<3; 过滤列缺失 = 口径理解错误,
+    fail-closed 不静默当作不过滤 (镜像 review 纪律)。
+    """
+    import sys as _sys
+    _scripts = str(Path(__file__).resolve().parent)
+    if _scripts not in _sys.path:
+        _sys.path.insert(0, _scripts)
+    from review_btst_prior_court import (  # noqa: E402
+        PRODUCTION_EXCLUDE_COLS,
+        candidate_universe,
+    )
+
+    required = ["fillable", "gate_blocked", "price_ge_3", *PRODUCTION_EXCLUDE_COLS]
+    missing = [c for c in required if c not in ev.columns]
+    if missing:
+        raise SystemExit(f"court 事件表缺少生产过滤列: {sorted(missing)}")
+    universe = candidate_universe(ev)
+    excluded_any = universe[list(PRODUCTION_EXCLUDE_COLS)].any(axis=1) | (
+        universe["price_ge_3"] != True  # noqa: E712
+    )
+    return universe.loc[~excluded_any].copy()
+
+
 def net_returns(gross: list[float | None]) -> list[float | None]:
     """gross → 净收益 (None 透传; 与 btst_court_views.net_ret 同式)。"""
     return [
@@ -173,39 +200,54 @@ def _group_rows(
     return out
 
 
-def decompose(df: pd.DataFrame) -> dict[str, object]:
-    """对每个 horizon 产出分组表 + 相对全体的归因分解。"""
+def decompose(
+    df: pd.DataFrame,
+    universes: tuple[str, ...] = ("all_candidates", "production_aligned"),
+) -> dict[str, object]:
+    """对每个宇宙 × 每个 horizon 产出分组表 + 相对该宇宙全体的归因分解。
+
+    双口径: all_candidates (全部可配对候选) 与 production_aligned (生产
+    可计划过滤链) — 两者的 E 不可混引 (先验 +0.56% 是生产对齐口径)。
+    """
+    frames = {"all_candidates": df}
+    if "production_aligned" in universes:
+        frames["production_aligned"] = production_aligned(df)
     payload: dict[str, object] = {
         "roundtrip_cost": ROUNDTRIP_COST,
         "min_cell_n": MIN_CELL_N,
-        "horizons": {},
+        "universes": {},
+        "horizons": {},  # 兼容旧键: 默认宇宙的 horizons 平铺
     }
-    for horizon in (PRIMARY_HORIZON, *CONTRAST_HORIZONS):
-        work = df.copy()
-        work[f"net_ret_t{horizon}"] = net_returns(
-            work[f"gross_ret_t{horizon}"].tolist()
-        )
-        work["strength_bucket"] = work["trigger_strength"].map(strength_bucket)
-        rows = []
-        base_stats: dict[str, object] | None = None
-        for label, sub in _group_rows(work, horizon):
-            rets = sub[f"net_ret_t{horizon}"].tolist()
-            days = sub["signal_date"].astype(str).tolist()
-            stats = win_loss_stats(rets, days)
-            entry = {
-                "group": label,
-                **stats,
-            }
-            if label == "ALL":
-                base_stats = stats
-            rows.append(entry)
-        assert base_stats is not None
-        for entry in rows:
-            if entry["n"] and entry["group"] != "ALL":
-                entry["attribution_vs_all"] = attribution(entry, base_stats)
-            else:
-                entry["attribution_vs_all"] = None
-        payload["horizons"][f"t{horizon}"] = rows
+    for universe_name, frame in frames.items():
+        if universe_name not in universes:
+            continue
+        uni: dict[str, object] = {"horizons": {}}
+        for horizon in (PRIMARY_HORIZON, *CONTRAST_HORIZONS):
+            work = frame.copy()
+            work[f"net_ret_t{horizon}"] = net_returns(
+                work[f"gross_ret_t{horizon}"].tolist()
+            )
+            work["strength_bucket"] = work["trigger_strength"].map(strength_bucket)
+            rows = []
+            base_stats: dict[str, object] | None = None
+            for label, sub in _group_rows(work, horizon):
+                rets = sub[f"net_ret_t{horizon}"].tolist()
+                days = sub["signal_date"].astype(str).tolist()
+                stats = win_loss_stats(rets, days)
+                entry = {"group": label, **stats}
+                if label == "ALL":
+                    base_stats = stats
+                rows.append(entry)
+            assert base_stats is not None
+            for entry in rows:
+                if entry["n"] and entry["group"] != "ALL":
+                    entry["attribution_vs_all"] = attribution(entry, base_stats)
+                else:
+                    entry["attribution_vs_all"] = None
+            uni["horizons"][f"t{horizon}"] = rows
+        payload["universes"][universe_name] = uni
+        if universe_name == "all_candidates":
+            payload["horizons"] = uni["horizons"]
     return payload
 
 
@@ -229,7 +271,45 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
     L.append("= ΔE(组 vs 全体)。聚类 CI 按信号日池化 bootstrap (90% 下界);")
     L.append(f"n<{MIN_CELL_N} 的格子只披露不判定。")
     L.append("")
-    for key, rows in payload["horizons"].items():
+    universes = payload.get("universes") or {"all_candidates": {"horizons": payload["horizons"]}}
+    for uni_name, uni in universes.items():
+        subtitle = "全候选 (含 gate 拦截/降级/ST/排除名单)" if uni_name == "all_candidates" else "生产对齐 (gate 放行 & 可成交 & 生产过滤链)"
+        L.append(f"### 口径: {uni_name} — {subtitle}")
+        L.append("")
+        _render_horizons(uni["horizons"], L)
+    aligned = (payload.get("universes") or {}).get("production_aligned")
+    if aligned:
+        t10_all = aligned["horizons"].get("t10", [])
+        all_row = next((r for r in t10_all if r["group"] == "ALL"), None)
+        if all_row and all_row.get("expectancy") is not None:
+            try:
+                from src.screening.offensive.known_distributions import (
+                    BTST_BREAKOUT_T10,
+                )
+                prior = BTST_BREAKOUT_T10
+                e_dev_pp = abs(all_row["expectancy"] - prior.expected_return) * 100
+                w_dev_pp = (all_row["winrate"] - prior.winrate) * 100
+                status = "对齐 (±1pp 内)" if e_dev_pp <= 1.0 else "偏离 >1pp — 消费前回 Observe"
+                L.append(f"- **先验对齐披露**: 生产对齐 T+10 E={all_row['expectancy']:+.2%} /")
+                L.append(f"  胜率={all_row['winrate']:.2%} (n={all_row['n']}) vs")
+                L.append(f"  known_distributions.BTST_BREAKOUT_T10")
+                L.append(f"  E={prior.expected_return:+.2%}/胜率={prior.winrate:.2%}:")
+                L.append(f"  E 偏离 {e_dev_pp:.2f}pp / 胜率偏离 {w_dev_pp:+.2f}pp — {status}。")
+            except ImportError:
+                L.append("- 先验对齐披露不可用 (known_distributions 导入失败)。")
+    L.append("## 纪律")
+    L.append("")
+    L.append("- 本报告是诊断证据, 不是参数变更提案; 任何阈值/先验/仓位调整 =")
+    L.append("  策略行为变化 = 新证据世代 (owner 决策 + 预注册)。")
+    L.append("- 无亏损组 payoff 未定义记 '—'; 恰 0 净收益记负侧 (保守)。")
+    L.append("- 复现: `uv run python scripts/winrate_payoff_decomposition.py`")
+    L.append(f"  (固定 bootstrap 种子; court 表 {COURT_TABLE})。")
+    L.append("")
+    return "\n".join(L)
+
+
+def _render_horizons(horizons: dict, L: list[str]) -> None:
+    for key, rows in horizons.items():
         L.append(f"## {key}")
         L.append("")
         L.append(
@@ -254,14 +334,6 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
                 f" {wr} | {pf} | {de} | {ci} |"
             )
         L.append("")
-    L.append("## 纪律")
-    L.append("")
-    L.append("- 本报告是诊断证据, 不是参数变更提案; 任何阈值/先验/仓位调整 =")
-    L.append("  策略行为变化 = 新证据世代 (owner 决策 + 预注册)。")
-    L.append("- 无亏损组 payoff 未定义记 '—'; 恰 0 净收益记负侧 (保守)。")
-    L.append("- 复现: `uv run python scripts/winrate_payoff_decomposition.py`")
-    L.append(f"  (固定 bootstrap 种子; court 表 {COURT_TABLE})。")
-    L.append("")
     return "\n".join(L)
 
 
@@ -271,6 +343,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="court 事件表路径 (默认生产 csv.gz; 测试用 fixture)")
     parser.add_argument("--report-dir", default=str(REPORT_DIR),
                         help="报告输出目录 (测试用 tmp)")
+    parser.add_argument("--universes", nargs="+",
+                        default=["all_candidates", "production_aligned"],
+                        choices=["all_candidates", "production_aligned"],
+                        help="报告口径 (默认双口径; 生产对齐需完整过滤列)")
     args = parser.parse_args(argv)
 
     date_str = date.today().strftime("%Y%m%d")
@@ -282,7 +358,7 @@ def main(argv: list[str] | None = None) -> int:
     if not court_table.exists():
         raise SystemExit(f"court 事件表缺失: {court_table}")
     ev = pd.read_csv(court_table)
-    payload = decompose(ev)
+    payload = decompose(ev, universes=tuple(args.universes))
     payload["court_rows"] = len(ev)
     payload["court_sessions"] = int(ev["signal_date"].nunique())
     report_dir.mkdir(parents=True, exist_ok=True)
