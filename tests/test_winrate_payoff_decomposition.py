@@ -238,3 +238,55 @@ class TestProductionAlignedUniverse:
         all_n = payload["universes"]["all_candidates"]["horizons"]["t10"][0]["n"]
         aligned_n = payload["universes"]["production_aligned"]["horizons"]["t10"][0]["n"]
         assert all_n == 12 and aligned_n == 10
+
+
+class TestDeterministicAcrossCalls:
+    """R13 对抗审查 PoC: RNG 全局状态曾使同进程第二次调用 CI 漂移。"""
+
+    def test_repeated_calls_identical_ci(self):
+        import numpy as np
+        from scripts.winrate_payoff_decomposition import cluster_boot_ci_low
+        rng_data = np.random.default_rng(42)
+        days = [f"d{i%10}" for i in range(60)]
+        rets = list(rng_data.normal(0.001, 0.02, 60))
+        ci1 = cluster_boot_ci_low(rets, days)
+        ci2 = cluster_boot_ci_low(rets, days)
+        ci3 = cluster_boot_ci_low(rets, days)
+        assert ci1 == ci2 == ci3  # 与进程内调用历史无关
+
+    def test_decompose_repeated_byte_identical(self):
+        from scripts.winrate_payoff_decomposition import decompose
+        import numpy as np, pandas as pd
+        rng = np.random.default_rng(7)
+        ev = pd.DataFrame({
+            "symbol": [f"s{i}" for i in range(80)],
+            "signal_date": [f"2026-01-{(i%15)+1:02d}" for i in range(80)],
+            "regime": ["normal" if i%4 else "crisis" for i in range(80)],
+            "trigger_strength": list(rng.uniform(0.45, 0.95, 80)),
+            "gross_ret_t10": list(rng.normal(0.005, 0.1, 80)),
+            "gross_ret_t5": list(rng.normal(0.002, 0.05, 80)),
+        })
+        first = decompose(ev, universes=("all_candidates",))
+        second = decompose(ev, universes=("all_candidates",))
+        assert first == second  # 两次完整分解逐字段相等 (含全部 CI)
+
+    def test_decompose_deterministic_regardless_of_prior_noise(self):
+        """预消耗全局 RNG 后 decompose 仍与干净进程一致 — 种子封闭在调用内。"""
+        import numpy as np
+        import pandas as pd
+        from scripts.winrate_payoff_decomposition import cluster_boot_ci_low, decompose
+        rng = np.random.default_rng(7)
+        ev = pd.DataFrame({
+            "symbol": [f"s{i}" for i in range(80)],
+            "signal_date": [f"2026-01-{(i%15)+1:02d}" for i in range(80)],
+            "regime": ["normal"] * 80,
+            "trigger_strength": list(rng.uniform(0.45, 0.95, 80)),
+            "gross_ret_t10": list(rng.normal(0.005, 0.1, 80)),
+            "gross_ret_t5": list(rng.normal(0.002, 0.05, 80)),
+        })
+        clean = decompose(ev, universes=("all_candidates",))
+        # 预消耗模块 RNG (若实现仍依赖全局态, 此后结果会漂移)
+        junk_days = [f"j{i%5}" for i in range(50)]
+        cluster_boot_ci_low(list(np.random.default_rng(1).normal(0, 0.01, 50)), junk_days)
+        after_noise = decompose(ev, universes=("all_candidates",))
+        assert clean == after_noise

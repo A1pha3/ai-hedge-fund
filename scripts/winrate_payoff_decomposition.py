@@ -46,7 +46,7 @@ SELL_STAMP_BPS = 5.0
 ROUNDTRIP_COST = (2 * SLIPPAGE_BPS + SELL_STAMP_BPS) / 1e4  # 0.65%
 MIN_CELL_N = 30  # 与 panel_health_check / panel_signal_decomposition 一致
 N_BOOT = 10_000
-RNG = np.random.default_rng(20260822)  # 固定种子: 报告可复现
+BOOT_SEED = 20260822  # 每次调用新建 seeded RNG — 可复现与进程历史/行序无关 (R13)
 PRIMARY_HORIZON = 10  # BTST 固定合约
 CONTRAST_HORIZONS = (5,)
 
@@ -144,10 +144,19 @@ def win_loss_stats(
 
 
 def cluster_boot_ci_low(
-    rets: list[float], days: list[str], ci: float = 0.90, n_boot: int = N_BOOT
+    rets: list[float],
+    days: list[str],
+    ci: float = 0.90,
+    n_boot: int = N_BOOT,
 ) -> float:
     """按信号日聚类池化 bootstrap (镜像 btst_court_views 修复后口径:
-    重采样天 → 池化被抽中天的全部事件 → 逐事件均值)。"""
+    重采样天 → 池化被抽中天的全部事件 → 逐事件均值)。
+
+    每次调用以 BOOT_SEED 新建 RNG — 同输入恒同输出, 与进程内调用历史、
+    行序、并行的其它调用全部无关 (R13 修复: 模块级全局 RNG 曾使同进程
+    第二次调用 CI 漂移, "固定种子可复现"承诺只对全新进程成立)。
+    """
+    rng = np.random.default_rng(BOOT_SEED)
     by_day: dict[str, list[float]] = {}
     for r, d in zip(rets, days):
         by_day.setdefault(d, []).append(r)
@@ -155,7 +164,7 @@ def cluster_boot_ci_low(
     k = len(pools)
     means = np.empty(n_boot)
     for i in range(n_boot):
-        pick = RNG.integers(0, k, k)
+        pick = rng.integers(0, k, k)
         means[i] = np.concatenate([pools[j] for j in pick]).mean()
     return float(np.quantile(means, 1 - ci))
 
