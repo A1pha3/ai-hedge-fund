@@ -28,6 +28,7 @@ import contextlib
 import hashlib
 import json
 import sqlite3
+import stat
 from datetime import datetime, timezone
 from decimal import Decimal
 from fractions import Fraction
@@ -38,6 +39,10 @@ from typing import Annotated, Any, Callable, TypeAlias
 import sqlalchemy as sa
 from pydantic import Field, ValidationError, model_validator
 from sqlalchemy.exc import DBAPIError, IntegrityError
+
+from src.screening.offensive.v3.orchestration.path_guards import (
+    ensure_directory_components,
+)
 
 from src.screening.offensive.v3.capital.conservation import (
     ConservationReport,
@@ -3416,7 +3421,24 @@ class CapitalRepository:
         """Create (idempotently) the ledger schema and sentinel meta rows."""
 
         path = Path(database_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        # 逐段创建 + 逐段验证 (第五轮): initialize 语义是全新建库, 预置
+        # symlink 无合法用途 — 中间段穿透创建与 db 最终组件写穿同拒;
+        # open() (打开既有库) 不在此列, symlink 可能是合法部署手法。
+        ensure_directory_components(
+            path.parent,
+            fail=CapitalConflict,
+            missing_code="capital_component_missing",
+            rejected_code="capital_component_rejected",
+        )
+        try:
+            db_mode = path.lstat().st_mode
+        except FileNotFoundError:
+            db_mode = None
+        if db_mode is not None and not stat.S_ISREG(db_mode):
+            raise CapitalConflict(
+                "capital_path_rejected",
+                "a fresh capital ledger path must be a regular file or absent",
+            )
         repository = cls._connect(path)
         with repository._engine.begin() as conn:
             repository._metadata.create_all(conn)
@@ -5738,7 +5760,23 @@ class CapitalRepository:
         """
 
         backup_path = Path(backup_path)
-        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        # 逐段创建 + 逐段验证 (第五轮): 备份目的地是 operator 供给 —
+        # sqlite backup 经预置 symlink 写穿同拒。
+        ensure_directory_components(
+            backup_path.parent,
+            fail=CapitalConflict,
+            missing_code="backup_component_missing",
+            rejected_code="backup_component_rejected",
+        )
+        try:
+            backup_mode = backup_path.lstat().st_mode
+        except FileNotFoundError:
+            backup_mode = None
+        if backup_mode is not None and not stat.S_ISREG(backup_mode):
+            raise CapitalConflict(
+                "backup_path_rejected",
+                "the backup destination must be a regular file or absent",
+            )
         source = sqlite3.connect(str(self._database_path))
         try:
             destination = sqlite3.connect(str(backup_path))
@@ -5813,7 +5851,23 @@ class CapitalRepository:
                 expected_content_root=manifest.content_root,
                 actual_content_root=actual_root,
             )
-        new_path.parent.mkdir(parents=True, exist_ok=True)
+        # 逐段创建 + 逐段验证 (第五轮): 恢复目的地是 operator 供给 —
+        # write_bytes 经预置 symlink 写穿同拒。
+        ensure_directory_components(
+            new_path.parent,
+            fail=CapitalConflict,
+            missing_code="restore_component_missing",
+            rejected_code="restore_component_rejected",
+        )
+        try:
+            restore_mode = new_path.lstat().st_mode
+        except FileNotFoundError:
+            restore_mode = None
+        if restore_mode is not None and not stat.S_ISREG(restore_mode):
+            raise CapitalConflict(
+                "restore_path_rejected",
+                "the restore destination must be a regular file or absent",
+            )
         new_path.write_bytes(backup_path.read_bytes())
         repository = cls.initialize(new_path)
         with repository._engine.connect() as conn:

@@ -40,8 +40,12 @@ import os
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
+import stat
 from typing import Final
 
+from src.screening.offensive.v3.orchestration.path_guards import (
+    ensure_directory_components,
+)
 from src.screening.offensive.v3.contracts import ExitMandate
 from src.screening.offensive.v3.gateway.exits import (
     ClaimedExitWork,
@@ -448,6 +452,24 @@ class LifecycleScheduler:
         principal(见 ``ServiceIdentity.require_private_access``)。
         """
         self._process_lease_path = path
+        # 路径守卫 (第五轮): lease 不得经预置 symlink 写穿 — parent 逐段
+        # 创建验证, lease 文件最终组件 lstat 拒 symlink; 非原子 write_text
+        # 保持现状 (损坏 lease 由 validate fail-closed 覆盖)。
+        ensure_directory_components(
+            path.parent,
+            fail=LifecycleSchedulerError,
+            missing_code="lease_component_missing",
+            rejected_code="lease_component_rejected",
+        )
+        try:
+            lease_mode = path.lstat().st_mode
+        except FileNotFoundError:
+            lease_mode = None
+        if lease_mode is not None and not stat.S_ISREG(lease_mode):
+            raise LifecycleSchedulerError(
+                "lease_path_rejected",
+                "the process lease path must be a regular file or absent",
+            )
         payload = {
             "pid": os.getpid(),
             "service_name": self._identity.service_name,
