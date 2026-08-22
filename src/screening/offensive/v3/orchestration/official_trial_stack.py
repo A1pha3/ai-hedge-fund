@@ -53,6 +53,42 @@ class OfficialStackError(RuntimeError):
         self.details = details
 
 
+def _require_regular_database(path: Path, *, missing_code: str) -> None:
+    """官方栈磁盘面守卫 (R29): 库文件必须是真实常规文件。
+
+    ``is_file()`` 跟随 symlink — 预置 ``evidence.sqlite3 -> 外部伪库``
+    会让官方栈在敌手库上构造 (regime/排程/候选/批授权 merkle 根全部
+    绑定污染源; PoC 实锤)。lstat 拒 symlink 与目录/FIFO 等非常规替换
+    物, 与 blob_store/arm_capital (第四/五轮) 的同族纪律一致。
+    """
+    import stat
+
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        raise OfficialStackError(
+            missing_code,
+            "the trial root lacks this database (seeding/genesis flows"
+            " must run first)",
+            path=str(path),
+        ) from None
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+        raise OfficialStackError(
+            "official_stack_path_rejected",
+            "an official-stack database must be a regular non-symlink file",
+            path=str(path),
+        )
+
+
+def _require_optional_regular_database(path: Path) -> None:
+    """存在的运行态库必须是常规文件; 缺失保持构造器既有语义 (自建)。"""
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return
+    _require_regular_database(path, missing_code="trial_root_not_initialized")
+
+
 @dataclass(frozen=True)
 class OfficialTrialStack:
     """One fully-wired official trial runtime over the persistent identity."""
@@ -105,6 +141,14 @@ def build_official_trial_stack(
 
     root = Path(trial_root).resolve()
     identity_dir = Path(identity_dir)
+    # trial_id 入口单段校验 (R29): 该 id 直接拼进归档路径与 portfolio_id,
+    # 穿越/绝对注入在拼路径前即拒 (深处 assembler 的 stage_trial_mismatch
+    # 是兜底而非纵深; R28 已修 stage_id 段, 本轮补 trial_id 段)。
+    from src.screening.offensive.v3.orchestration.path_guards import (
+        require_safe_segment,
+    )
+
+    require_safe_segment(trial_id, field="trial_id", fail=OfficialStackError)
     now = clock()
     identity = load_governance_identity(identity_dir, trusted_at=now)
     head = v3trust.CurrentTrustHeadWitness.model_validate_json(
@@ -113,19 +157,13 @@ def build_official_trial_stack(
 
     evidence_db = root / "evidence.sqlite3"
     bars_db = root / "bars-evidence.sqlite3"
+    _require_regular_database(
+        evidence_db, missing_code="trial_root_not_initialized"
+    )
+    _require_regular_database(
+        bars_db, missing_code="trial_root_not_initialized"
+    )
     blobs = root / "blobs"
-    missing = [
-        str(p.relative_to(root))
-        for p in (evidence_db, bars_db)
-        if not p.is_file()
-    ]
-    if missing:
-        raise OfficialStackError(
-            "trial_root_not_initialized",
-            "the trial root lacks pre-initialized evidence databases"
-            " (seeding/genesis flows must run first)",
-            missing=missing,
-        )
 
     def repo(namespace: str, database: Path) -> EvidenceRepository:
         return identity.repository_for(
@@ -136,6 +174,11 @@ def build_official_trial_stack(
             trust_head=head,
         )
 
+    # 运行态三库: 存在时必须是常规文件 (symlink 拒; 缺失保持构造器
+    # 既有自建语义 — spine 新建完整性语义是独立观察记录, 不在本层改)。
+    _require_optional_regular_database(root / "spine.sqlite3")
+    _require_optional_regular_database(root / "decisions.sqlite3")
+    _require_optional_regular_database(root / "governance.sqlite3")
     spine = SessionSpine(database_path=str(root / "spine.sqlite3"), clock=clock)
     store = TrialArmDecisionStore(database_path=str(root / "decisions.sqlite3"))
     # 资本约定路径在构造期即校验 (缺库 fail-closed 提前到组装面)

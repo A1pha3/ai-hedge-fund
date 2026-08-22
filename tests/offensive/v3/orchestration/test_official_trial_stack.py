@@ -319,3 +319,126 @@ def test_explicit_stage_id_traversal_rejected(tmp_path, evil_stage_id):
     with pytest.raises(OfficialStackError) as ei:
         _build(world, stage_id=evil_stage_id)
     assert ei.value.code == "stage_id_rejected"
+
+
+# ---------------------------------------------------------------------------
+# R29: 组装器磁盘面 symlink 守卫 + trial_id 入口单段校验
+# ---------------------------------------------------------------------------
+
+def test_symlinked_evidence_db_rejected(tmp_path):
+    """对抗 PoC (R28 审查延伸实锤): evidence.sqlite3 symlink 穿透 is_file。"""
+    import os
+
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    # 敌手: 把 evidence.sqlite3 替换为指向外部伪库的 symlink。
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    evil = outside / "evil-evidence.sqlite3"
+    evil.touch()
+    (world.root / "evidence.sqlite3").unlink()
+    os.symlink(evil, world.root / "evidence.sqlite3")
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "official_stack_path_rejected"
+
+
+def test_symlinked_bars_db_rejected(tmp_path):
+    import os
+
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    evil = outside / "evil-bars.sqlite3"
+    evil.touch()
+    (world.root / "bars-evidence.sqlite3").unlink()
+    os.symlink(evil, world.root / "bars-evidence.sqlite3")
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "official_stack_path_rejected"
+
+
+@pytest.mark.parametrize(
+    "db_name", ["spine.sqlite3", "decisions.sqlite3", "governance.sqlite3"]
+)
+def test_symlinked_runtime_dbs_rejected(tmp_path, db_name):
+    """spine/decisions/governance 同族: 存在时必须是常规文件。"""
+    import os
+
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    evil = outside / f"evil-{db_name}"
+    evil.touch()
+    target = world.root / db_name
+    if target.exists():
+        target.unlink()
+    os.symlink(evil, target)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "official_stack_path_rejected"
+
+
+def test_directory_in_place_of_evidence_db_rejected(tmp_path):
+    """目录替换物同样拒绝 (非常规文件一族)。"""
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    (world.root / "evidence.sqlite3").unlink()
+    (world.root / "evidence.sqlite3").mkdir()
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "official_stack_path_rejected"
+
+
+@pytest.mark.parametrize(
+    "evil_trial_id", ["sub/trial-b", "../escape", "/abs/trial", "trial-x/../trial-y"]
+)
+def test_trial_id_injection_rejected_at_entry(tmp_path, evil_trial_id):
+    """trial_id 入口单段校验 (R28 修 stage_id 段, 本轮补 trial_id 段)。"""
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world, trial_id=evil_trial_id)
+    assert ei.value.code == "trial_id_rejected"
