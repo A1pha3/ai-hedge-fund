@@ -100,7 +100,9 @@ except Exception:  # noqa: BLE001
 
     sps = _SpsFallback()
 
-RNG = np.random.default_rng(20260815)  # 固定种子: pack 可复现
+BOOT_SEED = 20260815  # per-call seeded RNG (R14): 每次调用新建 — 可复现与
+# 进程内调用历史无关 (同款模块级全局 RNG 缺陷已在 winrate 工具 R13 收口;
+# 镜像 review_btst_prior_court 的种子注入纪律, 保持种子连续性)
 N_BOOT = 10_000
 
 
@@ -118,8 +120,9 @@ def cluster_boot_ci_low(diffs: pd.Series, days: pd.Series, ci: float = 0.90, n_b
     by_day = [g.to_numpy() for _, g in diffs.groupby(days)]
     n = len(by_day)
     means = np.empty(n_boot)
+    rng = np.random.default_rng(BOOT_SEED)
     for i in range(n_boot):
-        pick = RNG.integers(0, n, n)
+        pick = rng.integers(0, n, n)
         means[i] = np.concatenate([by_day[j] for j in pick]).mean()
     return float(np.quantile(means, 1 - ci))
 
@@ -230,8 +233,9 @@ def q3_gap(ev: pd.DataFrame) -> dict:
         vals = df["ret10"].to_numpy()
         labels = (df["gap_t1_open"].to_numpy() >= c)
         perm = np.empty(n_perm)
+        rng = np.random.default_rng(BOOT_SEED)
         for i in range(n_perm):
-            shuffled = RNG.permutation(labels)
+            shuffled = rng.permutation(labels)
             perm[i] = vals[shuffled].mean() - vals[~shuffled].mean()
         p_one = float((perm <= obs).mean())
         cliffs[f"{c:.0%}"] = {"delta": round(float(obs), 5), "p_one_sided": round(p_one, 4), "n_hi": len(hi), "n_lo": len(lo)}

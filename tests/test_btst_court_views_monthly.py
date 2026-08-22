@@ -162,3 +162,39 @@ def test_freshness_problems_boundaries():
 def test_freshness_problems_missing_manifest():
     none = table_freshness(None, "a" * 64, date(2026, 8, 18))
     assert any("manifest" in p for p in freshness_problems(none))
+
+
+class TestRngDeterminism:
+    """R14 同族审查: btst_court_views 模块级 RNG 两个消费点 (CI + cliff
+    permutation) 的 per-call 确定性 — 镜像 winrate 工具 R13 修复纪律。"""
+
+    def _ev(self, n=200, seed=3):
+        import numpy as np
+        rng = np.random.default_rng(seed)
+        return pd.DataFrame({
+            "signal_date": [f"2026-03-{(i % 20) + 1:02d}" for i in range(n)],
+            "regime": ["normal" if i % 5 else "crisis" for i in range(n)],
+            "gross_ret_t5": list(rng.normal(0.004, 0.05, n)),
+            "gross_ret_t10": list(rng.normal(0.006, 0.10, n)),
+            "gap_t1_open": list(rng.normal(0.01, 0.03, n)),
+        })
+
+    def test_cluster_boot_ci_repeatable(self):
+        import numpy as np
+        from btst_court_views import cluster_boot_ci_low
+        ev = self._ev()
+        diffs = ev["gross_ret_t10"] - ev["gross_ret_t5"]
+        ci1 = cluster_boot_ci_low(diffs, ev["signal_date"])
+        junk = cluster_boot_ci_low(
+            pd.Series(np.random.default_rng(9).normal(0, 0.01, 60)),
+            pd.Series([f"j{i%6}" for i in range(60)]),
+        )  # 预消耗 (若仍依赖全局态, 此后漂移)
+        ci2 = cluster_boot_ci_low(diffs, ev["signal_date"])
+        assert ci1 == ci2
+
+    def test_q3_gap_repeatable(self):
+        from btst_court_views import q3_gap
+        ev = self._ev()
+        a = q3_gap(ev)
+        b = q3_gap(ev)
+        assert a == b  # 含 cliff permutation p 值, 与调用历史无关
