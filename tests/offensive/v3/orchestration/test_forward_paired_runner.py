@@ -607,8 +607,12 @@ def _by_arm(rig: _Rig, receipt: PairedSignalReceipt):
 
 
 def test_unavailable_runner_has_no_ambient_capabilities() -> None:
-    assert tuple(inspect.signature(ForwardPairedTrialRunner).parameters) == ()
-    assert not hasattr(ForwardPairedTrialRunner(), "__dict__")
+    # R24 解锁后: 无参实例无注入依赖 → decide 仍 fail-closed (零副作用
+    # 纪律不变); authority 只来自显式注入链。
+    runner = ForwardPairedTrialRunner()
+    with pytest.raises(PairedTrialRunnerError) as rejected:
+        runner.decide_signal_session(SignalSessionRequest(trial_id="t", signal_session=SIGNAL_DATE))
+    assert rejected.value.code == "forward_input_authority_unavailable"
 
 
 def test_bare_verified_snapshot_cannot_authorize_forward_run(rig: _Rig) -> None:

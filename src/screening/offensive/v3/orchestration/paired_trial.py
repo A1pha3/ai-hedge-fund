@@ -65,14 +65,23 @@ class PairedTrialRunnerError(RuntimeError):
 
 @dataclass(frozen=True)
 class SignalSessionRequest:
-    """Identity of a future forward signal-session request.
+    """One official forward signal-session decision request (R24 解锁).
 
-    The disabled runner does not inspect it.  In particular, caller-owned
-    values cannot stand in for the missing store-owned batch authority.
+    会话决策变量全部显式: cutoff/trusted_at/deadlines 是特权 worker 排程
+    职责 (宪法 #10 时序由 ``DeadlineContract`` 校验器强制; assemble 内部
+    的批授权/完备性由 store 侧 seal 强制 — caller 声明不能替代)。
     """
 
     trial_id: str
     signal_session: date
+    # 解锁字段带默认值: 未填请求在解锁路径被显式拒绝 (deadline/cycle
+    # 校验), 无参 runner 也保持 fail-closed — 两层独立。
+    decision_cycle_id: str = ""
+    trusted_evidence_cutoff: datetime | None = None
+    trusted_at: datetime | None = None
+    schedule_evidence_id: str = ""
+    candidate_evidence_ids: tuple[str, ...] = ()
+    deadlines: object | None = None  # DeadlineContract; 由 worker 排程构造
 
 
 @dataclass(frozen=True)
@@ -193,25 +202,141 @@ def classify_pair_session(
 
 
 class ForwardPairedTrialRunner:
-    """Disabled official forward entry point with no ambient capabilities.
+    """Official forward entry point — decide unlocked (R24, owner 在场).
 
-    Individually verified snapshots, evidence rows, decision pairs and session
-    statuses cannot prove a complete session batch.  Until Evidence Store owns
-    that batch authority and governance seals the exchange decision window,
-    every mutating runner operation rejects before reading a clock, store or
-    injected callback.  Pure construction helpers remain module-level below.
+    解锁依据 (docstring 原条件的落地): Evidence Store 已持有会话批授权
+    (``SessionBatchSealer`` 三段式 + 完备性), 治理已封存决策窗口 (签发
+    回执 + 归档 + 持久身份), 组装面带消费侧防御断言 (R9), 两臂资本走
+    arm_layout 约定路径 (R21/R23)。``decide_signal_session`` 的每个 mutating
+    能力都经注入依赖显式到达, 无 ambient 权限。
+
+    ``advance_market_session``/``finalize_missed_sessions`` 仍 fail-closed
+    (市场会话推进 = SessionLifecycleDriver 产品化, 排程接线下轮解锁)。
     """
 
-    __slots__ = ()
+    def __init__(
+        self,
+        *,
+        assembler: object = None,
+        capital_trial_root: object = None,
+        portfolio_id: str | None = None,
+        sizing_config: SizingConfig | None = None,
+        decision_store: object = None,
+        kernel_decider: object | None = None,
+    ) -> None:
+        # 无参实例 = 未注入 authority, decide 保持 fail-closed (旧 disabled
+        # 语义的延续: 权限只来自显式注入的依赖链, 无 ambient 能力)。
+        self._assembler = assembler
+        self._capital_trial_root = capital_trial_root
+        self._portfolio_id = portfolio_id
+        self._sizing = sizing_config
+        self._store = decision_store
+        self._decider = kernel_decider
+
+    def _kernel(self) -> object:
+        if self._decider is not None:
+            return self._decider
+        from src.screening.offensive.v3.kernel.decide import GrowthKernel
+
+        return GrowthKernel(self._sizing)
+
+    def _require_unlocked(self) -> None:
+        if (
+            self._assembler is None
+            or self._capital_trial_root is None
+            or self._portfolio_id is None
+            or self._sizing is None
+            or self._store is None
+        ):
+            raise PairedTrialRunnerError(
+                "forward_input_authority_unavailable",
+                "official forward authority requires the full injected"
+                " dependency chain (assembler/capital root/store/sizing)",
+            )
 
     def decide_signal_session(
         self, request: SignalSessionRequest
     ) -> PairedSignalReceipt:
-        """Reject before observing the request or invoking any capability."""
+        """Official session decision: assemble → dual-arm capital → kernel → pair commit.
 
-        raise PairedTrialRunnerError(
-            "forward_input_authority_unavailable",
-            "official forward input batch authority is not implemented",
+        恰等重放幂等由 ``commit_pair`` 保证 (同键同内容返回原 receipt);
+        批授权/完备性/防御断言在 assemble 内部强制。
+        """
+        from src.screening.offensive.v3.contracts.trial import TrialArm
+        from src.screening.offensive.v3.orchestration.arm_layout import (
+            arm_session_checkpoint,
+        )
+
+        self._require_unlocked()
+        if request.deadlines is None:
+            raise PairedTrialRunnerError(
+                "deadline_contract_required",
+                "the session request must carry the worker-built"
+                " DeadlineContract (constitution #10)",
+            )
+        assembled = self._assembler.assemble(
+            session=request.signal_session,
+            cutoff=request.trusted_evidence_cutoff,
+            cycle_id=request.decision_cycle_id,
+            trusted_at=request.trusted_at,
+            schedule_evidence_id=request.schedule_evidence_id,
+            candidate_evidence_ids=request.candidate_evidence_ids,
+        )
+        checkpoints = {}
+        for arm in (TrialArm.CHAMPION, TrialArm.CHALLENGER):
+            checkpoints[arm] = arm_session_checkpoint(
+                self._capital_trial_root,
+                trial_id=request.trial_id,
+                arm=arm,
+                portfolio_id=self._portfolio_id,
+                mode=assembled.shared_input.mode,
+                as_of=request.trusted_at,
+                capital_store_id=(
+                    f"{request.trial_id}:{arm.value.lower()}:capital"
+                ),
+            )
+        champion_input, challenger_input = build_arm_kernel_inputs(
+            validated=assembled.validated_bundle,
+            shared_input=assembled.shared_input,
+            candidates=assembled.candidates,
+            champion_capital_checkpoint=checkpoints[TrialArm.CHAMPION],
+            challenger_capital_checkpoint=checkpoints[TrialArm.CHALLENGER],
+            deadlines=request.deadlines,
+            sizing_config=self._sizing,
+        )
+        kernel = self._kernel()
+        champion = kernel.decide_shadow(champion_input)
+        challenger = kernel.decide_shadow(challenger_input)
+        records = build_pair_records(
+            trial_id=request.trial_id,
+            session=assembled.shared_input.signal_session,
+            cycle_id=assembled.shared_input.decision_cycle_id,
+            shared_input=assembled.shared_input,
+            regime_hash=assembled.regime.observation_hash,
+            champion=champion,
+            challenger=challenger,
+            trusted_at=assembled.shared_input.trusted_at,
+            champion_input=champion_input,
+            challenger_input=challenger_input,
+        )
+        self._store.commit_pair(*records)
+        status = classify_pair_session(
+            champion, challenger, shared_candidate_count=len(assembled.candidates)
+        )
+        # 配对试验的会话状态是 pair 级事实 (两臂同会话), 两字段填同一分类 —
+        # per-arm 分化不存在于配对语义。
+        return PairedSignalReceipt(
+            trial_id=request.trial_id,
+            signal_session=request.signal_session,
+            pair_key=(
+                request.trial_id,
+                request.signal_session.isoformat(),
+                request.decision_cycle_id,
+            ),
+            champion_status=status,
+            challenger_status=status,
+            decision_cycle_id=request.decision_cycle_id,
+            regime_observation_hash=assembled.regime.observation_hash,
         )
 
     # ===================================================================

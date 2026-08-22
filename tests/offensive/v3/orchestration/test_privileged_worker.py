@@ -637,3 +637,123 @@ class TestWorkerServer:
         with pytest.raises(WorkerServerError) as ei:
             server.serve_once()
         assert ei.value.code == "worker_server_not_bound"
+
+
+# --- R24: runner 解锁端到端 (官方 decide 链) ---------------------------------
+
+
+class TestRunnerUnlock:
+    def _armed_trial_root(self, tmp_path: Path) -> Path:
+        """真实 genesis 资本链: seed(proxy) → seal → 双臂 restore 至约定路径。"""
+        from datetime import timezone
+
+        from src.screening.offensive.v3.capital.flows import GenesisRequest
+        from src.screening.offensive.v3.capital.identity import AccountBinding
+        from src.screening.offensive.v3.capital.repository import CapitalRepository
+        from src.screening.offensive.v3.contracts.base import ExecutionMode
+        from src.screening.offensive.v3.orchestration.arm_capital import (
+            read_genesis_manifest,
+        )
+        from src.screening.offensive.v3.orchestration.arm_layout import (
+            arm_capital_database_path,
+        )
+        from src.screening.offensive.v3.orchestration.genesis import (
+            restore_genesis_arm,
+        )
+
+        now = datetime(2026, 8, 6, 9, 0, tzinfo=timezone.utc)
+        root = tmp_path / "trial-root"
+        seed = tmp_path / "seed-capital.sqlite3"
+        repo = CapitalRepository.initialize(seed)
+        repo.initialize_genesis(GenesisRequest(
+            idempotency_key="genesis-1",
+            account_binding=AccountBinding(
+                portfolio_id="pf-btst-trial",
+                mode=ExecutionMode.DAILY_BAR_PROXY,
+                broker_account_id=None,
+                base_currency="CNY",
+                environment_fingerprint=None,
+            ),
+            unit_quanta=10_000, unit_price_numerator=1_000, unit_price_denominator=1,
+            source_authority="governance.test", authorization_reference="test-1",
+            effective_at=now, as_of=now,
+        ))
+        from src.screening.offensive.v3.orchestration.genesis import (
+            TrialArmGenesisSource,
+            TrialGenesisArchive,
+        )
+
+        source = TrialArmGenesisSource(capital_repository=repo)
+        manifest = TrialGenesisArchive(root).seal(
+            TRIAL_ID, champion_source=source, challenger_source=source
+        )
+        for arm in ("CHAMPION", "CHALLENGER"):
+            target = arm_capital_database_path(root, TrialArm[arm])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            restore_genesis_arm(manifest, root, target, arm=arm)
+        return root
+
+    def test_decide_signal_session_end_to_end(self, worker_world, tmp_path):
+        from src.screening.offensive.v3.kernel.decide import GrowthKernel
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            ForwardPairedTrialRunner,
+            SignalSessionRequest,
+        )
+
+        trial_root = self._armed_trial_root(tmp_path)
+        store = TrialArmDecisionStore(
+            database_path=str(worker_world["root"] / "decisions.sqlite3")
+        )
+        store.register_trial(worker_world["bundle"], _registration_genesis())
+        runner = ForwardPairedTrialRunner(
+            assembler=worker_world["assembler"],
+            capital_trial_root=trial_root,
+            portfolio_id="pf-btst-trial",
+            sizing_config=_config(),
+            decision_store=store,
+        )
+        request = SignalSessionRequest(
+            trial_id=TRIAL_ID,
+            signal_session=SESSION,
+            decision_cycle_id="daily-action-20260806",
+            trusted_evidence_cutoff=CUTOFF,
+            trusted_at=datetime(2026, 8, 6, 15, 30, tzinfo=UTC),
+            schedule_evidence_id=worker_world["schedule_id"],
+            candidate_evidence_ids=(worker_world["candidate_id"],),
+            deadlines=DeadlineContract(
+                close_finalized_at=datetime(2026, 8, 6, 15, 0, tzinfo=UTC),
+                seal_creation_deadline=datetime(2026, 8, 6, 16, 0, tzinfo=UTC),
+                permit_issue_deadline=datetime(2026, 8, 6, 16, 30, tzinfo=UTC),
+                permit_expires_at=datetime(2026, 8, 7, 9, 25, tzinfo=UTC),
+                gateway_send_deadline=datetime(2026, 8, 7, 9, 25, tzinfo=UTC),
+                broker_auction_cutoff=datetime(2026, 8, 7, 9, 30, tzinfo=UTC),
+            ),
+        )
+        receipt = runner.decide_signal_session(request)
+        assert receipt.trial_id == TRIAL_ID
+        assert receipt.decision_cycle_id == "daily-action-20260806"
+        assert len(receipt.regime_observation_hash) == 64
+        assert receipt.pair_key == (TRIAL_ID, SESSION.isoformat(), "daily-action-20260806")
+        # 幂等重放: 同请求再决策返回同 receipt (commit_pair 恰等收敛)
+        again = runner.decide_signal_session(request)
+        assert again.pair_key == receipt.pair_key
+        assert again.regime_observation_hash == receipt.regime_observation_hash
+
+    def test_locked_runner_rejects_and_advance_still_closed(self, worker_world):
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            ForwardPairedTrialRunner,
+            PairedTrialRunnerError,
+            SignalSessionRequest,
+        )
+
+        locked = ForwardPairedTrialRunner()
+        req = SignalSessionRequest(trial_id=TRIAL_ID, signal_session=SESSION)
+        with pytest.raises(PairedTrialRunnerError) as ei:
+            locked.decide_signal_session(req)
+        assert ei.value.code == "forward_input_authority_unavailable"
+        with pytest.raises(PairedTrialRunnerError) as ei:
+            locked.advance_market_session(req)
+        assert ei.value.code == "forward_input_authority_unavailable"
+        with pytest.raises(PairedTrialRunnerError) as ei:
+            locked.finalize_missed_sessions(datetime(2026, 8, 7, tzinfo=UTC))
+        assert ei.value.code == "forward_input_authority_unavailable"
