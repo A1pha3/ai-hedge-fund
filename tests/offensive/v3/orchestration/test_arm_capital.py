@@ -261,3 +261,79 @@ def test_checkpoint_flows_into_kernel_input_via_builder(tmp_path):
         champion_input.capital_checkpoint.content_hash()
         != challenger_input.capital_checkpoint.content_hash()
     )
+
+
+# --- R21: 两臂台账运行态路径约定 --------------------------------------------
+
+
+class TestArmLayout:
+    def _trial_root(self, tmp_path: Path) -> Path:
+        from src.screening.offensive.v3.capital.repository import CapitalRepository
+
+        root = tmp_path / "trial-root"
+        for arm in ("champion", "challenger"):
+            db = root / "arms" / arm / "capital.sqlite3"  # 约定小写目录
+            db.parent.mkdir(parents=True)
+            CapitalRepository.initialize(db)
+        return root
+
+    def test_agreed_path_shape(self, tmp_path):
+        from src.screening.offensive.v3.orchestration.arm_layout import (
+            arm_capital_database_path,
+        )
+
+        p = arm_capital_database_path(tmp_path, TrialArm.CHALLENGER)
+        assert p == tmp_path / "arms" / "challenger" / "capital.sqlite3"
+
+    def test_open_missing_ledger_fails_closed(self, tmp_path):
+        from src.screening.offensive.v3.orchestration.arm_layout import (
+            ArmLayoutError,
+            open_arm_capital_repository,
+        )
+
+        with pytest.raises(ArmLayoutError) as ei:
+            open_arm_capital_repository(tmp_path, TrialArm.CHAMPION)
+        assert ei.value.code == "arm_ledger_missing"
+
+    def test_open_and_checkpoint_roundtrip(self, tmp_path):
+        """组合面: 初始化两臂库 → arm_session_checkpoint 读出 (genesis 错配在
+        arm_capital 层拒绝 — 本测只钉路径约定与 open 语义)。"""
+        from src.screening.offensive.v3.orchestration.arm_layout import (
+            ArmLayoutError,
+            open_arm_capital_repository,
+        )
+
+        root = self._trial_root(tmp_path)
+        repo = open_arm_capital_repository(root, TrialArm.CHAMPION)
+        assert repo.database_path.name == "capital.sqlite3"
+        # genesis manifest 不存在 → arm_capital 的读面拒绝 (组合面不静默)
+        from src.screening.offensive.v3.orchestration.arm_layout import (
+            arm_session_checkpoint,
+        )
+
+        with pytest.raises((ArmCapitalError, ArmLayoutError)):
+            arm_session_checkpoint(
+                root,
+                trial_id="trial-x",
+                arm=TrialArm.CHAMPION,
+                portfolio_id="paper-v3",
+                mode=ExecutionMode.DAILY_BAR_PROXY,
+                as_of=datetime(2026, 8, 6, 15, 0, tzinfo=UTC),
+                capital_store_id="trial-x:champion:capital",
+            )
+
+    def test_symlinked_arm_dir_rejected(self, tmp_path):
+        from src.screening.offensive.v3.orchestration.arm_layout import (
+            ArmLayoutError,
+            open_arm_capital_repository,
+        )
+
+        root = self._trial_root(tmp_path)
+        hostile = tmp_path / "elsewhere"
+        hostile.mkdir()
+        import shutil
+
+        shutil.rmtree(root / "arms" / "champion")
+        (root / "arms" / "champion").symlink_to(hostile)
+        with pytest.raises(ArmLayoutError):
+            open_arm_capital_repository(root, TrialArm.CHAMPION)
