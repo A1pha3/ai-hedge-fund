@@ -23,6 +23,12 @@ uv run python scripts/v3_governance_identity.py check --dir data/v3_governance_i
   （`v3/orchestration/arm_layout.py` 单一权威）；两臂库由 genesis
   restore 初始化（`scripts/v3_trial_genesis.py`，capital-only 已支持），
   读路径缺库 fail-closed、绝不静默新建。
+- **模式矩阵（2026-08-22 执行演练实证）**：影子前向试验的 seed 台账
+  用 `DAILY_BAR_PROXY` 绑定且 `broker_account_id=None`（proxy 池语义，
+  `AccountBinding` 校验器强制）；arm_session_checkpoint 的 mode 必须与
+  台账绑定 mode 一致（checkpoint 校验器强制）。演练链 seed→dry-run→
+  seal→冷读→hash→双臂 restore→约定路径 open→PIT checkpoint 全绿
+  （scratch: `data/tmp/trial-scratch`，可删）。
 
 ### ④ 证据/治理/决策三库与 spine
 - trial root 单 evidence 库 + governance 库 + stage 回执归档
