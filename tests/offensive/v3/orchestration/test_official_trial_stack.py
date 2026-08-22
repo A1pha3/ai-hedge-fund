@@ -533,6 +533,221 @@ def test_trial_root_relative_traversal_rejected(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# R33: stage 回执选择面内容绑定 — 文件名↔id / 外 trial / 同 id 双时刻
+# ---------------------------------------------------------------------------
+
+FOREIGN_TRIAL_ID = "trial-foreign-002"
+
+
+def _foreign_trial_receipt(tmp_path: Path):
+    """独立治理库 + 真实签发链的外 trial 回执 (trial_id ≠ TRIAL_ID)。
+
+    与主世界完全独立 (独立 sqlite), 复用 governance crib 组件重组
+    seal 链 — 只改 trial_id, envelope 以改后 canonical bytes 重签。
+    """
+    from src.screening.offensive.v3.contracts.regime import RegimeAdmissionMode
+    from src.screening.offensive.v3.governance.repository import (
+        GovernanceRepository,
+        RegimeTrialSealRequest,
+    )
+    from src.screening.offensive.v3.governance.stage_issuance import (
+        StageIssuanceRequest,
+    )
+    from test_regime_trial_governance import (
+        _baseline_activation,
+        _governance_trust,
+        _sap_manifest,
+        _trial_manifest,
+        _trial_policy,
+    )
+
+    sign, verifier, current_head, caps = _governance_trust()
+    baseline = _trial_policy(RegimeAdmissionMode.IGNORE)
+    target = _trial_policy(RegimeAdmissionMode.NORMAL_ONLY)
+    trial = _trial_manifest(baseline, target).model_copy(
+        update={"trial_id": FOREIGN_TRIAL_ID}
+    )
+    sap = _sap_manifest(trial)
+    activation = _baseline_activation(baseline)
+    governance = GovernanceRepository(
+        database_path=str(tmp_path / "foreign-governance.sqlite3"),
+        clock=lambda: GOV_NOW,
+    )
+    governance.seal_regime_trial(
+        RegimeTrialSealRequest(
+            stage_id="stage-regime-001",
+            signed_trial_envelope=sign(trial.canonical_bytes(), caps["trial"]),
+            trial_manifest=trial,
+            trial_capability=caps["trial"],
+            signed_sap_envelope=sign(sap.canonical_bytes(), caps["sap"]),
+            sap_manifest=sap,
+            sap_capability=caps["sap"],
+            signed_baseline_activation_envelope=sign(
+                activation.canonical_bytes(), caps["activation"]
+            ),
+            baseline_policy_activation=activation,
+            baseline_activation_capability=caps["activation"],
+            baseline_policy=baseline,
+            target_policy=target,
+            expected_signal_cutoff=GOV_NOW,
+        ),
+        verifier=verifier,
+        current_head=current_head,
+        trusted_at=ENROLLMENT_START,
+    )
+    from src.screening.offensive.v3.governance.stage_issuance import (
+        GovernanceStageIssuer,
+    )
+
+    issuer = GovernanceStageIssuer(
+        repository=governance,
+        signer=lambda payload: sign(payload, caps["stage"]),
+        stage_capability=caps["stage"],
+        verifier=verifier,
+        trust_head=lambda: current_head,
+        clock=lambda: GOV_NOW,
+    )
+    return issuer.issue(
+        StageIssuanceRequest(
+            trial_id=FOREIGN_TRIAL_ID,
+            stage_id="stage-foreign",
+            stage_sample_reservation_id="smp-f",
+            alpha_sample_consumption_id="alpha-f",
+            alpha_or_evalue_budget_consumption_id="budget-f",
+            attempt_ledger_checkpoint_hash="a" * 64,
+            stage_loss_budget_id="loss-f",
+            stage_loss_version=1,
+            maximum_loss_budget_cents=1_000_000,
+            issuer_id="governance.service",
+            issued_at=GOV_NOW - timedelta(minutes=1),
+        )
+    )
+
+
+def test_explicit_stage_id_filename_content_mismatch_rejected(tmp_path):
+    """对抗 PoC (R33-①): a.json 内含 stage_id=b 的合法回执。
+
+    修复前: 显式 stage_id 分支冷读后不断言 receipt.stage_id == 请求值,
+    静默接线 b 的治理事实 (manifest hash/enrollment 窗口全部错位)。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    receipt = _issue_receipt(
+        world.issuer, stage_id="stage-content", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    # 手写文件名 ≠ 内容 stage_id (write 面按内容定路径 — 该形态只能来自
+    # 手工放置/预置; 归档文件名从未被校验绑定内容)。
+    mismatch = (
+        world.root / "archive" / "stage-issuance" / TRIAL_ID / "stage-filename.json"
+    )
+    mismatch.parent.mkdir(parents=True, exist_ok=True)
+    mismatch.write_text(receipt.model_dump_json(), encoding="utf-8")
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world, stage_id="stage-filename")
+    assert ei.value.code == "stage_receipt_id_mismatch"
+
+
+def test_foreign_trial_receipt_in_archive_rejected(tmp_path):
+    """对抗 PoC (R33-②): 外 trial 真实签发链回执预置进本 trial 归档。
+
+    issued_at 比主世界唯一回执更晚 — 参与缺省 max 选择并胜出; 修复前
+    静默选择它, 唯一防线是 assemble 深处的 stage_trial_mismatch 兜底
+    (R28 立论: 深处是兜底而非纵深)。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    local = _issue_receipt(
+        world.issuer, stage_id="stage-local", issued_at=GOV_NOW - timedelta(minutes=5)
+    )
+    write_stage_issuance_receipt(world.root, local)
+    foreign = _foreign_trial_receipt(tmp_path)
+    assert foreign.trial_id == FOREIGN_TRIAL_ID
+    assert foreign.issued_at > local.issued_at
+    poison = world.root / "archive" / "stage-issuance" / TRIAL_ID / "stage-foreign.json"
+    poison.write_text(foreign.model_dump_json(), encoding="utf-8")
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "stage_receipt_foreign_trial"
+
+
+def test_duplicate_stage_id_different_issued_at_rejected(tmp_path):
+    """对抗 PoC (R33-③): 双独立签发链同 stage_id 不同 issued_at。
+
+    归档内两文件内容 stage_id 同为 stage-dup, issued_at t1 < t2。修复前
+    选择循环按文件名序返回首个 id 匹配 — 预置文件名可让旧签发胜出;
+    seal_stage 写面对同 id 异内容是 stage_seal_conflict, 读面缺同款。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    older = _issue_receipt(
+        world.issuer, stage_id="stage-dup", issued_at=GOV_NOW - timedelta(minutes=9)
+    )
+    # 第二条独立签发链 (独立治理库): 同 trial 同 stage_id、更晚时刻。
+    from src.screening.offensive.v3.governance.repository import (
+        GovernanceRepository,
+    )
+
+    governance_b = GovernanceRepository(
+        database_path=str(tmp_path / "second-governance.sqlite3"),
+        clock=lambda: GOV_NOW,
+    )
+    request, sign, verifier, current_head, caps, _bundle = _seal_request()
+    governance_b.seal_regime_trial(
+        request, verifier=verifier, current_head=current_head,
+        trusted_at=ENROLLMENT_START,
+    )
+    from src.screening.offensive.v3.governance.stage_issuance import (
+        GovernanceStageIssuer,
+        StageIssuanceRequest,
+    )
+
+    issuer_b = GovernanceStageIssuer(
+        repository=governance_b,
+        signer=lambda payload: sign(payload, caps["stage"]),
+        stage_capability=caps["stage"],
+        verifier=verifier,
+        trust_head=lambda: current_head,
+        clock=lambda: GOV_NOW,
+    )
+    newer = issuer_b.issue(
+        StageIssuanceRequest(
+            trial_id=TRIAL_ID,
+            stage_id="stage-dup",
+            stage_sample_reservation_id="smp-x",
+            alpha_sample_consumption_id="alpha-x",
+            alpha_or_evalue_budget_consumption_id="budget-x",
+            attempt_ledger_checkpoint_hash="b" * 64,
+            stage_loss_budget_id="loss-x",
+            stage_loss_version=1,
+            maximum_loss_budget_cents=1_000_000,
+            issuer_id="governance.service",
+            issued_at=GOV_NOW - timedelta(minutes=1),
+        )
+    )
+    assert newer.issued_at > older.issued_at
+    archive = world.root / "archive" / "stage-issuance" / TRIAL_ID
+    archive.mkdir(parents=True, exist_ok=True)
+    # 文件名刻意让旧的排在前 (字典序 aa < zz) — 修复前首个匹配即旧回执。
+    (archive / "stage-dup-older.json").write_text(older.model_dump_json(), encoding="utf-8")
+    (archive / "stage-dup-znewer.json").write_text(newer.model_dump_json(), encoding="utf-8")
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "stage_receipt_duplicate_id"
+
+
+# ---------------------------------------------------------------------------
 # R30: spine 预置纪律 (宪法 #13 expected-session spine 是预注册治理事实)
 # ---------------------------------------------------------------------------
 

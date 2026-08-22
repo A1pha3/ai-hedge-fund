@@ -282,10 +282,17 @@ def _latest_stage_receipt(root: Path, trial_id: str, stage_id: str | None) -> ob
     """Stage 签发回执选择 (R28 修复): 治理事实决定, 不由文件名决定。
 
     - 显式 ``stage_id``: 单段形状校验 (穿越/绝对注入到不了 lstat) 后
-      精确路径冷读 (确定性最强的审计路径);
+      精确路径冷读 (确定性最强的审计路径), 回执内容 stage_id 必须与
+      请求一致 (R33-①: 文件名与内容背离 = 静默接线错误治理事实);
     - 缺省: 归档中全部回执严格冷读 — 任何一个损坏即 fail-closed
-      (预置文件不能靠字典序静默出局操纵选择面) — 按 receipt 权威
-      签发时刻 ``issued_at`` (签发行为身份的一部分, P2-c) 取最新;
+      (预置文件不能靠字典序静默出局操纵选择面) — 回执 trial_id 必须
+      与归档归属 trial 一致 (R33-②: write 面按内容定路径, 外 trial
+      回执只能是预置污染 — 静默出局/参与选择都违反 R28 先例, 与
+      assemble 深处 stage_trial_mismatch 兜底分工为纵深), 同
+      ``stage_id`` 出现多个 ``issued_at`` 是归档异常 (R33-③: 镜像
+      seal_stage 写面同 id 异内容的 ``stage_seal_conflict`` 纪律 —
+      签发行为身份含时刻, 双时刻同 id 只能来自另一条签发链), 按
+      receipt 权威签发时刻 ``issued_at`` 取最新;
     - 同 ``issued_at`` 不同 stage_id: 治理异常, ``stage_selection_ambiguous``。
 
     identity v1 无 stage 签发 key, 回执由签发流程归档、本层不重签。
@@ -308,7 +315,7 @@ def _latest_stage_receipt(root: Path, trial_id: str, stage_id: str | None) -> ob
         )
         target = archive / f"{safe_stage_id}.json"
         try:
-            return read_stage_issuance_receipt(target)
+            receipt = read_stage_issuance_receipt(target)
         except StageArchiveError as exc:
             if exc.code == "archive_artifact_missing":
                 raise OfficialStackError(
@@ -325,6 +332,28 @@ def _latest_stage_receipt(root: Path, trial_id: str, stage_id: str | None) -> ob
                 " strict cold-read",
                 stage_id=stage_id,
             ) from exc
+        if receipt.trial_id != trial_id:
+            raise OfficialStackError(
+                "stage_receipt_foreign_trial",
+                "the archived receipt belongs to a different trial;"
+                " the archive directory is scoped to one trial by the"
+                " write face — a foreign-trial receipt is preset"
+                " contamination",
+                requested_trial_id=trial_id,
+                receipt_trial_id=receipt.trial_id,
+                stage_id=stage_id,
+            )
+        if receipt.stage_id != safe_stage_id:
+            raise OfficialStackError(
+                "stage_receipt_id_mismatch",
+                "the archived receipt content carries a different"
+                " stage_id than the requested artifact name — the"
+                " filename has never been bound to content, so this"
+                " divergence silently wires the wrong governance facts",
+                requested_stage_id=stage_id,
+                receipt_stage_id=receipt.stage_id,
+            )
+        return receipt
     receipts = sorted(archive.glob("*.json")) if archive.is_dir() else []
     if not receipts:
         raise OfficialStackError(
@@ -337,7 +366,7 @@ def _latest_stage_receipt(root: Path, trial_id: str, stage_id: str | None) -> ob
     parsed: list[StageIssuanceReceipt] = []
     for path in receipts:
         try:
-            parsed.append(read_stage_issuance_receipt(path))
+            receipt = read_stage_issuance_receipt(path)
         except StageArchiveError as exc:
             raise OfficialStackError(
                 "stage_receipt_corrupt",
@@ -346,6 +375,21 @@ def _latest_stage_receipt(root: Path, trial_id: str, stage_id: str | None) -> ob
                 " selection set",
                 path=str(path),
             ) from exc
+        if receipt.trial_id != trial_id:
+            raise OfficialStackError(
+                "stage_receipt_foreign_trial",
+                "an archived receipt belongs to a different trial;"
+                " the archive directory is scoped to one trial by the"
+                " write face — a foreign-trial receipt is preset"
+                " contamination and must not silently drop out of or"
+                " join the selection set",
+                requested_trial_id=trial_id,
+                receipt_trial_id=receipt.trial_id,
+                stage_id=receipt.stage_id,
+                path=str(path),
+            )
+        parsed.append(receipt)
+    _reject_duplicate_stage_ids(parsed)
     latest_at = max(receipt.issued_at for receipt in parsed)
     candidates = sorted(
         receipt.stage_id for receipt in parsed if receipt.issued_at == latest_at
@@ -360,12 +404,38 @@ def _latest_stage_receipt(root: Path, trial_id: str, stage_id: str | None) -> ob
             stage_ids=candidates,
         )
     for receipt in parsed:
-        if receipt.stage_id == candidates[0]:
+        # 纵深: 附 issued_at 条件 — 即便上游校验被未来改动弱化, 也不
+        # 会按文件名序静默选中较旧签发 (R33-③ 的原始缺陷形态)。
+        if receipt.stage_id == candidates[0] and receipt.issued_at == latest_at:
             return receipt
     raise OfficialStackError(  # pragma: no cover — candidates 来自 parsed
         "stage_receipt_corrupt",
         "selected stage receipt vanished between parse and select",
     )
+
+
+def _reject_duplicate_stage_ids(parsed: list[StageIssuanceReceipt]) -> None:
+    """同 stage_id 多个 issued_at = 归档异常 (R33-③)。
+
+    签发行为身份 = trial + stage + 时刻 (P2-c); seal_stage 写面对同
+    id 异内容落 ``stage_seal_conflict``。归档里同 id 双时刻只能来自
+    另一条签发链的手工放置 — 按文件名序任选其一会静默选中可能更旧
+    的治理事实, 与写面纪律一致地 fail-closed。
+    """
+    instants: dict[str, set[datetime]] = {}
+    for receipt in parsed:
+        instants.setdefault(receipt.stage_id, set()).add(receipt.issued_at)
+    duplicated = sorted(sid for sid, at in instants.items() if len(at) > 1)
+    if duplicated:
+        raise OfficialStackError(
+            "stage_receipt_duplicate_id",
+            "the archive carries multiple issuance instants for the same"
+            " stage_id; issuance identity includes the instant, so this"
+            " can only be a receipt from a second signing chain —"
+            " selecting either one by filename order would silently bind"
+            " unverified governance facts",
+            stage_ids=duplicated,
+        )
 
 
 def _build_sealer(root: Path, identity, clock) -> object:
