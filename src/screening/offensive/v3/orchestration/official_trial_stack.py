@@ -139,15 +139,32 @@ def build_official_trial_stack(
         open_arm_capital_repository,
     )
 
-    root = Path(trial_root).resolve()
+    # trial_root resolve 前全组件 walk (R31): ``resolve()`` 静默跟随
+    # symlink 组件 — 预置 ``trial-root -> /attacker/root`` 使 R29 的五库
+    # lstat 守卫/归档 walk/arms 校验全部作用在敌手 root 的真实路径上,
+    # 守卫永远看不到重定向 (stage_archive._validate_root 对 trial root
+    # 的同族纪律被组装器自己的 resolve 抵消)。walk 之后前缀已无 symlink,
+    # resolve 仅做词法规范化; 相对路径含 ``..`` 在此显式拒绝 — 与
+    # v3_regime_trial runbook 的 canonical 路径要求一致。
+    candidate_root = Path(trial_root)
+    if not candidate_root.is_absolute():
+        candidate_root = Path.cwd() / candidate_root
+    from src.screening.offensive.v3.orchestration.path_guards import (
+        require_safe_segment,
+        walk_components,
+    )
+
+    walk_components(
+        candidate_root,
+        fail=OfficialStackError,
+        missing_code="trial_root_not_initialized",
+        rejected_code="official_stack_path_rejected",
+    )
+    root = candidate_root.resolve()
     identity_dir = Path(identity_dir)
     # trial_id 入口单段校验 (R29): 该 id 直接拼进归档路径与 portfolio_id,
     # 穿越/绝对注入在拼路径前即拒 (深处 assembler 的 stage_trial_mismatch
     # 是兜底而非纵深; R28 已修 stage_id 段, 本轮补 trial_id 段)。
-    from src.screening.offensive.v3.orchestration.path_guards import (
-        require_safe_segment,
-    )
-
     require_safe_segment(trial_id, field="trial_id", fail=OfficialStackError)
     now = clock()
     identity = load_governance_identity(identity_dir, trusted_at=now)

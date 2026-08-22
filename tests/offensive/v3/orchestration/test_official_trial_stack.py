@@ -447,6 +447,78 @@ def test_trial_id_injection_rejected_at_entry(tmp_path, evil_trial_id):
 
 
 # ---------------------------------------------------------------------------
+# R31: trial_root resolve() 前全组件 walk — root symlink 重定向在守卫前拒绝
+# ---------------------------------------------------------------------------
+
+def test_trial_root_symlink_redirect_rejected(tmp_path):
+    """对抗 PoC (R31): trial_root 自身是 symlink。
+
+    修复前: 组装器第一步 ``Path(trial_root).resolve()`` 静默跟随 symlink,
+    R29 的五库 lstat 守卫全部作用在目标 root 的真实路径上 — 官方栈在
+    敌手指向的 root 上构造成功, 守卫永远看不到这次重定向。
+    """
+    import os
+
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    redirect = tmp_path / "victim-link"
+    os.symlink(world.root, redirect)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world, trial_root=redirect)
+    assert ei.value.code == "official_stack_path_rejected"
+
+
+def test_trial_root_intermediate_symlink_component_rejected(tmp_path):
+    """对抗 PoC (R31): 到 trial_root 的中间目录组件是 symlink — 同族拒绝。"""
+    import os
+
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    holder = tmp_path / "holder"
+    holder.mkdir()
+    os.symlink(world.root.parent, holder / "link-comp")
+    via_link = holder / "link-comp" / world.root.name
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world, trial_root=via_link)
+    assert ei.value.code == "official_stack_path_rejected"
+
+
+def test_trial_root_relative_traversal_rejected(tmp_path, monkeypatch):
+    """相对路径含 ``..`` 在 walk 前即拒 (canonical 绝对路径纪律)。"""
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    monkeypatch.chdir(tmp_path)
+    relative_escape = "../" + world.root.name
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world, trial_root=relative_escape)
+    assert ei.value.code in ("path_traversal", "trial_root_not_initialized")
+
+
+# ---------------------------------------------------------------------------
 # R30: spine 预置纪律 (宪法 #13 expected-session spine 是预注册治理事实)
 # ---------------------------------------------------------------------------
 
