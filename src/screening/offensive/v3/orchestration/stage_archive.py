@@ -143,9 +143,19 @@ def read_stage_issuance_receipt(path: Path) -> StageIssuanceReceipt:
             "the receipt artifact must be a regular non-symlink file",
             path=str(path),
         )
-    return StageIssuanceReceipt.model_validate_json(
-        path.read_text(encoding="utf-8"), strict=True
-    )
+    # 损坏 JSON 也必须类型化拒绝 (R28: 写面 78-83 与 arm_capital 116-118
+    # 均有 except ValidationError 先例, 唯读面漏 — 裸 ValidationError 会
+    # 穿透所有 catch StageArchiveError 的消费者)。
+    try:
+        return StageIssuanceReceipt.model_validate_json(
+            path.read_text(encoding="utf-8"), strict=True
+        )
+    except ValidationError as exc:
+        raise StageArchiveError(
+            "archive_artifact_corrupt",
+            "the receipt artifact failed strict parse",
+            path=str(path),
+        ) from exc
 
 
 def _validate_root(root: Path) -> None:
