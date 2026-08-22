@@ -174,9 +174,12 @@ def build_official_trial_stack(
             trust_head=head,
         )
 
-    # 运行态三库: 存在时必须是常规文件 (symlink 拒; 缺失保持构造器
-    # 既有自建语义 — spine 新建完整性语义是独立观察记录, 不在本层改)。
-    _require_optional_regular_database(root / "spine.sqlite3")
+    # 运行态库磁盘面: spine 是预注册治理事实 (宪法 #13 expected-session
+    # spine; runbook ④ 注册是启动前置) — 缺失即拒, 绝不静默自建空 spine
+    # (空 spine 使 finalize_missed_sessions 的 NO_RUN 补记静默失效)。
+    # decisions/governance 是运行时产物/封存流程产物: 存在时常规文件,
+    # 缺失保持构造器既有语义 (decisions 首决策自建)。
+    _require_regular_database(root / "spine.sqlite3", missing_code="trial_root_not_initialized")
     _require_optional_regular_database(root / "decisions.sqlite3")
     _require_optional_regular_database(root / "governance.sqlite3")
     spine = SessionSpine(database_path=str(root / "spine.sqlite3"), clock=clock)

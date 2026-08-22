@@ -149,9 +149,11 @@ def _official_archive_world(tmp_path: Path) -> _ArchiveWorld:
         trust_head=lambda: current_head,
         clock=lambda: GOV_NOW,
     )
-    # 官方布局占位: 证据库存在即可构造 (选择面测试不进证据链)。
+    # 官方布局占位: 证据库存在即可构造 (选择面测试不进证据链);
+    # spine 预置文件 (R30 收紧: 注册流程产物, 组装器不再静默自建)。
     (root / "evidence.sqlite3").touch()
     (root / "bars-evidence.sqlite3").touch()
+    (root / "spine.sqlite3").touch()
     return _ArchiveWorld(
         identity_dir=identity_dir,
         root=root,
@@ -442,3 +444,57 @@ def test_trial_id_injection_rejected_at_entry(tmp_path, evil_trial_id):
     with pytest.raises(OfficialStackError) as ei:
         _build(world, trial_id=evil_trial_id)
     assert ei.value.code == "trial_id_rejected"
+
+
+# ---------------------------------------------------------------------------
+# R30: spine 预置纪律 (宪法 #13 expected-session spine 是预注册治理事实)
+# ---------------------------------------------------------------------------
+
+def test_missing_spine_fails_closed(tmp_path):
+    """缺失 spine.sqlite3 不再静默自建 — 注册流程必须先跑 (RED for 缺口)。
+
+    静默新建的完整性代价: runner finalize_missed_sessions 消费
+    enrolled_sessions, 空 spine 使错过会话的 NO_RUN 补记静默失效。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    (world.root / "spine.sqlite3").unlink(missing_ok=True)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "trial_root_not_initialized"
+
+
+def test_preprovisioned_empty_spine_accepted(tmp_path):
+    """预置的 spine 文件通过构造 — enrollment 内容校验属 worker/runner。"""
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    # 夹具默认构造已建立 spine; 删除后 touch 模拟「注册流程预置空文件」。
+    (world.root / "spine.sqlite3").unlink(missing_ok=True)
+    (world.root / "spine.sqlite3").touch()
+
+    stack = _build(world)
+    assert stack.spine is not None
+
+
+def test_missing_decisions_store_still_self_builds(tmp_path):
+    """decisions.sqlite3 是运行时产物 (首决策产生) — 缺失维持自建语义。"""
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    (world.root / "decisions.sqlite3").unlink(missing_ok=True)
+
+    stack = _build(world)
+    assert stack.decision_store is not None
