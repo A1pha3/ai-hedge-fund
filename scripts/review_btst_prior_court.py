@@ -370,6 +370,20 @@ def run_check(ev: pd.DataFrame, today: date | None = None) -> None:
     assert 0 < top1["trade_mean"] < 0.04, (
         f"top-1 量级断言失败: {top1['mean']:.4f} 不在 (0, 0.04) — 与预验 (+1.77% 毛 / +1.12% 净) 背离"
     )
+    # T+8 对齐哨点 (2026-08-22 补齐重校准的配套): 与 T+10 同款 ±1pp/胜率
+    # 虚高 <10pp 语义 — court 表重建后 T+8 先验脱钩当天暴露.
+    from src.screening.offensive.known_distributions import BTST_BREAKOUT_T8
+
+    t8 = net_ret(candidate_universe(ev)["gross_ret_t8"].dropna())
+    t8_er_delta = abs(BTST_BREAKOUT_T8.expected_return - t8.mean()) * 100
+    assert t8_er_delta <= 1.0, (
+        f"T+8 对齐断言失败: 先验期望 {BTST_BREAKOUT_T8.expected_return:.4f} 与 "
+        f"court 生产对齐 {t8.mean():.4f} 偏离 {t8_er_delta:.2f}pp > 1pp"
+    )
+    assert BTST_BREAKOUT_T8.winrate - (t8 > 0).mean() < 0.10, (
+        f"T+8 方向断言失败: 先验胜率 {BTST_BREAKOUT_T8.winrate:.4f} 高于 court "
+        f"{(t8 > 0).mean():.4f} 达 10pp — 回到旧虚高关系"
+    )
     print(
         json.dumps({
             "check": "ok",

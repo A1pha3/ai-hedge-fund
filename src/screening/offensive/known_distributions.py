@@ -9,7 +9,7 @@ kelly_pct 路径; 2026-08-14 regime 加仓移除时装饰性 Kelly 计算已删)
 BTST T+10 与 OversoldBounce T+5 先验已从 court 全候选重放重校准 —
 与被复核策略候选宇宙一致 (含退市者快照、T+1 开盘买 + 30bps/边滑点 +
 5bps 卖出印花税), 公式指纹钉在 manifest, 重算脚本口径可复验。
-BTST T+8 未重校准 (court 重验只出 T+10 视图) — 保留旧值并显式标注,
+BTST T+8 已于 2026-08-22 补齐 court 重校准 (owner 批准, 见下块注释);
 不得再作为当前口径引用。旧值 (2026-07-12 连续涨停样本、未扣费) 移入
 下方历史校准记录。
 
@@ -39,22 +39,26 @@ from __future__ import annotations
 
 from src.screening.offensive.statistics import Distribution
 
-# BTST 突破 T+8 — ⚠ 未随 2026-08-19 court 重校准 (重验只出 T+10 视图):
-# 下列数字是 2026-07-12 的 626 票连续涨停样本、未扣费口径, 较生产对齐宇宙
-# 虚高 (同源 T+10 口径虚高 E ~6pp), 仅作回测兼容保留, 不得引用为当前性能.
-# 历史推导: 自 T+10 全池分布按 paper_trading_backtest T+k 曲线校准
-# (E[r] ×1.10, avg_loss ×0.85, winrate 0.56).
+# BTST 突破 T+8 — 2026-08-22 owner 批准补齐重校准 (同 2026-08-19 T+10
+# court 重校准世代的收尾): court 全候选生产对齐宇宙 (与 T+10 同过滤链),
+# T+1 开盘买 + T+8 开盘卖, 净口径已扣 30bps/边滑点 + 5bps 卖出印花税;
+# 聚类 bootstrap CI90 (n_boot=3000, seed=20260818, 与 review 同参数可复验);
+# IC = 日内 trigger_strength×gross_ret_t8 Spearman 均值 (84 个 ≥5 事件日).
+# 旧值 (2026-07-12 的 626 票连续涨停样本、未扣费, E=+5.43%/wr=59.4%,
+# 自 T+10 全池按 T+k 曲线校准 E×1.10/avg_loss×0.85) 虚高 ~5pp, 仅保留为
+# 历史审计线索. T+8 E 比 T+10 弱 (+0.18% vs +0.56%), CI 跨 0 — 与
+# "持有更久捕获突破延续" 的 setup 语义一致, 披露层如实呈现.
 BTST_BREAKOUT_T8 = Distribution(
-    n=1478,
-    winrate=0.5940,
-    avg_gain=0.1585,
-    avg_loss=-0.0982,
-    convexity_ratio=2.36,
-    expected_return=0.0543,
-    ci_low=0.0430,
-    ci_high=0.0656,
-    ic=0.15,
-    provenance="626 票连续涨停样本 · 2026-07-12 · 未扣费 · ⚠未随 2026-08-19 court 重校准, 仅回测兼容",
+    n=1464,
+    winrate=0.4577,
+    avg_gain=0.1180,
+    avg_loss=-0.0963,
+    convexity_ratio=1.03,
+    expected_return=0.0018,
+    ci_low=-0.0155,
+    ci_high=0.0174,
+    ic=0.0748,
+    provenance="court 全候选生产对齐宇宙 n=1464 · 2025-07→2026-08 · T+1 开盘+真实成本 · 2026-08-22 owner 批准补齐 (同 2026-08-19 T+10 重校准世代)",
 )
 
 # BTST 突破 T+10 — 2026-08-19 owner 批准重校准 (新证据世代), court 全候选重放:
