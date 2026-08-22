@@ -381,6 +381,25 @@ class TrialArmDecisionStore:
 
     # -- read ----------------------------------------------------------------
 
+    def pair_keys(self, trial_id: str) -> tuple[tuple[str, str, str], ...]:
+        """All committed pair keys of one trial, ordered (advance/lifecycle face)."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT signal_session, decision_cycle_id, COUNT(*) AS n"
+                " FROM trial_arm_decisions"
+                " WHERE trial_id = ?"
+                " GROUP BY signal_session, decision_cycle_id"
+                " HAVING n = 2"
+                " ORDER BY signal_session, decision_cycle_id",
+                (trial_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+        return tuple(
+            (trial_id, str(row[0]), str(row[1])) for row in rows
+        )
+
     def pair(
         self, key: tuple[str, str, str]
     ) -> tuple[TrialArmDecisionRecord, TrialArmDecisionRecord]:

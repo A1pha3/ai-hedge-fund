@@ -85,6 +85,33 @@ class SignalSessionRequest:
 
 
 @dataclass(frozen=True)
+class MarketSessionAdvanceRequest:
+    """One official market-session advance (R25 解锁).
+
+    会话窗口/时间回调/bar 证据记录是 worker 排程职责的声明式注入:
+    ``execution_sessions`` 来自冻结排程切片 (排程是权威), ``bar_records``
+    是证据时间轴已发布的 per-session bar-set 记录 (经
+    ``evidence_backed_bar_for`` 严格验证, 调用方无法喂原始 CSV)。
+    """
+
+    trial_id: str
+    through_session: date
+    execution_sessions: tuple[date, ...] = ()
+    bar_records: object = None  # Mapping[date, EvidenceRecord]
+
+
+@dataclass(frozen=True)
+class MarketAdvanceReceipt:
+    """Durable outcome of one market-window advance (both arms)."""
+
+    trial_id: str
+    through_session: date
+    settlements_by_arm: dict
+    conservation_ok_by_arm: dict
+    open_at_end_by_arm: dict
+
+
+@dataclass(frozen=True)
 class PairedSignalReceipt:
     """The durable outcome of one signal session decision."""
 
@@ -223,6 +250,9 @@ class ForwardPairedTrialRunner:
         sizing_config: SizingConfig | None = None,
         decision_store: object = None,
         kernel_decider: object | None = None,
+        bar_repository: object = None,
+        market_scenario: object = None,
+        trial_attribution: object = None,
     ) -> None:
         # 无参实例 = 未注入 authority, decide 保持 fail-closed (旧 disabled
         # 语义的延续: 权限只来自显式注入的依赖链, 无 ambient 能力)。
@@ -232,6 +262,9 @@ class ForwardPairedTrialRunner:
         self._sizing = sizing_config
         self._store = decision_store
         self._decider = kernel_decider
+        self._bar_repository = bar_repository
+        self._market_scenario = market_scenario
+        self._trial_attribution = trial_attribution
 
     def _kernel(self) -> object:
         if self._decider is not None:
@@ -343,12 +376,144 @@ class ForwardPairedTrialRunner:
     # forward market-session advance (exit run-out through finality)
     # ===================================================================
 
-    def advance_market_session(self, request: SignalSessionRequest) -> object:
-        """Reject before reading lifecycle state or invoking a capability."""
+    def advance_market_session(
+        self, request: MarketSessionAdvanceRequest | SignalSessionRequest
+    ) -> MarketAdvanceReceipt:
+        """Official market-window advance: pair lines → dual-arm lifecycle drive.
 
-        raise PairedTrialRunnerError(
-            "forward_input_authority_unavailable",
-            "official forward input batch authority is not implemented",
+        形态 = 对 [窗口起点 … through_session] 的全生命周期重放: append-only
+        台账 + 幂等结算使重放收敛 (重复 advance 同窗口返回等价结果, 资本
+        副作用幂等)。出场先于入场/停牌顺延/守恒重验由 ``SessionLifecycleDriver``
+        强制; bar 源经 ``evidence_backed_bar_for`` (证据时间轴唯一入口)。
+        """
+        from collections.abc import Mapping as _Mapping
+        from datetime import time, timedelta as _td
+
+        from src.screening.offensive.v3.contracts.trial import TrialArm
+        from src.screening.offensive.v3.orchestration.arm_layout import (
+            open_arm_capital_repository,
+        )
+        from src.screening.offensive.v3.orchestration.replay_assembly import (
+            evidence_backed_bar_for,
+        )
+        from src.screening.offensive.v3.orchestration.session_driver import (
+            SessionLifecycleDriver,
+            open_line_from_shadow_line,
+        )
+
+        self._require_unlocked()
+        if (
+            self._bar_repository is None
+            or self._market_scenario is None
+            or self._trial_attribution is None
+        ):
+            raise PairedTrialRunnerError(
+                "market_advance_authority_unavailable",
+                "market advance requires injected bar repository, cost"
+                " scenario and fill attribution",
+            )
+        if not isinstance(request, MarketSessionAdvanceRequest):
+            raise PairedTrialRunnerError(
+                "advance_request_invalid",
+                "advance requires a MarketSessionAdvanceRequest",
+            )
+        sessions = tuple(request.execution_sessions)
+        if not sessions or sessions[-1] != request.through_session:
+            raise PairedTrialRunnerError(
+                "advance_window_invalid",
+                "execution_sessions must be non-empty and end at"
+                " through_session (schedule slice is authoritative)",
+            )
+        if list(sessions) != sorted(sessions):
+            raise PairedTrialRunnerError(
+                "advance_window_invalid",
+                "execution_sessions must be strictly ordered",
+            )
+        bar_records = request.bar_records
+        if not isinstance(bar_records, _Mapping):
+            raise PairedTrialRunnerError(
+                "advance_bar_records_required",
+                "worker must supply the published per-session bar-set records",
+            )
+        missing_bars = [s for s in sessions if s not in bar_records]
+        if missing_bars:
+            raise PairedTrialRunnerError(
+                "advance_bar_records_required",
+                "every execution session needs a published bar-set record",
+                missing=sorted(missing_bars)[:5],
+            )
+
+        # 已 commit 的 pairs → 双臂入场计划 (kernel 行是身份/量/日期权威)
+        entries_by_arm: dict = {TrialArm.CHAMPION: {}, TrialArm.CHALLENGER: {}}
+        for key in self._store.pair_keys(request.trial_id):
+            champion_record, challenger_record = self._store.pair(key)
+            for arm, record in (
+                (TrialArm.CHAMPION, champion_record),
+                (TrialArm.CHALLENGER, challenger_record),
+            ):
+                decision = record.decision
+                entry_session = decision.target_entry_session
+                lines = tuple(
+                    open_line_from_shadow_line(line, entry_session=entry_session)
+                    for line in decision.counterfactual_lines
+                )
+                entries_by_arm[arm].setdefault(entry_session, ())
+                entries_by_arm[arm][entry_session] = (
+                    entries_by_arm[arm][entry_session] + lines
+                )
+
+        def command_at(session: date) -> datetime:
+            # 15:00 国内收盘 = 07:00 UTC; 影子 proxy 的命令时刻由会话日
+            # 确定性派生 (排程显式化留 worker 接线迭代)。
+            return datetime.combine(session, time(7, 0), tzinfo=__import__(
+                "datetime"
+            ).timezone.utc)
+
+        def send_deadline(session: date) -> datetime:
+            return command_at(session) + _td(minutes=5)
+
+        bar_for = evidence_backed_bar_for(self._bar_repository, bar_records)
+        receipts: dict = {}
+        for arm in (TrialArm.CHAMPION, TrialArm.CHALLENGER):
+            repository = open_arm_capital_repository(
+                self._capital_trial_root, arm
+            )
+            driver = SessionLifecycleDriver(
+                repository=repository,
+                arm=arm.value.lower(),
+                scenario=self._market_scenario,
+                sessions=sessions,
+                entries_by_session=entries_by_arm[arm],
+                attribution=self._trial_attribution,
+                command_at=command_at,
+                send_deadline=send_deadline,
+                bar_for=bar_for,
+            )
+            result = driver.run()
+            if not result.conservation_ok:
+                raise PairedTrialRunnerError(
+                    "advance_conservation_violation",
+                    "the arm ledger failed conservation re-verification",
+                    arm=arm.value,
+                    details=result.conservation_details[:5],
+                )
+            receipts[arm] = result
+
+        return MarketAdvanceReceipt(
+            trial_id=request.trial_id,
+            through_session=request.through_session,
+            settlements_by_arm={
+                arm.value: len(result.settlements)
+                for arm, result in receipts.items()
+            },
+            conservation_ok_by_arm={
+                arm.value: result.conservation_ok
+                for arm, result in receipts.items()
+            },
+            open_at_end_by_arm={
+                arm.value: dict(result.open_at_end)
+                for arm, result in receipts.items()
+            },
         )
 
     def finalize_missed_sessions(self, trusted_at: datetime) -> tuple[date, ...]:

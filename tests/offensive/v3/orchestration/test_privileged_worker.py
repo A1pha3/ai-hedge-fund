@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -756,4 +756,147 @@ class TestRunnerUnlock:
         assert ei.value.code == "forward_input_authority_unavailable"
         with pytest.raises(PairedTrialRunnerError) as ei:
             locked.finalize_missed_sessions(datetime(2026, 8, 7, tzinfo=UTC))
+        assert ei.value.code == "forward_input_authority_unavailable"
+
+
+class TestRunnerAdvanceUnlock:
+    """R25: advance_market_session 解锁 — 市场会话推进端到端。"""
+
+    def test_advance_end_to_end(self, worker_world, tmp_path):
+        """decide (R24 链) → bar 证据发布 → advance → 双臂守恒 + 幂等。"""
+        from datetime import time as _time
+
+        from src.screening.offensive.v3.contracts.decision import ShadowDecision
+        from src.screening.offensive.v3.evidence.market_bars import (
+            MarketBarSetPublisher,
+        )
+        from src.screening.offensive.v3.capital.fills import FillAttribution
+        from src.screening.offensive.v3.execution.lifecycle import DailyBar
+        from src.screening.offensive.v3.orchestration.arm_lifecycle import (
+            CURRENT_COST_SCENARIO,
+        )
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            ForwardPairedTrialRunner,
+            MarketSessionAdvanceRequest,
+            SignalSessionRequest,
+        )
+
+        trial_root = TestRunnerUnlock()._armed_trial_root(tmp_path)
+        store = TrialArmDecisionStore(
+            database_path=str(worker_world["root"] / "decisions.sqlite3")
+        )
+        store.register_trial(worker_world["bundle"], _registration_genesis())
+        runner = ForwardPairedTrialRunner(
+            assembler=worker_world["assembler"],
+            capital_trial_root=trial_root,
+            portfolio_id="pf-btst-trial",
+            sizing_config=_config(),
+            decision_store=store,
+        )
+        receipt = runner.decide_signal_session(SignalSessionRequest(
+            trial_id=TRIAL_ID, signal_session=SESSION,
+            decision_cycle_id="daily-action-20260806",
+            trusted_evidence_cutoff=CUTOFF,
+            trusted_at=datetime(2026, 8, 6, 15, 30, tzinfo=UTC),
+            schedule_evidence_id=worker_world["schedule_id"],
+            candidate_evidence_ids=(worker_world["candidate_id"],),
+            deadlines=DeadlineContract(
+                close_finalized_at=datetime(2026, 8, 6, 15, 0, tzinfo=UTC),
+                seal_creation_deadline=datetime(2026, 8, 6, 16, 0, tzinfo=UTC),
+                permit_issue_deadline=datetime(2026, 8, 6, 16, 30, tzinfo=UTC),
+                permit_expires_at=datetime(2026, 8, 7, 9, 25, tzinfo=UTC),
+                gateway_send_deadline=datetime(2026, 8, 7, 9, 25, tzinfo=UTC),
+                broker_auction_cutoff=datetime(2026, 8, 7, 9, 30, tzinfo=UTC),
+            ),
+        ))
+        # 从已 commit 的 pair 读 kernel 行 → 确定 entry/exit 会话与标的
+        champion, challenger = store.pair(receipt.pair_key)
+        decision = champion.decision
+        assert isinstance(decision, ShadowDecision)
+        line = decision.counterfactual_lines[0]
+        entry_session = decision.target_entry_session
+        exit_session = line.target_exit_session
+
+        # bar 证据发布 (证据时间轴唯一入口): 窗口内每会话一张 bar-set
+        from src.screening.offensive.v3.evidence.offline_rig import (
+            build_offline_evidence_rig,
+        )
+
+        bars_rig = build_offline_evidence_rig(
+            database_path=tmp_path / "bars-evidence.sqlite3",
+            blobs_dir=tmp_path / "blobs",
+            namespace="btst-bars",
+            clock=lambda: datetime(2026, 8, 6, 9, 0, tzinfo=UTC),
+            trust_now=datetime(2026, 8, 6, 9, 0, tzinfo=UTC),
+        )
+        publisher = MarketBarSetPublisher(
+            repository=bars_rig.repository,
+            clock=lambda: datetime(2026, 8, 6, 9, 0, tzinfo=UTC),
+            signer=bars_rig.signer,
+        )
+        sessions = []
+        s = entry_session
+        while s <= exit_session:
+            sessions.append(s)
+            s += timedelta(days=1)
+        bar_records = {}
+        for s in sessions:
+            # bar 对齐 candidate entry 价 (fixture 1.00 元 = 100 cents,
+            # 板块 10% fences: 110/90) — 买入上限 100 >= open 100 → FILLED
+            bar = DailyBar(
+                security_id=line.security_id, session=s,
+                open_cents=100, high_cents=106,
+                low_cents=95, close_cents=103,
+                limit_up_cents=110, limit_down_cents=90,
+            )
+            bar_records[s] = publisher.publish(session=s, bars={line.security_id: bar})
+
+        advance = ForwardPairedTrialRunner(
+            assembler=worker_world["assembler"],
+            capital_trial_root=trial_root,
+            portfolio_id="pf-btst-trial",
+            sizing_config=_config(),
+            decision_store=store,
+            bar_repository=bars_rig.repository,
+            market_scenario=CURRENT_COST_SCENARIO,
+            trial_attribution=FillAttribution(
+                producer_namespace="btst",
+                research_program_id="prog-1",
+                economic_lineage_id="eline-1",
+                stage_id="stage-1",
+            ),
+        )
+        result = advance.advance_market_session(MarketSessionAdvanceRequest(
+            trial_id=TRIAL_ID,
+            through_session=exit_session,
+            execution_sessions=tuple(sessions),
+            bar_records=bar_records,
+        ))
+        assert result.conservation_ok_by_arm == {
+            "CHAMPION": True, "CHALLENGER": True,
+        }
+
+        assert result.settlements_by_arm["CHAMPION"] >= 2  # entry + exit
+        # 幂等: 同窗口重放收敛 (append-only + 幂等结算)
+        again = advance.advance_market_session(MarketSessionAdvanceRequest(
+            trial_id=TRIAL_ID,
+            through_session=exit_session,
+            execution_sessions=tuple(sessions),
+            bar_records=bar_records,
+        ))
+        assert again.settlements_by_arm == result.settlements_by_arm
+
+    def test_advance_without_authority_rejected(self, worker_world):
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            ForwardPairedTrialRunner,
+            MarketSessionAdvanceRequest,
+            PairedTrialRunnerError,
+        )
+
+        runner = ForwardPairedTrialRunner()
+        req = MarketSessionAdvanceRequest(
+            trial_id=TRIAL_ID, through_session=date(2026, 8, 20)
+        )
+        with pytest.raises(PairedTrialRunnerError) as ei:
+            runner.advance_market_session(req)
         assert ei.value.code == "forward_input_authority_unavailable"
