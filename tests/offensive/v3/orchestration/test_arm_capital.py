@@ -337,3 +337,50 @@ class TestArmLayout:
         (root / "arms" / "champion").symlink_to(hostile)
         with pytest.raises(ArmLayoutError):
             open_arm_capital_repository(root, TrialArm.CHAMPION)
+
+
+class TestGenesisManifestJsonRoundtripHash:
+    """R23 执行发现的缺陷回归: seal→cold-read→content_hash 链。
+
+    pydantic 解析 ISO UTC 产出 TzInfo(UTC) 非 timezone.utc 单例 —
+    裸 ``datetime`` 注解使 ``_validate_utc`` 身份比较恒拒; 既有测试全部
+    直接构造单例对象, 真实封存产物的冷读哈希从未通过。sealed_at 改
+    UtcInstant (BeforeValidator normalize json 字符串→单例) 后收敛。
+    """
+
+    def _manifest(self):
+        return TrialGenesisManifest(
+            trial_id="trial-rr",
+            normalized_genesis_hash="1" * 64,
+            champion_normalized_hash="2" * 64,
+            challenger_normalized_hash="3" * 64,
+            champion_backup_root="a" * 64,
+            challenger_backup_root="b" * 64,
+            trial_manifest_hash="d" * 64,
+            sap_manifest_hash="e" * 64,
+            sealed_at=datetime(2026, 8, 22, 8, 52, 23, tzinfo=UTC),
+            schema_major=2,
+        )
+
+    def test_json_roundtrip_hash_identical(self, tmp_path):
+        import json as _json
+
+        manifest = self._manifest()
+        expect = manifest.content_hash()
+        # 冷读路径: 落盘 JSON (Z 后缀) → read_genesis_manifest → hash
+        root = tmp_path / "trial-rr"
+        root.mkdir()
+        (root / "genesis-manifest.json").write_text(
+            manifest.model_dump_json(), encoding="utf-8"
+        )
+        back = read_genesis_manifest(tmp_path, "trial-rr")
+        assert back.sealed_at.tzinfo is UTC  # 单例 (非 pydantic TzInfo)
+        assert back.content_hash() == expect  # 冷读哈希与封存时逐字节一致
+
+    def test_tzinfo_singleton_after_json_parse(self):
+        from src.screening.offensive.v3.orchestration.genesis import (
+            TrialGenesisManifest as M,
+        )
+
+        parsed = M.model_validate_json(self._manifest().model_dump_json())
+        assert parsed.sealed_at.tzinfo is UTC

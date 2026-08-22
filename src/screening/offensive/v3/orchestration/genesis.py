@@ -23,7 +23,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from src.screening.offensive.v3.capital.repository import CapitalRepository
-from src.screening.offensive.v3.contracts.base import CanonicalModel
+from src.screening.offensive.v3.contracts.base import CanonicalModel, UtcInstant
 from src.screening.offensive.v3.contracts.capital import (
     CapitalPositionRisk,
     CapitalRiskSnapshot,
@@ -165,7 +165,12 @@ class TrialGenesisManifest(CanonicalModel):
     challenger_proxy_root: str | None = None
     trial_manifest_hash: str
     sap_manifest_hash: str
-    sealed_at: datetime
+    # UtcInstant 注解 (R23): 裸 datetime 在 JSON 反序列化时由 pydantic 核心
+    # 解析出 TzInfo(UTC) 而非 timezone.utc 单例 — content_hash 的
+    # _validate_utc 身份比较恒拒, seal→read→content_hash 链在真实封存
+    # 产物上从未通过 (既有测试全部直接构造单例)。注解链的
+    # BeforeValidator 在 json 模式把 ISO 字符串 normalize 为单例。
+    sealed_at: UtcInstant
     schema_major: int = SCHEMA_MAJOR
 
     def content_hash(self) -> str:
