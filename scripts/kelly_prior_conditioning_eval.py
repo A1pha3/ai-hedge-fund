@@ -39,6 +39,10 @@ HORIZON = 10
 ROUNDTRIP_COST = 0.0065  # 与 winrate_payoff_decomposition/btst_court_views 同式
 HALF_KELLY = 0.5
 CAP_PCT = 0.10
+#: 近零亏损门槛: |avg_loss| 低于此值时二元 Kelly (w/b − (1−w)/g) 的第一项
+#: 数值爆炸 (如 avg_loss=-0.0002 → kelly_full=825), 无消费意义 — 退化
+#: 披露而非输出荒谬确定感 (R16 对抗审查 PoC)。
+MIN_ABS_LOSS_FOR_KELLY = 0.005
 BUCKETS = ("<0.50", "0.50-0.60", "0.60-0.70", "≥0.70")
 
 
@@ -87,6 +91,20 @@ def kelly_stats(rets: list[float]) -> dict[str, object] | None:
     w = len(wins) / len(rets)
     g = sum(wins) / len(wins)
     b = sum(losses) / len(losses)
+    degenerate = abs(b) < MIN_ABS_LOSS_FOR_KELLY
+    if degenerate:
+        return {
+            "n": len(rets),
+            "winrate": w,
+            "avg_gain": g,
+            "avg_loss": b,
+            "kelly_full": None,
+            "kelly_half": None,
+            "implied_pct_uncapped": None,
+            "capped_at_10pct": None,
+            "negative_kelly": None,
+            "degenerate_kelly": True,
+        }
     full = kelly_fraction(w, g, b)
     half = HALF_KELLY * full
     return {
@@ -99,6 +117,7 @@ def kelly_stats(rets: list[float]) -> dict[str, object] | None:
         "implied_pct_uncapped": half,
         "capped_at_10pct": half > CAP_PCT,
         "negative_kelly": full < 0,
+        "degenerate_kelly": False,
     }
 
 
@@ -187,8 +206,10 @@ def split_half_stability(frame: pd.DataFrame) -> dict[str, object]:
         "spearman_kelly_order": rho,
         "kelly_sign_stable_across_halves": sign_stable,
         "verdict_hint": (
-            "排序不稳定 — 条件化 Kelly 无消费价值 (过拟合)"
-            if rho is None or rho < 0.5
+            "可用桶不足 (<3 桶可算 Kelly) — 样本不支持稳定性判定"
+            if rho is None
+            else "排序不稳定 — 条件化 Kelly 无消费价值 (过拟合)"
+            if rho < 0.5
             else (
                 "排序稳定但符号跨半翻转 — 桶级『下注/不下注』定性判断"
                 "不稳定, 条件化证据不足 (符号一致是排序稳定的前置条件)"

@@ -113,3 +113,34 @@ class TestEndToEnd:
         assert "split-half 稳定性" in md
         payload = json.loads(js)
         assert payload["global_prior_kelly"]["kelly_full"] is not None
+
+
+class TestDegenerateDisclosure:
+    """R16 对抗审查: 近零亏损的 Kelly 数值爆炸必须退化披露。"""
+
+    def test_near_zero_loss_flagged_degenerate(self):
+        s = kelly_stats([0.10, 0.0, 0.0, 0.0, 0.0, -0.001])
+        assert s is not None
+        assert s.get("degenerate_kelly") is True
+        assert s["kelly_full"] is None  # 数值无意义, 不给荒谬确定感
+
+    def test_normal_loss_not_flagged(self):
+        s = kelly_stats([0.10, 0.05, -0.04, -0.06])
+        assert s.get("degenerate_kelly") is False or "degenerate_kelly" not in s or s["degenerate_kelly"] is False
+        assert s["kelly_full"] is not None
+
+    def test_verdict_honest_when_insufficient_buckets(self):
+        """rho=None (可用桶<3) 的 verdict 必须说『可用桶不足』而非『排序不稳定』。"""
+        from scripts.kelly_prior_conditioning_eval import split_half_stability
+        import numpy as np
+        rng = np.random.default_rng(1)
+        rows = []
+        for i in range(100):
+            rows.append({
+                "signal_date": "2026-01-05" if i < 90 else f"2026-{(i%9)+2:02d}-01",
+                "trigger_strength": 0.45 + (i % 5) * 0.11,
+                "gross_ret_t10": float(rng.normal(0.01, 0.09)),
+            })
+        sh = split_half_stability(pd.DataFrame(rows))
+        assert sh["spearman_kelly_order"] is None
+        assert "可用桶不足" in sh["verdict_hint"]
