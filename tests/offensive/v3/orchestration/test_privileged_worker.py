@@ -957,3 +957,165 @@ class TestRunnerFinalizeUnlock:
         with pytest.raises(PairedTrialRunnerError) as ei:
             runner.finalize_missed_sessions(datetime(2026, 8, 20, tzinfo=UTC))
         assert ei.value.code == "forward_input_authority_unavailable"
+
+
+class TestOfficialTrialStack:
+    """R27: 官方栈组装器 — 真实身份接线端到端 (tmp 身份目录 + 官方布局)。"""
+
+    def test_build_and_decide_on_official_stack(self, worker_world, tmp_path):
+        import json as _json
+
+        from src.screening.offensive.v3.evidence.governance_identity import (
+            generate_governance_identity,
+        )
+        from src.screening.offensive.v3.governance.repository import (
+            GovernanceRepository,
+        )
+        from src.screening.offensive.v3.governance.stage_issuance import (
+            GovernanceStageIssuer,
+            StageIssuanceRequest,
+        )
+        from src.screening.offensive.v3.orchestration.official_trial_stack import (
+            build_official_trial_stack,
+        )
+        from src.screening.offensive.v3.orchestration.stage_archive import (
+            write_stage_issuance_receipt,
+        )
+
+        # ① 真实身份目录 (tmp 生成, 与 R23 生产目录同形态)
+        identity_dir = tmp_path / "identity"
+        generate_governance_identity(
+            identity_dir, namespaces=("regime", "sse-sessions", "btst-bars", "btst"),
+            clock=lambda: datetime(2026, 8, 6, 8, 0, tzinfo=UTC),
+        )
+        # ② trial root: 官方布局 (资本双臂 + 治理封存 + stage 回执归档)
+        root = tmp_path / "trial-root"
+        from datetime import timezone as _tz
+
+        from src.screening.offensive.v3.capital.flows import GenesisRequest
+        from src.screening.offensive.v3.capital.identity import AccountBinding
+        from src.screening.offensive.v3.capital.repository import CapitalRepository
+        from src.screening.offensive.v3.contracts.base import ExecutionMode
+        from src.screening.offensive.v3.orchestration.arm_layout import (
+            arm_capital_database_path,
+        )
+        from src.screening.offensive.v3.orchestration.arm_capital import (
+            read_genesis_manifest,
+        )
+        from src.screening.offensive.v3.orchestration.genesis import (
+            TrialArmGenesisSource,
+            TrialGenesisArchive,
+            restore_genesis_arm,
+        )
+
+        _now = datetime(2026, 8, 6, 8, 0, tzinfo=_tz.utc)
+        seed = tmp_path / "seed-capital.sqlite3"
+        repo = CapitalRepository.initialize(seed)
+        repo.initialize_genesis(GenesisRequest(
+            idempotency_key="genesis-1",
+            account_binding=AccountBinding(
+                portfolio_id="pf-trial-regime-001",
+                mode=ExecutionMode.DAILY_BAR_PROXY,
+                broker_account_id=None, base_currency="CNY",
+                environment_fingerprint=None,
+            ),
+            unit_quanta=10_000, unit_price_numerator=1_000, unit_price_denominator=1,
+            source_authority="governance.test", authorization_reference="t-1",
+            effective_at=_now, as_of=_now,
+        ))
+        source = TrialArmGenesisSource(capital_repository=repo)
+        manifest = TrialGenesisArchive(root).seal(
+            TRIAL_ID, champion_source=source, challenger_source=source
+        )
+        for arm in ("CHAMPION", "CHALLENGER"):
+            target = arm_capital_database_path(root, TrialArm[arm])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            restore_genesis_arm(manifest, root, target, arm=arm)
+        governance = GovernanceRepository(
+            database_path=str(root / "governance.sqlite3"),
+            clock=lambda: GOV_NOW,
+        )
+        request, sign, verifier, current_head, caps, bundle = _seal_request()
+        from tests.offensive.v3.evidence.test_session_spine import (  # noqa: F401
+            _Clock,
+        )
+        governance.seal_regime_trial(
+            request, verifier=verifier, current_head=current_head,
+            trusted_at=ENROLLMENT_START,
+        )
+        issuer = GovernanceStageIssuer(
+            repository=governance,
+            signer=lambda payload: sign(payload, caps["stage"]),
+            stage_capability=caps["stage"],
+            verifier=verifier,
+            trust_head=lambda: current_head,
+            clock=lambda: GOV_NOW,
+        )
+        receipt = issuer.issue(
+            StageIssuanceRequest(
+                trial_id=TRIAL_ID,
+                stage_id="stage-regime-001",
+                stage_sample_reservation_id="smp-1",
+                alpha_sample_consumption_id="alpha-1",
+                alpha_or_evalue_budget_consumption_id="budget-1",
+                attempt_ledger_checkpoint_hash=HASH,
+                stage_loss_budget_id="loss-1",
+                stage_loss_version=1,
+                maximum_loss_budget_cents=1_000_000,
+                issuer_id="governance.service",
+                issued_at=GOV_NOW,
+            )
+        )
+        write_stage_issuance_receipt(root, receipt)
+
+        # ③ 证据库预置 (官方布局: 三命名空间共库 + bar 库) — 空文件占位即构造
+        (root / "evidence.sqlite3").touch()
+        (root / "bars-evidence.sqlite3").touch()
+
+        # ④ 组装官方栈
+        from src.screening.offensive.v3.capital.fills import FillAttribution
+        from src.screening.offensive.v3.orchestration.arm_lifecycle import (
+            CURRENT_COST_SCENARIO,
+        )
+
+        stack = build_official_trial_stack(
+            identity_dir=identity_dir,
+            trial_root=root,
+            trial_id=TRIAL_ID,
+            sizing_config=_config(),
+            clock=lambda: datetime(2026, 8, 6, 15, 30, tzinfo=UTC),
+            market_scenario=CURRENT_COST_SCENARIO,
+            trial_attribution=FillAttribution(
+                producer_namespace="btst", research_program_id="prog-1",
+                economic_lineage_id="eline-1", stage_id="stage-1",
+            ),
+            research_program_id="prog-1",
+        )
+        assert stack.runner is not None
+        assert stack.governance_database().name == "governance.sqlite3"
+
+    def test_missing_evidence_db_fails_closed(self, worker_world, tmp_path):
+        from src.screening.offensive.v3.evidence.governance_identity import (
+            generate_governance_identity,
+        )
+        from src.screening.offensive.v3.orchestration.official_trial_stack import (
+            OfficialStackError,
+            build_official_trial_stack,
+        )
+
+        identity_dir = tmp_path / "identity"
+        generate_governance_identity(
+            identity_dir, namespaces=("regime", "sse-sessions", "btst-bars", "btst"),
+            clock=lambda: datetime(2026, 8, 6, 8, 0, tzinfo=UTC),
+        )
+        root = tmp_path / "empty-root"
+        root.mkdir()
+        with pytest.raises(OfficialStackError) as ei:
+            build_official_trial_stack(
+                identity_dir=identity_dir, trial_root=root, trial_id=TRIAL_ID,
+                sizing_config=_config(),
+                clock=lambda: datetime(2026, 8, 6, 15, 30, tzinfo=UTC),
+                market_scenario=object(), trial_attribution=object(),
+                research_program_id="prog-1",
+            )
+        assert ei.value.code == "trial_root_not_initialized"
