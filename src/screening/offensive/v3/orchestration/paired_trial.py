@@ -253,6 +253,8 @@ class ForwardPairedTrialRunner:
         bar_repository: object = None,
         market_scenario: object = None,
         trial_attribution: object = None,
+        session_spine: object = None,
+        research_program_id: str | None = None,
     ) -> None:
         # 无参实例 = 未注入 authority, decide 保持 fail-closed (旧 disabled
         # 语义的延续: 权限只来自显式注入的依赖链, 无 ambient 能力)。
@@ -265,6 +267,8 @@ class ForwardPairedTrialRunner:
         self._bar_repository = bar_repository
         self._market_scenario = market_scenario
         self._trial_attribution = trial_attribution
+        self._session_spine = session_spine
+        self._research_program_id = research_program_id
 
     def _kernel(self) -> object:
         if self._decider is not None:
@@ -517,12 +521,43 @@ class ForwardPairedTrialRunner:
         )
 
     def finalize_missed_sessions(self, trusted_at: datetime) -> tuple[date, ...]:
-        """Reject before reading time, calendar, spine or decision state."""
+        """Finalize enrolled-but-undecided sessions as NO_RUN (R26 解锁).
 
-        raise PairedTrialRunnerError(
-            "forward_input_authority_unavailable",
-            "official forward input batch authority is not implemented",
+        补记语义: 评估窗口 (enrollment 的 assessment_date) 已过、该 trial
+        无决策 pair、spine 无终态的会话 → ``mark_no_run``。幂等: 已有
+        终态的会话跳过 (append-only spine 不重复追加)。
+        """
+        from src.screening.offensive.v3.evidence.session_spine import (
+            SessionStatus,
         )
+
+        self._require_unlocked()
+        if self._session_spine is None or self._research_program_id is None:
+            raise PairedTrialRunnerError(
+                "finalize_authority_unavailable",
+                "finalize requires the injected session spine and program id",
+            )
+        decided_sessions = {
+            key[1] for key in self._store.pair_keys(self._research_program_id)
+        }
+        finalized: list[date] = []
+        for enrollment in self._session_spine.enrolled_sessions(
+            self._research_program_id
+        ):
+            if enrollment.assessment_date > trusted_at.date():
+                continue  # 评估窗口未过 — 不是 missed
+            if str(enrollment.signal_session) in decided_sessions:
+                continue  # 已有决策 pair
+            current = self._session_spine.status(
+                self._research_program_id, enrollment.signal_session
+            )
+            if current is not None and current is not SessionStatus.DATA_UNKNOWN:
+                continue  # 已有终态 (含既往 NO_RUN) — 幂等跳过
+            self._session_spine.mark_no_run(
+                self._research_program_id, enrollment.signal_session
+            )
+            finalized.append(enrollment.signal_session)
+        return tuple(finalized)
 
 
 def freeze_shared_input(

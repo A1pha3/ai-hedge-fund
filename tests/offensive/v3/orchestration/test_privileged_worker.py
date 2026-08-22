@@ -900,3 +900,60 @@ class TestRunnerAdvanceUnlock:
         with pytest.raises(PairedTrialRunnerError) as ei:
             runner.advance_market_session(req)
         assert ei.value.code == "forward_input_authority_unavailable"
+
+
+class TestRunnerFinalizeUnlock:
+    """R26: finalize_missed_sessions 解锁 — 错过会话 NO_RUN 补记。"""
+
+    def test_finalize_marks_missed_idempotent(self, worker_world, tmp_path):
+        from src.screening.offensive.v3.evidence.session_spine import (
+            SessionEnrollment,
+            SessionSpine,
+            SessionStatus,
+        )
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            ForwardPairedTrialRunner,
+        )
+
+        program = "prog-btst-trial"
+        spine = SessionSpine(
+            database_path=str(worker_world["root"] / "spine.sqlite3"),
+            clock=lambda: datetime(2026, 8, 6, 15, 30, tzinfo=UTC),
+        )
+        # 两个已注册会话: 08-06 (将被 decide) 与 08-13 (将错过)
+        spine.enroll_expected_sessions((
+            SessionEnrollment(program, SESSION, SESSION),
+            SessionEnrollment(program, date(2026, 8, 13), date(2026, 8, 13)),
+        ))
+        store = TrialArmDecisionStore(
+            database_path=str(worker_world["root"] / "decisions.sqlite3")
+        )
+        store.register_trial(worker_world["bundle"], _registration_genesis())
+        runner = ForwardPairedTrialRunner(
+            assembler=worker_world["assembler"],
+            capital_trial_root=TestRunnerUnlock()._armed_trial_root(tmp_path),
+            portfolio_id="pf-btst-trial",
+            sizing_config=_config(),
+            decision_store=store,
+            session_spine=spine,
+            research_program_id=program,
+        )
+        # 两个会话评估窗均已过 (trusted_at 08-20) 且无 pair → 全部补记 (日历序)
+        finalized = runner.finalize_missed_sessions(datetime(2026, 8, 20, 15, 0, tzinfo=UTC))
+        assert finalized == (SESSION, date(2026, 8, 13))
+        assert spine.status(program, SESSION) is SessionStatus.NO_RUN
+        assert spine.status(program, date(2026, 8, 13)) is SessionStatus.NO_RUN
+        # 幂等: 重复 finalize 不再补记 (终态已存在)
+        again = runner.finalize_missed_sessions(datetime(2026, 8, 21, 15, 0, tzinfo=UTC))
+        assert again == ()
+
+    def test_finalize_without_authority_rejected(self, worker_world):
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            ForwardPairedTrialRunner,
+            PairedTrialRunnerError,
+        )
+
+        runner = ForwardPairedTrialRunner()
+        with pytest.raises(PairedTrialRunnerError) as ei:
+            runner.finalize_missed_sessions(datetime(2026, 8, 20, tzinfo=UTC))
+        assert ei.value.code == "forward_input_authority_unavailable"
