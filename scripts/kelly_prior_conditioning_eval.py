@@ -46,36 +46,16 @@ MIN_ABS_LOSS_FOR_KELLY = 0.005
 BUCKETS = ("<0.50", "0.50-0.60", "0.60-0.70", "≥0.70")
 
 
-def strength_bucket(strength: float) -> str:
-    if strength is None or (isinstance(strength, float) and math.isnan(strength)):
-        return "unknown"
-    if strength < 0.50:
-        return "<0.50"
-    if strength < 0.60:
-        return "0.50-0.60"
-    if strength < 0.70:
-        return "0.60-0.70"
-    return "≥0.70"
+# 单一实现 (R17): 生产对齐宇宙与强度桶从 winrate 工具导出面复用 — 三处
+# 复制 (winrate/kelly/review) 曾是漂移风险, 现收敛为 winrate 工具唯一实现
+# (其内部再 import review_btst_prior_court 的过滤链常量)。
+import sys as _sys
 
+_SCRIPTS = str(Path(__file__).resolve().parent)
+if _SCRIPTS not in _sys.path:
+    _sys.path.insert(0, _SCRIPTS)
 
-def production_aligned(ev: pd.DataFrame) -> pd.DataFrame:
-    """复用 review_btst_prior_court 单一实现 (与 winrate 工具同款, 防口径漂移)。"""
-    import sys
-
-    scripts = str(Path(__file__).resolve().parent)
-    if scripts not in sys.path:
-        sys.path.insert(0, scripts)
-    from review_btst_prior_court import PRODUCTION_EXCLUDE_COLS, candidate_universe
-
-    required = ["fillable", "gate_blocked", "price_ge_3", *PRODUCTION_EXCLUDE_COLS]
-    missing = [c for c in required if c not in ev.columns]
-    if missing:
-        raise SystemExit(f"court 事件表缺少生产过滤列: {sorted(missing)}")
-    universe = candidate_universe(ev)
-    excluded = universe[list(PRODUCTION_EXCLUDE_COLS)].any(axis=1) | (
-        universe["price_ge_3"] != True  # noqa: E712
-    )
-    return universe.loc[~excluded].copy()
+from winrate_payoff_decomposition import production_aligned, strength_bucket  # noqa: E402
 
 
 def kelly_stats(rets: list[float]) -> dict[str, object] | None:
@@ -122,19 +102,13 @@ def kelly_stats(rets: list[float]) -> dict[str, object] | None:
 
 
 def cluster_ci_low(rets: list[float], days: list[str]) -> float | None:
+    """聚类 CI 下界 — 算法单一实现在 winrate 工具 (per-call seeded), 本层
+    只加 n<MIN_CELL_N 门 (评估口径 N_BOOT 更小, 差异在报告披露)。"""
     if len(rets) < MIN_CELL_N or len(set(days)) < 2:
         return None
-    rng = np.random.default_rng(BOOT_SEED)  # per-call: 与进程历史无关 (R13 纪律)
-    pools = {}
-    for r, d in zip(rets, days):
-        pools.setdefault(d, []).append(r)
-    arrs = [np.asarray(v) for v in pools.values()]
-    k = len(arrs)
-    means = np.empty(N_BOOT)
-    for i in range(N_BOOT):
-        pick = rng.integers(0, k, k)
-        means[i] = np.concatenate([arrs[j] for j in pick]).mean()
-    return float(np.quantile(means, 0.10))
+    from winrate_payoff_decomposition import cluster_boot_ci_low
+
+    return cluster_boot_ci_low(rets, days, ci=0.90, n_boot=N_BOOT)
 
 
 def bucket_rows(frame: pd.DataFrame) -> list[dict[str, object]]:
