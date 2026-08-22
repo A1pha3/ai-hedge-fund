@@ -191,15 +191,31 @@ def build_official_trial_stack(
             trust_head=head,
         )
 
-    # 运行态库磁盘面: spine 是预注册治理事实 (宪法 #13 expected-session
-    # spine; runbook ④ 注册是启动前置) — 缺失即拒, 绝不静默自建空 spine
-    # (空 spine 使 finalize_missed_sessions 的 NO_RUN 补记静默失效)。
-    # decisions/governance 是运行时产物/封存流程产物: 存在时常规文件,
-    # 缺失保持构造器既有语义 (decisions 首决策自建)。
+    # 运行态库磁盘面: spine 与 governance 都是封存/注册流程的预置产物
+    # (宪法 #13 expected-session spine + 治理封存; runbook ④/封存是启动
+    # 前置) — 缺失即拒, 绝不静默自建 (空 spine 使 finalize 的 NO_RUN
+    # 补记静默失效; 空 governance 把「封存流程没跑」推迟到首次 decide
+    # 的 stage_unknown)。decisions 是运行时产物: 存在时常规文件, 缺失
+    # 保持构造器既有语义 (首决策自建)。
     _require_regular_database(root / "spine.sqlite3", missing_code="trial_root_not_initialized")
     _require_optional_regular_database(root / "decisions.sqlite3")
-    _require_optional_regular_database(root / "governance.sqlite3")
+    _require_regular_database(
+        root / "governance.sqlite3", missing_code="trial_root_not_initialized"
+    )
     spine = SessionSpine(database_path=str(root / "spine.sqlite3"), clock=clock)
+    # spine 事实非空性与归属 (R32): 文件存在 ≠ 注册流程跑过 — 0 字节
+    # 文件经 SessionSpine.__init__ 静默建 DDL 成为零 enrollment 空 spine,
+    # 异 research_program 的合法 spine 按 program 过滤后同样为空。
+    # worker/runner 侧无此校验 (无主校验), 组装面是唯一收口点。
+    if not spine.enrolled_sessions(research_program_id):
+        raise OfficialStackError(
+            "spine_not_registered",
+            "the session spine carries no enrollment for this research"
+            " program (runbook session registration must run first; an"
+            " empty or foreign-program spine silently voids the"
+            " finalize NO_RUN bookkeeping)",
+            research_program_id=research_program_id,
+        )
     store = TrialArmDecisionStore(database_path=str(root / "decisions.sqlite3"))
     # 资本约定路径在构造期即校验 (缺库 fail-closed 提前到组装面)
     from src.screening.offensive.v3.contracts.trial import TrialArm

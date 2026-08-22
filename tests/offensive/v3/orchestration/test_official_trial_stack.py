@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -150,10 +150,24 @@ def _official_archive_world(tmp_path: Path) -> _ArchiveWorld:
         clock=lambda: GOV_NOW,
     )
     # 官方布局占位: 证据库存在即可构造 (选择面测试不进证据链);
-    # spine 预置文件 (R30 收紧: 注册流程产物, 组装器不再静默自建)。
+    # spine 预置真实 enrollment (R32: 组装面校验 enrolled_sessions 非空,
+    # 空文件/异 program 都 spine_not_registered — fixture 模拟注册流程)。
     (root / "evidence.sqlite3").touch()
     (root / "bars-evidence.sqlite3").touch()
     (root / "spine.sqlite3").touch()
+    from src.screening.offensive.v3.evidence.session_spine import (
+        SessionEnrollment,
+        SessionSpine,
+    )
+
+    SessionSpine(
+        database_path=str(root / "spine.sqlite3"), clock=lambda: GOV_NOW
+    ).enroll_expected_sessions(
+        (
+            SessionEnrollment("prog-1", date(2026, 8, 6), date(2026, 8, 6)),
+            SessionEnrollment("prog-1", date(2026, 8, 13), date(2026, 8, 13)),
+        )
+    )
     return _ArchiveWorld(
         identity_dir=identity_dir,
         root=root,
@@ -544,19 +558,86 @@ def test_missing_spine_fails_closed(tmp_path):
     assert ei.value.code == "trial_root_not_initialized"
 
 
-def test_preprovisioned_empty_spine_accepted(tmp_path):
-    """预置的 spine 文件通过构造 — enrollment 内容校验属 worker/runner。"""
+def test_preprovisioned_empty_spine_rejected(tmp_path):
+    """空 touch spine 文件拒绝 (R32) — R30 只拒缺文件, 空文件形态原样绕过。
+
+    R30 版测试曾固化「空文件接受, enrollment 内容校验属 worker/runner」—
+    对抗审查证实 worker/runner 侧不存在该校验 (无主校验): SessionSpine
+    __init__ 对 0 字节文件静默建全套 DDL, 零 enrollment 的空 spine 使
+    finalize_missed_sessions 的 NO_RUN 补记静默失效。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
     world = _official_archive_world(tmp_path)
     only = _issue_receipt(
         world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
     )
     write_stage_issuance_receipt(world.root, only)
-    # 夹具默认构造已建立 spine; 删除后 touch 模拟「注册流程预置空文件」。
     (world.root / "spine.sqlite3").unlink(missing_ok=True)
     (world.root / "spine.sqlite3").touch()
 
-    stack = _build(world)
-    assert stack.spine is not None
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "spine_not_registered"
+
+
+def test_foreign_program_spine_rejected(tmp_path):
+    """异 research_program 的合法 spine 拒绝 (R32) — 治理事实归属校验。
+
+    预置一个只 enroll 了 prog-other 的完整 spine: 按 program 过滤后
+    enrollment 为空, 修复前静默通过 (归属分歧永不暴露), 修复后拒绝。
+    同时收口组装器接线错误 (research_program_id 传错提前失败)。
+    """
+    from src.screening.offensive.v3.evidence.session_spine import (
+        SessionEnrollment,
+        SessionSpine,
+    )
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    (world.root / "spine.sqlite3").unlink(missing_ok=True)
+    foreign = SessionSpine(
+        database_path=str(world.root / "spine.sqlite3"),
+        clock=lambda: GOV_NOW,
+    )
+    foreign.enroll_expected_sessions(
+        (SessionEnrollment("prog-other", date(2026, 8, 6), date(2026, 8, 6)),)
+    )
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)  # research_program_id="prog-1"
+    assert ei.value.code == "spine_not_registered"
+
+
+def test_missing_governance_db_rejected(tmp_path):
+    """缺 governance.sqlite3 不再静默自建 (R32) — 封存流程产物同族纪律。
+
+    docstring 自述「治理库由封存流程预置, 本层只读」, 但缺失时
+    GovernanceRepository.__init__ 静默 CREATE TABLE 自建空治理库,
+    失败推迟到首次 decide 的 stage_unknown — 掩盖「封存流程没跑」。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    (world.root / "governance.sqlite3").unlink(missing_ok=True)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "trial_root_not_initialized"
 
 
 def test_missing_decisions_store_still_self_builds(tmp_path):

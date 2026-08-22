@@ -1069,10 +1069,24 @@ class TestOfficialTrialStack:
         write_stage_issuance_receipt(root, receipt)
 
         # ③ 证据库预置 (官方布局: 三命名空间共库 + bar 库) — 空文件占位即构造;
-        # spine 预置文件 (R30 收紧: 注册流程产物, 组装器不再静默自建)。
+        # spine 预置真实 enrollment (R32: 组装面校验非空+归属, touch 空文件
+        # 不再静默通过)。
         (root / "evidence.sqlite3").touch()
         (root / "bars-evidence.sqlite3").touch()
         (root / "spine.sqlite3").touch()
+        from src.screening.offensive.v3.evidence.session_spine import (
+            SessionEnrollment,
+            SessionSpine,
+        )
+
+        SessionSpine(
+            database_path=str(root / "spine.sqlite3"), clock=lambda: GOV_NOW
+        ).enroll_expected_sessions(
+            (
+                SessionEnrollment("prog-1", date(2026, 8, 6), date(2026, 8, 6)),
+                SessionEnrollment("prog-1", date(2026, 8, 13), date(2026, 8, 13)),
+            )
+        )
 
         # ④ 组装官方栈
         from src.screening.offensive.v3.capital.fills import FillAttribution
