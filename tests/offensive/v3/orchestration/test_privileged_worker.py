@@ -445,3 +445,195 @@ def test_assemble_rejects_cross_wired_candidate_session(worker_world, tmp_path):
             candidate_evidence_ids=(candidate.evidence.evidence_id,),
         )
     assert ei.value.code == "candidate_session_mismatch"
+
+
+# --- R20: 特权 worker UDS 进程边界原语 --------------------------------------
+
+
+class TestWorkerServer:
+    def _server(self, worker_world, tmp_path, **kw):
+        # macOS sun_path 限制 104 字节, pytest basetemp 过长 → 系统 mkdtemp
+        # (短路径; /var/folders 下由操作系统自动清理)
+        import tempfile
+
+        from src.screening.offensive.v3.orchestration.worker_server import (
+            PrivilegedWorkerServer,
+            WorkerServerConfig,
+        )
+
+        short_dir = Path(tempfile.mkdtemp(prefix="wks-"))
+        return PrivilegedWorkerServer(
+            assembler=worker_world["assembler"],
+            config=WorkerServerConfig(socket_dir=short_dir),
+            **kw,
+        )
+
+    def _client_roundtrip(self, sock_path, request, uid=None):
+        import socket as s
+
+        if uid is None:
+            uid = os.getuid()
+        conn = s.socket(s.AF_UNIX, s.SOCK_STREAM)
+        conn.connect(str(sock_path))
+        conn.sendall(json.dumps(request).encode("utf-8"))
+        conn.shutdown(s.SHUT_WR)
+        data = b""
+        while True:
+            chunk = conn.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+        conn.close()
+        # serve_once 需要在 accept 前启动 — 本测试由调用方线程驱动
+        return data
+
+    def test_bind_serve_roundtrip(self, worker_world, tmp_path):
+        import threading
+
+        server = self._server(worker_world, tmp_path, peer_uid_extractor=lambda c: os.getuid())
+        sock_path = server.bind()
+        assert sock_path.is_socket()
+
+        result = {}
+
+        def run():
+            result["response"] = server.serve_once()
+
+        t = threading.Thread(target=run)
+        t.start()
+        import socket as s
+
+        conn = s.socket(s.AF_UNIX, s.SOCK_STREAM)
+        conn.connect(str(sock_path))
+        conn.sendall(
+            json.dumps(
+                {
+                    "op": "assemble",
+                    "session": SESSION.isoformat(),
+                    "cutoff": CUTOFF.isoformat(),
+                    "cycle_id": "daily-action-20260806",
+                    "trusted_at": "2026-08-06T15:30:00+00:00",
+                    "schedule_evidence_id": worker_world["schedule_id"],
+                    "candidate_evidence_ids": [worker_world["candidate_id"]],
+                }
+            ).encode("utf-8")
+        )
+        conn.shutdown(s.SHUT_WR)
+        data = b""
+        while True:
+            chunk = conn.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+        conn.close()
+        t.join(timeout=10)
+
+        resp = result["response"]
+        assert resp["ok"] is True
+        assert resp["stage_id"] == worker_world["receipt"].stage_id
+        assert resp["candidates"] == 1
+        assert len(resp["evidence_set_merkle_root"]) == 64
+        assert json.loads(data)["ok"] is True
+        server.close()
+
+    def test_peer_uid_rejected(self, worker_world, tmp_path):
+        import threading
+        import socket as s
+
+        server = self._server(
+            worker_world, tmp_path, peer_uid_extractor=lambda c: 99999
+        )
+        sock_path = server.bind()
+        result = {}
+
+        def run():
+            result["response"] = server.serve_once()
+
+        t = threading.Thread(target=run)
+        t.start()
+        conn = s.socket(s.AF_UNIX, s.SOCK_STREAM)
+        conn.connect(str(sock_path))
+        conn.sendall(b'{"op":"assemble"}')
+        conn.shutdown(s.SHUT_WR)
+        data = b""
+        while True:
+            chunk = conn.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+        conn.close()
+        t.join(timeout=10)
+        assert result["response"]["ok"] is False
+        assert result["response"]["code"] == "peer_uid_rejected"
+        server.close()
+
+    def test_op_unknown_and_bad_request(self, worker_world, tmp_path):
+        import threading
+        import socket as s
+
+        server = self._server(worker_world, tmp_path, peer_uid_extractor=lambda c: os.getuid())
+        sock_path = server.bind()
+        for payload, expected_code in (
+            ({"op": "nope"}, "op_unknown"),
+            ({"op": "assemble", "session": "not-a-date"}, "request_invalid"),
+        ):
+            result = {}
+
+            def run():
+                result["response"] = server.serve_once()
+
+            t = threading.Thread(target=run)
+            t.start()
+            conn = s.socket(s.AF_UNIX, s.SOCK_STREAM)
+            conn.connect(str(sock_path))
+            conn.sendall(json.dumps(payload).encode("utf-8"))
+            conn.shutdown(s.SHUT_WR)
+            while conn.recv(65536):
+                pass
+            conn.close()
+            t.join(timeout=10)
+            assert result["response"]["ok"] is False, payload
+            assert result["response"]["code"] == expected_code, payload
+        server.close()
+
+    def test_live_lease_conflict_and_stale_cleanup(self, worker_world, tmp_path):
+        from src.screening.offensive.v3.orchestration.worker_server import (
+            WorkerServerError,
+        )
+
+        server = self._server(worker_world, tmp_path, peer_uid_extractor=lambda c: os.getuid())
+        sock_path = server.bind()
+        shared_dir = server._config.socket_dir  # 同一 socket 目录才谈得上冲突
+        from src.screening.offensive.v3.orchestration.worker_server import (
+            PrivilegedWorkerServer,
+            WorkerServerConfig,
+        )
+
+        def _sibling():
+            return PrivilegedWorkerServer(
+                assembler=worker_world["assembler"],
+                config=WorkerServerConfig(socket_dir=shared_dir),
+                peer_uid_extractor=lambda c: os.getuid(),
+            )
+
+        with pytest.raises(WorkerServerError) as ei:
+            _sibling().bind()
+        assert ei.value.code == "worker_server_conflict"
+
+        # 模拟进程死亡: lease 指向不存在 pid → stale 清理重绑
+        lease = sock_path.parent / "privileged-worker.lease.json"
+        lease.write_text(json.dumps({"pid": 999999999, "service_name": "privileged-worker", "started_at": "x", "owner_uid": os.getuid()}))
+        third = _sibling()
+        third.bind()  # stale → 清理成功
+        third.close()
+        server.close()
+
+    def test_serve_before_bind_rejected(self, worker_world, tmp_path):
+        from src.screening.offensive.v3.orchestration.worker_server import (
+            WorkerServerError,
+        )
+
+        server = self._server(worker_world, tmp_path)
+        with pytest.raises(WorkerServerError) as ei:
+            server.serve_once()
+        assert ei.value.code == "worker_server_not_bound"
