@@ -1083,8 +1083,12 @@ class TestOfficialTrialStack:
             database_path=str(root / "spine.sqlite3"), clock=lambda: GOV_NOW
         ).enroll_expected_sessions(
             (
-                SessionEnrollment("prog-1", date(2026, 8, 6), date(2026, 8, 6)),
-                SessionEnrollment("prog-1", date(2026, 8, 13), date(2026, 8, 13)),
+                SessionEnrollment(
+                    "research.btst.regime", date(2026, 8, 6), date(2026, 8, 6)
+                ),
+                SessionEnrollment(
+                    "research.btst.regime", date(2026, 8, 13), date(2026, 8, 13)
+                ),
             )
         )
 
@@ -1102,10 +1106,11 @@ class TestOfficialTrialStack:
             clock=lambda: datetime(2026, 8, 6, 15, 30, tzinfo=UTC),
             market_scenario=CURRENT_COST_SCENARIO,
             trial_attribution=FillAttribution(
-                producer_namespace="btst", research_program_id="prog-1",
+                producer_namespace="btst",
+                research_program_id="research.btst.regime",
                 economic_lineage_id="eline-1", stage_id="stage-1",
             ),
-            research_program_id="prog-1",
+            research_program_id="research.btst.regime",
         )
         assert stack.runner is not None
         assert stack.governance_database().name == "governance.sqlite3"

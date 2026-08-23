@@ -161,7 +161,20 @@ def build_official_trial_stack(
         rejected_code="official_stack_path_rejected",
     )
     root = candidate_root.resolve()
-    identity_dir = Path(identity_dir)
+    # identity_dir 同族 walk (R34): 身份目录是全部签名面的信任链根 —
+    # R31 对 trial_root 拒绝的 symlink 重定向对它原样有效 (敌手可用
+    # 离线 generate 原语自建合法形态的身份目录; load 面的 identity.json
+    # is_file() 跟随 symlink, 中间组件零防护)。
+    candidate_identity = Path(identity_dir)
+    if not candidate_identity.is_absolute():
+        candidate_identity = Path.cwd() / candidate_identity
+    walk_components(
+        candidate_identity,
+        fail=OfficialStackError,
+        missing_code="identity_not_initialized",
+        rejected_code="official_stack_path_rejected",
+    )
+    identity_dir = candidate_identity
     # trial_id 入口单段校验 (R29): 该 id 直接拼进归档路径与 portfolio_id,
     # 穿越/绝对注入在拼路径前即拒 (深处 assembler 的 stage_trial_mismatch
     # 是兜底而非纵深; R28 已修 stage_id 段, 本轮补 trial_id 段)。
@@ -202,7 +215,18 @@ def build_official_trial_stack(
     _require_regular_database(
         root / "governance.sqlite3", missing_code="trial_root_not_initialized"
     )
-    spine = SessionSpine(database_path=str(root / "spine.sqlite3"), clock=clock)
+    spine_path = root / "spine.sqlite3"
+    # 0 字节前置检查 (R34): 最常见污染形态在 SessionSpine.__init__ 落
+    # DDL 写副作用**之前**即拒 — 读侧组装不对预注册治理事实文件产生
+    # 任何写痕迹 (WAL sidecar/mtime)。
+    if spine_path.stat().st_size == 0:
+        raise OfficialStackError(
+            "spine_not_registered",
+            "the session spine file is empty — the runbook session"
+            " registration must run first (an empty spine silently voids"
+            " the finalize NO_RUN bookkeeping)",
+        )
+    spine = SessionSpine(database_path=str(spine_path), clock=clock)
     # spine 事实非空性与归属 (R32): 文件存在 ≠ 注册流程跑过 — 0 字节
     # 文件经 SessionSpine.__init__ 静默建 DDL 成为零 enrollment 空 spine,
     # 异 research_program 的合法 spine 按 program 过滤后同样为空。
@@ -233,6 +257,38 @@ def build_official_trial_stack(
     governance = GovernanceRepository(
         database_path=str(root / "governance.sqlite3"), clock=clock
     )
+    # 治理事实非空 + program 三角互证 (R34): 0 字节库通过 R32 的文件
+    # 守卫后被 __init__ 静默建空表, 失败推迟到首次 decide 的
+    # stage_unknown。构造期 quiet 读 regime_trial_bundle (stage 签发的
+    # 单一事实源) — 空/损/异 trial 库立即拒绝; 同时断言封存 manifest 的
+    # research_program_id 与组装入参一致 (spine↔入参↔封存权威三角闭合,
+    # 错位时 NO_RUN 补记会按错误 program 记账)。
+    from src.screening.offensive.v3.governance.repository import (
+        GovernanceStoreError,
+    )
+
+    try:
+        sealed_bundle = governance.regime_trial_bundle(trial_id)
+    except GovernanceStoreError as exc:
+        raise OfficialStackError(
+            "governance_not_sealed",
+            "the governance database carries no sealed paired trial"
+            " bundle for this trial (sealing flow must run first; an"
+            " empty or foreign-trial store must not defer this fact to"
+            " the first decide's stage_unknown)",
+            trial_id=trial_id,
+        ) from exc
+    if sealed_bundle.trial_manifest.research_program_id != research_program_id:
+        raise OfficialStackError(
+            "program_binding_mismatch",
+            "the sealed trial manifest binds a different research program"
+            " than the stack was assembled with — the spine NO_RUN"
+            " bookkeeping would record against the wrong program",
+            sealed_program=(
+                sealed_bundle.trial_manifest.research_program_id
+            ),
+            requested_program=research_program_id,
+        )
     from src.screening.offensive.v3.governance.stage_issuance import (
         StageIssuanceReceipt,
     )

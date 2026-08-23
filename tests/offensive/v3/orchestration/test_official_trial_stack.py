@@ -164,8 +164,12 @@ def _official_archive_world(tmp_path: Path) -> _ArchiveWorld:
         database_path=str(root / "spine.sqlite3"), clock=lambda: GOV_NOW
     ).enroll_expected_sessions(
         (
-            SessionEnrollment("prog-1", date(2026, 8, 6), date(2026, 8, 6)),
-            SessionEnrollment("prog-1", date(2026, 8, 13), date(2026, 8, 13)),
+            SessionEnrollment(
+                "research.btst.regime", date(2026, 8, 6), date(2026, 8, 6)
+            ),
+            SessionEnrollment(
+                "research.btst.regime", date(2026, 8, 13), date(2026, 8, 13)
+            ),
         )
     )
     return _ArchiveWorld(
@@ -175,7 +179,7 @@ def _official_archive_world(tmp_path: Path) -> _ArchiveWorld:
         sizing_config=_config(),
         market_scenario=CURRENT_COST_SCENARIO,
         trial_attribution=FillAttribution(
-            producer_namespace="btst", research_program_id="prog-1",
+            producer_namespace="btst", research_program_id="research.btst.regime",
             economic_lineage_id="eline-1", stage_id="stage-1",
         ),
     )
@@ -214,7 +218,7 @@ def _build(world: _ArchiveWorld, **overrides):
         clock=lambda: datetime(2026, 8, 6, 15, 30, tzinfo=UTC),
         market_scenario=world.market_scenario,
         trial_attribution=world.trial_attribution,
-        research_program_id="prog-1",
+        research_program_id="research.btst.regime",
     )
     kwargs.update(overrides)
     return build_official_trial_stack(**kwargs)
@@ -529,7 +533,9 @@ def test_trial_root_relative_traversal_rejected(tmp_path, monkeypatch):
 
     with pytest.raises(OfficialStackError) as ei:
         _build(world, trial_root=relative_escape)
-    assert ei.value.code in ("path_traversal", "trial_root_not_initialized")
+    # R34 收紧单码: walk_components 的 .. 前置检查在 lstat 前 — 若该
+    # 前置被移除/重排, 测试必须红 (双码断言会掩盖回归)。
+    assert ei.value.code == "path_traversal"
 
 
 # ---------------------------------------------------------------------------
@@ -828,7 +834,7 @@ def test_foreign_program_spine_rejected(tmp_path):
     )
 
     with pytest.raises(OfficialStackError) as ei:
-        _build(world)  # research_program_id="prog-1"
+        _build(world)  # research_program_id=research.btst.regime (封存对齐)
     assert ei.value.code == "spine_not_registered"
 
 
@@ -866,3 +872,157 @@ def test_missing_decisions_store_still_self_builds(tmp_path):
 
     stack = _build(world)
     assert stack.decision_store is not None
+
+
+def test_same_id_same_instant_two_files_ambiguous(tmp_path):
+    """对抗审查复核 (R33 后): 同 stage_id 同 issued_at 异内容双文件。
+
+    审查者断言该形态静默按文件名序选择 — 实证 ``candidates`` 列表推导
+    不去重 (["S","S"] 长度 2) → ``stage_selection_ambiguous`` fail-closed。
+    本测试钉死该形态, 防止未来去重"优化"重新打开它。
+    """
+    from src.screening.offensive.v3.governance.repository import (
+        GovernanceRepository,
+    )
+    from src.screening.offensive.v3.governance.stage_issuance import (
+        GovernanceStageIssuer,
+        StageIssuanceRequest,
+    )
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    at = GOV_NOW - timedelta(minutes=5)
+    first = _issue_receipt(world.issuer, stage_id="stage-twin", issued_at=at)
+    governance_b = GovernanceRepository(
+        database_path=str(tmp_path / "twin-governance.sqlite3"),
+        clock=lambda: GOV_NOW,
+    )
+    request, sign, verifier, current_head, caps, _bundle = _seal_request()
+    governance_b.seal_regime_trial(
+        request, verifier=verifier, current_head=current_head,
+        trusted_at=ENROLLMENT_START,
+    )
+    issuer_b = GovernanceStageIssuer(
+        repository=governance_b,
+        signer=lambda payload: sign(payload, caps["stage"]),
+        stage_capability=caps["stage"],
+        verifier=verifier,
+        trust_head=lambda: current_head,
+        clock=lambda: GOV_NOW,
+    )
+    second = issuer_b.issue(
+        StageIssuanceRequest(
+            trial_id=TRIAL_ID,
+            stage_id="stage-twin",
+            stage_sample_reservation_id="smp-t",
+            alpha_sample_consumption_id="alpha-t",
+            alpha_or_evalue_budget_consumption_id="budget-t",
+            attempt_ledger_checkpoint_hash="f" * 64,
+            stage_loss_budget_id="loss-t",
+            stage_loss_version=1,
+            maximum_loss_budget_cents=1_000_000,
+            issuer_id="governance.service",
+            issued_at=at,
+        )
+    )
+    assert first.issued_at == second.issued_at
+    assert first.content_hash() != second.content_hash()
+    archive = world.root / "archive" / "stage-issuance" / TRIAL_ID
+    archive.mkdir(parents=True, exist_ok=True)
+    (archive / "stage-a-first.json").write_text(first.model_dump_json(), encoding="utf-8")
+    (archive / "stage-z-second.json").write_text(second.model_dump_json(), encoding="utf-8")
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "stage_selection_ambiguous"
+
+
+# ---------------------------------------------------------------------------
+# R34: 三轮对抗审查返工 — governance 0 字节 / program 三角互证 / identity walk
+# ---------------------------------------------------------------------------
+
+def test_empty_touch_governance_db_rejected(tmp_path):
+    """0 字节 governance.sqlite3 拒绝 (R34) — R32 只封缺文件的自我镜像。
+
+    0 字节是常规文件, 通过 R32 的 lstat 守卫; GovernanceRepository.__init__
+    的 CREATE TABLE IF NOT EXISTS 静默建空表, 失败推迟到首次 decide 的
+    stage_unknown — 与 R32 批判 R30「只拒缺文件, 空文件形态原样绕过」
+    同构。修复 = 构造期 quiet 读 regime_trial_bundle (stage 签发的单一
+    事实源), 空库即 governance_not_sealed。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    (world.root / "governance.sqlite3").unlink(missing_ok=True)
+    (world.root / "governance.sqlite3").touch()
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "governance_not_sealed"
+
+
+def test_spine_program_vs_sealed_manifest_mismatch_rejected(tmp_path):
+    """spine↔封存 manifest program 三角互证 (R34) — R32 只闭合了一条边。
+
+    fixture 曾以完全错位的 program 组装成功 (spine prog-1 vs 封存
+    research.btst.regime), NO_RUN 补记按错误 program 记账。
+    """
+    from datetime import date as _d
+
+    from src.screening.offensive.v3.evidence.session_spine import (
+        SessionEnrollment,
+        SessionSpine,
+    )
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    (world.root / "spine.sqlite3").unlink(missing_ok=True)
+    SessionSpine(
+        database_path=str(world.root / "spine.sqlite3"), clock=lambda: GOV_NOW
+    ).enroll_expected_sessions(
+        (SessionEnrollment("prog-mismatched", _d(2026, 8, 6), _d(2026, 8, 6)),)
+    )
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world, research_program_id="prog-mismatched")
+    assert ei.value.code == "program_binding_mismatch"
+
+
+def test_identity_dir_symlink_redirect_rejected(tmp_path):
+    """identity_dir 全组件 walk (R34) — R31 同族面收口。
+
+    身份目录是全部签名面的信任链根; 预置 identity-dir -> 敌手身份目录
+    (generate 是离线原语, 敌手可自建合法形态) 时 R31 的守卫对它无效 —
+    load_governance_identity 的 identity.json 用 is_file() 跟随 symlink。
+    """
+    import os
+
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    redirect = tmp_path / "identity-link"
+    os.symlink(world.identity_dir, redirect)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world, identity_dir=redirect)
+    assert ei.value.code == "official_stack_path_rejected"
