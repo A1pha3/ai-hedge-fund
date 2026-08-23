@@ -721,11 +721,21 @@ class ScanFunnel:
     大涨非涨停日也计入, detect 内部才按板块自适应阈值精确判定涨停.
     多 setup 同时启用时计数按 ticker×setup 评估次数计 (当前仅 btst 启用,
     评估次数 = 票数).
+
+    闭合扩展 (2026-08-23 对抗审查 Item 3): universe/verify_blocked/
+    excluded_permanent/data_rejected 把首数与宇宙的差额变成可解释数字 —
+    此前 "扫描 1645" 与宇宙 1733 的 88 差额静默不可见, 票可以在无痕通道里
+    从"命中已建仓"变成"从未存在" (2026-08-20 事件). universe 为 None 时
+    (旧构造点) 渲染退化为旧格式.
     """
 
     scannable: int
     prefilter_passed: int
     hits: int
+    universe: int | None = None
+    verify_blocked: int = 0
+    excluded_permanent: int = 0
+    data_rejected: int = 0
 
 
 @dataclass(frozen=True)
@@ -763,6 +773,23 @@ class PlanDetail:
 
 
 @dataclass(frozen=True)
+class PendingPlanRef:
+    """既有待成交计划的只读引用 — 渲染对账 join 的台账侧输入.
+
+    2026-08-20 事件: 22:47 重跑的操作员视图对 18:09 创建的待成交计划只字未提
+    (摘要"无新计划"与敞口行"待成交 6%"同屏互不引用). 本结构把"本信号日台账
+    里已有、但本次扫描未再检出"的计划显式带进渲染层 — 真相只能被陈述, 不能
+    因为某次运行没看见就消失.
+    """
+
+    ticker: str
+    planned_entry_date: date | None
+    planned_weight: float | None
+    # PLAN_CREATED 事件的 occurred_at (ISO 字符串); 无事件记录时 None → 渲染"—"
+    created_at: str | None = None
+
+
+@dataclass(frozen=True)
 class DailyActionV2Run:
     service_run: Any
     plans: tuple[Any, ...]
@@ -780,6 +807,9 @@ class DailyActionV2Run:
     capacity_skipped: tuple[Any, ...] = ()
     # regime: 信号日市场状态 (crisis/risk_off 会阻断新仓), None 时渲染省略.
     regime: str | None = None
+    # undetected_pending_plans: 本信号日台账已有、本次扫描未再检出的待成交计划
+    # (渲染对账 join 的第四态). None/空时渲染省略, 旧构造点不受影响.
+    undetected_pending_plans: tuple[PendingPlanRef, ...] = ()
 
 
 _BLOCK_REASON_ZH = {
@@ -792,6 +822,9 @@ _BLOCK_REASON_ZH = {
     "readiness_identity_mismatch": "就绪身份不匹配",
     "snapshot_fingerprint_mismatch": "快照指纹不匹配",
     "readiness_scan_failed": "就绪快照扫描失败",
+    # 证据写入失败 (2026-08-23 Item 3): 日志是 panel 样本外证据的载体, 写失败
+    # 时新计划必须阻断 (计划不得脱离证据创建), 生命周期结算照常渲染.
+    "setup_output_log_write_failed": "信号日志写入失败（新计划已阻断，已结算生命周期照常显示；请重跑）",
     "calendar_unavailable": "交易日历不可用",
     "incomplete_setup_data": "setup 数据不完整",
     "setup_disabled_by_default": "setup 默认暂停",
@@ -862,6 +895,25 @@ def _render_section(title: str, rows: Sequence[str]) -> list[str]:
 
 def _weekday_zh(d: date) -> str:
     return "一二三四五六日"[d.weekday()]
+
+
+def _format_created_at(raw: str | None) -> str:
+    """台账事件 occurred_at (ISO UTC) → 北京时间 "MM-DD HH:MM" 短格式.
+
+    退化链: 无记录→"—"; 解析/时区失败→原样字符串. 渲染辅助, 绝不抛.
+    """
+    if not raw:
+        return "—"
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        parsed = datetime.fromisoformat(raw)
+        if parsed.tzinfo is None:
+            return raw
+        return parsed.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%m-%d %H:%M")
+    except (ValueError, TypeError, OSError):
+        return raw
 
 
 # 强度分量 metadata key → 中文标签 (与 btst_breakout detect 的 strength 公式同序).
@@ -1326,6 +1378,11 @@ def complete_daily_action_v2(
     )
     # Idempotent reruns still display the one persisted plan for this signal date.
     displayed_tickers = {candidate.ticker for candidate in scan.candidates}
+    session_plans = [
+        plan
+        for plan in service.repository.planned_trades()
+        if plan.signal_date == scan.signal_date
+    ]
     persisted = tuple(
         ActionItem(
             plan.trade_id,
@@ -1336,8 +1393,23 @@ def complete_daily_action_v2(
             planned_entry_date=plan.planned_entry_date,
             planned_weight=plan.planned_weight,
         )
-        for plan in service.repository.planned_trades()
-        if plan.signal_date == scan.signal_date and plan.ticker in displayed_tickers
+        for plan in session_plans
+        if plan.ticker in displayed_tickers
+    )
+    # 渲染对账 join 第四态 (2026-08-20 事件): 本信号日台账已有、本次扫描未再
+    # 检出的计划 — 此前被 displayed_tickers 过滤静默吞掉, 操作员视图与台账
+    # 各说各话. 真相只陈述, 不因某次运行"没看见"而消失.
+    undetected = tuple(
+        PendingPlanRef(
+            ticker=plan.ticker,
+            planned_entry_date=plan.planned_entry_date,
+            planned_weight=plan.planned_weight,
+            created_at=service.repository.event_occurred_at(
+                plan.trade_id, "PLAN_CREATED"
+            ),
+        )
+        for plan in session_plans
+        if plan.ticker not in displayed_tickers
     )
     return DailyActionV2Run(
         service_run,
@@ -1349,6 +1421,7 @@ def complete_daily_action_v2(
         funnel=scan.funnel,
         capacity_skipped=getattr(service_run, "capacity_skipped", ()),
         regime=scan.regime,
+        undetected_pending_plans=undetected,
     )
 
 
@@ -1411,6 +1484,10 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         parts: list[str] = []
         if run.plans:
             parts.append(f"新计划 {len(run.plans)} 只")
+        if run.undetected_pending_plans:
+            # 会话口径计数 (2026-08-20 事件): 摘要此前只陈述本次运行, 对台账里
+            # 早前运行创建的待成交计划只字未提 — 与敞口行同屏互不引用.
+            parts.append(f"既有待成交 {len(run.undetected_pending_plans)} 只（早前运行创建）")
         if synthetic_trades or confirmed_trades:
             parts.append(f"当日成交 {len(synthetic_trades) + len(confirmed_trades)} 笔")
         if run.service_run.exit_plans:
@@ -1446,6 +1523,11 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         _load_auto_topn_tickers(as_of.strftime("%Y%m%d")) if details_by_ticker else set()
     )
     converge_shown = False
+    # 渲染对账 join: 本次重新检出但非本次创建的计划 → 标注出身 (幂等重跑时
+    # 新计划区此前不区分"新建"与"既有重新检出", 操作员无法分辨计划来源).
+    created_now = {
+        item.ticker for item in getattr(run.service_run, "new_plans", ())
+    }
     for plan in run.plans:
         entry = ""
         if plan.planned_entry_date is not None:
@@ -1456,6 +1538,8 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         weight = ""
         if plan.planned_weight is not None:
             weight = f"权重 {plan.planned_weight:.1%}"
+        if plan.ticker not in created_now:
+            entry = (entry + " " if entry else "") + "〔既有计划·本次重新检出〕"
         ref = references.get(plan.ticker)
         ref_text = _fmt_ref_price(ref)
         plan_rows.append(
@@ -1503,6 +1587,40 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         plan_rows.append(f"  先验口径：{footnote}")
     lines.extend(_render_section(f"新计划（{len(run.plans)} 只）", plan_rows))
     lines.append("")
+
+    # ---- 既有待成交计划（本次未再检出）----
+    # 台账↔扫描对账 join (2026-08-20 事件): 22:47 重跑的操作员视图对 18:09
+    # 创建的计划只字未提 — "无新计划"的结论与敞口行的"待成交"同屏矛盾.
+    # 此区把台账侧事实显式陈述出来: 计划仍在, 按约入场, 只是本次扫描没看见.
+    if run.undetected_pending_plans:
+        pending_rows: list[str] = []
+        for ref in run.undetected_pending_plans:
+            entry = ""
+            if ref.planned_entry_date is not None:
+                entry = (
+                    f"计划 {ref.planned_entry_date.month}/{ref.planned_entry_date.day}"
+                    f"（周{_weekday_zh(ref.planned_entry_date)}）入场"
+                )
+            weight = f"权重 {ref.planned_weight:.1%}" if ref.planned_weight is not None else ""
+            pending_rows.append(
+                "  ".join(
+                    part
+                    for part in (
+                        _pad_to(_label(ref.ticker), _LABEL_WIDTH),
+                        entry,
+                        weight,
+                        f"创建于 {_format_created_at(ref.created_at)}",
+                    )
+                    if part
+                )
+            )
+        lines.extend(
+            _render_section(
+                f"既有待成交计划（{len(run.undetected_pending_plans)} 只，本次未再检出）",
+                pending_rows,
+            )
+        )
+        lines.append("")
 
     # ---- 当日成交 ----
     # raw_entry_price 类型是 Optional — 正常成交行恒有价, 但一行坏数据不该崩掉
@@ -1612,10 +1730,39 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
                 for reason, count in reason_counts.items()
             )
             capacity_suffix = f" · 容量拦截 {len(capacity_skipped)} 只（{parts}）"
+        # 闭合格式 (2026-08-23): 宇宙→扫描的差额显式分解 (验证拒绝/永久排除/
+        # 数据拒绝), 漏斗算术可复核算得出来; universe 为 None 的旧构造点退化为
+        # 旧格式.
+        if run.funnel.universe is not None:
+            funnel_head = (
+                f"扫描漏斗：宇宙 {run.funnel.universe} 只"
+                f" → 验证拒绝 {run.funnel.verify_blocked} · 永久排除 {run.funnel.excluded_permanent}"
+                f" · 数据拒绝 {run.funnel.data_rejected}"
+                f" → 扫描 {run.funnel.scannable} 只 → 涨幅≥9.5% {run.funnel.prefilter_passed} 只 → "
+                f"命中 {run.funnel.hits} 只 → 可计划 {len(run.plans)} 只 · "
+                f"不可计划 {len(actionable_blocked)} 只{capacity_suffix}"
+            )
+        else:
+            funnel_head = (
+                f"扫描漏斗：扫描 {run.funnel.scannable} 只 → 涨幅≥9.5% {run.funnel.prefilter_passed} 只 → "
+                f"命中 {run.funnel.hits} 只 → 可计划 {len(run.plans)} 只 · "
+                f"不可计划 {len(actionable_blocked)} 只{capacity_suffix}"
+            )
+        lines.append(funnel_head)
+        lines.append("")
+
+    # ---- 排除名单可见性 (2026-08-23 Item 5): 配置不是隐形政策 ----
+    # EXTRA_EXCLUDED_TICKERS 从扫描宇宙里静默删票, 输出零体现 — 与"配置不是
+    # 权限"的宪法精神冲突. 非空时必须陈述.
+    from src.tools.ashare_board_utils import extra_excluded_tickers
+
+    extra_excluded = extra_excluded_tickers()
+    if extra_excluded:
+        shown = ",".join(sorted(extra_excluded))
+        if len(shown) > 80:
+            shown = shown[:80] + "…"
         lines.append(
-            f"扫描漏斗：扫描 {run.funnel.scannable} 只 → 涨幅≥9.5% {run.funnel.prefilter_passed} 只 → "
-            f"命中 {run.funnel.hits} 只 → 可计划 {len(run.plans)} 只 · "
-            f"不可计划 {len(actionable_blocked)} 只{capacity_suffix}"
+            f"排除名单：EXTRA_EXCLUDED_TICKERS 生效 {len(extra_excluded)} 只（{shown}）— 不参与扫描"
         )
         lines.append("")
 
@@ -2172,6 +2319,12 @@ def scan_from_verified_snapshot(
     evaluated_count = 0
     prefilter_passed = 0
     hit_count = 0
+    # 闭合扩展 (2026-08-23): 宇宙→扫描的差额分解 — 每个静默跳过通道都要有名字,
+    # 票不允许在无痕通道里消失 (2026-08-20 事件: 22:47 的 300009).
+    universe_count = len(snapshot.manifest.universe_tickers)
+    verify_blocked_count = len(snapshot.ticker_blocks)
+    excluded_permanent_count = 0
+    data_rejected_count = 0
 
     def price_frame(rows: Sequence[Any]) -> pd.DataFrame:
         return pd.DataFrame(
@@ -2210,14 +2363,17 @@ def scan_from_verified_snapshot(
     for ticker in snapshot.scannable_tickers:
         # 永久排除票 (退市/数据残缺): 不进任何路径, 连 degraded 噪声都不产生.
         if is_excluded_ticker(ticker):
+            excluded_permanent_count += 1
             continue
         for setup_name, setup_obj, horizon, known_dist in setup_configs:
             ctx = snapshot.setup_context(ticker, setup_name)
             if ctx is None:
+                data_rejected_count += 1
                 continue
             try:
                 reference_prices[ticker] = snapshot.reference_price(ticker)
             except KeyError:
+                data_rejected_count += 1
                 continue
             entry_price = reference_prices[ticker]
             if not ctx.capability.plan_eligible:
@@ -2226,6 +2382,7 @@ def scan_from_verified_snapshot(
 
             prices = price_frame(ctx.prices)
             if prices.empty:
+                data_rejected_count += 1
                 continue
             last_row = prices.iloc[-1]
             pct = float(last_row.get("pct_change", 0.0) or 0.0)
@@ -2347,6 +2504,10 @@ def scan_from_verified_snapshot(
             scannable=evaluated_count,
             prefilter_passed=prefilter_passed,
             hits=hit_count,
+            universe=universe_count,
+            verify_blocked=verify_blocked_count,
+            excluded_permanent=excluded_permanent_count,
+            data_rejected=data_rejected_count,
         ),
         regime=regime,
     )

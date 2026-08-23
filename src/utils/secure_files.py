@@ -147,3 +147,25 @@ def read_regular_bytes(path: Path, *, max_bytes: int) -> bytes:
     finally:
         for opened in reversed(open_dirs):
             os.close(opened)
+
+
+def read_secure_csv_frame(path: Path, *, max_bytes: int):
+    """Securely read a CSV into a string-typed pandas frame, or None if absent.
+
+    单一实现 (2026-08-23 对抗审查 Item 4): 授权侧 (cache_refresh 构建 readiness
+    manifest) 与验证侧 (daily_action_snapshot 复算 PIT 指纹) 必须走同一条读取
+    路径 — 各自实现会产生解析器分歧 (浮点往返/列投影/dtype), 让"授权指纹"与
+    "验证指纹"对同一文件算出不同值. 本函数是唯一的 secure CSV frame 入口.
+    """
+    import io
+
+    import pandas as pd
+
+    if not isinstance(path, Path):
+        path = Path(path)
+    if not path.exists():
+        return None
+    raw = read_regular_bytes(path, max_bytes=max_bytes)
+    if not raw.strip():
+        return pd.DataFrame()
+    return pd.read_csv(io.BytesIO(raw), dtype=str)

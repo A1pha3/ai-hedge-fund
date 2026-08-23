@@ -143,10 +143,18 @@ def test_price_evidence_is_bound_to_frame_captured_before_post_write_replacement
         refresh_fund_flow=False,
     )
 
+    # 语义更新 (2026-08-23 Item 4 授权回读): 授权指纹绑定**落盘文件真相**,
+    # 不再绑定"写入时捕获的内存帧". 写后被替换的文件 = loader 数小时后读到的
+    # 同一文件 — 旧语义 (授权内存帧) 会必然 mismatch → 票无痕消失 (2026-08-20
+    # 事件类); 新语义下 授权≡验证由构造成立.
+    price_file = price_cache / "000001.csv"
+    from src.utils.secure_files import read_secure_csv_frame
+
+    file_frame = read_secure_csv_frame(price_file, max_bytes=10 * 1024 * 1024)
     assert result.outcomes["000001"].evidence_fingerprints["price"] == (
-        canonical_price_fingerprint(captured["000001"], "000001", "20260713")
+        canonical_price_fingerprint(file_frame, "000001", "20260713")
     )
-    assert result.outcomes["000001"].price_history_rows == len(captured["000001"])
+    assert result.outcomes["000001"].price_history_rows == len(file_frame)
 
 
 def test_price_evidence_is_copied_before_writer_mutates_input_frame(
@@ -354,12 +362,16 @@ def test_flow_evidence_is_bound_to_frame_captured_before_post_write_replacement(
         fund_flow_rate_limit_sec=0,
     )
 
+    # 语义更新 (2026-08-23 Item 4 授权回读): 授权指纹绑定落盘文件真相 —
+    # 写后替换的文件就是 loader 将要读到的文件, 授权≡验证由构造成立.
+    from src.utils.secure_files import read_secure_csv_frame
+
+    flow_file = (tmp_path / "flow") / "000001.csv"
+    file_frame = read_secure_csv_frame(flow_file, max_bytes=10 * 1024 * 1024)
     assert result.outcomes["000001"].evidence_fingerprints["fund_flow"] == (
-        canonical_flow_fingerprint(captured["000001"], "000001", "20260713")
+        canonical_flow_fingerprint(file_frame, "000001", "20260713")
     )
-    assert result.outcomes["000001"].fund_flow_history_rows == len(
-        captured["000001"]
-    )
+    assert result.outcomes["000001"].fund_flow_history_rows == len(file_frame)
 
 
 def test_failed_price_write_does_not_retain_baseline_fingerprint(tmp_path, monkeypatch):

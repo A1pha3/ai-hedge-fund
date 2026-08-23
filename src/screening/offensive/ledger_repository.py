@@ -935,6 +935,21 @@ CREATE TABLE IF NOT EXISTS position_marks (
             ).fetchone()
             return int(row["count"])
 
+    def event_occurred_at(self, trade_id: str, event_type: str) -> str | None:
+        """读单事件的首个 occurred_at (如 PLAN_CREATED 的创建时刻) — 纯只读.
+
+        渲染对账用: "既有待成交计划"需要向操作员交代计划出身时刻, 回答
+        "这笔计划是哪次运行创建的" (2026-08-20 事件: 22:47 的操作员视图对
+        18:09 创建的计划只字未提). 未知事件返回 None, 渲染层退化为"—".
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT occurred_at FROM trade_events WHERE trade_id=? AND event_type=?"
+                " ORDER BY seq LIMIT 1",
+                (trade_id, event_type),
+            ).fetchone()
+            return None if row is None else str(row["occurred_at"])
+
     def count_trades(self) -> int:
         with self._connect() as conn:
             row = conn.execute(

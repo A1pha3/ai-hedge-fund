@@ -104,6 +104,9 @@ def test_ledger_repository_has_no_new_public_mutators() -> None:
             "latest_position_mark",
             "cash_balance",
             "count_events",
+            # event_occurred_at (2026-08-23): 纯只读单事件时刻查询 (渲染对账用,
+            # 与 count_events 同族读面), 无写入面 — 只读白名单登记.
+            "event_occurred_at",
             "count_exit_defers",
             "count_trades",
         }

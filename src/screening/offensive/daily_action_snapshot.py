@@ -16,7 +16,6 @@ security, regime, and policy evidence are all taken from the validated manifest.
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import logging
 from collections.abc import Mapping
@@ -285,13 +284,14 @@ def _frozen_flow_rows(
 
 
 def _read_csv_frame(path: Path) -> pd.DataFrame | None:
-    """Securely read a cache CSV into a string-typed frame, or None if absent."""
-    if not path.exists():
-        return None
-    raw = read_regular_bytes(path, max_bytes=MAX_CACHE_FILE_BYTES)
-    if not raw.strip():
-        return pd.DataFrame()
-    return pd.read_csv(io.BytesIO(raw), dtype=str)
+    """Securely read a cache CSV into a string-typed frame, or None if absent.
+
+    委托 ``secure_files.read_secure_csv_frame`` 单一实现 — cache_refresh 的
+    授权回读与此处验证复算必须共用同一条读取路径 (2026-08-23 Item 4).
+    """
+    from src.utils.secure_files import read_secure_csv_frame
+
+    return read_secure_csv_frame(path, max_bytes=MAX_CACHE_FILE_BYTES)
 
 
 def _extract_regime(regime_row: Mapping[str, object]) -> str:

@@ -41,6 +41,7 @@ from src.screening.offensive.pit_evidence import (
 )
 from src.tools.ashare_board_utils import is_excluded_ticker
 from src.utils.atomic_files import atomic_write_csv, atomic_write_json
+from src.utils.secure_files import SecureReadError, read_secure_csv_frame
 from src.utils.date_utils import latest_open_trade_date_on_or_before
 
 logger = logging.getLogger(__name__)
@@ -1516,9 +1517,33 @@ def refresh_daily_action_caches(
         if suspension_evidence.status.value == "unavailable"
         else ()
     )
+
+    # 授权回读 (2026-08-23 对抗审查 Item 4): readiness manifest 的授权指纹必须
+    # 从落盘文件经与 loader 相同的 secure reader 回读计算 (read-after-write) —
+    # 此前授权侧用刷新管道的内存帧、验证侧 (daily_action_snapshot) 数小时后
+    # 重读文件, 两条独立计算路径 + 写入窗口 = "授权≠落盘"的合法背离类
+    # (2026-08-20 事件: 22:47 的静默跳过即此类). 单一实现后 授权≡验证由构造
+    # 成立; 回读失败 = 无证据 = 该票 capability 阻断 (fail-closed, 与 loader
+    # 对同一文件的行为一致).
+    _MAX_READBACK_FILE_BYTES = 50 * 1024 * 1024
+
+    def _read_back_frame(path: Path) -> pd.DataFrame:
+        try:
+            frame = read_secure_csv_frame(path, max_bytes=_MAX_READBACK_FILE_BYTES)
+        except (OSError, SecureReadError):
+            logger.warning(
+                "[cache_refresh] 授权回读失败 %s — 该票按无证据处理",
+                path,
+                exc_info=True,
+            )
+            return pd.DataFrame()
+        if frame is None:
+            return pd.DataFrame()
+        return _project_pit_frame(frame, effective_trade_date)
+
     for ticker in frozen_universe:
-        price_frame = price_frames.get(ticker, pd.DataFrame())
-        flow_frame = flow_frames.get(ticker, pd.DataFrame())
+        price_frame = _read_back_frame(Path(price_cache_dir) / f"{ticker}.csv")
+        flow_frame = _read_back_frame(Path(fund_flow_cache_dir) / f"{ticker}.csv")
         price_evidence_invalid = False
         flow_evidence_invalid = False
         evidence_fingerprints: dict[str, str] = {}

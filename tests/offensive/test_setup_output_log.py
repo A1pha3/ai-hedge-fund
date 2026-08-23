@@ -178,3 +178,130 @@ def test_warn_missing_signal_log_sessions_advisory_on_bad_calendar(tmp_path):
         warn_missing_signal_log_sessions(before="20260807", calendar_path=bad, log_dir=tmp_path)
         == []
     )
+
+
+# ===========================================================================
+# 台账↔日志对账写守卫 (2026-08-23 对抗审查 R1-R3 收敛, 真实事件回归)
+#
+# 事件回放 (2026-08-20 晚): 18:09 运行检出 300009 并创建台账计划; 22:47
+# 重跑时 300009 因当晚数据状态未被检出, 幂等覆盖写把它的 plan_eligible 行
+# 从当日日志中抹掉 — panel 样本外证据被"最后写者"静默污染, 且该票已有
+# 真实仓位. 守卫语义: 日志真相只累积, 台账计划-backed 行不可消失.
+# ===========================================================================
+
+
+def test_log_guard_preserves_plan_backed_row_on_rerun(tmp_path):
+    """8-20 事件主回归: 后续运行的覆盖写不得抹掉台账计划-backed 行."""
+    # 18:09 运行: 300009 检出且可计划
+    log_setup_outputs(
+        date(2026, 8, 20),
+        [_action("300009", metadata={"pct_change": 19.98})],
+        [],
+        regime="normal",
+        out_dir=tmp_path,
+    )
+
+    # 22:47 重跑: 300009 未检出 (只剩另两只被拦票), 但台账已有其计划
+    log_setup_outputs(
+        date(2026, 8, 20),
+        [],
+        [
+            _action("300363", trigger_strength=0.43, entry_price=90.0),
+            _action("002172", trigger_strength=0.27, entry_price=4.4),
+        ],
+        regime="normal",
+        out_dir=tmp_path,
+        plan_backed_tickers={"300009"},
+    )
+
+    records = _read_log(tmp_path, "20260820")
+    by_ticker = {r["ticker"]: r for r in records}
+    # 守卫: 300009 的 plan_eligible 行必须存活, 新运行的行照常写入
+    assert by_ticker["300009"]["plan_eligible"] is True
+    assert by_ticker["300363"]["plan_eligible"] is False
+    assert by_ticker["002172"]["plan_eligible"] is False
+
+
+def test_log_guard_preserves_blocked_row_upgraded_to_eligible(tmp_path):
+    """合并规则: 同票早运行被拦、晚运行可计划 → eligible 优先存活."""
+    log_setup_outputs(
+        date(2026, 8, 20),
+        [],
+        [_action("300363", trigger_strength=0.43)],
+        regime="normal",
+        out_dir=tmp_path,
+    )
+    log_setup_outputs(
+        date(2026, 8, 20),
+        [_action("300363", metadata={"pct_change": 20.0})],
+        [],
+        regime="normal",
+        out_dir=tmp_path,
+    )
+    (rec,) = _read_log(tmp_path, "20260820")
+    assert rec["ticker"] == "300363" and rec["plan_eligible"] is True
+
+
+def test_log_merge_latest_run_wins_on_equal_eligibility(tmp_path):
+    """合并规则: 同资格 (均不可计划) 时晚运行覆盖 (最新数据), 输出按票排序."""
+    log_setup_outputs(
+        date(2026, 8, 20),
+        [],
+        [_action("000001", trigger_strength=0.30), _action("600000", trigger_strength=0.31)],
+        regime="normal",
+        out_dir=tmp_path,
+    )
+    log_setup_outputs(
+        date(2026, 8, 20),
+        [],
+        [_action("000001", trigger_strength=0.35)],
+        regime="normal",
+        out_dir=tmp_path,
+    )
+    records = _read_log(tmp_path, "20260820")
+    assert [r["ticker"] for r in records] == ["000001", "600000"]
+    assert next(r for r in records if r["ticker"] == "000001")["trigger_strength"] == 0.35
+
+
+def test_log_guard_warns_when_plan_backed_row_unrecoverable(tmp_path, caplog):
+    """守卫告警: 计划-backed 票在既有文件与新扫描里都不存在 (如首跑日志写失败)."""
+    import logging as _logging
+
+    with caplog.at_level(_logging.WARNING, logger="src.screening.offensive.setup_output_log"):
+        log_setup_outputs(
+            date(2026, 8, 20),
+            [],
+            [_action("300363", trigger_strength=0.43)],
+            regime="normal",
+            out_dir=tmp_path,
+            plan_backed_tickers={"300009"},
+        )
+
+    # 覆盖语义仍写盘 (当日覆盖哨点依赖文件存在), 但守卫必须告警
+    assert _read_log(tmp_path, "20260820")
+    assert any("300009" in r.message and ("台账" in r.message or "对账" in r.message) for r in caplog.records)
+
+
+def test_log_directory_chain_rejects_symlink(tmp_path):
+    """目录加固: 日志目录链上的 symlink 组件 fail-closed (写入前拒绝)."""
+    import os
+
+    from src.screening.offensive.setup_output_log import SetupOutputLogError
+
+    real = tmp_path / "real_logs"
+    real.mkdir()
+    linked = tmp_path / "linked_logs"
+    os.symlink(real, linked)
+
+    try:
+        log_setup_outputs(
+            date(2026, 8, 20), [_action("300009")], [], regime="normal", out_dir=linked
+        )
+    except SetupOutputLogError:
+        return
+    raise AssertionError("symlinked log dir must be rejected before write")
+
+
+def _read_log(out_dir, compact: str) -> list[dict]:
+    path = out_dir / f"{compact}.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]

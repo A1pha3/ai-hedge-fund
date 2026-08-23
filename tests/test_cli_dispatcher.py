@@ -663,3 +663,115 @@ class TestDailyActionExitCode:
             snapshot_block_reason="daily_action_readiness_missing",
             run_block_reasons=("drawdown_circuit_breaker",),
         ) == 13
+
+
+def test_daily_action_log_write_failure_blocks_new_plans(tmp_path, monkeypatch):
+    """证据写入失败 = 运行失败 (2026-08-23 Item 3): 新计划阻断, 走 run_block 结论.
+
+    此前 `except → debug` 让证据丢失不可见, 计划在无证据行的情况下照建 —
+    2026-08-20 事件的第一因. 现在写失败必须阻断 + 结论先行.
+    """
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from src.screening.offensive.daily_action import _CN_TZ
+
+    monkeypatch.chdir(tmp_path)
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir(parents=True)
+    signal_date = date(2026, 7, 13)
+    run = SimpleNamespace(
+        plans=(),
+        blocked_candidates=(),
+        open_positions=(),
+        service_run=SimpleNamespace(
+            block_reasons=("setup_output_log_write_failed",)
+        ),
+    )
+    with (
+        patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=reports_dir),
+        patch("src.screening.offensive.daily_action.resolve_daily_action_signal", return_value=(signal_date, "normal")),
+        patch(
+            "src.screening.offensive.daily_action._current_cn_datetime",
+            return_value=datetime(2026, 7, 13, 21, 0, tzinfo=_CN_TZ),
+        ),
+        patch(
+            "src.screening.offensive.daily_action_snapshot.load_verified_daily_action_snapshot",
+            return_value=SimpleNamespace(snapshot=SimpleNamespace(regime="normal", signal_date=signal_date), global_reason=None),
+        ),
+        patch(
+            "src.screening.offensive.daily_action.scan_from_verified_snapshot",
+            return_value=SimpleNamespace(signal_date=signal_date, candidates=(), blocked_candidates=(), reference_prices=()),
+        ),
+        patch(
+            "src.screening.offensive.setup_output_log.log_setup_outputs",
+            side_effect=OSError("disk full"),
+        ) as log_write,
+        patch(
+            "src.screening.offensive.daily_action.complete_daily_action_v2",
+            return_value=run,
+        ) as complete,
+        patch("src.screening.offensive.daily_action.render_daily_action_v2", return_value="正文"),
+        patch("builtins.print") as output,
+    ):
+        rc = dispatcher._resolve_daily_action(
+            ["--daily-action"],
+            open_sessions=(signal_date, signal_date + timedelta(days=1), signal_date + timedelta(days=7)),
+            ledger_path=tmp_path / "ledger.sqlite3",
+        )
+    assert rc == 13  # 数据护栏阻断 (写失败需排查重跑), 非策略性停手
+    # 写失败必须传导为 new_entry_block, 而不是静默继续建计划
+    assert complete.call_args.kwargs.get("new_entry_block") == "setup_output_log_write_failed"
+    rendered = output.call_args.args[0]
+    assert "信号日志写入失败" in rendered
+    assert rendered.find("结论：⛔") < rendered.find("正文")
+
+
+def test_daily_action_log_write_passes_plan_backed_tickers(tmp_path, monkeypatch):
+    """台账写守卫接线 (Item 1): 本信号日已有计划的票传给日志守卫."""
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from src.screening.offensive.daily_action import _CN_TZ
+
+    monkeypatch.chdir(tmp_path)
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir(parents=True)
+    signal_date = date(2026, 7, 13)
+    run = SimpleNamespace(
+        plans=(),
+        blocked_candidates=(),
+        open_positions=(),
+        service_run=SimpleNamespace(block_reasons=()),
+    )
+    with (
+        patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=reports_dir),
+        patch("src.screening.offensive.daily_action.resolve_daily_action_signal", return_value=(signal_date, "normal")),
+        patch(
+            "src.screening.offensive.daily_action._current_cn_datetime",
+            return_value=datetime(2026, 7, 13, 21, 0, tzinfo=_CN_TZ),
+        ),
+        patch(
+            "src.screening.offensive.daily_action_snapshot.load_verified_daily_action_snapshot",
+            return_value=SimpleNamespace(snapshot=SimpleNamespace(regime="normal", signal_date=signal_date), global_reason=None),
+        ),
+        patch(
+            "src.screening.offensive.daily_action.scan_from_verified_snapshot",
+            return_value=SimpleNamespace(signal_date=signal_date, candidates=(), blocked_candidates=(), reference_prices=()),
+        ),
+        patch(
+            "src.screening.offensive.setup_output_log.log_setup_outputs",
+            return_value=tmp_path / "log.jsonl",
+        ) as log_write,
+        patch("src.screening.offensive.daily_action.complete_daily_action_v2", return_value=run),
+        patch("src.screening.offensive.daily_action.render_daily_action_v2", return_value="正文"),
+        patch("builtins.print"),
+    ):
+        dispatcher._resolve_daily_action(
+            ["--daily-action"],
+            open_sessions=(signal_date, signal_date + timedelta(days=1), signal_date + timedelta(days=7)),
+            ledger_path=tmp_path / "ledger.sqlite3",
+        )
+    # 空台账 → 守卫参数为空集 (键存在即可证接线)
+    assert "plan_backed_tickers" in log_write.call_args.kwargs
+    assert log_write.call_args.kwargs["plan_backed_tickers"] == set()

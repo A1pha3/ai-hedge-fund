@@ -1210,6 +1210,11 @@ def _resolve_daily_action(
             try:
                 scan = scan_from_verified_snapshot(verified.snapshot)
                 regime = verified.snapshot.regime
+                # 证据写入失败 = 运行失败 (2026-08-23 对抗审查 Item 3): 此前
+                # `except → debug` 让证据丢失不可见, 计划在无证据行的情况下照建
+                # (2026-08-20 事件的第一因). 现在写失败 → 阻断新计划 (生命周期
+                # 结算已提交, 照常渲染), 操作员重跑即可 — 绝不让计划脱离证据.
+                log_write_failed = False
                 try:
                     from src.screening.offensive.setup_output_log import log_setup_outputs
 
@@ -1222,19 +1227,39 @@ def _resolve_daily_action(
                         for b in scan.blocked_candidates
                         if b.reason != "candidate_not_plan_eligible"
                     )
+                    # 台账写守卫 (Item 1): 本信号日已有计划的票, 其 plan_eligible
+                    # 行必须在日志中存活 — 晚间重跑的数据抖动不得抹掉证据.
+                    session_plan_tickers = {
+                        plan.ticker
+                        for plan in repository.planned_trades()
+                        if plan.signal_date == signal_date
+                    }
+                    session_plan_tickers |= {
+                        trade.ticker
+                        for trade in repository.open_trades()
+                        if trade.signal_date == signal_date
+                    }
                     log_setup_outputs(
                         verified.snapshot.signal_date,
                         scan.candidates,
                         logged_blocked,
                         regime=regime,
+                        plan_backed_tickers=session_plan_tickers,
                     )
                 except Exception:
-                    logger.debug("daily-action setup output log failed", exc_info=True)
+                    logger.warning(
+                        "daily-action setup output log failed — 新计划创建已阻断",
+                        exc_info=True,
+                    )
+                    log_write_failed = True
                 v2_run = complete_daily_action_v2(
                     service,
                     context,
                     scan,
                     verified_snapshot=verified.snapshot,
+                    new_entry_block=(
+                        "setup_output_log_write_failed" if log_write_failed else None
+                    ),
                 )
             except Exception:
                 logger.warning("daily-action readiness snapshot scan failed", exc_info=True)

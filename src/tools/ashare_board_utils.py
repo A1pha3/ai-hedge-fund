@@ -99,16 +99,25 @@ def build_beijing_exchange_mask_from_series(series: pd.Series) -> pd.Series:
 _EXCLUDED_TICKERS: frozenset[str] = frozenset({"000004", "002808"})
 
 
+def extra_excluded_tickers() -> frozenset[str]:
+    """``EXTRA_EXCLUDED_TICKERS`` 追加的排除票 (空集 = 未启用).
+
+    可见性接口 (2026-08-23): 环境变量从扫描宇宙里静默删票是隐形政策开关,
+    渲染层用它把生效中的追加排除显式陈述出来 — 配置变更必须可见.
+    """
+    raw = os.environ.get("EXTRA_EXCLUDED_TICKERS", "")
+    return frozenset(tok.strip() for tok in raw.split(",") if tok.strip())
+
+
 def excluded_tickers() -> frozenset[str]:
     """当前生效的永久排除代码集.
 
     默认返回内置 ``_EXCLUDED_TICKERS``. 可用 ``EXTRA_EXCLUDED_TICKERS=000004,000999``
     追加 (逗号分隔, 仅追加不覆盖), 便于临时屏蔽新发现的问题票而无需改代码.
     """
-    extra_raw = os.environ.get("EXTRA_EXCLUDED_TICKERS", "")
-    if not extra_raw.strip():
+    extra = extra_excluded_tickers()
+    if not extra:
         return _EXCLUDED_TICKERS
-    extra = {tok.strip() for tok in extra_raw.split(",") if tok.strip()}
     return _EXCLUDED_TICKERS | extra
 
 
