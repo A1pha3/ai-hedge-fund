@@ -85,6 +85,12 @@ def walk_components(
     ``directory`` 必须是 canonical 绝对路径且不含 ``..``。FileNotFound
     映射为 ``missing_code``, symlink 或非目录组件映射为 ``rejected_code``;
     两个错误码由接线面按各自语义命名。
+
+    错误码 taxonomy (R35 发现 7 成文): ``missing_code``/``rejected_code``
+    是 walk 发现, 参数化由接线面命名; ``path_not_canonical``/
+    ``path_traversal`` 是**前置形状违规的固定共享码** — 调用方异常族
+    (``fail``) 直接透传, 不参数化: 所有接线面对「非 canonical 绝对
+    路径」「含 ``..``」的前置形状语义相同, 参数化只会制造同义码碎片。
     """
     raiser = _raiser(fail)
     if not isinstance(directory, Path) or not directory.is_absolute():
@@ -134,7 +140,9 @@ def ensure_directory_components(
     创建拆成单段步进:
 
     1. 前置: ``directory`` 必须是 canonical 绝对路径且不含 ``..``
-       (与 ``walk_components`` 同一前置);
+       (与 ``walk_components`` 同一前置, 含同款固定共享前置码
+       ``path_not_canonical``/``path_traversal`` — taxonomy 见其
+       docstring, R35 发现 7);
     2. 自 ``directory`` 上溯至首个**已存在**祖先: 途中任何 symlink/
        非目录组件即刻拒绝 (rejected_code);
     3. 该祖先再经 ``walk_components`` 自 anchor 全组件复验;

@@ -24,10 +24,13 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
+import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Final
 
 from src.screening.offensive.v3.evidence.governance_identity import (
     load_governance_identity,
@@ -87,6 +90,72 @@ def _require_optional_regular_database(path: Path) -> None:
     except FileNotFoundError:
         return
     _require_regular_database(path, missing_code="trial_root_not_initialized")
+
+
+_SPINE_ENROLLMENT_PROBE_SQL: Final = (
+    "SELECT 1 FROM expected_sessions"
+    " WHERE research_program_id = :program LIMIT 1"
+)
+_GOVERNANCE_SEALED_PROBE_SQL: Final = (
+    "SELECT 1 FROM sealed_trials WHERE trial_id = :trial LIMIT 1"
+)
+
+
+def _require_pre_registered_fact(
+    path: Path,
+    *,
+    checkpoint_code: str,
+    probe_sql: str,
+    params: dict[str, object],
+    rejection_code: str,
+    message: str,
+    **details: object,
+) -> None:
+    """预注册治理事实的冷读零写痕探测 (R35, R34 0 字节特检的全形态泛化)。
+
+    在构造 ``SessionSpine`` / ``GovernanceRepository`` 之前验证「注册/
+    封存流程确实跑过」: 两者的 ``__init__`` 都在连接时执行
+    ``journal_mode=WAL`` + ``CREATE TABLE IF NOT EXISTS``, 对任何未注册
+    形态 (0 字节/空 schema/垃圾字节/异归属) 的拒绝路径都会先把 DDL 与
+    WAL sidecar 写进预注册治理事实文件 (发现 5: R34 只封了 0 字节)。
+
+    两段防线:
+    1. **冷文件检查** — ``-wal`` sidecar 存在即以 ``checkpoint_code``
+       拒绝: 未 checkpoint 的 WAL 意味着注册/封存 writer 仍打开或曾
+       中断; 更危险的是 sidecar 复活 (对抗复现实锤): 主文件被替换成
+       任意字节后, SQLite 可经残留 ``-wal``/``-shm`` 读出旧写入 —
+       90 字节垃圾主文件 + 构造期 ``regime_trial_bundle`` 返回合法
+       封存 bundle, 组装静默成功。读侧组装只信任已 checkpoint 的
+       冷文件, 使「文件字节」与「消费到的事实」不脱钩。
+    2. **immutable 探测** — ``immutable=1`` 只读连接让 SQLite 完全
+       跳过锁与 sidecar 创建, 探测本身零写痕; 垃圾/空 schema 统一
+       类型化为 ``rejection_code`` (修复前以非类型化 sqlalchemy 异常
+       泄漏或经 sidecar 复活静默通过)。代价是忽略未 checkpoint 的
+       ``-wal`` — 注册中断残留本就该 fail-closed 重跑注册, 而非由
+       读侧组装恢复 (恢复=写), 冷文件检查已显式拒绝该形态。
+    """
+    if (path.parent / f"{path.name}-wal").exists():
+        raise OfficialStackError(
+            checkpoint_code,
+            "a pre-registered governance fact file must be fully"
+            " checkpointed (no -wal sidecar) before read-side assembly —"
+            " an un-checkpointed WAL means the sealing/registration"
+            " writer is still open or was interrupted, and stale"
+            " sidecars can resurrect replaced main-file bytes",
+            fact_file=path.name,
+            **details,
+        )
+    uri = f"file:{urllib.parse.quote(str(path))}?immutable=1"
+    try:
+        connection = sqlite3.connect(uri, uri=True)
+        try:
+            row = connection.execute(probe_sql, params).fetchone()
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise OfficialStackError(rejection_code, message, **details) from exc
+    if row is None:
+        raise OfficialStackError(rejection_code, message, **details)
 
 
 @dataclass(frozen=True)
@@ -182,7 +251,7 @@ def build_official_trial_stack(
     now = clock()
     identity = load_governance_identity(identity_dir, trusted_at=now)
     head = v3trust.CurrentTrustHeadWitness.model_validate_json(
-        __import__("json").dumps(identity.manifest["head_witness"])
+        json.dumps(identity.manifest["head_witness"])
     )
 
     evidence_db = root / "evidence.sqlite3"
@@ -216,16 +285,25 @@ def build_official_trial_stack(
         root / "governance.sqlite3", missing_code="trial_root_not_initialized"
     )
     spine_path = root / "spine.sqlite3"
-    # 0 字节前置检查 (R34): 最常见污染形态在 SessionSpine.__init__ 落
-    # DDL 写副作用**之前**即拒 — 读侧组装不对预注册治理事实文件产生
-    # 任何写痕迹 (WAL sidecar/mtime)。
-    if spine_path.stat().st_size == 0:
-        raise OfficialStackError(
-            "spine_not_registered",
-            "the session spine file is empty — the runbook session"
-            " registration must run first (an empty spine silently voids"
-            " the finalize NO_RUN bookkeeping)",
-        )
+    # 冷读零写痕探测 (R35): 全部未注册/垃圾/sidecar 形态在
+    # SessionSpine.__init__ 落 WAL+DDL 写副作用**之前**类型化拒绝 —
+    # 读侧组装对预注册治理事实文件的任何拒绝路径零写痕 (字节与
+    # sidecar), R34 的 0 字节特检被本机制包含。
+    _require_pre_registered_fact(
+        spine_path,
+        checkpoint_code="spine_not_checkpointed",
+        probe_sql=_SPINE_ENROLLMENT_PROBE_SQL,
+        params={"program": research_program_id},
+        rejection_code="spine_not_registered",
+        message=(
+            "the session spine carries no enrollment for this research"
+            " program (runbook session registration must run first; an"
+            " empty or foreign-program spine silently voids the finalize"
+            " NO_RUN bookkeeping, and a rejected read-side assembly must"
+            " leave zero write traces on the pre-registered fact file)"
+        ),
+        research_program_id=research_program_id,
+    )
     spine = SessionSpine(database_path=str(spine_path), clock=clock)
     # spine 事实非空性与归属 (R32): 文件存在 ≠ 注册流程跑过 — 0 字节
     # 文件经 SessionSpine.__init__ 静默建 DDL 成为零 enrollment 空 spine,
@@ -252,21 +330,38 @@ def build_official_trial_stack(
     )
     from src.screening.offensive.v3.governance.repository import (
         GovernanceRepository,
+        GovernanceStoreError,
+    )
+
+    # 冷读零写痕探测 (R35): governance 同族 — GovernanceRepository 的
+    # __init__ 连接时落 WAL+DDL, 空 schema/垃圾主文件先被写再被 R34
+    # 的 quiet 读拒绝; sidecar 复活形态则完全静默通过 (见探测 docstring)。
+    _require_pre_registered_fact(
+        root / "governance.sqlite3",
+        checkpoint_code="governance_not_checkpointed",
+        probe_sql=_GOVERNANCE_SEALED_PROBE_SQL,
+        params={"trial": trial_id},
+        rejection_code="governance_not_sealed",
+        message=(
+            "the governance database carries no sealed paired trial"
+            " bundle for this trial (sealing flow must run first; an"
+            " empty or foreign-trial store must not defer this fact to"
+            " the first decide's stage_unknown, and a rejected read-side"
+            " assembly must leave zero write traces on the pre-registered"
+            " fact file)"
+        ),
+        trial_id=trial_id,
     )
 
     governance = GovernanceRepository(
         database_path=str(root / "governance.sqlite3"), clock=clock
     )
-    # 治理事实非空 + program 三角互证 (R34): 0 字节库通过 R32 的文件
-    # 守卫后被 __init__ 静默建空表, 失败推迟到首次 decide 的
-    # stage_unknown。构造期 quiet 读 regime_trial_bundle (stage 签发的
-    # 单一事实源) — 空/损/异 trial 库立即拒绝; 同时断言封存 manifest 的
-    # research_program_id 与组装入参一致 (spine↔入参↔封存权威三角闭合,
-    # 错位时 NO_RUN 补记会按错误 program 记账)。
-    from src.screening.offensive.v3.governance.repository import (
-        GovernanceStoreError,
-    )
-
+    # 治理事实非空 + program 三角互证 (R34): 构造期 quiet 读
+    # regime_trial_bundle (stage 签发的单一事实源) — 探测只验
+    # 「行存在」, 封存字节的严格重解析/哈希互证仍在此处; 同时断言
+    # 封存 manifest 的 research_program_id 与组装入参一致
+    # (spine↔入参↔封存权威三角闭合, 错位时 NO_RUN 补记会按错误
+    # program 记账)。
     try:
         sealed_bundle = governance.regime_trial_bundle(trial_id)
     except GovernanceStoreError as exc:
@@ -289,10 +384,6 @@ def build_official_trial_stack(
             ),
             requested_program=research_program_id,
         )
-    from src.screening.offensive.v3.governance.stage_issuance import (
-        StageIssuanceReceipt,
-    )
-
     receipt = _latest_stage_receipt(root, trial_id, stage_id)
     assembler = ForwardSessionAssembler(
         sealer=_build_sealer(root, identity, clock),

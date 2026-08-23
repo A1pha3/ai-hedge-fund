@@ -1067,6 +1067,8 @@ class TestOfficialTrialStack:
             )
         )
         write_stage_issuance_receipt(root, receipt)
+        # R35 冷读前置: 签发写入后 checkpoint (issue 经 governance 引擎)。
+        governance._engine.dispose()
 
         # ③ 证据库预置 (官方布局: 三命名空间共库 + bar 库) — 空文件占位即构造;
         # spine 预置真实 enrollment (R32: 组装面校验非空+归属, touch 空文件
@@ -1079,9 +1081,10 @@ class TestOfficialTrialStack:
             SessionSpine,
         )
 
-        SessionSpine(
+        spine_writer = SessionSpine(
             database_path=str(root / "spine.sqlite3"), clock=lambda: GOV_NOW
-        ).enroll_expected_sessions(
+        )
+        spine_writer.enroll_expected_sessions(
             (
                 SessionEnrollment(
                     "research.btst.regime", date(2026, 8, 6), date(2026, 8, 6)
@@ -1091,6 +1094,10 @@ class TestOfficialTrialStack:
                 ),
             )
         )
+        # R35 冷读前置: 组装器对预注册事实文件要求已 checkpoint 的冷文件
+        # (sidecar 拒绝) — fixture 与官方 runbook 现实对齐, 确定性 dispose
+        # (临时对象的引用回收时机不可依赖)。
+        spine_writer._engine.dispose()
 
         # ④ 组装官方栈
         from src.screening.offensive.v3.capital.fills import FillAttribution

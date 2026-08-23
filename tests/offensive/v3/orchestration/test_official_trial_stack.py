@@ -160,9 +160,10 @@ def _official_archive_world(tmp_path: Path) -> _ArchiveWorld:
         SessionSpine,
     )
 
-    SessionSpine(
+    spine_writer = SessionSpine(
         database_path=str(root / "spine.sqlite3"), clock=lambda: GOV_NOW
-    ).enroll_expected_sessions(
+    )
+    spine_writer.enroll_expected_sessions(
         (
             SessionEnrollment(
                 "research.btst.regime", date(2026, 8, 6), date(2026, 8, 6)
@@ -172,6 +173,12 @@ def _official_archive_world(tmp_path: Path) -> _ArchiveWorld:
             ),
         )
     )
+    # 冷读前置 (R35): 引擎 dispose 使 -wal 确定性 checkpoint 进主文件 —
+    # 临时对象的引用回收时机不可依赖 (引擎对象图含环, GC 非确定),
+    # 且官方 runbook 现实是封存进程终止即冷; 组装器对事实文件的冷读
+    # 探测 (含 sidecar 拒绝) 要求 fixture 与之一致。
+    spine_writer._engine.dispose()
+    governance._engine.dispose()
     return _ArchiveWorld(
         identity_dir=identity_dir,
         root=root,
@@ -188,7 +195,7 @@ def _official_archive_world(tmp_path: Path) -> _ArchiveWorld:
 def _issue_receipt(issuer: GovernanceStageIssuer, *, stage_id: str, issued_at: datetime):
     """签发一个真实治理链 receipt (stage_id/issued_at 及台账 id 相互独立)。"""
     seq = stage_id.rsplit("-", 1)[-1]
-    return issuer.issue(
+    receipt = issuer.issue(
         StageIssuanceRequest(
             trial_id=TRIAL_ID,
             stage_id=stage_id,
@@ -203,6 +210,10 @@ def _issue_receipt(issuer: GovernanceStageIssuer, *, stage_id: str, issued_at: d
             issued_at=issued_at,
         )
     )
+    # 冷读前置 (R35): 签发写入后 checkpoint, 使 _build 的冷读探测看到
+    # 主文件事实而非未 checkpoint 的 -wal。
+    issuer._repository._engine.dispose()
+    return receipt
 
 
 def _build(world: _ArchiveWorld, **overrides):
@@ -832,6 +843,7 @@ def test_foreign_program_spine_rejected(tmp_path):
     foreign.enroll_expected_sessions(
         (SessionEnrollment("prog-other", date(2026, 8, 6), date(2026, 8, 6)),)
     )
+    foreign._engine.dispose()  # R35 冷读前置: 持有引用的引擎不 dispose 会留 -wal
 
     with pytest.raises(OfficialStackError) as ei:
         _build(world)  # research_program_id=research.btst.regime (封存对齐)
@@ -963,6 +975,10 @@ def test_empty_touch_governance_db_rejected(tmp_path):
     write_stage_issuance_receipt(world.root, only)
     (world.root / "governance.sqlite3").unlink(missing_ok=True)
     (world.root / "governance.sqlite3").touch()
+    # R35: 清残留 sidecar, 本测试钉 0 字节主文件形态 (sidecar 形态由
+    # test_stale_wal_sidecar_* 单独覆盖)。
+    for suffix in ("-wal", "-shm"):
+        (world.root / f"governance.sqlite3{suffix}").unlink(missing_ok=True)
 
     with pytest.raises(OfficialStackError) as ei:
         _build(world)
@@ -991,11 +1007,13 @@ def test_spine_program_vs_sealed_manifest_mismatch_rejected(tmp_path):
     )
     write_stage_issuance_receipt(world.root, only)
     (world.root / "spine.sqlite3").unlink(missing_ok=True)
-    SessionSpine(
+    mismatched = SessionSpine(
         database_path=str(world.root / "spine.sqlite3"), clock=lambda: GOV_NOW
-    ).enroll_expected_sessions(
+    )
+    mismatched.enroll_expected_sessions(
         (SessionEnrollment("prog-mismatched", _d(2026, 8, 6), _d(2026, 8, 6)),)
     )
+    mismatched._engine.dispose()  # R35 冷读前置 (确定性 checkpoint)
 
     with pytest.raises(OfficialStackError) as ei:
         _build(world, research_program_id="prog-mismatched")
@@ -1026,3 +1044,238 @@ def test_identity_dir_symlink_redirect_rejected(tmp_path):
     with pytest.raises(OfficialStackError) as ei:
         _build(world, identity_dir=redirect)
     assert ei.value.code == "official_stack_path_rejected"
+
+
+# ---------------------------------------------------------------------------
+# R35: R34 登记三遗留项收口 — 拒绝路径零写痕全形态 + sidecar 复活收口
+# ---------------------------------------------------------------------------
+
+def _make_decoy_sqlite(path: Path) -> None:
+    """非零空 schema 形态: 合法 sqlite 文件但不含任何 spine/governance 表。
+
+    R34 的 0 字节特检只封最常见污染形态 — 非零字节但未注册 schema 的
+    文件 (异工具产物/半成品) 原样穿过特检, 写副作用发生在 __init__。
+    """
+    import sqlite3 as _sqlite3
+
+    connection = _sqlite3.connect(str(path))
+    try:
+        connection.execute("CREATE TABLE decoy (x INTEGER)")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _clear_sidecars(path: Path) -> None:
+    """清除事实文件的 -wal/-shm 残留, 使测试钉主文件形态本身。"""
+    for suffix in ("-wal", "-shm"):
+        (path.parent / f"{path.name}{suffix}").unlink(missing_ok=True)
+
+
+def _snapshot_fact_file(path: Path) -> tuple[bytes, frozenset[str]]:
+    """(文件字节, 同名 sidecar 集) — 拒绝路径零写痕断言的取证快照。"""
+    return (
+        path.read_bytes(),
+        frozenset(
+            entry.name
+            for entry in path.parent.iterdir()
+            if entry.name.startswith(path.name)
+        ),
+    )
+
+
+def test_nonzero_empty_schema_spine_rejected_zero_write(tmp_path):
+    """非零空 schema spine 拒绝且零写痕 (R35 发现 5 全形态收口)。
+
+    修复前 (RED 实证): SessionSpine.__init__ 对该文件先落全套 DDL
+    (文件字节被拒绝路径改写) 再以 enrolled 空拒绝 — R34 承诺的
+    「读侧组装对预注册治理事实文件零写痕迹」在非 0 字节形态失效。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    spine = world.root / "spine.sqlite3"
+    spine.unlink()
+    _make_decoy_sqlite(spine)
+    _clear_sidecars(spine)
+    before = _snapshot_fact_file(spine)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "spine_not_registered"
+    after = _snapshot_fact_file(spine)
+    assert after[0] == before[0], "rejected assembly must not rewrite the spine bytes"
+    assert after[1] == before[1], "rejected assembly must not create WAL/SHM sidecars"
+
+
+def test_nonzero_empty_schema_governance_rejected_zero_write(tmp_path):
+    """非零空 schema governance 拒绝且零写痕 (R35 发现 5 同族收口)。
+
+    修复前 (RED 实证): GovernanceRepository.__init__ 对该文件先落全套
+    治理 DDL (字节被拒绝路径改写), 再由 R34 的 regime_trial_bundle
+    quiet 读拒绝 — 错误码正确但文件已被污染。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    governance_db = world.root / "governance.sqlite3"
+    governance_db.unlink()
+    _make_decoy_sqlite(governance_db)
+    _clear_sidecars(governance_db)
+    before = _snapshot_fact_file(governance_db)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "governance_not_sealed"
+    after = _snapshot_fact_file(governance_db)
+    assert after[0] == before[0], (
+        "rejected assembly must not rewrite the governance bytes"
+    )
+    assert after[1] == before[1], (
+        "rejected assembly must not create WAL/SHM sidecars on governance"
+    )
+
+
+def test_garbage_spine_bytes_rejected_typed(tmp_path):
+    """垃圾字节 spine 类型化拒绝 (R35)。
+
+    修复前 (RED 实证): 非 OfficialStackError 的原始异常泄漏, 或 (sidecar
+    在场时) 经复活静默通过 — 违反 fail-closed 类型化纪律。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    spine = world.root / "spine.sqlite3"
+    spine.unlink()
+    spine.write_bytes(b"this is definitely not a sqlite database\n" * 4)
+    _clear_sidecars(spine)
+    before = _snapshot_fact_file(spine)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "spine_not_registered"
+    assert _snapshot_fact_file(spine) == before
+
+
+def test_garbage_governance_bytes_rejected_typed(tmp_path):
+    """垃圾字节 governance 类型化拒绝 (R35, 清 sidecar 后钉主文件形态)。"""
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    governance_db = world.root / "governance.sqlite3"
+    governance_db.unlink()
+    governance_db.write_bytes(b"\x00\x01garbage - not a sqlite file\xff" * 3)
+    _clear_sidecars(governance_db)
+    before = _snapshot_fact_file(governance_db)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "governance_not_sealed"
+    assert _snapshot_fact_file(governance_db) == before
+
+
+def test_stale_wal_sidecar_resurrection_rejected(tmp_path):
+    """sidecar 复活 PoC (R35 Act 期对抗发现, 修复主证据)。
+
+    修复前 (RED 实证): 主文件替换为 90 字节垃圾 + 残留未 checkpoint 的
+    -wal/-shm (当时来自 fixture 泄漏, 等价于敌手植入) → 组装**静默
+    成功**, 构造期 regime_trial_bundle 经 sidecar 复活返回合法封存
+    bundle —「文件字节」与「消费到的事实」脱钩。
+    修复后: governance_not_checkpointed (探测先于任何 sqlite 打开)。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    governance_db = world.root / "governance.sqlite3"
+    # fixture 冷读前置后不再自然泄漏 -wal (这正是语义所在) — 敌手形态
+    # 是「替换主文件 + 植入 sidecar」, 在此显式植入。
+    governance_db.unlink()
+    governance_db.write_bytes(b"\x00\x01garbage - not a sqlite file\xff" * 3)
+    (world.root / "governance.sqlite3-wal").write_bytes(b"planted-stale-wal")
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "governance_not_checkpointed"
+
+
+def test_sidecar_present_spine_rejected(tmp_path):
+    """合法 spine 但残留 -wal → spine_not_checkpointed (sidecar 形态面)。"""
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    (world.root / "spine.sqlite3-wal").write_bytes(b"stale-wal-debris")
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "spine_not_checkpointed"
+
+
+def test_probe_tables_track_schema_ddl():
+    """探测 SQL 表名 drift guard (R35): schema 演化时探测必须同步。
+
+    探测 SQL 引用的表必须仍是各自 _SCHEMA_DDL 声明的表 — 否则未来
+    schema 演化会把合法已注册文件误判为未注册 (fail-closed 退化)。
+    """
+    import re as _re
+
+    from src.screening.offensive.v3.evidence import session_spine as _spine_mod
+    from src.screening.offensive.v3.governance import repository as _gov_mod
+    from src.screening.offensive.v3.orchestration import (
+        official_trial_stack as _stack_mod,
+    )
+
+    declared = set(
+        _re.findall(
+            r"CREATE TABLE IF NOT EXISTS\s+(\w+)",
+            "\n".join(_spine_mod._SCHEMA_DDL),
+        )
+    ) | set(
+        _re.findall(
+            r"CREATE TABLE IF NOT EXISTS\s+(\w+)",
+            "\n".join(_gov_mod._SCHEMA_DDL),
+        )
+    )
+    probes = (
+        _stack_mod._SPINE_ENROLLMENT_PROBE_SQL,
+        _stack_mod._GOVERNANCE_SEALED_PROBE_SQL,
+    )
+    referenced = {
+        table for sql in probes for table in _re.findall(r"FROM\s+(\w+)", sql)
+    }
+    assert referenced <= declared
