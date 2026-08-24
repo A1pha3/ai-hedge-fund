@@ -178,7 +178,12 @@ def seed_official_evidence_stores(identity_dir: Path, root: Path) -> None:
     from src.screening.offensive.v3.evidence.governance_identity import (
         load_governance_identity,
     )
-    from src.screening.offensive.v3.evidence.regime import RegimeObservationPublisher
+    from src.screening.offensive.v3.evidence.regime import (
+        RegimeObservationPublisher,
+    )
+    from src.screening.offensive.v3.orchestration.trial_session_driver import (
+        REGIME_CLASSIFIER_FINGERPRINT,
+    )
     from src.screening.offensive.v3.evidence.session_batch import (
         REGIME_EVIDENCE_ID,
         REGIME_NAMESPACE,
@@ -213,8 +218,8 @@ def seed_official_evidence_stores(identity_dir: Path, root: Path) -> None:
         provider_published_at=seed_at,
         observed_at=seed_at,
         classifier_semver="1.0.0",
-        behavior_fingerprint="d" * 64,
-        input_schema_hash="d" * 64,
+        behavior_fingerprint=REGIME_CLASSIFIER_FINGERPRINT,
+        input_schema_hash=REGIME_CLASSIFIER_FINGERPRINT,
     )
     snapshot = SnapshotEvidence(
         evidence_id=REGIME_EVIDENCE_ID,
@@ -222,9 +227,9 @@ def seed_official_evidence_stores(identity_dir: Path, root: Path) -> None:
         subject_producer=REGIME_NAMESPACE,
         family_id=None,
         strategy_semver="1.0.0",
-        behavior_fingerprint="d" * 64,
+        behavior_fingerprint=REGIME_CLASSIFIER_FINGERPRINT,
         policy_epoch=1,
-        execution_version="t0-close-t1-open-t10-open.v1",
+        execution_version="t1-open-t10-open.v1",
         cost_version="cn-a-share-costs.v1",
         effective_at=seed_at,
         provider_published_at=seed_at,
@@ -1048,6 +1053,7 @@ class TestRunnerFinalizeUnlock:
             decision_store=store,
             session_spine=spine,
             research_program_id=program,
+            trial_id=TRIAL_ID,
         )
         # 两个会话评估窗均已过 (trusted_at 08-20) 且无 pair → 全部补记 (日历序)
         finalized = runner.finalize_missed_sessions(datetime(2026, 8, 20, 15, 0, tzinfo=UTC))
@@ -1096,7 +1102,7 @@ class TestOfficialTrialStack:
         # ① 真实身份目录 (tmp 生成, 与 R23 生产目录同形态)
         identity_dir = tmp_path / "identity"
         generate_governance_identity(
-            identity_dir, namespaces=("regime", "sse-sessions", "btst-bars", "btst"),
+            identity_dir, namespaces=("regime", "exchange-calendar", "btst-bars", "btst"),
             clock=lambda: datetime(2026, 8, 6, 8, 0, tzinfo=UTC),
         )
         # ② trial root: 官方布局 (资本双臂 + 治理封存 + stage 回执归档)
@@ -1244,7 +1250,7 @@ class TestOfficialTrialStack:
 
         identity_dir = tmp_path / "identity"
         generate_governance_identity(
-            identity_dir, namespaces=("regime", "sse-sessions", "btst-bars", "btst"),
+            identity_dir, namespaces=("regime", "exchange-calendar", "btst-bars", "btst"),
             clock=lambda: datetime(2026, 8, 6, 8, 0, tzinfo=UTC),
         )
         root = tmp_path / "empty-root"

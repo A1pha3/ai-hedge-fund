@@ -62,7 +62,7 @@ _VALID_FROM_HOURS = 1.0
 _VALID_UNTIL_DAYS = 365
 #: 每 namespace 一个 issuer; 能力类型按命名空间固定 (与 offline_rig/生产
 #: 发布器一致): snapshot 发布 (regime/排程/bar) 与 signal 发布 (btst)。
-_SNAPSHOT_NAMESPACES = ("regime", "sse-sessions", "btst-bars")
+_SNAPSHOT_NAMESPACES = ("regime", "exchange-calendar", "btst-bars")
 _SIGNAL_NAMESPACES = ("btst",)
 
 

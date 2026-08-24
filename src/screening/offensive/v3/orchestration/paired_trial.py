@@ -255,6 +255,7 @@ class ForwardPairedTrialRunner:
         trial_attribution: object = None,
         session_spine: object = None,
         research_program_id: str | None = None,
+        trial_id: str | None = None,
     ) -> None:
         # 无参实例 = 未注入 authority, decide 保持 fail-closed (旧 disabled
         # 语义的延续: 权限只来自显式注入的依赖链, 无 ambient 能力)。
@@ -269,6 +270,7 @@ class ForwardPairedTrialRunner:
         self._trial_attribution = trial_attribution
         self._session_spine = session_spine
         self._research_program_id = research_program_id
+        self._trial_id = trial_id
 
     def _kernel(self) -> object:
         if self._decider is not None:
@@ -456,6 +458,13 @@ class ForwardPairedTrialRunner:
                 (TrialArm.CHALLENGER, challenger_record),
             ):
                 decision = record.decision
+                if isinstance(decision, NoTradeDecision):
+                    # No-trade 会话 (零候选/regime 阻断/容量阻断) 无入场计划 —
+                    # 该臂该会话保持空仓, 生命周期照常推进 (marks/出场义务)。
+                    # 影子前向试验的常态路径; 修复前这里无条件访问
+                    # ``target_entry_session`` 使任何 no-trade 会话的窗口推进
+                    # 崩溃 (R36 首次真实消费暴露)。
+                    continue
                 entry_session = decision.target_entry_session
                 lines = tuple(
                     open_line_from_shadow_line(line, entry_session=entry_session)
@@ -537,9 +546,16 @@ class ForwardPairedTrialRunner:
                 "finalize_authority_unavailable",
                 "finalize requires the injected session spine and program id",
             )
-        decided_sessions = {
-            key[1] for key in self._store.pair_keys(self._research_program_id)
-        }
+        if self._trial_id is None:
+            # 已决策会话的排除依赖 per-trial pair 查询; 未绑定 trial 的 runner
+            # 无法证明任何会话已决策 — fail-closed, 而不是把决策过的会话也
+            # 补记 NO_RUN (R36 修复: 此前以 program 查 pair_keys 恒空, 决策
+            # 过的会话被静默误标)。
+            raise PairedTrialRunnerError(
+                "finalize_trial_unbound",
+                "finalize requires the runner to be bound to one trial id",
+            )
+        decided_sessions = {key[1] for key in self._store.pair_keys(self._trial_id)}
         finalized: list[date] = []
         for enrollment in self._session_spine.enrolled_sessions(
             self._research_program_id

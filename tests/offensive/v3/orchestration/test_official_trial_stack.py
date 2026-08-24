@@ -104,7 +104,7 @@ def _official_archive_world(tmp_path: Path) -> _ArchiveWorld:
     identity_dir = tmp_path / "identity"
     generate_governance_identity(
         identity_dir,
-        namespaces=("regime", "sse-sessions", "btst-bars", "btst"),
+        namespaces=("regime", "exchange-calendar", "btst-bars", "btst"),
         clock=lambda: datetime(2026, 8, 6, 8, 0, tzinfo=UTC),
     )
     root = tmp_path / "trial-root"

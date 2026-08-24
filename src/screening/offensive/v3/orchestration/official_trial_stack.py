@@ -36,7 +36,10 @@ from src.screening.offensive.v3.evidence.governance_identity import (
     load_governance_identity,
 )
 from src.screening.offensive.v3.evidence.repository import EvidenceRepository
-from src.screening.offensive.v3.evidence.session_batch import REGIME_NAMESPACE
+from src.screening.offensive.v3.evidence.session_batch import (
+    REGIME_NAMESPACE,
+    SCHEDULE_NAMESPACE,
+)
 from src.screening.offensive.v3.evidence.session_spine import SessionSpine
 from src.screening.offensive.v3.governance.stage_issuance import (
     StageIssuanceReceipt,
@@ -529,7 +532,7 @@ def build_official_trial_stack(
         trial_id=trial_id,
         stage_receipt=receipt,
         regime_repository=repo("regime", evidence_db),
-        schedule_repository=repo("sse-sessions", evidence_db),
+        schedule_repository=repo(SCHEDULE_NAMESPACE, evidence_db),
         btst_repository=repo("btst", evidence_db),
     )
     runner = ForwardPairedTrialRunner(
@@ -543,6 +546,7 @@ def build_official_trial_stack(
         trial_attribution=trial_attribution,
         session_spine=spine,
         research_program_id=research_program_id,
+        trial_id=trial_id,
     )
     return OfficialTrialStack(
         identity_dir=identity_dir,
@@ -550,7 +554,7 @@ def build_official_trial_stack(
         trial_id=trial_id,
         stage_receipt=receipt,
         regime_repository=repo("regime", evidence_db),
-        schedule_repository=repo("sse-sessions", evidence_db),
+        schedule_repository=repo(SCHEDULE_NAMESPACE, evidence_db),
         btst_repository=repo("btst", evidence_db),
         bars_repository=repo("btst-bars", bars_db),
         spine=spine,
