@@ -36,8 +36,18 @@ uv run python scripts/v3_governance_identity.py check --dir data/v3_governance_i
 
 ## 启动顺序
 
+0. **前置（owner）**：trial root 四库空文件占位（`evidence.sqlite3` /
+   `bars-evidence.sqlite3` / `spine.sqlite3` / `governance.sqlite3` 各
+   `touch`）＋ 身份目录 v2 再生成（R38 起治理签发四键随默认生成集产出；
+   v1 目录缺 exchange-calendar/治理键，见 v3-governance-identity.md）。
 1. ①②③④ 全绿 → 生成/确认 trial genesis（`v3_trial_genesis.py`，
    dry-run 默认零写入，先 dry 后真跑）。
+1b. **bootstrap 三步（R38 生产入口，均 dry-run 默认零写入）**：
+   `scripts/v3_trial_bootstrap.py seed-evidence`（首会话 regime 观察＋bars
+   schema）→ `enroll-spine`（权威日历派生 enrollment，assessment=T+10）→
+   `seal-trial`（参数文件→互证 artifact→治理键签名→封存→stage 签发→回执
+   归档）。注意：seal 的 attempt 预留是消耗性（同参数重放=类型化冲突，
+   multiplicity 纪律）。
 2. 用治理身份 signer 替换 ephemeral rig（`governance_identity.load` →
    `repository_for`/`signer_for` 接线）。
 3. 特权 worker daemon 启动（UDS bind）→ 用一次 `assemble` 请求冒烟

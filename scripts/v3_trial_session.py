@@ -140,16 +140,35 @@ def _build_stack(
         raise SystemExit(_fail("stack_build_failed", str(exc), code=exc.code))
 
 
-def _load_snapshot(manifest_path: Path, signal_session: date):
+def _load_snapshot(
+    manifest_path: Path,
+    signal_session: date,
+    *,
+    data_dir: Path,
+):
     from src.screening.offensive.daily_action_snapshot import (
         SnapshotLoadError,
         load_verified_daily_action_snapshot,
     )
 
     try:
-        snapshot = load_verified_daily_action_snapshot(manifest_path)
+        result = load_verified_daily_action_snapshot(
+            signal_session,
+            reports_dir=manifest_path.parent,
+            data_dir=data_dir,
+        )
     except SnapshotLoadError as exc:
         raise SystemExit(_fail("snapshot_load_failed", str(exc)))
+    if result.snapshot is None:
+        raise SystemExit(
+            _fail(
+                "snapshot_load_failed",
+                "readiness snapshot is unavailable for the signal session",
+                global_reason=result.global_reason,
+                ticker_blocks=list(result.ticker_blocks),
+            )
+        )
+    snapshot = result.snapshot
     if snapshot.signal_date != signal_session:
         raise SystemExit(
             _fail(
@@ -187,7 +206,9 @@ def _cmd_decide(args: argparse.Namespace) -> int:
                 **(checks or {}),
             }
         )
-    snapshot = _load_snapshot(Path(args.readiness_manifest), signal_session)
+    snapshot = _load_snapshot(
+        Path(args.readiness_manifest), signal_session, data_dir=Path(args.data_dir)
+    )
     stack = _build_stack(
         identity_dir=identity_dir,
         trial_root=trial_root,
@@ -362,6 +383,7 @@ def _build_parser() -> argparse.ArgumentParser:
     common(decide)
     decide.add_argument("--readiness-manifest", required=True)
     decide.add_argument("--signal-session", required=True)
+    decide.add_argument("--data-dir", default="data", help="repo data dir (price/fund-flow caches)")
     decide.set_defaults(func=_cmd_decide)
 
     advance = sub.add_parser("advance", help="publish bar sets + market-window advance")

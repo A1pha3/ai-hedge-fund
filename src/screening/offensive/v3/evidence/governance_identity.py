@@ -61,9 +61,18 @@ ROOT_ISSUER_ID = "governance.root"
 _VALID_FROM_HOURS = 1.0
 _VALID_UNTIL_DAYS = 365
 #: 每 namespace 一个 issuer; 能力类型按命名空间固定 (与 offline_rig/生产
-#: 发布器一致): snapshot 发布 (regime/排程/bar) 与 signal 发布 (btst)。
+#: 发布器一致): snapshot 发布 (regime/排程/bar)、signal 发布 (btst)、
+#: 治理签发 (trial/SAP/activation/stage — R27 登记『identity v1 无 stage
+#: 签发 key, 身份目录 v2 轮换时补』的收口; IssuerKind.GOVERNANCE 角色在
+#: registry 的 _ROLE_ARTIFACTS 恰好授权这四种 artifact)。
 _SNAPSHOT_NAMESPACES = ("regime", "exchange-calendar", "btst-bars")
 _SIGNAL_NAMESPACES = ("btst",)
+_GOVERNANCE_NAMESPACES = (
+    "governance.trial.manifest",
+    "governance.sap.manifest",
+    "governance.policy.activation",
+    "governance.stage.manifest",
+)
 
 
 class GovernanceIdentityError(RuntimeError):
@@ -228,6 +237,29 @@ def _capability_for(namespace: str, valid_from: datetime, valid_until: datetime)
             ExecutionMode.RESEARCH_RECONSTRUCTION,
             "governance.signal.v1",
         )
+    elif namespace in _GOVERNANCE_NAMESPACES:
+        # 治理签发面: artifact 与 capability_version 一一对应 (契约校验器
+        # _capability 钉死 manifest 侧版本串, 信封 context 必须逐值匹配)。
+        artifact, version = {
+            "governance.trial.manifest": (
+                v3trust.ArtifactKind.TRIAL_MANIFEST,
+                "governance.trial.manifest.v1",
+            ),
+            "governance.sap.manifest": (
+                v3trust.ArtifactKind.STATISTICAL_ANALYSIS_PLAN,
+                "governance.sap.v1",
+            ),
+            "governance.policy.activation": (
+                v3trust.ArtifactKind.POLICY_ACTIVATION,
+                "governance.policy.activation.v1",
+            ),
+            "governance.stage.manifest": (
+                v3trust.ArtifactKind.STAGE_MANIFEST,
+                "governance.stage.manifest.v1",
+            ),
+        }[namespace]
+        kind = v3trust.IssuerKind.GOVERNANCE
+        mode = ExecutionMode.DAILY_BAR_PROXY
     else:
         raise GovernanceIdentityError(
             "namespace_unknown",
@@ -256,6 +288,7 @@ def generate_governance_identity(
     namespaces: tuple[str, ...] = (
         *_SNAPSHOT_NAMESPACES,
         *_SIGNAL_NAMESPACES,
+        *_GOVERNANCE_NAMESPACES,
     ),
     clock: Callable[[], datetime] | None = None,
     valid_days: int = _VALID_UNTIL_DAYS,

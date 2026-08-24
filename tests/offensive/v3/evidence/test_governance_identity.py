@@ -172,3 +172,79 @@ def test_verify_cli_face(identity_dir: Path):
     assert out["ok"] is True
     assert out["namespaces"] == ["regime", "btst"]
     assert out["root_key_id"] == "governance-root-1"
+
+
+# ---------------------------------------------------------------------------
+# v2: 治理签发命名空间 (R38 — trial/SAP/activation/stage 四键收口)
+# ---------------------------------------------------------------------------
+
+def test_default_generation_includes_governance_namespaces(tmp_path: Path):
+    d = tmp_path / "identity-v2"
+    generate_governance_identity(d, clock=lambda: NOW)
+    manifest = json.loads((d / "identity.json").read_text())
+    assert manifest["namespaces"] == [
+        "regime",
+        "exchange-calendar",
+        "btst-bars",
+        "btst",
+        "governance.trial.manifest",
+        "governance.sap.manifest",
+        "governance.policy.activation",
+        "governance.stage.manifest",
+    ]
+    keys = d / "keys"
+    assert (keys / "root.pem").is_file()
+    for namespace in manifest["namespaces"]:
+        assert (keys / f"{namespace}.pem").is_file()
+    # 8 命名空间键 + root = 9 键, 全部 0600。
+    assert len(list(keys.glob("*.pem"))) == 9
+    for key in keys.glob("*.pem"):
+        assert stat.S_IMODE(key.stat().st_mode) == 0o600
+    summary = verify_identity_directory(d)
+    assert summary["ok"] is True
+
+
+def test_governance_signers_verify_with_capability_context(tmp_path: Path):
+    from src.screening.offensive.v3 import trust as v3_trust
+    from src.screening.offensive.v3.contracts.trust import ArtifactKind
+
+    d = tmp_path / "identity-v2"
+    generate_governance_identity(d, clock=lambda: NOW)
+    identity = load_governance_identity(d, trusted_at=NOW)
+    expected_artifact = {
+        "governance.trial.manifest": ArtifactKind.TRIAL_MANIFEST,
+        "governance.sap.manifest": ArtifactKind.STATISTICAL_ANALYSIS_PLAN,
+        "governance.policy.activation": ArtifactKind.POLICY_ACTIVATION,
+        "governance.stage.manifest": ArtifactKind.STAGE_MANIFEST,
+    }
+    payload = b"governance-signing-surface-roundtrip"
+    for namespace, artifact in expected_artifact.items():
+        signer = identity.signer_for(namespace)
+        assert signer.issuer.issuer_id == f"governance.{namespace}.service"
+        assert signer.issuer.issuer_kind is v3_trust.IssuerKind.GOVERNANCE
+        capability = identity.capabilities[namespace]
+        assert capability.artifact is artifact
+        # capability_version 与 bootstrap 派生 artifact 的 issuer_capability 逐一匹配
+        expected_version = {
+            "governance.trial.manifest": "governance.trial.manifest.v1",
+            "governance.sap.manifest": "governance.sap.v1",
+            "governance.policy.activation": "governance.policy.activation.v1",
+            "governance.stage.manifest": "governance.stage.manifest.v1",
+        }[namespace]
+        assert capability.capability_version == expected_version
+        assert capability.mode is not None
+        signed = signer(payload)
+        assert signed.issuer_id == f"governance.{namespace}.service"
+        assert signed.namespace == namespace
+        assert signed.artifact is artifact
+
+
+def test_pre_v2_namespace_subset_still_generates_and_loads(tmp_path: Path):
+    """v1 形态 (无治理命名空间) 的目录生成/加载不受 v2 扩展影响。"""
+    d = tmp_path / "identity-v1-style"
+    generate_governance_identity(
+        d, namespaces=("regime", "btst"), clock=lambda: NOW
+    )
+    identity = load_governance_identity(d, trusted_at=NOW)
+    signed = identity.signer_for("regime")(b"v1-style-still-signs")
+    assert signed.namespace == "regime"
