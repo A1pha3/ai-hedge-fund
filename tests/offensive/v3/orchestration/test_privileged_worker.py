@@ -142,6 +142,117 @@ def _registration_genesis() -> TrialGenesisManifest:
     )
 
 
+class _IdentitySignerPort:
+    """RegimeObservationPublisher 的签名鸭子 (与 test_session_batch 同款)。"""
+
+    def __init__(self, signer) -> None:
+        self._signer = signer
+
+    def sign_snapshot(self, snapshot, payload: bytes):
+        return self._signer(payload)
+
+
+def seed_official_evidence_stores(identity_dir: Path, root: Path) -> None:
+    """官方布局证据库真实播种 (R37): 组装面冷读探测要求 evidence 库
+    regime 命名空间 ≥1 条 committed 证据 (持久身份签发链 — 与官方栈
+    同源, 非 ephemeral rig)、bars 库 schema 落盘零记录 (首发 market
+    session 前 0 bars 是合法启动形态); 播种后 dispose 冷读 (R35 同款
+    纪律: -wal 确定性 checkpoint 进主文件, 临时对象 GC 时机不可依赖)。
+
+    种子时刻 SEED_AT 晚于身份生成 (08-06 08:00) — 冻结仓库钟早于信任
+    锚点会被 root key not yet valid 拒 (offline_rig trust_now 同族陷阱);
+    regime 证据用固定 REGIME_EVIDENCE_ID (批规则 v1 固定成员)。
+    """
+    import hashlib
+
+    from src.screening.offensive.v3 import trust as v3_trust
+    from src.screening.offensive.v3.contracts import SUPPORTED_SCHEMA_MAJOR
+    from src.screening.offensive.v3.contracts.base import EvidenceScope, ExecutionMode
+    from src.screening.offensive.v3.contracts.evidence import SnapshotEvidence
+    from src.screening.offensive.v3.contracts.regime import (
+        RegimeObservation,
+        RegimeObservationReason,
+        RegimeSourceRevision,
+        RegimeState,
+    )
+    from src.screening.offensive.v3.evidence.governance_identity import (
+        load_governance_identity,
+    )
+    from src.screening.offensive.v3.evidence.regime import RegimeObservationPublisher
+    from src.screening.offensive.v3.evidence.session_batch import (
+        REGIME_EVIDENCE_ID,
+        REGIME_NAMESPACE,
+    )
+
+    seed_at = datetime(2026, 8, 6, 9, 0, tzinfo=UTC)
+    identity = load_governance_identity(identity_dir, trusted_at=seed_at)
+    head = v3_trust.CurrentTrustHeadWitness.model_validate_json(
+        json.dumps(identity.manifest["head_witness"])
+    )
+    blobs = root / "blobs"
+
+    regime_repo = identity.repository_for(
+        namespace=REGIME_NAMESPACE,
+        database_path=str(root / "evidence.sqlite3"),
+        blobs_dir=blobs,
+        clock=lambda: seed_at,
+        trust_head=head,
+    )
+    observation = RegimeObservation(
+        signal_session=SESSION,
+        state=RegimeState.NORMAL,
+        reason=RegimeObservationReason.CLASSIFIED,
+        raw_state="normal",
+        source_revisions=(
+            RegimeSourceRevision(
+                evidence_id=REGIME_EVIDENCE_ID, revision=1,
+                artifact_hash="d" * 64,
+            ),
+        ),
+        effective_at=seed_at,
+        provider_published_at=seed_at,
+        observed_at=seed_at,
+        classifier_semver="1.0.0",
+        behavior_fingerprint="d" * 64,
+        input_schema_hash="d" * 64,
+    )
+    snapshot = SnapshotEvidence(
+        evidence_id=REGIME_EVIDENCE_ID,
+        subject_scope=EvidenceScope.GLOBAL,
+        subject_producer=REGIME_NAMESPACE,
+        family_id=None,
+        strategy_semver="1.0.0",
+        behavior_fingerprint="d" * 64,
+        policy_epoch=1,
+        execution_version="t0-close-t1-open-t10-open.v1",
+        cost_version="cn-a-share-costs.v1",
+        effective_at=seed_at,
+        provider_published_at=seed_at,
+        observed_at=seed_at,
+        available_at=seed_at,
+        mode=ExecutionMode.DAILY_BAR_PROXY,
+        source_authority="regime.classifier",
+        payload_content_hash=hashlib.sha256(
+            observation.canonical_bytes()
+        ).hexdigest(),
+        schema_major=SUPPORTED_SCHEMA_MAJOR,
+        evidence_kind="snapshot",
+    )
+    RegimeObservationPublisher(regime_repo).publish(
+        observation, snapshot,
+        _IdentitySignerPort(identity.signer_for(REGIME_NAMESPACE)),
+    )
+    bars_repo = identity.repository_for(
+        namespace="btst-bars",
+        database_path=str(root / "bars-evidence.sqlite3"),
+        blobs_dir=blobs,
+        clock=lambda: seed_at,
+        trust_head=head,
+    )
+    regime_repo._engine.dispose()
+    bars_repo._engine.dispose()
+
+
 @pytest.fixture()
 def worker_world(tmp_path: Path):
     batch = build_batch_world(tmp_path)
@@ -1070,11 +1181,11 @@ class TestOfficialTrialStack:
         # R35 冷读前置: 签发写入后 checkpoint (issue 经 governance 引擎)。
         governance._engine.dispose()
 
-        # ③ 证据库预置 (官方布局: 三命名空间共库 + bar 库) — 空文件占位即构造;
-        # spine 预置真实 enrollment (R32: 组装面校验非空+归属, touch 空文件
-        # 不再静默通过)。
-        (root / "evidence.sqlite3").touch()
-        (root / "bars-evidence.sqlite3").touch()
+        # ③ 证据库真实播种 (R37): 组装面冷读探测要求 evidence 库 regime
+        # ≥1 条 committed 证据、bars 库 schema 落盘 (零记录合法) — 0 字节
+        # 占位不再静默通过; spine 预置真实 enrollment (R32: 组装面校验
+        # 非空+归属)。
+        seed_official_evidence_stores(identity_dir, root)
         (root / "spine.sqlite3").touch()
         from src.screening.offensive.v3.evidence.session_spine import (
             SessionEnrollment,

@@ -149,11 +149,14 @@ def _official_archive_world(tmp_path: Path) -> _ArchiveWorld:
         trust_head=lambda: current_head,
         clock=lambda: GOV_NOW,
     )
-    # 官方布局占位: 证据库存在即可构造 (选择面测试不进证据链);
-    # spine 预置真实 enrollment (R32: 组装面校验 enrolled_sessions 非空,
-    # 空文件/异 program 都 spine_not_registered — fixture 模拟注册流程)。
-    (root / "evidence.sqlite3").touch()
-    (root / "bars-evidence.sqlite3").touch()
+    # 证据库真实播种 (R37): 组装面冷读探测要求 evidence 库 regime 命名
+    # 空间 ≥1 条 committed 证据 (持久身份签发链)、bars 库 schema 落盘
+    # (零记录合法) — 0 字节占位被 evidence_not_seeded/bars_store_not_seeded
+    # 拒绝; spine 预置真实 enrollment (R32: 组装面校验 enrolled_sessions
+    # 非空, 空文件/异 program 都 spine_not_registered — fixture 模拟注册流程)。
+    from test_privileged_worker import seed_official_evidence_stores
+
+    seed_official_evidence_stores(identity_dir, root)
     (root / "spine.sqlite3").touch()
     from src.screening.offensive.v3.evidence.session_spine import (
         SessionEnrollment,
@@ -1279,3 +1282,247 @@ def test_probe_tables_track_schema_ddl():
         table for sql in probes for table in _re.findall(r"FROM\s+(\w+)", sql)
     }
     assert referenced <= declared
+
+
+# -- R37: 运行时 append 面证据库 (evidence/bars) 冷读零写痕探测 ---------------
+
+
+def _receipted_world(tmp_path):
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    return world
+
+
+def test_zero_byte_evidence_db_rejected_zero_write(tmp_path):
+    """0 字节 evidence 库拒绝且零写痕 (R37)。
+
+    修复前 (RED 实证): EvidenceRepository.__init__ 对 0 字节文件静默落
+    WAL+DDL (组装读路径改写事实文件字节), 以「合法空证据世界」通过 —
+    fixture 曾以 touch() 依赖该副作用。修复后 evidence_not_seeded 且
+    拒绝路径字节与 sidecar 零写痕。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _receipted_world(tmp_path)
+    evidence_db = world.root / "evidence.sqlite3"
+    evidence_db.unlink()
+    evidence_db.touch()
+    _clear_sidecars(evidence_db)
+    before = _snapshot_fact_file(evidence_db)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "evidence_not_seeded"
+    after = _snapshot_fact_file(evidence_db)
+    assert after[0] == before[0], (
+        "rejected assembly must not rewrite the evidence bytes"
+    )
+    assert after[1] == before[1], (
+        "rejected assembly must not create WAL/SHM sidecars on evidence"
+    )
+
+
+def test_real_schema_zero_records_evidence_db_rejected(tmp_path):
+    """真实 schema 但零记录的 evidence 库拒绝 (R37) — 事实是记录不是 schema。
+
+    「repo 开过一次但从未发布」形态: 全套 evidence DDL 在、evidence_head
+    genesis 行在、evidence_records 空 — 修复前静默通过 (空证据世界)。
+    修复后拒绝: regime 命名空间 ≥1 条 committed 记录才是启动完成事实
+    (批规则 v1 固定成员; runbook ④ 前置)。
+    """
+    import sqlite3 as _sqlite3
+
+    from src.screening.offensive.v3.evidence.repository import _SCHEMA_DDL
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _receipted_world(tmp_path)
+    evidence_db = world.root / "evidence.sqlite3"
+    evidence_db.unlink()
+    connection = _sqlite3.connect(str(evidence_db))
+    try:
+        for ddl in _SCHEMA_DDL:
+            connection.execute(ddl)
+        connection.commit()
+    finally:
+        connection.close()
+    _clear_sidecars(evidence_db)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "evidence_not_seeded"
+
+
+def test_garbage_evidence_db_rejected_typed(tmp_path):
+    """垃圾字节 evidence 库类型化拒绝 (R37)。
+
+    修复前 (RED 实证): DDL 执行以非类型化 sqlalchemy/sqlite3 异常泄漏
+    (组装器 typed-error 纪律破口)。修复后统一 evidence_not_seeded。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _receipted_world(tmp_path)
+    evidence_db = world.root / "evidence.sqlite3"
+    evidence_db.write_bytes(b"\x90" * 90)
+    _clear_sidecars(evidence_db)
+    before = _snapshot_fact_file(evidence_db)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "evidence_not_seeded"
+    after = _snapshot_fact_file(evidence_db)
+    assert after[0] == before[0], "typed rejection must be zero-write"
+    assert after[1] == before[1]
+
+
+def test_zero_byte_bars_db_rejected_zero_write(tmp_path):
+    """0 字节 bars 库拒绝且零写痕 (R37) — bars_store_not_seeded。"""
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _receipted_world(tmp_path)
+    bars_db = world.root / "bars-evidence.sqlite3"
+    bars_db.unlink()
+    bars_db.touch()
+    _clear_sidecars(bars_db)
+    before = _snapshot_fact_file(bars_db)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "bars_store_not_seeded"
+    after = _snapshot_fact_file(bars_db)
+    assert after[0] == before[0], (
+        "rejected assembly must not rewrite the bars bytes"
+    )
+    assert after[1] == before[1], (
+        "rejected assembly must not create WAL/SHM sidecars on bars"
+    )
+
+
+def test_garbage_bars_db_rejected_typed(tmp_path):
+    """垃圾字节 bars 库类型化拒绝 (R37)。"""
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _receipted_world(tmp_path)
+    bars_db = world.root / "bars-evidence.sqlite3"
+    bars_db.write_bytes(b"\x00garbage" * 11)
+    _clear_sidecars(bars_db)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "bars_store_not_seeded"
+
+
+def test_zero_record_bars_db_accepted(tmp_path):
+    """零记录 bars 库合法通过 (R37) — 首发 market session 前 0 bars 合法。
+
+    bars 是运行时 append 面: 播种/发布管道落 schema 即启动完成, 记录
+    随会话推进增长 (fixture 即此形态 — 本测试显式钉死该语义, 防未来
+    把 bars 探测收紧成「非空记录」时无声破坏启动流程)。
+    """
+    world = _receipted_world(tmp_path)
+    stack = _build(world)
+    assert stack.runner is not None
+
+
+def test_evidence_live_wal_sidecar_not_rejected(tmp_path):
+    """evidence 库带活 -wal 不拒 (R37 sidecar 语义分流成文)。
+
+    spine/governance 是 write-once 冻结事实文件 — sidecar 存在即拒
+    (R35); evidence/bars 是运行时 append 面 — 活 publisher 的未
+    checkpoint WAL 是合法形态 (publish→assemble 同进程流), 不做
+    blanket sidecar 拒绝。冷主文件里的 regime 记录足以通过 immutable
+    探测; 复活形态 (垃圾主文件) 由探测本身关闭, 与 sidecar 无关。
+    """
+    import sqlite3 as _sqlite3
+
+    world = _receipted_world(tmp_path)
+    evidence_db = world.root / "evidence.sqlite3"
+    # 真 live writer: 打开连接落一笔不 checkpoint 的 WAL 写入后保持连接
+    writer = _sqlite3.connect(str(evidence_db))
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute(
+            "INSERT OR IGNORE INTO evidence_head (issuer_namespace,"
+            " last_commit_sequence, dependency_root)"
+            " VALUES ('live-writer', 0, 'genesis')"
+        )
+        writer.commit()
+        assert (world.root / "evidence.sqlite3-wal").exists()
+        stack = _build(world)
+        assert stack.runner is not None
+    finally:
+        writer.close()
+
+
+def test_r37_probe_tables_track_schema_ddl():
+    """R37 探测表 drift guard — evidence_records 必须仍是 repository DDL 声明的表。"""
+    import re as _re
+
+    from src.screening.offensive.v3.evidence import repository as _repo_mod
+    from src.screening.offensive.v3.orchestration import (
+        official_trial_stack as _stack_mod,
+    )
+
+    declared = set(
+        _re.findall(
+            r"CREATE TABLE IF NOT EXISTS\s+(\w+)",
+            "\n".join(_repo_mod._SCHEMA_DDL),
+        )
+    )
+    referenced = set(
+        _re.findall(r"FROM\s+(\w+)", _stack_mod._EVIDENCE_REGIME_PROBE_SQL)
+    )
+    assert referenced <= declared
+
+
+def test_garbage_decisions_db_rejected_typed_zero_write(tmp_path):
+    """垃圾 decisions.sqlite3 类型化拒绝且零写痕 (R37 Act 期对抗发现)。
+
+    decisions 是运行时自建产物: 缺失→首决策自建 (R32 成文)、0 字节→
+    构造器自愈落 schema 是设计行为; 唯一拒绝形态 = 非 sqlite 垃圾 —
+    修复前 TrialArmDecisionStore.__init__ 的 WAL/DDL 以非类型化
+    sqlalchemy.exc.DatabaseError 泄漏 (evidence/bars 同族)。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _receipted_world(tmp_path)
+    decisions_db = world.root / "decisions.sqlite3"
+    decisions_db.write_bytes(b"\xde\xad" * 45)
+    _clear_sidecars(decisions_db)
+    before = _snapshot_fact_file(decisions_db)
+
+    with pytest.raises(OfficialStackError) as ei:
+        _build(world)
+    assert ei.value.code == "decision_store_corrupt"
+    after = _snapshot_fact_file(decisions_db)
+    assert after[0] == before[0], "typed rejection must be zero-write"
+    assert after[1] == before[1]
+
+
+def test_zero_byte_decisions_db_still_self_builds(tmp_path):
+    """0 字节 decisions.sqlite3 维持自建语义 (R37) — 与缺失同义, 不拒。
+
+    钉死与 spine (0 字节=预注册事实缺失, 拒) 的语义分流: decisions 的
+    schema 由构造器按需创建是运行时产物的设计行为, 探测只拒垃圾。
+    """
+    world = _receipted_world(tmp_path)
+    decisions_db = world.root / "decisions.sqlite3"
+    decisions_db.unlink(missing_ok=True)
+    decisions_db.touch()
+
+    stack = _build(world)
+    assert stack.decision_store is not None

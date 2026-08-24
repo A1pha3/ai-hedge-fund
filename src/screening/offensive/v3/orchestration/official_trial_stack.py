@@ -36,6 +36,7 @@ from src.screening.offensive.v3.evidence.governance_identity import (
     load_governance_identity,
 )
 from src.screening.offensive.v3.evidence.repository import EvidenceRepository
+from src.screening.offensive.v3.evidence.session_batch import REGIME_NAMESPACE
 from src.screening.offensive.v3.evidence.session_spine import SessionSpine
 from src.screening.offensive.v3.governance.stage_issuance import (
     StageIssuanceReceipt,
@@ -99,6 +100,108 @@ _SPINE_ENROLLMENT_PROBE_SQL: Final = (
 _GOVERNANCE_SEALED_PROBE_SQL: Final = (
     "SELECT 1 FROM sealed_trials WHERE trial_id = :trial LIMIT 1"
 )
+_EVIDENCE_REGIME_PROBE_SQL: Final = (
+    "SELECT 1 FROM evidence_records"
+    " WHERE issuer_namespace = :ns LIMIT 1"
+)
+_BARS_SCHEMA_PROBE_SQL: Final = (
+    "SELECT 1 FROM sqlite_master"
+    " WHERE type = 'table' AND name = 'evidence_records' LIMIT 1"
+)
+_ANY_SQLITE_PROBE_SQL: Final = "SELECT count(*) FROM sqlite_master"
+
+
+def _require_valid_sqlite_when_present(
+    path: Path,
+    *,
+    rejection_code: str,
+    message: str,
+    **details: object,
+) -> None:
+    """运行时自建库「存在即须为合法 sqlite」探测 (R37 Act 期对抗发现)。
+
+    decisions.sqlite3 是运行时产物: 缺失 → 构造器首决策自建 (R32 成文
+    语义), 0 字节/空 schema → 构造器自愈式落 schema (``CREATE TABLE IF
+    NOT EXISTS`` 是该 store 的设计行为, 与 spine/governance 的「预注册
+    事实不得被读侧组装写入」相反)。唯一拒绝形态 = 非 sqlite 垃圾字节
+    — 修复前 ``TrialArmDecisionStore.__init__`` 的 WAL/DDL 在垃圾文件
+    上以非类型化 ``sqlalchemy.exc.DatabaseError`` 泄漏 (与 evidence/bars
+    的 R37 缺陷同族; ``SELECT count(*)`` 在任何合法 sqlite 上恒返回
+    一行, 故 row 永不为 None — 只有垃圾触发 sqlite3.Error)。
+    """
+    if not path.exists():
+        return
+    uri = f"file:{urllib.parse.quote(str(path))}?immutable=1"
+    try:
+        connection = sqlite3.connect(uri, uri=True)
+        try:
+            connection.execute(_ANY_SQLITE_PROBE_SQL).fetchone()
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise OfficialStackError(rejection_code, message, **details) from exc
+
+
+def _build_decision_store(root: Path) -> TrialArmDecisionStore:
+    decisions_db = root / "decisions.sqlite3"
+    _require_valid_sqlite_when_present(
+        decisions_db,
+        rejection_code="decision_store_corrupt",
+        message=(
+            "an existing decisions.sqlite3 is not a valid SQLite"
+            " database (missing files self-build on first decision and"
+            " empty files self-heal schema by design — only non-sqlite"
+            " garbage is rejected, previously leaking an untyped"
+            " database error from the assembly read path)"
+        ),
+        fact_file=decisions_db.name,
+    )
+    return TrialArmDecisionStore(database_path=str(decisions_db))
+
+
+def _require_seeded_database(
+    path: Path,
+    *,
+    probe_sql: str,
+    params: dict[str, object],
+    rejection_code: str,
+    message: str,
+    **details: object,
+) -> None:
+    """运行时 append 面证据库的冷读零写痕探测 (R37, R35 同族)。
+
+    与 ``_require_pre_registered_fact`` (spine/governance) 的语义分流
+    成文: 那两者是 **write-once 冻结事实文件** — sidecar 存在即拒
+    (R35); 本 helper 面向 **evidence.sqlite3 / bars-evidence.sqlite3
+    运行时 append 面** — 活 publisher 的未 checkpoint WAL 是合法形态
+    (publish→assemble 同进程流), 不做 blanket sidecar 拒绝。
+
+    R35 登记的同族缺陷在此收口: ``EvidenceRepository.__init__`` 连接时
+    无条件 ``journal_mode=WAL`` + DDL + ``INSERT OR IGNORE`` — 组装器
+    读路径对 0 字节/空 schema 库会静默落写副作用后以「合法空证据世界」
+    通过 (fixture 曾以 ``touch()`` 依赖该副作用, 实证可达), 垃圾字节
+    以非类型化 sqlalchemy 异常泄漏, 垃圾主文件 + 残留 sidecar 复活面
+    与 R35 spine/governance PoC 同族。
+
+    ``immutable=1`` 只读探测在构造任何 repository 之前执行: 探测本身
+    零写痕 (不落 DDL/sidecar), 垃圾/空 schema/未播种统一类型化为
+    ``rejection_code``; R35 的复活形态 (主文件被替换) 由探测视图本身
+    关闭 — 垃圾主文件无论 sidecar 与否在探测即失败, 复活数据到不了
+    消费面。代价与 R35 相同: 探测只看冷主文件 (忽略未 checkpoint
+    WAL) — 对 append 面这是刻意选择, 事实 (regime 记录/schema) 由
+    播种/发布流程在组装前持久化, 活 writer 的增量留给正常读路径。
+    """
+    uri = f"file:{urllib.parse.quote(str(path))}?immutable=1"
+    try:
+        connection = sqlite3.connect(uri, uri=True)
+        try:
+            row = connection.execute(probe_sql, params).fetchone()
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise OfficialStackError(rejection_code, message, **details) from exc
+    if row is None:
+        raise OfficialStackError(rejection_code, message, **details)
 
 
 def _require_pre_registered_fact(
@@ -262,6 +365,41 @@ def build_official_trial_stack(
     _require_regular_database(
         bars_db, missing_code="trial_root_not_initialized"
     )
+    # 运行时 append 面冷读探测 (R37, R35 登记的同族遗留): 在构造任何
+    # EvidenceRepository 之前验证「播种/发布流程确实跑过」 —
+    # EvidenceRepository.__init__ 连接即 WAL+DDL+INSERT, 0 字节/空
+    # schema 形态会被静默写副作用后以合法空证据世界通过。evidence 库
+    # 的事实 = regime 命名空间 ≥1 条 committed 记录 (批规则 v1 固定
+    # 成员、runbook ④ 启动前置、首 decide 硬前提); bars 库的事实 =
+    # schema 已落盘 (记录可空 — 首发 market session 前 0 bars 合法)。
+    # sidecar 不拒 (活 writer 合法, 与 spine/governance 冻结事实文件
+    # 分流), 复活形态由 immutable 主文件探测本身关闭 (见 helper)。
+    _require_seeded_database(
+        evidence_db,
+        probe_sql=_EVIDENCE_REGIME_PROBE_SQL,
+        params={"ns": REGIME_NAMESPACE},
+        rejection_code="evidence_not_seeded",
+        message=(
+            "the trial evidence store carries no committed regime"
+            " evidence (runbook step 4 requires the evidence pipeline"
+            " to run before assembly; a schema-only or empty store"
+            " means the trial never completed launch)"
+        ),
+        fact_file=evidence_db.name,
+    )
+    _require_seeded_database(
+        bars_db,
+        probe_sql=_BARS_SCHEMA_PROBE_SQL,
+        params={},
+        rejection_code="bars_store_not_seeded",
+        message=(
+            "the bars evidence store was never initialized by the"
+            " seeding/publishing pipeline (no schema on disk; records"
+            " may legitimately be empty before the first market"
+            " session, but the store itself must exist)"
+        ),
+        fact_file=bars_db.name,
+    )
     blobs = root / "blobs"
 
     def repo(namespace: str, database: Path) -> EvidenceRepository:
@@ -318,7 +456,7 @@ def build_official_trial_stack(
             " finalize NO_RUN bookkeeping)",
             research_program_id=research_program_id,
         )
-    store = TrialArmDecisionStore(database_path=str(root / "decisions.sqlite3"))
+    store = _build_decision_store(root)
     # 资本约定路径在构造期即校验 (缺库 fail-closed 提前到组装面)
     from src.screening.offensive.v3.contracts.trial import TrialArm
 
