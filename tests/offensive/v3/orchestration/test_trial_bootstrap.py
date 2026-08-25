@@ -328,6 +328,207 @@ def _trial_params_file(tmp_path: Path, *, identity_dir: Path) -> Path:
     return path
 
 
+class TestGenesisSeed:
+    """genesis-seed (第三十九轮): fresh-world 构造器的生产入口。
+
+    独立 oracle = ``_fresh_layout`` 手工 Python 链 (R38 fixture): CLI 产出
+    世界必须与之经济等价 (双臂 normalized state hash / genesis manifest
+    经济字段)。对抗面: dry-run 字节级零写入 (含 root 缺失形态) / 幂等重放
+    / fresh-world 冲突 / 相对路径 / root symlink / trial-id 形状。
+    """
+
+    def _seed_argv(self, root: Path, trial_id: str = TRIAL_ID, **overrides) -> list[str]:
+        argv = [
+            "genesis-seed",
+            "--trial-root", str(root),
+            "--trial-id", trial_id,
+            "--now", GOV_NOW.isoformat(),
+        ]
+        if overrides.get("execute"):
+            argv.append("--execute")
+        for key in ("units", "unit_price_cents", "source_authority"):
+            if key in overrides:
+                argv += [f"--{key.replace('_', '-')}", str(overrides[key])]
+        return argv
+
+    def test_dry_run_zero_write_on_missing_root(self, tmp_path) -> None:
+        """dry-run 连 trial root 目录都不创建 (缺失形态零写入)。"""
+        root = tmp_path / "trial-root"
+        assert cli_main(self._seed_argv(root)) == 0
+        assert not root.exists()
+
+    def test_dry_run_zero_write_on_fresh_root(self, tmp_path) -> None:
+        root = tmp_path / "trial-root"
+        root.mkdir()
+        for name in (
+            "evidence.sqlite3", "bars-evidence.sqlite3",
+            "spine.sqlite3", "governance.sqlite3",
+        ):
+            (root / name).write_bytes(b"")
+        before = _tree_digest(tmp_path)
+        assert cli_main(self._seed_argv(root)) == 0
+        assert _tree_digest(tmp_path) == before
+
+    def test_execute_equivalent_to_fixture_chain(self, tmp_path) -> None:
+        """CLI 世界与 R38 fixture 手工链经济等价 (独立 oracle)。"""
+        from src.screening.offensive.v3.capital.flows import GenesisRequest
+        from src.screening.offensive.v3.capital.identity import AccountBinding
+        from src.screening.offensive.v3.capital.repository import CapitalRepository
+        from src.screening.offensive.v3.contracts.base import ExecutionMode
+        from src.screening.offensive.v3.contracts.trial import TrialArm
+        from src.screening.offensive.v3.orchestration.arm_capital import (
+            arm_capital_checkpoint,
+            read_genesis_manifest,
+        )
+        from src.screening.offensive.v3.orchestration.arm_layout import (
+            arm_capital_database_path as layout_arm_path,
+        )
+        from src.screening.offensive.v3.orchestration.genesis import (
+            TrialArmGenesisSource,
+            TrialGenesisArchive,
+            restore_genesis_arm,
+        )
+
+        cli_root = tmp_path / "cli-root"
+        assert cli_main(self._seed_argv(cli_root, execute=True)) == 0
+
+        # 手工对照世界 (与 _fresh_layout 同链, 独立 root)
+        hand_root = tmp_path / "hand-root"
+        hand_root.mkdir()
+        seed = tmp_path / "hand-seed.sqlite3"
+        repo = CapitalRepository.initialize(seed)
+        repo.initialize_genesis(GenesisRequest(
+            idempotency_key="genesis-hand-r39",
+            account_binding=AccountBinding(
+                portfolio_id=f"pf-{TRIAL_ID}",
+                mode=ExecutionMode.DAILY_BAR_PROXY,
+                broker_account_id=None, base_currency="CNY",
+                environment_fingerprint=None,
+            ),
+            unit_quanta=10_000, unit_price_numerator=1_000,
+            unit_price_denominator=1,
+            source_authority="governance.test", authorization_reference="t-r39",
+            effective_at=GOV_NOW, as_of=GOV_NOW,
+        ))
+        source = TrialArmGenesisSource(capital_repository=repo)
+        hand_manifest = TrialGenesisArchive(hand_root).seal(
+            TRIAL_ID, champion_source=source, challenger_source=source
+        )
+        for arm in ("CHAMPION", "CHALLENGER"):
+            target = layout_arm_path(hand_root, TrialArm[arm])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            restore_genesis_arm(hand_manifest, hand_root, target, arm=arm)
+
+        # 经济等价: 双臂 normalized state hash 逐臂相等 (归因/幂等键差异
+        # 不是经济状态)
+        for arm in ("CHAMPION", "CHALLENGER"):
+            cli_arm = TrialArmGenesisSource(
+                capital_repository=CapitalRepository.open(
+                    layout_arm_path(cli_root, TrialArm[arm])
+                )
+            )
+            hand_arm = TrialArmGenesisSource(
+                capital_repository=CapitalRepository.open(
+                    layout_arm_path(hand_root, TrialArm[arm])
+                )
+            )
+            assert (
+                cli_arm.normalized_state().content_hash()
+                == hand_arm.normalized_state().content_hash()
+            )
+
+        # genesis manifest 冷读 (arm_capital 单一实现) + checkpoint 可构造
+        manifest = read_genesis_manifest(cli_root, TRIAL_ID)
+        assert (
+            manifest.normalized_genesis_hash == hand_manifest.normalized_genesis_hash
+        )
+        checkpoint = arm_capital_checkpoint(
+            repository=CapitalRepository.open(
+                layout_arm_path(cli_root, TrialArm.CHAMPION)
+            ),
+            trial_id=TRIAL_ID,
+            arm=TrialArm.CHAMPION,
+            portfolio_id=f"pf-{TRIAL_ID}",
+            mode=ExecutionMode.DAILY_BAR_PROXY,
+            as_of=GOV_NOW,
+            capital_store_id=f"capital.{TRIAL_ID}.champion",
+            genesis_manifest=manifest,
+        )
+        assert checkpoint.portfolio_id == f"pf-{TRIAL_ID}"
+        # 四库占位已就位 (后续 bootstrap 子命令的前置)
+        for name in (
+            "evidence.sqlite3", "bars-evidence.sqlite3",
+            "spine.sqlite3", "governance.sqlite3",
+        ):
+            assert (cli_root / name).is_file()
+            assert (cli_root / name).stat().st_size == 0
+
+    def test_execute_idempotent_replay(self, tmp_path) -> None:
+        """同参数重放收敛: 同 manifest hash + 恰一条 genesis flow。"""
+        from src.screening.offensive.v3.capital.repository import CapitalRepository
+
+        root = tmp_path / "trial-root"
+        assert cli_main(self._seed_argv(root, execute=True)) == 0
+        first_manifest = (root / TRIAL_ID / "genesis-manifest.json").read_bytes()
+        assert cli_main(self._seed_argv(root, execute=True)) == 0
+        assert (root / TRIAL_ID / "genesis-manifest.json").read_bytes() == first_manifest
+
+        seed = root / "genesis-seed" / "seed-capital.sqlite3"
+        repo = CapitalRepository.open(seed)
+        with repo._engine.connect() as conn:  # noqa: SLF001 — 测试面只读
+            import sqlalchemy as sa
+
+            rows = conn.execute(
+                sa.text(
+                    "SELECT count(*) FROM capital_flow_events"
+                    " WHERE flow_kind = 'GENESIS'"
+                )
+            ).scalar()
+        assert rows == 1
+
+    def test_preplaced_nonempty_db_rejected_zero_write(self, tmp_path) -> None:
+        root = tmp_path / "trial-root"
+        root.mkdir()
+        (root / "evidence.sqlite3").write_bytes(b"non-zero garbage")
+        before = _tree_digest(tmp_path)
+        with pytest.raises(SystemExit) as stopped:
+            cli_main(self._seed_argv(root, execute=True))
+        assert stopped.value.code == 2
+        assert _tree_digest(tmp_path) == before
+
+    def test_relative_root_rejected(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(SystemExit) as stopped:
+            cli_main([
+                "genesis-seed",
+                "--trial-root", "relative-trial-root",
+                "--trial-id", TRIAL_ID,
+                "--now", GOV_NOW.isoformat(),
+            ])
+        assert stopped.value.code == 2
+        assert not (tmp_path / "relative-trial-root").exists()
+
+    def test_root_symlink_component_rejected(self, tmp_path) -> None:
+        real = tmp_path / "real"
+        real.mkdir()
+        link = tmp_path / "link-to-real"
+        link.symlink_to(real)
+        with pytest.raises(SystemExit) as stopped:
+            cli_main(self._seed_argv(tmp_path / "link-to-real" / "trial", execute=True))
+        assert stopped.value.code == 2
+        assert not (real / "trial").exists()
+
+    def test_invalid_trial_id_rejected(self, tmp_path) -> None:
+        with pytest.raises(SystemExit) as stopped:
+            cli_main(self._seed_argv(tmp_path / "r", trial_id="Bad_ID!"))
+        assert stopped.value.code == 2
+
+    def test_invalid_units_rejected(self, tmp_path) -> None:
+        with pytest.raises(SystemExit) as stopped:
+            cli_main(self._seed_argv(tmp_path / "r", units=0))
+        assert stopped.value.code == 2
+
+
 class TestSeedEvidence:
     def test_seed_then_driver_decide_reuses_observation(self, tmp_path) -> None:
         """种子观察 == 驱动器同 manifest 推导 → 首 decide 幂等复用。"""
@@ -683,6 +884,115 @@ class TestIdentityV2BackwardCompat:
 
 
 class TestFullLaunchSequence:
+    def test_genesis_seed_then_bootstrap_and_decide_cli_only(
+        self, tmp_path
+    ) -> None:
+        """纯 CLI 启动序列 (第三十九轮): genesis-seed → 三子命令 → decide。
+
+        世界构造不再依赖测试 fixture 手工链 — runbook 启动顺序 0→2 步
+        逐命令可执行 (genesis-seed 是最后一块缺口)。identity 独立生成
+        (身份是证据面, 与资本面 genesis-seed 正交)。
+        """
+        from src.screening.offensive.v3.kernel.sizing import SizingConfig
+        from src.screening.offensive.v3.capital.fills import FillAttribution
+        from src.screening.offensive.v3.orchestration.arm_lifecycle import (
+            CURRENT_COST_SCENARIO,
+        )
+        from src.screening.offensive.v3.orchestration.official_trial_stack import (
+            build_official_trial_stack,
+        )
+        from src.screening.offensive.v3.evidence.governance_identity import (
+            load_governance_identity,
+        )
+
+        identity_dir = tmp_path / "identity"
+        generate_governance_identity(
+            identity_dir, clock=lambda: datetime(2026, 8, 6, 8, 0, tzinfo=UTC)
+        )
+        root = tmp_path / "trial-root"
+        assert cli_main([
+            "genesis-seed",
+            "--trial-root", str(root),
+            "--trial-id", TRIAL_ID,
+            "--now", GOV_NOW.isoformat(),
+            "--execute",
+        ]) == 0
+
+        calendar = _calendar_file(tmp_path)
+        manifest_file = _readiness_manifest_file(tmp_path)
+        common = [
+            "--identity-dir", str(identity_dir),
+            "--trial-root", str(root),
+        ]
+        assert cli_main([
+            "seed-evidence", *common,
+            "--calendar", str(calendar),
+            "--readiness-manifest", str(manifest_file),
+            "--signal-session", SIGNAL_SESSION.isoformat(),
+            "--now", DECIDE_AT.isoformat(),
+            "--execute",
+        ]) == 0
+        assert cli_main([
+            "enroll-spine", *common,
+            "--calendar", str(calendar),
+            "--start", SIGNAL_SESSION.isoformat(),
+            "--end", SIGNAL_SESSION.isoformat(),
+            "--now", DECIDE_AT.isoformat(),
+            "--execute",
+        ]) == 0
+        params = _trial_params_file(tmp_path, identity_dir=identity_dir)
+        assert cli_main([
+            "seal-trial", *common,
+            "--trial-id", TRIAL_ID,
+            "--params", str(params),
+            "--now", (GOV_NOW + timedelta(days=2)).isoformat(),
+            "--execute",
+        ]) == 0
+
+        sizing = SizingConfig(
+            per_ticker_gross_cap_cents=200_000,
+            per_industry_gross_cap_cents=300_000,
+            per_day_gross_cap_cents=500_000,
+            portfolio_gross_cap_cents=400_000,
+            worst_case_fee_ppm=3_000,
+        )
+        stack = build_official_trial_stack(
+            identity_dir=identity_dir,
+            trial_root=root,
+            trial_id=TRIAL_ID,
+            sizing_config=sizing,
+            clock=lambda: DECIDE_AT,
+            market_scenario=CURRENT_COST_SCENARIO,
+            trial_attribution=FillAttribution(
+                producer_namespace="btst",
+                research_program_id="research.btst.regime",
+                economic_lineage_id="eline-r38",
+                stage_id="stage-r38-001",
+            ),
+            research_program_id="research.btst.regime",
+        )
+        identity = load_governance_identity(identity_dir, trusted_at=DECIDE_AT)
+        driver = OfficialTrialSessionDriver(
+            stack=stack,
+            identity=identity,
+            calendar_path=calendar,
+            clock=lambda: DECIDE_AT,
+        )
+        driver.ensure_trial_registration()
+        receipt = driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        assert receipt.pair_key[0] == TRIAL_ID
+        import sqlite3
+
+        with sqlite3.connect(
+            f"file:{root / 'decisions.sqlite3'}?mode=ro", uri=True
+        ) as conn:
+            pairs = conn.execute(
+                "SELECT count(*) FROM trial_arm_decisions"
+            ).fetchone()
+        assert pairs[0] >= 2  # 双臂各一条
+
     def test_seed_enroll_seal_then_decide_pair_committed(
         self, tmp_path
     ) -> None:

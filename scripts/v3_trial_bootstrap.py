@@ -5,10 +5,16 @@ R36 驱动器落地后, runbook 启动顺序 2-4 步对 owner 仍不可执行: R
 组装器冷读守卫要求 trial root 四库预置 (evidence regime 播种 / bars
 schema / spine 注册 / governance 封存 + stage 回执归档), 但预置只有测试
 fixture 能构造; 生产身份 v1 缺 exchange-calendar 键与全部治理签发键。
-本脚本把缺口收敛为三个显式子命令 (与 ``v3_trial_session.py`` /
+本脚本把缺口收敛为显式子命令 (与 ``v3_trial_session.py`` /
 ``v3_trial_genesis.py`` 同款纪律: **默认 dry-run 零写入**, ``--execute``
 才真写):
 
+  genesis-seed    (第三十九轮) fresh-world 构造器 — 四库空占位 + seed
+                  台账 (DAILY_BAR_PROXY 绑定, broker_account_id=None)
+                  + genesis 封存 + 双臂 restore 到 arm_layout 约定路径。
+                  此前 seed 台账创建只有测试 fixture 的手工 Python 链
+                  (test_trial_bootstrap._fresh_layout), runbook 按文
+                  不可执行; 本命令使其一步可执行且幂等;
   seed-evidence   首会话 regime 观察播种 + bars 库 schema 落盘
                   — 与驱动器同源推导 (REGIME_EVIDENCE_ID /
                   REGIME_CLASSIFIER_FINGERPRINT / envelope 构造共享),
@@ -25,8 +31,13 @@ fixture 能构造; 生产身份 v1 缺 exchange-calendar 键与全部治理签�
 诚实边界: 全部离线 primitive — 不解锁 runner 权限语义、不连 broker、
 不构成资本事实; trial 参数 (策略指纹/损失预算/enrollment 窗口) 的业务
 正确性由参数文件作者 (owner) 负责, 本脚本只负责派生一致性与签名链完整。
+genesis-seed 的 units/unit price/source authority 是 owner 显式决策的
+ genesis 经济事实 (有默认值, 落账后永久), 与任何授权/激活无关。
 
 用法:
+  uv run python scripts/v3_trial_bootstrap.py genesis-seed \\
+      --trial-root <root> --trial-id <id> [--units 10000] \\
+      [--unit-price-cents 1000] [--execute] [--now ISO]
   uv run python scripts/v3_trial_bootstrap.py seed-evidence \\
       --identity-dir data/v3_governance_identity --trial-root <root> \\
       --calendar data/reports/trade_calendar.json \\
@@ -39,12 +50,34 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import stat
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 from src.screening.offensive.v3.contracts.evidence import SUPPORTED_SCHEMA_MAJOR
+
+# 与 v3_trial_genesis 同形 (单一形状规则: 两处 grep 可互相核对的字面 regex)
+_TRIAL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
+
+# 四库占位名 — genesis-seed 的 fresh-world 守卫对象 (R35/R37 组装器冷读
+# 探测的同一组文件; genesis-seed 是它们的生产创建者)。
+_PREPLACED_DB_NAMES = (
+    "evidence.sqlite3",
+    "bars-evidence.sqlite3",
+    "spine.sqlite3",
+    "governance.sqlite3",
+)
+
+
+class _PathGuardError(RuntimeError):
+    """path_guards 守卫拒绝 → CLI 类型化失败的桥接异常 (code 透传)。"""
+
+    def __init__(self, code: str, detail: str, **details: object) -> None:
+        super().__init__(f"{code}: {detail}")
+        self.code = code
+        self.details = details
 
 
 def _publication_settle():
@@ -234,6 +267,217 @@ def _seed_observation(snapshot: object, signal_session: date, now: datetime):
         evidence_kind="snapshot",
     )
     return observation, envelope
+
+
+def _cmd_genesis_seed(args: argparse.Namespace) -> int:
+    """genesis-seed — runbook 启动序列第 0/1 步的生产入口 (第三十九轮)。
+
+    把此前只有测试 fixture 能构造的世界构造 (test_trial_bootstrap
+    ``_fresh_layout`` 的手工 Python 链) 收敛为一条命令: 四库空占位 +
+    seed 台账 (DAILY_BAR_PROXY 绑定) + genesis 封存 + 双臂 restore。
+    全部消费既有单一实现 (CapitalRepository/TrialGenesisArchive/
+    arm_layout/restore_genesis_arm), 本命令零新资本语义。
+
+    纪律: dry-run 默认字节级零写入 (连 trial root 目录都不创建); 拒绝
+    发生在任何写副作用之前 (canonical 绝对路径/fresh-world/形状校验);
+    同参数重放幂等 (seed 幂等键 + archive 恰等幂等 + restore 覆写同字节)。
+    """
+    now = _parse_now(args.now)
+    trial_root = Path(args.trial_root)
+    trial_id = args.trial_id
+
+    if _TRIAL_ID_RE.fullmatch(trial_id) is None:
+        raise SystemExit(
+            _fail(
+                "trial_id_invalid",
+                "trial id must match ^[a-z0-9][a-z0-9-]{2,63}$",
+                trial_id=trial_id,
+            )
+        )
+    if not trial_root.is_absolute():
+        raise SystemExit(
+            _fail(
+                "trial_root_not_absolute",
+                "the capital truth layer requires a canonical absolute"
+                " trial root (path guards reject relative paths)",
+                trial_root=str(trial_root),
+            )
+        )
+    if args.units <= 0:
+        raise SystemExit(_fail("units_invalid", str(args.units)))
+    if args.unit_price_cents <= 0:
+        raise SystemExit(_fail("unit_price_invalid", str(args.unit_price_cents)))
+
+    # fresh-world 守卫 (零写): 四库占位存在且非空 = 世界已越权初始化。
+    # 缺失/空 0 字节是合法起点 (execute 期补 touch)。
+    for name in _PREPLACED_DB_NAMES:
+        path = trial_root / name
+        try:
+            mode = path.lstat().st_mode
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(mode):
+            raise SystemExit(_fail("trial_root_path_rejected", name))
+        if path.stat().st_size > 0:
+            raise SystemExit(
+                _fail(
+                    "trial_root_not_fresh",
+                    "a preplaced database is non-empty; genesis-seed only"
+                    " constructs a fresh world (use a new trial root)",
+                    name=name,
+                )
+            )
+
+    if not args.execute:
+        return _ok(
+            {
+                "mode": "dry-run",
+                "plan": [
+                    "ensure trial root directory (guarded components)",
+                    "touch the four empty db placeholders",
+                    "initialize seed capital ledger"
+                    " (DAILY_BAR_PROXY binding, broker_account_id=None)",
+                    f"record genesis units ({args.units} units @"
+                    f" {args.unit_price_cents} cents) — idempotency key"
+                    f" bootstrap:{trial_id}",
+                    "seal paired genesis archive (content-addressed)",
+                    "restore both arms to <trial_root>/arms/<arm>/capital.sqlite3",
+                ],
+                "trial_id": trial_id,
+                "trial_root": str(trial_root),
+                "units": args.units,
+                "unit_price_cents": args.unit_price_cents,
+                "source_authority": args.source_authority,
+                "authorization_reference": (
+                    args.authorization_reference
+                    if args.authorization_reference is not None
+                    else f"bootstrap:{trial_id}"
+                ),
+            }
+        )
+
+    # ---- execute ----
+    from src.screening.offensive.v3.capital.flows import GenesisRequest
+    from src.screening.offensive.v3.capital.identity import AccountBinding
+    from src.screening.offensive.v3.capital.repository import (
+        CapitalConflict,
+        CapitalRepository,
+    )
+    from src.screening.offensive.v3.contracts.base import ExecutionMode
+    from src.screening.offensive.v3.contracts.trial import TrialArm
+    from src.screening.offensive.v3.orchestration.arm_layout import (
+        arm_capital_database_path,
+    )
+    from src.screening.offensive.v3.orchestration.genesis import (
+        TrialArmGenesisSource,
+        TrialGenesisArchive,
+        TrialGenesisError,
+        restore_genesis_arm,
+    )
+    from src.screening.offensive.v3.orchestration.path_guards import (
+        ensure_directory_components,
+    )
+
+    def _guard_fail(exc: _PathGuardError, *, surface: str) -> SystemExit:
+        return SystemExit(
+            _fail(surface, str(exc), guard_code=exc.code)
+        )
+
+    try:
+        ensure_directory_components(
+            trial_root,
+            fail=_PathGuardError,
+            missing_code="trial_root_component_missing",
+            rejected_code="trial_root_component_rejected",
+        )
+    except _PathGuardError as exc:
+        raise _guard_fail(exc, surface="trial_root_rejected")
+
+    # 四库空占位。execute 期重验空性 (dry-run 与 --execute 之间可能隔了
+    # 任意长的墙钟; 陈旧 dry-run 的放行不构成 execute 的事实) — 任一非空
+    # 即拒绝, 与零写阶段同码。
+    for name in _PREPLACED_DB_NAMES:
+        path = trial_root / name
+        if path.exists():
+            if path.stat().st_size > 0:
+                raise SystemExit(
+                    _fail(
+                        "trial_root_not_fresh",
+                        "a preplaced database is non-empty; genesis-seed only"
+                        " constructs a fresh world (use a new trial root)",
+                        name=name,
+                    )
+                )
+        else:
+            path.write_bytes(b"")
+
+    seed_dir = trial_root / "genesis-seed"
+    try:
+        ensure_directory_components(
+            seed_dir,
+            fail=_PathGuardError,
+            missing_code="seed_dir_component_missing",
+            rejected_code="seed_dir_component_rejected",
+        )
+    except _PathGuardError as exc:
+        raise _guard_fail(exc, surface="seed_dir_rejected")
+    seed_path = seed_dir / "seed-capital.sqlite3"
+
+    try:
+        repo = CapitalRepository.initialize(seed_path)
+        repo.initialize_genesis(
+            GenesisRequest(
+                idempotency_key=f"bootstrap:{trial_id}",
+                account_binding=AccountBinding(
+                    portfolio_id=f"pf-{trial_id}",
+                    mode=ExecutionMode.DAILY_BAR_PROXY,
+                    broker_account_id=None,
+                    base_currency="CNY",
+                    environment_fingerprint=None,
+                ),
+                unit_quanta=args.units,
+                unit_price_numerator=args.unit_price_cents,
+                unit_price_denominator=1,
+                source_authority=args.source_authority,
+                authorization_reference=(
+                    args.authorization_reference
+                    if args.authorization_reference is not None
+                    else f"bootstrap:{trial_id}"
+                ),
+                effective_at=now,
+                as_of=now,
+            )
+        )
+        source = TrialArmGenesisSource(capital_repository=repo)
+        manifest = TrialGenesisArchive(trial_root).seal(
+            trial_id, champion_source=source, challenger_source=source
+        )
+        arms = {}
+        for arm in ("CHAMPION", "CHALLENGER"):
+            target = arm_capital_database_path(trial_root, TrialArm[arm])
+            restore_genesis_arm(manifest, trial_root, target, arm=arm)
+            arms[arm.lower()] = str(target)
+    except (CapitalConflict, TrialGenesisError) as exc:
+        raise SystemExit(
+            _fail(
+                getattr(exc, "code", "genesis_seed_failed"),
+                str(exc),
+            )
+        )
+
+    return _ok(
+        {
+            "mode": "execute",
+            "trial_id": manifest.trial_id,
+            "genesis_manifest_hash": hashlib.sha256(
+                (trial_root / trial_id / "genesis-manifest.json").read_bytes()
+            ).hexdigest(),
+            "seed_ledger": str(seed_path),
+            "arms": arms,
+            "units": args.units,
+            "unit_price_cents": args.unit_price_cents,
+        }
+    )
 
 
 def _cmd_seed_evidence(args: argparse.Namespace) -> int:
@@ -825,6 +1069,36 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument("--research-program", default="research.btst.regime")
         p.add_argument("--now", default=None, help="UTC ISO instant (default: now)")
         p.add_argument("--execute", action="store_true", help="real writes (default: dry-run)")
+
+    genesis = sub.add_parser(
+        "genesis-seed",
+        help="fresh-world constructor: 4 db placeholders + seed capital ledger"
+        " + paired genesis seal + both arms (no identity needed — capital plane)",
+    )
+    genesis.add_argument("--trial-root", required=True)
+    genesis.add_argument("--trial-id", required=True)
+    genesis.add_argument(
+        "--units", type=int, default=10_000, help="genesis unit quanta (default 10000)"
+    )
+    genesis.add_argument(
+        "--unit-price-cents",
+        type=int,
+        default=1_000,
+        help="genesis unit price in integer cents (default 1000 = ¥10.00)",
+    )
+    genesis.add_argument(
+        "--source-authority",
+        default="governance.bootstrap",
+        help="genesis attribution recorded permanently in the capital ledger",
+    )
+    genesis.add_argument(
+        "--authorization-reference",
+        default=None,
+        help="authorization reference (default: bootstrap:{trial_id})",
+    )
+    genesis.add_argument("--now", default=None, help="UTC ISO instant (default: now)")
+    genesis.add_argument("--execute", action="store_true", help="real writes (default: dry-run)")
+    genesis.set_defaults(func=_cmd_genesis_seed)
 
     seed = sub.add_parser("seed-evidence", help="seed first-session regime evidence + bars schema")
     common(seed)

@@ -36,19 +36,30 @@ uv run python scripts/v3_governance_identity.py check --dir data/v3_governance_i
 
 ## 启动顺序
 
-0. **前置（owner）**：trial root 四库空文件占位（`evidence.sqlite3` /
-   `bars-evidence.sqlite3` / `spine.sqlite3` / `governance.sqlite3` 各
-   `touch`）＋ 身份目录 v2 再生成（R38 起治理签发四键随默认生成集产出；
-   v1 目录缺 exchange-calendar/治理键，见 v3-governance-identity.md：
+0. **前置（owner）**：身份目录 v2 再生成（R38 起治理签发四键随默认生成集
+   产出；v1 目录缺 exchange-calendar/治理键，见 v3-governance-identity.md：
    新目录 generate、旧目录改名废弃，绝不原地改写）。
 ```bash
 uv run python scripts/v3_governance_identity.py generate --dir <新目录>
 uv run python scripts/v3_governance_identity.py check --dir <新目录>
 # namespaces 应含 regime/exchange-calendar/btst-bars/btst + 四个 governance.*
 ```
-1. ①②③④ 全绿 → 生成/确认 trial genesis（`v3_trial_genesis.py`，
-   dry-run 默认零写入，先 dry 后真跑）；双臂 restore 到
-   `<trial_root>/arms/{champion,challenger}/capital.sqlite3`。
+1. **genesis-seed（R39 生产入口，fresh-world 构造器；dry-run 默认零写入，
+   `--execute` 才真写）**：一条命令完成四库空占位 + seed 台账创建
+   （DAILY_BAR_PROXY 绑定、`broker_account_id=None`——影子试验模式矩阵）
+   + genesis 封存 + 双臂 restore 到 arm_layout 约定路径。同参数重放幂等；
+   四库占位任一非空 → `trial_root_not_fresh`（世界已初始化，换新 root）。
+   `trial_root` 必须是 canonical 绝对路径（资本层路径守卫拒绝相对路径）；
+   `--units`/`--unit-price-cents`/`--source-authority` 是落账后永久的
+   genesis 经济事实（owner 显式决策，默认 10000 单位 @ ¥10.00）。
+```bash
+uv run python scripts/v3_trial_bootstrap.py genesis-seed \
+    --trial-root <绝对路径 trial_root> --trial-id <trial_id> \
+    [--units 10000] [--unit-price-cents 1000] \
+    [--source-authority governance.bootstrap] [--execute] [--now <UTC ISO>]
+```
+   （既有 `v3_trial_genesis.py` 仍可用于对**外部既有台账**做 dry-run
+   盘点/再封存；新 trial 世界一律走 `genesis-seed`。）
 1b. **bootstrap 三步（R38 生产入口，均 dry-run 默认零写入，
     `--execute` 才真写；trial 参数的业务正确性由参数文件作者负责）**：
 ```bash
