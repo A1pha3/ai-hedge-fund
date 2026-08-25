@@ -39,17 +39,47 @@ uv run python scripts/v3_governance_identity.py check --dir data/v3_governance_i
 0. **前置（owner）**：trial root 四库空文件占位（`evidence.sqlite3` /
    `bars-evidence.sqlite3` / `spine.sqlite3` / `governance.sqlite3` 各
    `touch`）＋ 身份目录 v2 再生成（R38 起治理签发四键随默认生成集产出；
-   v1 目录缺 exchange-calendar/治理键，见 v3-governance-identity.md）。
+   v1 目录缺 exchange-calendar/治理键，见 v3-governance-identity.md：
+   新目录 generate、旧目录改名废弃，绝不原地改写）。
+```bash
+uv run python scripts/v3_governance_identity.py generate --dir <新目录>
+uv run python scripts/v3_governance_identity.py check --dir <新目录>
+# namespaces 应含 regime/exchange-calendar/btst-bars/btst + 四个 governance.*
+```
 1. ①②③④ 全绿 → 生成/确认 trial genesis（`v3_trial_genesis.py`，
-   dry-run 默认零写入，先 dry 后真跑）。
-1b. **bootstrap 三步（R38 生产入口，均 dry-run 默认零写入）**：
-   `scripts/v3_trial_bootstrap.py seed-evidence`（首会话 regime 观察＋bars
-   schema）→ `enroll-spine`（权威日历派生 enrollment，assessment=T+10）→
-   `seal-trial`（参数文件→互证 artifact→治理键签名→封存→stage 签发→回执
-   归档）。注意：seal 的 attempt 预留是消耗性（同参数重放=类型化冲突，
-   multiplicity 纪律）。
-2. 用治理身份 signer 替换 ephemeral rig（`governance_identity.load` →
-   `repository_for`/`signer_for` 接线）。
+   dry-run 默认零写入，先 dry 后真跑）；双臂 restore 到
+   `<trial_root>/arms/{champion,challenger}/capital.sqlite3`。
+1b. **bootstrap 三步（R38 生产入口，均 dry-run 默认零写入，
+    `--execute` 才真写；trial 参数的业务正确性由参数文件作者负责）**：
+```bash
+# 播种首会话 regime 观察 (固定 REGIME_EVIDENCE_ID, readiness 指纹绑定;
+# 首个 decide 幂等复用种子观察) + bars 库 schema 落盘
+uv run python scripts/v3_trial_bootstrap.py seed-evidence \
+    --identity-dir <身份目录> --trial-root <trial_root> \
+    --calendar data/reports/trade_calendar.json \
+    --readiness-manifest data/reports/daily_action_readiness_YYYYMMDD.json \
+    --signal-session YYYY-MM-DD [--execute] [--now <UTC ISO>]
+# spine enrollment (权威日历派生, assessment = 排程末位 T+10)
+uv run python scripts/v3_trial_bootstrap.py enroll-spine \
+    --identity-dir <身份目录> --trial-root <trial_root> \
+    --calendar data/reports/trade_calendar.json \
+    --start YYYY-MM-DD --end YYYY-MM-DD [--execute]
+# 治理封存 + stage 签发 + 回执归档 (trust 头自动从身份目录绑定)
+uv run python scripts/v3_trial_bootstrap.py seal-trial \
+    --identity-dir <身份目录> --trial-root <trial_root> \
+    --trial-id <trial_id> --params <trial-params.json> [--execute]
+```
+   注意：seal 的 attempt 预留是消耗性（同参数重放=类型化冲突，
+   multiplicity 纪律）；stage 契约要求 issued_at < enrollment_start。
+2. 日度驱动（R36 CLI; R38 修正 decide 快照加载面 — 真实三参签名 +
+   VerifiedSnapshotResult 解包，新增 `--data-dir`）：
+```bash
+uv run python scripts/v3_trial_session.py decide \
+    --identity-dir <身份目录> --trial-root <trial_root> \
+    --trial-id <trial_id> --calendar data/reports/trade_calendar.json \
+    --readiness-manifest data/reports/daily_action_readiness_YYYYMMDD.json \
+    --data-dir data --signal-session YYYY-MM-DD [--execute]
+```
 3. 特权 worker daemon 启动（UDS bind）→ 用一次 `assemble` 请求冒烟
    （返回 `ok:true` + merkle root）。
 4. **runner 解锁**：这是最后的 owner 开关动作（代码 fail-closed 的解除

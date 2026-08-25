@@ -676,3 +676,71 @@ class TestAdversarial:
         assert payload["ok"] is True
         assert payload["mode"] == "dry-run"
         assert _tree_digest(world.root) + _tree_digest(world.identity_dir) == before
+
+    def test_decide_loads_snapshot_with_real_loader_signature(
+        self, world: _DriverWorld, tmp_path_factory, capsys
+    ) -> None:
+        """R38 修复钉死: decide 的快照加载用真实三参签名并解包 Result。
+
+        R36 缺陷: 单参调用 load_verified_daily_action_snapshot(manifest_path)
+        — 真实签名 (signal_date, *, reports_dir, data_dir), 一执行即
+        TypeError; 且返回值是 VerifiedSnapshotResult 包装, 需解包 .snapshot。
+        本测试经生产发布函数落盘真实 manifest 后走 CLI --execute 全链。
+        """
+        from dataclasses import replace as _replace
+
+        from scripts.v3_trial_session import main as cli_main
+        from src.screening.offensive.cache_readiness import universe_fingerprint
+        from src.screening.offensive.daily_action_readiness import (
+            publish_daily_action_readiness,
+        )
+        from src.screening.offensive.pit_evidence import canonical_fingerprint
+
+        reports = tmp_path_factory.mktemp("reports-r38")
+        manifest = _manifest(SIGNAL_SESSION)
+        stepped = _replace(
+            manifest,
+            created_at=manifest.created_at.replace("+00:00", "Z"),
+            universe_fingerprint=universe_fingerprint(TICKERS),
+            suspension_evidence=_replace(
+                manifest.suspension_evidence,
+                source_fingerprint=canonical_fingerprint("suspension", "*", []),
+            ),
+        )
+        unsigned = {
+            key: value
+            for key, value in stepped.to_dict().items()
+            if key != "content_fingerprint"
+        }
+        publication = publish_daily_action_readiness(
+            _replace(stepped, content_fingerprint=_fingerprint(unsigned)),
+            reports,
+        )
+        assert publication.status == "healthy"
+
+        world.driver.ensure_trial_registration()
+        # R35 冷读纪律: CLI 是新进程, 组装器冷读探测要求事实文件已
+        # checkpoint — 同进程 stack (spine + assembler 持有的 governance)
+        # 与 registration 构造的引擎先确定性 dispose。governance 引擎不
+        # 在 stack 公开面, 经同路径重建一个等价引擎 dispose (SQLite WAL
+        # checkpoint 是文件级效果, 与引擎实例无关)。
+        world.stack.spine._engine.dispose()
+        world.stack.runner._assembler._governance._engine.dispose()
+        rc = cli_main(
+            [
+                "decide",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--readiness-manifest", str(publication.artifact_path),
+                "--data-dir", str(tmp_path_factory.mktemp("data-r38")),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--now", DECIDE_AT.isoformat(),
+                "--execute",
+            ]
+        )
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+        assert payload["champion_status"] == str(payload["challenger_status"])

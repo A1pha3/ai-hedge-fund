@@ -137,7 +137,7 @@ def _build_stack(
             research_program_id=research_program_id,
         )
     except OfficialStackError as exc:
-        raise SystemExit(_fail("stack_build_failed", str(exc), code=exc.code))
+        raise SystemExit(_fail(exc.code, str(exc)))
 
 
 def _load_snapshot(

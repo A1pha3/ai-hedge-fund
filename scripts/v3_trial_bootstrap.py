@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import stat
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -134,10 +135,8 @@ def _common_checks(*, identity_dir: Path, trial_root: Path) -> dict:
         path = trial_root / name
         if not path.is_file():
             raise SystemExit(_fail("trial_root_not_initialized", name))
-        import stat as _stat
-
         mode = path.lstat().st_mode
-        if not _stat.S_ISREG(mode):
+        if not stat.S_ISREG(mode):
             raise SystemExit(_fail("trial_root_path_rejected", name))
     return {"namespaces": summary.get("namespaces")}
 
@@ -150,8 +149,6 @@ def _seed_observation(snapshot: object, signal_session: date, now: datetime):
     测试钉住「种子观察 == 同 manifest 下驱动器首 decide 会产出的观察」,
     使首个 decide 走幂等复用路径而非第二 revision。
     """
-    import hashlib as _hashlib
-
     from src.screening.offensive.v3.contracts.base import (
         EvidenceScope,
         ExecutionMode,
@@ -169,6 +166,8 @@ def _seed_observation(snapshot: object, signal_session: date, now: datetime):
         REGIME_EVIDENCE_ID,
     )
     from src.screening.offensive.v3.orchestration.trial_session_driver import (
+        _HEX,
+        _REGIME_FINGERPRINT_PREFIX,
         REGIME_CLASSIFIER_FINGERPRINT,
     )
 
@@ -176,11 +175,12 @@ def _seed_observation(snapshot: object, signal_session: date, now: datetime):
         snapshot.regime,
         reason_if_missing=RegimeObservationReason.MISSING_REQUIRED_INPUT,
     )
+    # 与驱动器 _regime_source_artifact_hash 同源: 剥前缀后必须是 sha256
+    # hex (拒绝把捏造来源绑进证据时间轴)。常量 import 非字面量复制。
     fingerprint = snapshot.manifest.shared_evidence.regime_fingerprint
-    prefix = "sha256:"
-    if fingerprint.startswith(prefix):
-        fingerprint = fingerprint[len(prefix):]
-    if len(fingerprint) != 64 or not all(c in "0123456789abcdef" for c in fingerprint.lower()):
+    if fingerprint.startswith(_REGIME_FINGERPRINT_PREFIX):
+        fingerprint = fingerprint[len(_REGIME_FINGERPRINT_PREFIX):]
+    if len(fingerprint) != 64 or not _HEX.issuperset(fingerprint.lower()):
         raise SystemExit(
             _fail(
                 "regime_source_fingerprint_invalid",
@@ -227,7 +227,7 @@ def _seed_observation(snapshot: object, signal_session: date, now: datetime):
         available_at=now,
         mode=ExecutionMode.DAILY_BAR_PROXY,
         source_authority="regime.classifier",
-        payload_content_hash=_hashlib.sha256(
+        payload_content_hash=hashlib.sha256(
             observation.canonical_bytes()
         ).hexdigest(),
         schema_major=SUPPORTED_SCHEMA_MAJOR,
@@ -285,6 +285,7 @@ def _cmd_seed_evidence(args: argparse.Namespace) -> int:
         RegimeObservationPublisher,
         RegimeObservationReader,
     )
+    from src.screening.offensive.v3.evidence.repository import EvidenceStoreError
     from src.screening.offensive.v3.evidence.session_batch import REGIME_NAMESPACE
 
     # 不经 build_official_trial_stack (那会触发治理封存前置探测, 而封存
@@ -335,10 +336,11 @@ def _cmd_seed_evidence(args: argparse.Namespace) -> int:
     try:
         active = reader.active(envelope.evidence_id, probe_cutoff)
         existing = active
-    except Exception as exc:  # noqa: BLE001 - 只吞「cutoff 前无提交」缺席
-        code = str(exc).partition(":")[0]
-        if code != "evidence_not_committed_before_cutoff":
-            raise SystemExit(_fail("regime_store_error", code))
+    except EvidenceStoreError as exc:
+        # P2-1 纪律 (驱动器同款 _store_code 分流): 只吞「cutoff 前无提交」
+        # 缺席; 其余仓库错误 propagate — 宽吞会假装没看到坏记录。
+        if str(exc).partition(":")[0] != "evidence_not_committed_before_cutoff":
+            raise
 
     seeded: bool
     if existing is None:
@@ -448,7 +450,11 @@ def _cmd_enroll_spine(args: argparse.Namespace) -> int:
         )
     except SessionSpineError as exc:
         raise SystemExit(
-            _fail("spine_enroll_failed", exc.code, detail=str(exc))
+            _fail(
+                "spine_enroll_failed",
+                str(exc),
+                spine_code=exc.code,
+            )
         )
     finally:
         # 冷读纪律 (R35): 引擎 dispose 使 -wal 确定性 checkpoint 进主文件,
@@ -537,12 +543,12 @@ def _cmd_seal_trial(args: argparse.Namespace) -> int:
         StageIssuanceError,
         StageIssuanceRequest,
     )
-    from src.screening.offensive.v3.policy.models import PolicySnapshot
     from src.screening.offensive.v3.contracts.governance import (
+        PolicyActivation,
         StatisticalAnalysisPlan,
         TrialManifest,
     )
-    from src.screening.offensive.v3.policy.models import PolicyActivation
+    from src.screening.offensive.v3.policy.models import PolicySnapshot
 
     # 严格模型经 JSON 面 reconstruction (model_dump(mode="json") 的产物
     # 直接 model_validate 会被 strict 类型拒绝 — model_validate_json 是
@@ -576,8 +582,18 @@ def _cmd_seal_trial(args: argparse.Namespace) -> int:
                 issued_at=issued_at.isoformat(),
             )
         )
-    trust_bundle_hash = p_trial["trust_bundle_hash"]
-    registry_epoch = int(p_trial["registry_epoch"])
+    # 信任头绑定从磁盘身份派生 (单一事实源): 参数文件不供给 trust_bundle
+    # hash/epoch — 伪造的信任头在封存验签时才会被拒, 这里提前 fail-closed
+    # 并保证 manifest/activation 与身份目录逐值一致。
+    from src.screening.offensive.v3 import trust as v3_trust
+
+    _identity_for_head = load_governance_identity(identity_dir, trusted_at=now)
+    trust_bundle_hash = _identity_for_head.manifest["head_witness"][
+        "active_trust_bundle_hash"
+    ]
+    registry_epoch = int(
+        _identity_for_head.manifest["head_witness"]["registry_epoch"]
+    )
 
     activation = PolicyActivation(
         portfolio_id=p_act["portfolio_id"],
@@ -607,11 +623,9 @@ def _cmd_seal_trial(args: argparse.Namespace) -> int:
         target_portfolio_policy_fingerprint=target.policy_fingerprint,
         trust_bundle_hash=trust_bundle_hash,
         registry_epoch=registry_epoch,
-        baseline_policy_activation_hash=(
-            p_trial["baseline_policy_activation_hash"]
-            if "baseline_policy_activation_hash" in p_trial
-            else activation.artifact_hash()
-        ),
+        # activation 哈希从派生对象计算 (互证绑定): trial manifest 绑定的
+        # 就是本次封存的 activation 字节, 不接受外部声称值。
+        baseline_policy_activation_hash=activation.artifact_hash(),
         target_policy_snapshot_registration_hash=target_policy_registration_hash(target),
         attempt_ledger_checkpoint_before_trial=(
             p_trial["attempt_ledger_checkpoint_before_trial"]
@@ -685,8 +699,8 @@ def _cmd_seal_trial(args: argparse.Namespace) -> int:
         schema_major=2,
     )
 
-    identity = load_governance_identity(identity_dir, trusted_at=now)
-    from src.screening.offensive.v3 import trust as v3_trust
+    # 复用信任头加载 (单一实现): manifest 同一磁盘字节, 不重复加载。
+    identity = _identity_for_head
 
     head = v3_trust.CurrentTrustHeadWitness.model_validate_json(
         json.dumps(identity.manifest["head_witness"])
@@ -732,7 +746,12 @@ def _cmd_seal_trial(args: argparse.Namespace) -> int:
         )
     except GovernanceStoreError as exc:
         raise SystemExit(
-            _fail("seal_failed", exc.code, detail=str(exc), **(exc.details or {}))
+            _fail(
+                "seal_failed",
+                str(exc),
+                store_code=exc.code,
+                **exc.details,
+            )
         )
 
     stage_sign, stage_cap = sign_with("governance.stage.manifest")
@@ -763,10 +782,12 @@ def _cmd_seal_trial(args: argparse.Namespace) -> int:
         receipt = issuer.issue(stage_request)
     except (StageIssuanceError, GovernanceStoreError) as exc:
         raise SystemExit(
-            _fail("stage_issue_failed", str(exc), code=getattr(exc, "code", ""))
+            _fail(
+                "stage_issue_failed",
+                str(exc),
+                store_code=getattr(exc, "code", ""),
+            )
         )
-    finally:
-        pass
 
     from src.screening.offensive.v3.orchestration.stage_archive import (
         StageArchiveError,
@@ -777,7 +798,7 @@ def _cmd_seal_trial(args: argparse.Namespace) -> int:
         archive_path = write_stage_issuance_receipt(trial_root, receipt)
     except StageArchiveError as exc:
         raise SystemExit(
-            _fail("archive_failed", str(exc), code=exc.code)
+            _fail("archive_failed", str(exc), archive_code=exc.code)
         )
     finally:
         # 冷读纪律 (R35/R37): 封存/签发进程终止前确定性 checkpoint,
