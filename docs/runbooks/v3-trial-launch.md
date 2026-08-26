@@ -91,6 +91,36 @@ uv run python scripts/v3_trial_session.py decide \
     --readiness-manifest data/reports/daily_action_readiness_YYYYMMDD.json \
     --data-dir data --signal-session YYYY-MM-DD [--execute]
 ```
+2b. **日度市场推进（R40 前置完备性）**：decide 之后的执行窗口推进
+    （T+1..T+10 开盘结算 + marks 估值 + 守恒重验）。bar-source 必须是
+    **未复权 tushare `pro.daily` 日快照**（court raw 格式
+    `daily_YYYYMMDD.csv`，含 `pre_close`——限价围栏从 pre_close × 板块
+    幅度推导）。刷新用研究面续传工具（幂等，已存在文件跳过）：
+```bash
+uv run python scripts/btst_court_fetch.py   # data/research/btst_court/raw/daily/
+uv run python scripts/v3_trial_session.py advance \
+    --identity-dir <身份目录> --trial-root <trial_root> \
+    --trial-id <trial_id> --calendar data/reports/trade_calendar.json \
+    --signal-session YYYY-MM-DD --through-session YYYY-MM-DD \
+    --bar-source data/research/btst_court/raw/daily [--execute] [--now <UTC ISO>]
+```
+    dry-run 与 execute 共用前置校验（栈构造/证据发布之前）：冻结排程窗口
+    （信号会话 + 后 10 会话）内每个会话的 `daily_*.csv` 必须在位，缺失
+    即类型化 `bar_sessions_missing` 并输出完整缺失清单；窗口外
+    through_session 在 dry-run 即拒（`advance_window_not_in_schedule`）；
+    execute 只解析窗口内快照（driver 面同款整窗口预检——任一会话缺失
+    时零 bar 发布）。
+    ⚠ **不可用 `data/price_cache/` 作 bar-source**：它是 qfq 前复权且无
+    `pre_close`（`src/tools/price.py`），限价围栏/资本标记口径全错——
+    数据完整性红线（AGENTS.md）。
+2c. **错过会话补记**：enrollment 窗口内因故未 decide 的会话，在
+    assessment 日期过后补 NO_RUN 终态（幂等，append-only spine）：
+```bash
+uv run python scripts/v3_trial_session.py finalize-missed \
+    --identity-dir <身份目录> --trial-root <trial_root> \
+    --trial-id <trial_id> --calendar data/reports/trade_calendar.json \
+    [--execute] [--now <UTC ISO>]
+```
 3. 特权 worker daemon 启动（UDS bind）→ 用一次 `assemble` 请求冒烟
    （返回 `ok:true` + merkle root）。
 4. **runner 解锁**：这是最后的 owner 开关动作（代码 fail-closed 的解除

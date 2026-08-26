@@ -321,19 +321,27 @@ class OfficialTrialSessionDriver:
                     for session in (signal_session, *schedule.following_sessions)
                 ],
             )
-        bar_records = {}
-        for session in window:
-            bars = bars_by_session.get(session)
-            if bars is None:
-                raise TrialSessionDriverError(
-                    "bar_set_missing",
-                    "every advanced session needs a bar set (suspended or"
-                    " otherwise); UNKNOWN fencing happens downstream",
-                    session=session.isoformat(),
-                )
-            bar_records[session] = self._publish_bar_set(
-                session=session, bars=bars, now=advance_at
+        # Whole-window preflight: when any session's bar set is missing, no
+        # bar evidence may be published (a mid-window gap must not leave the
+        # operator with a partially published window and a late failure).
+        missing_sessions = [
+            session for session in window if bars_by_session.get(session) is None
+        ]
+        if missing_sessions:
+            raise TrialSessionDriverError(
+                "bar_set_missing",
+                "every advanced session needs a bar set (suspended or"
+                " otherwise); UNKNOWN fencing happens downstream",
+                missing_sessions=[
+                    session.isoformat() for session in missing_sessions
+                ],
             )
+        bar_records = {
+            session: self._publish_bar_set(
+                session=session, bars=bars_by_session[session], now=advance_at
+            )
+            for session in window
+        }
         return self._stack.runner.advance_market_session(
             MarketSessionAdvanceRequest(
                 trial_id=self._stack.trial_id,

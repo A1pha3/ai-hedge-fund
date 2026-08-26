@@ -744,3 +744,232 @@ class TestAdversarial:
         payload = json.loads(capsys.readouterr().out)
         assert payload["ok"] is True
         assert payload["champion_status"] == str(payload["challenger_status"])
+
+
+# ---------------------------------------------------------------------------
+# R40: advance 数据面前置完备性 — driver 整窗口预检 + CLI 双面 pre-flight
+# ---------------------------------------------------------------------------
+
+_COURT_HEADER = (
+    "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,vol,amount\n"
+)
+
+
+def _court_bar_dir(tmp_path: Path, sessions) -> Path:
+    """Court raw daily_YYYYMMDD.csv 快照目录 (bars_from_court_csv 消费格式)."""
+    bar_dir = tmp_path / "court-daily"
+    bar_dir.mkdir(parents=True, exist_ok=True)
+    for session in sessions:
+        rows = [_COURT_HEADER]
+        for ticker in TICKERS:
+            rows.append(
+                f"{ticker}.SZ,{session:%Y%m%d},"
+                "11.0,12.0,10.5,11.5,10.9,5.5,1000,11000\n"
+            )
+        (bar_dir / f"daily_{session:%Y%m%d}.csv").write_text(
+            "".join(rows), encoding="utf-8"
+        )
+    return bar_dir
+
+
+def _bars_for(session: date):
+    from src.screening.offensive.v3.execution.lifecycle import DailyBar
+
+    return {
+        f"{ticker}.SZ": DailyBar(
+            security_id=f"{ticker}.SZ",
+            session=session,
+            open_cents=1100,
+            high_cents=1200,
+            low_cents=1050,
+            close_cents=1150,
+            limit_up_cents=1320,
+            limit_down_cents=880,
+        )
+        for ticker in TICKERS
+    }
+
+
+class TestAdvanceDatafacePreflight:
+    def test_driver_missing_session_publishes_nothing(
+        self, world: _DriverWorld
+    ) -> None:
+        """整窗口预检: 任一会话缺失 → 零 bar 发布 (修复前窗口前段已发布)。"""
+        world.driver.ensure_trial_registration()
+        world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        through = SIGNAL_SESSION + timedelta(days=1)
+        before = _tree_digest(world.root)
+        with pytest.raises(TrialSessionDriverError) as rejected:
+            world.driver.advance_sessions(
+                signal_session=SIGNAL_SESSION,
+                through_session=through,
+                bars_by_session={SIGNAL_SESSION: _bars_for(SIGNAL_SESSION)},
+                now=LATER_AT,
+            )
+        assert rejected.value.code == "bar_set_missing"
+        assert rejected.value.details.get("missing_sessions") == [
+            through.isoformat()
+        ]
+        assert _tree_digest(world.root) == before
+
+    def test_cli_advance_dry_run_reports_missing_sessions(
+        self, world: _DriverWorld, tmp_path: Path, capsys
+    ) -> None:
+        from scripts.v3_trial_session import main as cli_main
+
+        bar_dir = _court_bar_dir(tmp_path, [SIGNAL_SESSION])
+        before = _tree_digest(world.root) + _tree_digest(world.identity_dir)
+        rc = cli_main(
+            [
+                "advance",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--through-session", (SIGNAL_SESSION + timedelta(days=1)).isoformat(),
+                "--bar-source", str(bar_dir),
+            ]
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert rc == 2
+        assert payload["ok"] is False
+        assert payload["code"] == "bar_sessions_missing"
+        assert payload["details"]["missing_sessions"] == [
+            (SIGNAL_SESSION + timedelta(days=1)).isoformat()
+        ]
+        assert _tree_digest(world.root) + _tree_digest(world.identity_dir) == before
+
+    def test_cli_advance_dry_run_complete_window_ok(
+        self, world: _DriverWorld, tmp_path: Path, capsys
+    ) -> None:
+        from scripts.v3_trial_session import main as cli_main
+
+        window = (SIGNAL_SESSION, SIGNAL_SESSION + timedelta(days=1))
+        bar_dir = _court_bar_dir(tmp_path, window)
+        rc = cli_main(
+            [
+                "advance",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--through-session", window[-1].isoformat(),
+                "--bar-source", str(bar_dir),
+            ]
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert rc == 0
+        assert payload["mode"] == "dry-run"
+        assert payload["window_sessions"] == 2
+
+    def test_cli_advance_execute_preflight_is_zero_write(
+        self, world: _DriverWorld, tmp_path: Path, capsys
+    ) -> None:
+        """execute 缺失会话 → 栈构造之前拒绝: trial root 字节级零突变。
+
+        修复前: _build_stack 先行 (对 trial root 落 WAL+DDL 写副作用),
+        之后 driver 才以 bar_set_missing 晚失败。
+        """
+        from scripts.v3_trial_session import main as cli_main
+
+        bar_dir = _court_bar_dir(tmp_path, [SIGNAL_SESSION])
+        before = _tree_digest(world.root) + _tree_digest(world.identity_dir)
+        rc = cli_main(
+            [
+                "advance",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--through-session", (SIGNAL_SESSION + timedelta(days=1)).isoformat(),
+                "--bar-source", str(bar_dir),
+                "--now", LATER_AT.isoformat(),
+                "--execute",
+            ]
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert rc == 2
+        assert payload["code"] == "bar_sessions_missing"
+        assert _tree_digest(world.root) + _tree_digest(world.identity_dir) == before
+
+    def test_cli_advance_dry_run_rejects_through_outside_schedule(
+        self, world: _DriverWorld, tmp_path: Path, capsys
+    ) -> None:
+        """窗口外 through_session 在 dry-run 即拒 (修复前只在 execute 期)。"""
+        from scripts.v3_trial_session import main as cli_main
+
+        bar_dir = _court_bar_dir(
+            tmp_path, [SIGNAL_SESSION, SIGNAL_SESSION + timedelta(days=99)]
+        )
+        with pytest.raises(SystemExit) as stopped:
+            cli_main(
+                [
+                    "advance",
+                    "--identity-dir", str(world.identity_dir),
+                    "--trial-root", str(world.root),
+                    "--trial-id", TRIAL_ID,
+                    "--calendar", str(world.calendar_path),
+                    "--signal-session", SIGNAL_SESSION.isoformat(),
+                    "--through-session",
+                    (SIGNAL_SESSION + timedelta(days=99)).isoformat(),
+                    "--bar-source", str(bar_dir),
+                ]
+            )
+        assert stopped.value.code == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["code"] == "advance_window_not_in_schedule"
+
+    def test_cli_advance_execute_parses_only_window_files(
+        self, world: _DriverWorld, tmp_path: Path, capsys, monkeypatch
+    ) -> None:
+        """execute 只解析窗口内 daily_*.csv (修复前全目录解析 394 文件级浪费)。"""
+        import scripts.v3_seed_market_bars as seeder
+        from scripts.v3_trial_session import main as cli_main
+
+        window = (SIGNAL_SESSION, SIGNAL_SESSION + timedelta(days=1))
+        bar_dir = _court_bar_dir(
+            tmp_path,
+            [
+                SIGNAL_SESSION - timedelta(days=7),  # 窗口外的多余快照
+                *window,
+            ],
+        )
+        world.driver.ensure_trial_registration()
+        world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        # R35 冷读纪律: CLI 构造新栈前确定性 checkpoint 既有引擎。
+        world.stack.spine._engine.dispose()
+        world.stack.runner._assembler._governance._engine.dispose()
+
+        calls: list[date] = []
+        original = seeder.bars_from_court_csv
+
+        def counting(path, session):
+            calls.append(session)
+            return original(path, session)
+
+        monkeypatch.setattr(seeder, "bars_from_court_csv", counting)
+        rc = cli_main(
+            [
+                "advance",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--through-session", window[-1].isoformat(),
+                "--bar-source", str(bar_dir),
+                "--now", LATER_AT.isoformat(),
+                "--execute",
+            ]
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert rc == 0
+        assert payload["ok"] is True
+        assert calls == list(window)

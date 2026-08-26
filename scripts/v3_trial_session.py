@@ -26,7 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 
 
@@ -248,6 +248,70 @@ def _cmd_decide(args: argparse.Namespace) -> int:
     )
 
 
+def _advance_window_sessions(
+    *,
+    calendar_path: Path,
+    signal_session: date,
+    through_session: date,
+) -> list[date]:
+    """Read-only derivation of the frozen advance window (shared pre-flight).
+
+    Mirrors the driver's ``advance_sessions`` slicing exactly: the schedule is
+    authoritative, and the window shape is available_at-independent (the
+    instant only feeds the evidence envelope). Raises SystemExit with typed
+    failures on calendar/schedule problems; never constructs the stack.
+    """
+    from src.screening.offensive.v3.evidence.trading_schedule import (
+        TradingScheduleError,
+        derive_trading_schedule,
+        load_authoritative_dates,
+    )
+
+    try:
+        dates = load_authoritative_dates(calendar_path)
+    except (TradingScheduleError, OSError) as exc:
+        raise SystemExit(_fail("calendar_unreadable", str(exc)))
+    if signal_session not in dates:
+        raise SystemExit(
+            _fail(
+                "signal_session_not_in_calendar",
+                "the signal session is absent from the authoritative calendar",
+                signal_session=signal_session.isoformat(),
+            )
+        )
+    try:
+        schedule = derive_trading_schedule(
+            signal_session=signal_session,
+            calendar_dates=dates,
+            # Nominal close-finalized instant (mirrors the driver's
+            # _CLOSE_FINALIZED); the window shape is available_at-independent.
+            available_at=datetime.combine(
+                signal_session, time(15, 0), tzinfo=timezone.utc
+            ),
+        )
+    except TradingScheduleError as exc:
+        code = str(exc).partition(":")[0] or "insufficient_forward_sessions"
+        raise SystemExit(_fail(code, str(exc)))
+    window = [
+        session
+        for session in (signal_session, *schedule.following_sessions)
+        if session <= through_session
+    ]
+    if not window or window[-1] != through_session:
+        raise SystemExit(
+            _fail(
+                "advance_window_not_in_schedule",
+                "through_session must be a member of the frozen schedule"
+                " slice (the schedule is authoritative)",
+                schedule_window=[
+                    session.isoformat()
+                    for session in (signal_session, *schedule.following_sessions)
+                ],
+            )
+        )
+    return window
+
+
 def _cmd_advance(args: argparse.Namespace) -> int:
     identity_dir = Path(args.identity_dir)
     trial_root = Path(args.trial_root)
@@ -261,14 +325,34 @@ def _cmd_advance(args: argparse.Namespace) -> int:
         calendar_path=calendar_path,
         trial_id=args.trial_id,
     )
-    from scripts.v3_seed_market_bars import bars_from_court_csv
-
-    source = Path(args.bar_source)
-    sessions = sorted(
-        path for path in source.glob("daily_*.csv")
+    # Shared pre-flight (dry-run and execute): every session of the frozen
+    # window must have a daily snapshot BEFORE the stack is constructed (the
+    # constructor itself writes WAL+DDL into the trial root).
+    window = _advance_window_sessions(
+        calendar_path=calendar_path,
+        signal_session=signal_session,
+        through_session=through_session,
     )
-    if not sessions and not args.execute:
-        return _fail("bar_source_empty", str(source))
+    source = Path(args.bar_source)
+    if not source.is_dir():
+        return _fail("bar_source_missing", str(source))
+    missing_sessions = [
+        session
+        for session in window
+        if not (source / f"daily_{session:%Y%m%d}.csv").is_file()
+    ]
+    if missing_sessions:
+        return _fail(
+            "bar_sessions_missing",
+            "every session in the frozen advance window needs a"
+            " daily_YYYYMMDD.csv snapshot (unadjusted pro.daily format;"
+            " refresh the source before advancing)",
+            missing_sessions=[
+                session.isoformat() for session in missing_sessions
+            ],
+            window_sessions=[session.isoformat() for session in window],
+            bar_source=str(source),
+        )
     if not args.execute:
         return _ok(
             {
@@ -277,14 +361,19 @@ def _cmd_advance(args: argparse.Namespace) -> int:
                     "publish bar-set evidence per session in window",
                     "advance_market_session (both arms, conservation)",
                 ],
-                "bar_snapshots": len(sessions),
+                "window_sessions": len(window),
                 **(checks or {}),
             }
         )
+    from scripts.v3_seed_market_bars import bars_from_court_csv
+
+    # Parse only the window's snapshots (a full research directory can hold
+    # hundreds of full-market files; the driver only consumes the window).
     bars_by_session = {}
-    for path in sessions:
-        session = _parse_date(path.stem.removeprefix("daily_"))
-        bars_by_session[session] = bars_from_court_csv(path, session)
+    for session in window:
+        bars_by_session[session] = bars_from_court_csv(
+            source / f"daily_{session:%Y%m%d}.csv", session
+        )
     stack = _build_stack(
         identity_dir=identity_dir,
         trial_root=trial_root,
