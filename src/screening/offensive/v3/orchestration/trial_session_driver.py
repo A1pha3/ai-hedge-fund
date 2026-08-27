@@ -48,7 +48,10 @@ from src.screening.offensive.v3.evidence.repository import (
     EvidenceRepository,
     EvidenceStoreError,
 )
-from src.screening.offensive.v3.evidence.session_batch import SCHEDULE_NAMESPACE
+from src.screening.offensive.v3.evidence.session_batch import (
+    SCHEDULE_NAMESPACE,
+    committed_selected_candidate_ids,
+)
 from src.screening.offensive.v3.evidence.trading_schedule import (
     TradingSchedulePublisher,
     build_schedule_envelope,
@@ -445,6 +448,21 @@ class OfficialTrialSessionDriver:
                     published=str(existing.observation.state),
                     snapshot=str(state),
                 )
+            if existing.observation.signal_session > signal_session:
+                # 前向 Trial 的会话序纪律: active 头只能随驱动前进。为更早
+                # 会话追加 revision 会把 active 投影倒回 (R41 RED 探针实锤:
+                # retro 驱动静默成功后, 本应幂等的晚会话重放以
+                # batch_seal_conflict 破裂, 操作员无法与真实损坏区分)。
+                # 错过会话的官方出口是 finalize-missed (NO_RUN), 不是补驱动。
+                raise TrialSessionDriverError(
+                    "regime_session_regression",
+                    "the active regime observation belongs to a later session;"
+                    " a forward trial drives sessions in order (missed"
+                    " sessions are recorded NO_RUN via finalize-missed, never"
+                    " retro-decided)",
+                    active_session=existing.observation.signal_session.isoformat(),
+                    requested_session=signal_session.isoformat(),
+                )
 
         observation = RegimeObservation(
             signal_session=signal_session,
@@ -597,9 +615,28 @@ class OfficialTrialSessionDriver:
             for artifact in artifacts
             if artifact.envelope.stage is SignalStage.SELECTED
         )
+        probe_cutoff = now + _PUBLICATION_SETTLE
+        # 同会话候选真相序纪律: 该会话一旦有已提交 SELECTED 候选不在当前
+        # 快照派生集合内 (crash 后 manifest 重生成再重驱动的分歧形态),
+        # 在零新发布处类型化拒绝——否则第二套 SELECTED 会静默入库, 晚失败
+        # 于批完备性 (batch_completeness_violation) 且永久污染证据时间轴。
+        # 恰等重放不受影响 (committed ⊆ derived 时进入下方复用路径)。
+        committed = committed_selected_candidate_ids(
+            self._stack.btst_repository, signal_session, probe_cutoff
+        )
+        unexpected = set(committed) - set(selected_ids)
+        if unexpected:
+            raise TrialSessionDriverError(
+                "candidate_set_divergence",
+                "committed SELECTED candidates exist for this session that"
+                " the current snapshot does not derive; a session has"
+                " exactly one candidate truth",
+                signal_session=signal_session.isoformat(),
+                committed_not_derived=sorted(unexpected),
+                derived_evidence_ids=sorted(selected_ids),
+            )
         if not selected_ids:
             return ()
-        probe_cutoff = now + _PUBLICATION_SETTLE
         presence = {
             evidence_id: self._existing(
                 self._stack.btst_repository, evidence_id, cutoff=probe_cutoff

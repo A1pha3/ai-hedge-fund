@@ -114,7 +114,11 @@ uv run python scripts/v3_trial_session.py advance \
     `pre_close`（`src/tools/price.py`），限价围栏/资本标记口径全错——
     数据完整性红线（AGENTS.md）。
 2c. **错过会话补记**：enrollment 窗口内因故未 decide 的会话，在
-    assessment 日期过后补 NO_RUN 终态（幂等，append-only spine）：
+    assessment 日期过后补 NO_RUN 终态（幂等，append-only spine）。
+    ⚠ **会话只许前向驱动（R41）**：跳过的会话一律走本步 NO_RUN 补记，
+    **绝不回头补 decide**——晚于后续会话补驱动早会话会被驱动器以
+    `regime_session_regression` 类型化拒绝（regime 修正链的 active 头
+    只能随驱动前进；此前该形态会静默倒序并破坏晚会话的幂等重放）。
 ```bash
 uv run python scripts/v3_trial_session.py finalize-missed \
     --identity-dir <身份目录> --trial-root <trial_root> \

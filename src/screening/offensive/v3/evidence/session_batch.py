@@ -134,6 +134,35 @@ class SessionBatchAuthority(CanonicalModel):
         return self
 
 
+def committed_selected_candidate_ids(
+    repository: EvidenceRepository, session: date, cutoff: datetime
+) -> tuple[str, ...]:
+    """Committed SELECTED candidate evidence ids bound to one session.
+
+    单一实现, 两个消费面共用: sealer 的完备性规则 (batch_completeness_
+    violation) 与日度驱动器的发布前分歧检测 (candidate_set_divergence)。
+    会话归属由信封 ``effective_at.date()`` 权威判定 (与 ``_candidate_binding``
+    同源); cutoff 后提交的候选是批外证据, 不计入。cutoff 正确扫描遇到的
+    非「未提交」仓库错误必须 propagate (P2-1 纪律: 宽吞会假装没看到坏记录)。
+    """
+    ids: list[str] = []
+    for evidence_id in repository.evidence_ids_by_kind("signal"):
+        try:
+            record = repository.active_revision(evidence_id, cutoff)
+        except EvidenceStoreError as exc:
+            if exc.code != "evidence_not_committed_before_cutoff":
+                raise
+            continue
+        envelope = record.evidence
+        if (
+            isinstance(envelope, SignalEvidence)
+            and envelope.stage is SignalStage.SELECTED
+            and envelope.effective_at.date() == session
+        ):
+            ids.append(evidence_id)
+    return tuple(ids)
+
+
 class SessionBatchSealer:
     """Seal (and re-verify) the decision batch of one signal session."""
 
@@ -237,7 +266,7 @@ class SessionBatchSealer:
     ) -> SessionBatchAuthority:
         """Store-side derivation only — no persistence (verify 复用, 零写入)."""
         members: list[tuple[BatchBinding, int]] = [
-            self._regime_binding(cutoff),
+            self._regime_binding(session, cutoff),
             self._schedule_binding(session, schedule_evidence_id, cutoff),
         ]
         declared = set(candidate_evidence_ids)
@@ -376,9 +405,41 @@ class SessionBatchSealer:
     # -- members ---------------------------------------------------------------
 
     def _regime_binding(
-        self, cutoff: datetime
+        self, session: date, cutoff: datetime
     ) -> tuple[BatchBinding, int]:
-        return self._resolve(REGIME_NAMESPACE, REGIME_EVIDENCE_ID, cutoff)
+        """Fixed-id regime member: cutoff 正确背书 + 会话断言。
+
+        排程 (``schedule_session_mismatch``) 与候选 (``candidate_session_mismatch``)
+        两侧自 Op2 起都有会话断言; regime 是三成员中唯一缺失的一环——错位的
+        regime 观察此前只能落到 ShadowSharedInput 的非类型化校验错误
+        (kernel/models.py 的 pydantic ValueError)。会话归属由绑定 blob 严格
+        解码出的 ``signal_session`` 权威判定 (与 ``schedule_from_record``
+        复核面同源, 不做 evidence_id 词法解析)。
+        """
+        from src.screening.offensive.v3.evidence.regime import (
+            RegimeObservationReader,
+        )
+
+        active = RegimeObservationReader(
+            self._repositories[REGIME_NAMESPACE]
+        ).active(REGIME_EVIDENCE_ID, cutoff)
+        if active.observation.signal_session != session:
+            raise SessionBatchError(
+                "regime_session_mismatch",
+                "the active regime observation belongs to another signal"
+                " session",
+                evidence_id=REGIME_EVIDENCE_ID,
+                regime_session=active.observation.signal_session.isoformat(),
+                session=session.isoformat(),
+            )
+        return (
+            BatchBinding(
+                issuer_namespace=REGIME_NAMESPACE,
+                evidence_id=REGIME_EVIDENCE_ID,
+                artifact_hash=active.record.artifact_hash(),
+            ),
+            active.record.commit_sequence,
+        )
 
     def _schedule_binding(
         self, session: date, evidence_id: str, cutoff: datetime
@@ -526,33 +587,22 @@ class SessionBatchSealer:
         self, session: date, cutoff: datetime, declared: set[str]
     ) -> None:
         """btst 命名空间内该会话全部 SELECTED 证据必须恰被声明。"""
-        for evidence_id in self._repositories[BTST_NAMESPACE].evidence_ids_by_kind(
-            "signal"
-        ):
-            if evidence_id in declared:
-                continue
-            try:
-                record = self._repositories[BTST_NAMESPACE].active_revision(
-                    evidence_id, cutoff
+        unexpected = (
+            set(
+                committed_selected_candidate_ids(
+                    self._repositories[BTST_NAMESPACE], session, cutoff
                 )
-            except EvidenceStoreError as exc:
-                # 只吞"cutoff 前未提交"= 该 id 是批外证据; 其余异常必须
-                # propagate (Phase A 审查 P2-1: 宽吞会假装"没看到"坏记录).
-                if exc.code != "evidence_not_committed_before_cutoff":
-                    raise
-                continue
-            envelope = record.evidence
-            if (
-                isinstance(envelope, SignalEvidence)
-                and envelope.stage is SignalStage.SELECTED
-                and envelope.effective_at.date() == session
-            ):
-                raise SessionBatchError(
-                    "batch_completeness_violation",
-                    "an undeclared SELECTED candidate exists for this session",
-                    evidence_id=evidence_id,
-                    session=session.isoformat(),
-                )
+            )
+            - declared
+        )
+        if unexpected:
+            raise SessionBatchError(
+                "batch_completeness_violation",
+                "an undeclared SELECTED candidate exists for this session",
+                evidence_id=sorted(unexpected)[0],
+                session=session.isoformat(),
+                unexpected_evidence_ids=sorted(unexpected),
+            )
 
 
 __all__ = [
@@ -565,4 +615,5 @@ __all__ = [
     "SessionBatchAuthority",
     "SessionBatchError",
     "SessionBatchSealer",
+    "committed_selected_candidate_ids",
 ]

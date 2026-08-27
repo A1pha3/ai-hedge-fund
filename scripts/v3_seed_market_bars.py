@@ -30,17 +30,80 @@ from src.screening.offensive.v3.execution.lifecycle import DailyBar
 from src.tools.ashare_board_utils import limit_up_cap_pct_for_ticker
 
 
+class CourtBarCsvError(RuntimeError):
+    """Typed rejection of a malformed court raw bar snapshot (R41).
+
+    句法层防御: runbook 的 qfq/price_cache 红线是语义约束 (复权口径无法从
+    字节证明), 但「文件不是可解析的未复权 pro.daily 快照」必须在入口处
+    类型化拒绝, 而不是让 AttributeError/KeyError 以裸 traceback 泄漏。
+    """
+
+    def __init__(self, code: str, message: str, **details: object) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.details = details
+
+
+#: 未复权 pro.daily 日快照的必需列 (price_cache 的 qfq 快照缺 pre_close,
+#: 在列校验层即被拒——runbook 红线的句法执行面)。
+_COURT_CSV_REQUIRED_COLUMNS = (
+    "ts_code",
+    "open",
+    "high",
+    "low",
+    "close",
+    "pre_close",
+)
+
+
 def bars_from_court_csv(csv_path: Path, session: date) -> dict[str, DailyBar]:
     df = pd.read_csv(csv_path, dtype={"trade_date": str})
+    missing_columns = [
+        column for column in _COURT_CSV_REQUIRED_COLUMNS if column not in df.columns
+    ]
+    if missing_columns:
+        raise CourtBarCsvError(
+            "bar_csv_columns_missing",
+            "the file is not an unadjusted pro.daily snapshot (missing"
+            " required columns; qfq price-cache exports are banned as a"
+            " bar source by runbook red line)",
+            path=str(csv_path),
+            missing_columns=missing_columns,
+            columns=list(df.columns),
+        )
+    if df.empty:
+        raise CourtBarCsvError(
+            "bar_csv_empty",
+            "a bar snapshot must carry at least one row",
+            path=str(csv_path),
+            session=session.isoformat(),
+        )
     out: dict[str, DailyBar] = {}
     for row in df.itertuples(index=False):
         ts_code = str(row.ts_code)
+        if ts_code in out:
+            # 静默覆盖 = 「消失必有名」违例: 重复行的第二值绝不悄悄获胜。
+            raise CourtBarCsvError(
+                "bar_csv_duplicate_ticker",
+                "the snapshot carries more than one row for a ticker",
+                path=str(csv_path),
+                ts_code=ts_code,
+            )
         symbol = ts_code.split(".")[0]
-        open_c = round(float(row.open) * 100)
-        high_c = round(float(row.high) * 100)
-        low_c = round(float(row.low) * 100)
-        close_c = round(float(row.close) * 100)
-        pre_c = round(float(row.pre_close) * 100)
+        try:
+            open_c = round(float(row.open) * 100)
+            high_c = round(float(row.high) * 100)
+            low_c = round(float(row.low) * 100)
+            close_c = round(float(row.close) * 100)
+            pre_c = round(float(row.pre_close) * 100)
+        except (ValueError, TypeError) as exc:
+            raise CourtBarCsvError(
+                "bar_csv_row_invalid",
+                "a price field does not parse into a number",
+                path=str(csv_path),
+                ts_code=ts_code,
+                reason=str(exc),
+            ) from exc
         cap = limit_up_cap_pct_for_ticker(symbol)
 
         def _half_up(x: float) -> int:

@@ -14,6 +14,7 @@ CLI dry-run 字节级零写入。
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import sys
@@ -259,6 +260,37 @@ def _disabled_capability():
     )
 
 
+def _published_manifest(reports_dir: Path, session: date = SIGNAL_SESSION):
+    """经生产发布函数落盘一份合法 readiness manifest (R38 首用, R41 提为共享)。"""
+    from dataclasses import replace as _replace
+
+    from src.screening.offensive.cache_readiness import universe_fingerprint
+    from src.screening.offensive.daily_action_readiness import (
+        publish_daily_action_readiness,
+    )
+    from src.screening.offensive.pit_evidence import canonical_fingerprint
+
+    manifest = _manifest(session)
+    stepped = _replace(
+        manifest,
+        created_at=manifest.created_at.replace("+00:00", "Z"),
+        universe_fingerprint=universe_fingerprint(TICKERS),
+        suspension_evidence=_replace(
+            manifest.suspension_evidence,
+            source_fingerprint=canonical_fingerprint("suspension", "*", []),
+        ),
+    )
+    unsigned = {
+        key: value
+        for key, value in stepped.to_dict().items()
+        if key != "content_fingerprint"
+    }
+    return publish_daily_action_readiness(
+        _replace(stepped, content_fingerprint=_fingerprint(unsigned)),
+        reports_dir,
+    )
+
+
 def _snapshot(
     *,
     regime: str = "normal",
@@ -321,6 +353,12 @@ class _DriverWorld:
             archive.issuer, stage_id="stage-regime-001", issued_at=GOV_NOW
         )
         write_stage_issuance_receipt(archive.root, receipt)
+        # R41 接管定位的 R38 flake 根因: 回执签发经 issuer 的 repository
+        # 重开 governance 写连接 (_official_archive_world 的 R35 dispose 在
+        # 签发之前), 池化连接存续到 GC —— 闭合时机非确定, CLI 冷读探测
+        # (governance_not_checkpointed) 先于收集运行即失败。构造期确定性
+        # 闭合第三写者 (与下方测试内私有引擎处置同一手法)。
+        archive.issuer._repository._engine.dispose()
         self.root = archive.root
         self.identity_dir = archive.identity_dir
         self.calendar_path = _calendar_file(tmp_path)
@@ -656,9 +694,19 @@ class TestAdversarial:
             )
         assert rejected.value.code == "signal_session_not_in_calendar"
 
-    def test_cli_dry_run_is_zero_write(self, world: _DriverWorld, capsys) -> None:
+    def test_cli_dry_run_is_zero_write(
+        self, world: _DriverWorld, tmp_path: Path, capsys
+    ) -> None:
+        """R36→R41: dry-run 仍字节级零写入, 但现在带 manifest pre-flight。
+
+        R36 契约 (manifest 缺失仍报绿) 正是 R41 关闭的操作员假信心面;
+        缺失/会话错位两形态的拒绝由 TestDecideManifestPreflight 钉死。
+        """
         from scripts.v3_trial_session import main as cli_main
 
+        reports = tmp_path / "reports"
+        reports.mkdir()
+        publication = _published_manifest(reports, SIGNAL_SESSION)
         before = _tree_digest(world.root) + _tree_digest(world.identity_dir)
         rc = cli_main(
             [
@@ -667,7 +715,8 @@ class TestAdversarial:
                 "--trial-root", str(world.root),
                 "--trial-id", TRIAL_ID,
                 "--calendar", str(world.calendar_path),
-                "--readiness-manifest", "/nonexistent/manifest.json",
+                "--readiness-manifest", str(publication.artifact_path),
+                "--data-dir", str(tmp_path),
                 "--signal-session", SIGNAL_SESSION.isoformat(),
             ]
         )
@@ -675,6 +724,7 @@ class TestAdversarial:
         payload = json.loads(capsys.readouterr().out)
         assert payload["ok"] is True
         assert payload["mode"] == "dry-run"
+        assert payload["readiness_session"] == SIGNAL_SESSION.isoformat()
         assert _tree_digest(world.root) + _tree_digest(world.identity_dir) == before
 
     def test_decide_loads_snapshot_with_real_loader_signature(
@@ -687,35 +737,10 @@ class TestAdversarial:
         TypeError; 且返回值是 VerifiedSnapshotResult 包装, 需解包 .snapshot。
         本测试经生产发布函数落盘真实 manifest 后走 CLI --execute 全链。
         """
-        from dataclasses import replace as _replace
-
         from scripts.v3_trial_session import main as cli_main
-        from src.screening.offensive.cache_readiness import universe_fingerprint
-        from src.screening.offensive.daily_action_readiness import (
-            publish_daily_action_readiness,
-        )
-        from src.screening.offensive.pit_evidence import canonical_fingerprint
 
         reports = tmp_path_factory.mktemp("reports-r38")
-        manifest = _manifest(SIGNAL_SESSION)
-        stepped = _replace(
-            manifest,
-            created_at=manifest.created_at.replace("+00:00", "Z"),
-            universe_fingerprint=universe_fingerprint(TICKERS),
-            suspension_evidence=_replace(
-                manifest.suspension_evidence,
-                source_fingerprint=canonical_fingerprint("suspension", "*", []),
-            ),
-        )
-        unsigned = {
-            key: value
-            for key, value in stepped.to_dict().items()
-            if key != "content_fingerprint"
-        }
-        publication = publish_daily_action_readiness(
-            _replace(stepped, content_fingerprint=_fingerprint(unsigned)),
-            reports,
-        )
+        publication = _published_manifest(reports, SIGNAL_SESSION)
         assert publication.status == "healthy"
 
         world.driver.ensure_trial_registration()
@@ -726,6 +751,11 @@ class TestAdversarial:
         # checkpoint 是文件级效果, 与引擎实例无关)。
         world.stack.spine._engine.dispose()
         world.stack.runner._assembler._governance._engine.dispose()
+        # dispose 只归还池内闲置连接; 被引用循环 Session 持有的
+        # governance 连接要等 GC 才释放, 活连接会让 -wal 留存到 CLI
+        # 冷读探测之后 (governance_not_checkpointed 假阳性, R41 slot
+        # 验证 2/2 确定性复现)。强制回收使最后连接关闭、WAL 落盘清除。
+        gc.collect()
         rc = cli_main(
             [
                 "decide",
@@ -946,6 +976,7 @@ class TestAdvanceDatafacePreflight:
         # R35 冷读纪律: CLI 构造新栈前确定性 checkpoint 既有引擎。
         world.stack.spine._engine.dispose()
         world.stack.runner._assembler._governance._engine.dispose()
+        gc.collect()  # 同 R38 测试位: 释放引用循环 Session 持有的活连接, WAL 才随最后连接关闭而清除
 
         calls: list[date] = []
         original = seeder.bars_from_court_csv
@@ -973,3 +1004,379 @@ class TestAdvanceDatafacePreflight:
         assert rc == 0
         assert payload["ok"] is True
         assert calls == list(window)
+
+
+# ---------------------------------------------------------------------------
+# R41: 会话真相序纪律 — regime 头前向唯序 + 候选集同会话唯一真相
+# ---------------------------------------------------------------------------
+
+EARLIER_SESSION = date(2026, 8, 5)
+
+
+def _wide_calendar_file(tmp_path: Path, earliest: date) -> Path:
+    """含 earliest 起共 20 个会话的日历 (夹具默认日历从 SIGNAL_SESSION 起)."""
+    wide = tmp_path / "wide-trade-calendar.json"
+    wide.write_text(
+        json.dumps(
+            [
+                (earliest + timedelta(days=offset)).strftime("%Y%m%d")
+                for offset in range(0, 20)
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return wide
+
+
+class TestSessionTruthOrderDiscipline:
+    """R41: 前向 Trial 的 regime active 头只能随驱动前进。
+
+    修复前 (RED 探针实锤): 先驱动 08-06 再补驱动 08-05 静默成功——
+    修正链追加倒序 revision 并把 active 头倒回早会话, 此后本应逐字节
+    幂等的 08-06 重放以 batch_seal_conflict 破裂 (与真实损坏不可区分)。
+    """
+
+    def test_retro_drive_rejected_zero_write(
+        self, world: _DriverWorld, tmp_path: Path
+    ) -> None:
+        world.driver._calendar_path = _wide_calendar_file(tmp_path, EARLIER_SESSION)
+        world.driver.ensure_trial_registration()
+        world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        before = _tree_digest(world.root)
+        world.now = DECIDE_AT + timedelta(hours=2)
+        with pytest.raises(TrialSessionDriverError) as rejected:
+            world.driver.decide_session(
+                snapshot=_snapshot(signal_date=EARLIER_SESSION),
+                signal_session=EARLIER_SESSION,
+                now=world.now,
+            )
+        assert rejected.value.code == "regime_session_regression"
+        assert rejected.value.details["active_session"] == SIGNAL_SESSION.isoformat()
+        assert rejected.value.details["requested_session"] == EARLIER_SESSION.isoformat()
+        assert _tree_digest(world.root) == before
+
+    def test_rejected_retro_preserves_later_replay_idempotency(
+        self, world: _DriverWorld, tmp_path: Path
+    ) -> None:
+        """被拒的 retro 尝试之后, 晚会话重放仍收敛到同 pair (危害回归)."""
+        world.driver._calendar_path = _wide_calendar_file(tmp_path, EARLIER_SESSION)
+        world.driver.ensure_trial_registration()
+        first = world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        world.now = DECIDE_AT + timedelta(hours=2)
+        with pytest.raises(TrialSessionDriverError):
+            world.driver.decide_session(
+                snapshot=_snapshot(signal_date=EARLIER_SESSION),
+                signal_session=EARLIER_SESSION,
+                now=world.now,
+            )
+        world.now = DECIDE_AT + timedelta(hours=3)
+        replay = world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=world.now
+        )
+        assert replay.pair_key == first.pair_key
+        assert replay.champion_status == first.champion_status
+
+    def test_forward_next_session_still_publishes(
+        self, world: _DriverWorld
+    ) -> None:
+        """前向驱动 (active 头属早会话) 不受守卫影响。"""
+        world.driver.ensure_trial_registration()
+        world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        next_session = SIGNAL_SESSION + timedelta(days=1)
+        world.now = datetime(2026, 8, 7, 15, 30, tzinfo=UTC)
+        receipt = world.driver.decide_session(
+            snapshot=_snapshot(signal_date=next_session, flat=True),
+            signal_session=next_session,
+            now=world.now,
+        )
+        assert receipt.pair_key[1] == next_session.isoformat()
+
+
+def _miss_result(ticker: str, trade_date: str) -> DetectionResult:
+    return DetectionResult(
+        hit=False,
+        ticker=ticker,
+        trade_date=trade_date,
+        trigger_strength=0.0,
+        invalidation_condition="",
+        metadata={},
+        degraded=False,
+        degradation_reason="",
+    )
+
+
+@pytest.fixture()
+def live_candidates(
+    world: _DriverWorld, monkeypatch: pytest.MonkeyPatch
+) -> _DriverWorld:
+    """R41: 让扫描真实产出 SELECTED 候选 (crib test_btst_producer_api.world)。
+
+    夹具价格 (300xxx 创业板, 信号日 pct=10.0) 不过 ~19.5% 涨停门槛, 真实
+    detect 恒 miss——分歧场景需要会话真的提交 SELECTED 候选。detect 固定
+    为命中但保持价格感知: flat 世界 (全部 close=10.0) 仍 miss, 使
+    shrunk-to-empty (重生成后零候选) 场景可达。
+    """
+    from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
+
+    def _detect(self, ticker: str, trade_date: str, context: dict) -> DetectionResult:
+        prices = context.get("prices")
+        if prices is None or len(prices) == 0:
+            return _miss_result(ticker, trade_date)
+        if float(prices.iloc[-1]["close"]) <= 10.0:
+            return _miss_result(ticker, trade_date)
+        return _hit_result(ticker)
+
+    monkeypatch.setattr(BtstBreakoutSetup, "detect", _detect)
+    return world
+
+
+class TestCandidateSetDivergence:
+    """R41: 同会话已提交 SELECTED 候选集是唯一真相。
+
+    修复前: crash (候选发布后 pair 前崩) + readiness manifest 重生成 +
+    重驱动会静默发布第二套同会话 SELECTED, 晚失败于批完备性且永久污染
+    证据时间轴。分歧 (生产形态 = snapshot_id 内容派生变化 → id 集变化)
+    必须在零新发布处类型化拒绝; 恰等重放不受影响。
+    """
+
+    def test_disjoint_snapshot_ids_rejected_zero_write(
+        self, live_candidates: _DriverWorld
+    ) -> None:
+        world = live_candidates
+        world.driver.ensure_trial_registration()
+        world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        before = _tree_digest(world.root)
+        world.now = DECIDE_AT + timedelta(hours=2)
+        with pytest.raises(TrialSessionDriverError) as rejected:
+            world.driver.decide_session(
+                snapshot=_snapshot(snapshot_id="sha256:" + "c" * 64),
+                signal_session=SIGNAL_SESSION,
+                now=world.now,
+            )
+        assert rejected.value.code == "candidate_set_divergence"
+        committed = rejected.value.details["committed_not_derived"]
+        assert len(committed) == 2  # 两个 A 集合 id 均不在 B 集合内
+        assert _tree_digest(world.root) == before
+
+    def test_shrunk_to_empty_rejected(
+        self, live_candidates: _DriverWorld
+    ) -> None:
+        """重生成后零候选 (全部候选消失) 同样是分歧, 不是合法重放。"""
+        world = live_candidates
+        world.driver.ensure_trial_registration()
+        world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        world.now = DECIDE_AT + timedelta(hours=2)
+        with pytest.raises(TrialSessionDriverError) as rejected:
+            world.driver.decide_session(
+                snapshot=_snapshot(flat=True),
+                signal_session=SIGNAL_SESSION,
+                now=world.now,
+            )
+        assert rejected.value.code == "candidate_set_divergence"
+
+    def test_exact_replay_still_converges(
+        self, live_candidates: _DriverWorld
+    ) -> None:
+        """恰等重放 (同 snapshot) 不受分歧守卫影响 (复用路径)."""
+        world = live_candidates
+        world.driver.ensure_trial_registration()
+        first = world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        world.now = DECIDE_AT + timedelta(hours=4)
+        replay = world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=world.now
+        )
+        assert replay.pair_key == first.pair_key
+
+
+class TestCourtBarCsvMalformed:
+    """R41: bar 源畸形文件的句法层类型化拒绝 (runbook qfq 红线执行面)."""
+
+    def _write_csv(self, tmp_path: Path, name: str, content: str) -> Path:
+        path = tmp_path / name
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_missing_pre_close_column_rejected(self, tmp_path: Path) -> None:
+        """price_cache 式 qfq 快照 (缺 pre_close) 在列校验即拒。"""
+        from scripts.v3_seed_market_bars import (
+            CourtBarCsvError,
+            bars_from_court_csv,
+        )
+
+        path = self._write_csv(
+            tmp_path,
+            "daily_20260806.csv",
+            "ts_code,trade_date,open,high,low,close\n300001.SZ,20260806,11,12,10.5,11.5\n",
+        )
+        with pytest.raises(CourtBarCsvError) as rejected:
+            bars_from_court_csv(path, SIGNAL_SESSION)
+        assert rejected.value.code == "bar_csv_columns_missing"
+        assert "pre_close" in rejected.value.details["missing_columns"]
+
+    def test_empty_file_rejected(self, tmp_path: Path) -> None:
+        from scripts.v3_seed_market_bars import (
+            CourtBarCsvError,
+            bars_from_court_csv,
+        )
+
+        path = self._write_csv(
+            tmp_path,
+            "daily_20260806.csv",
+            "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,vol,amount\n",
+        )
+        with pytest.raises(CourtBarCsvError) as rejected:
+            bars_from_court_csv(path, SIGNAL_SESSION)
+        assert rejected.value.code == "bar_csv_empty"
+
+    def test_duplicate_ticker_rejected(self, tmp_path: Path) -> None:
+        from scripts.v3_seed_market_bars import (
+            CourtBarCsvError,
+            bars_from_court_csv,
+        )
+
+        path = self._write_csv(
+            tmp_path,
+            "daily_20260806.csv",
+            _COURT_HEADER
+            + "300001.SZ,20260806,11.0,12.0,10.5,11.5,10.9,5.5,1000,11000\n"
+            + "300001.SZ,20260806,11.1,12.1,10.6,11.6,10.9,5.5,1000,11000\n",
+        )
+        with pytest.raises(CourtBarCsvError) as rejected:
+            bars_from_court_csv(path, SIGNAL_SESSION)
+        assert rejected.value.code == "bar_csv_duplicate_ticker"
+        assert rejected.value.details["ts_code"] == "300001.SZ"
+
+    def test_non_numeric_row_rejected(self, tmp_path: Path) -> None:
+        from scripts.v3_seed_market_bars import (
+            CourtBarCsvError,
+            bars_from_court_csv,
+        )
+
+        path = self._write_csv(
+            tmp_path,
+            "daily_20260806.csv",
+            _COURT_HEADER
+            + "300001.SZ,20260806,'11.0,12.0,10.5,11.5,10.9,5.5,1000,11000\n",
+        )
+        with pytest.raises(CourtBarCsvError) as rejected:
+            bars_from_court_csv(path, SIGNAL_SESSION)
+        assert rejected.value.code == "bar_csv_row_invalid"
+
+    def test_cli_execute_malformed_csv_typed_zero_write(
+        self, world: _DriverWorld, tmp_path: Path, capsys
+    ) -> None:
+        """CLI execute 遇畸形快照 → 类型化 JSON (非裸 traceback), 且在
+        栈构造之前拒绝 (trial root 字节级零突变)."""
+        from scripts.v3_trial_session import main as cli_main
+
+        bar_dir = tmp_path / "court-malformed"
+        bar_dir.mkdir(parents=True, exist_ok=True)
+        good = _court_bar_dir(tmp_path, [SIGNAL_SESSION])
+        (good / f"daily_{SIGNAL_SESSION:%Y%m%d}.csv").rename(
+            bar_dir / f"daily_{SIGNAL_SESSION:%Y%m%d}.csv"
+        )
+        (bar_dir / f"daily_{SIGNAL_SESSION + timedelta(days=1):%Y%m%d}.csv").write_text(
+            "ts_code,trade_date,open,high,low,close\n300001.SZ,20260807,1,2,3,4\n",
+            encoding="utf-8",
+        )
+        before = _tree_digest(world.root) + _tree_digest(world.identity_dir)
+        rc = cli_main(
+            [
+                "advance",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--through-session", (SIGNAL_SESSION + timedelta(days=1)).isoformat(),
+                "--bar-source", str(bar_dir),
+                "--now", LATER_AT.isoformat(),
+                "--execute",
+            ]
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert rc == 2
+        assert payload["ok"] is False
+        assert payload["code"] == "bar_csv_invalid"
+        assert payload["details"]["code"] == "bar_csv_columns_missing"
+        assert _tree_digest(world.root) + _tree_digest(world.identity_dir) == before
+
+
+class TestDecideManifestPreflight:
+    """R41: decide dry-run 的 readiness manifest pre-flight (docstring 对齐)."""
+
+    def test_dry_run_missing_manifest_rejected(
+        self, world: _DriverWorld, tmp_path: Path, capsys
+    ) -> None:
+        """manifest 缺失在 dry-run 即拒 (修复前 dry-run 对缺失 manifest 报绿)."""
+        from scripts.v3_trial_session import main as cli_main
+
+        before = _tree_digest(world.root) + _tree_digest(world.identity_dir)
+        rc = cli_main(
+            [
+                "decide",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--readiness-manifest", str(tmp_path / "missing.json"),
+                "--data-dir", str(tmp_path),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+            ]
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert rc == 2
+        assert payload["ok"] is False
+        assert payload["code"] == "snapshot_load_failed"
+        assert _tree_digest(world.root) + _tree_digest(world.identity_dir) == before
+
+    def test_dry_run_manifest_session_mismatch_rejected(
+        self, world: _DriverWorld, tmp_path: Path, capsys
+    ) -> None:
+        """manifest 属另一交易日 → dry-run 即拒 (类型化, 零写入).
+
+        loader 按文件名解析 (daily_action_readiness_{signal_date}.json) 且
+        内部校验 trade_date; 错位的真实可达形态是「文件名 08-06 / 内容
+        08-07」→ global_reason=readiness_date_mismatch。_load_snapshot 的
+        manifest_session_mismatch 分支是该面之下的防御纵深 (真实 loader
+        先拒绝, 不可达)。
+        """
+        from scripts.v3_trial_session import main as cli_main
+
+        other_day = SIGNAL_SESSION + timedelta(days=1)
+        publication = _published_manifest(tmp_path, other_day)
+        mislabeled = tmp_path / (
+            f"daily_action_readiness_{SIGNAL_SESSION:%Y%m%d}.json"
+        )
+        publication.artifact_path.rename(mislabeled)
+        before = _tree_digest(world.root) + _tree_digest(world.identity_dir)
+        rc = cli_main(
+            [
+                "decide",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--readiness-manifest", str(mislabeled),
+                "--data-dir", str(tmp_path),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+            ]
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert rc == 2
+        assert payload["ok"] is False
+        assert payload["code"] == "snapshot_load_failed"
+        assert payload["details"]["global_reason"] == "readiness_date_mismatch"
+        assert _tree_digest(world.root) + _tree_digest(world.identity_dir) == before

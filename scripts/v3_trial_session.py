@@ -193,6 +193,18 @@ def _cmd_decide(args: argparse.Namespace) -> int:
         calendar_path=calendar_path,
         trial_id=args.trial_id,
     )
+    # Readiness manifest pre-flight is shared by dry-run and execute (R41:
+    # the module docstring already promised manifest validation; a dry-run
+    # that cannot see a missing or session-mismatched manifest gives the
+    # operator false confidence). Loading is read-only (reports + caches).
+    # _load_snapshot 以 SystemExit 携带 typed JSON; 本入口把它收敛为返回码
+    # (R40 既有约定: 前置拒绝返回 rc=2 而非向调用方泄漏异常)。
+    try:
+        snapshot = _load_snapshot(
+            Path(args.readiness_manifest), signal_session, data_dir=Path(args.data_dir)
+        )
+    except SystemExit as stopped:
+        return int(stopped.code)
     if not args.execute:
         return _ok(
             {
@@ -203,12 +215,10 @@ def _cmd_decide(args: argparse.Namespace) -> int:
                     "publish btst candidates (SELECTED)",
                     "decide_signal_session (pair commit)",
                 ],
+                "readiness_session": snapshot.signal_date.isoformat(),
                 **(checks or {}),
             }
         )
-    snapshot = _load_snapshot(
-        Path(args.readiness_manifest), signal_session, data_dir=Path(args.data_dir)
-    )
     stack = _build_stack(
         identity_dir=identity_dir,
         trial_root=trial_root,
@@ -365,15 +375,32 @@ def _cmd_advance(args: argparse.Namespace) -> int:
                 **(checks or {}),
             }
         )
-    from scripts.v3_seed_market_bars import bars_from_court_csv
+    from scripts.v3_seed_market_bars import CourtBarCsvError, bars_from_court_csv
 
     # Parse only the window's snapshots (a full research directory can hold
     # hundreds of full-market files; the driver only consumes the window).
     bars_by_session = {}
     for session in window:
-        bars_by_session[session] = bars_from_court_csv(
-            source / f"daily_{session:%Y%m%d}.csv", session
-        )
+        try:
+            bars_by_session[session] = bars_from_court_csv(
+                source / f"daily_{session:%Y%m%d}.csv", session
+            )
+        except CourtBarCsvError as exc:
+            # _fail 的首个位置参数就是顶层 code, 底层拒绝码要进 details.code
+            # ——键名与位置参数同名, kwargs 无法表达, 只能按 _fail 的输出
+            # 契约手工构造 (R38 同族参数碰撞的第三处, 语义与 _fail 逐字对齐)。
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "code": "bar_csv_invalid",
+                        "message": str(exc),
+                        "details": {**exc.details, "code": exc.code},
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return 2
     stack = _build_stack(
         identity_dir=identity_dir,
         trial_root=trial_root,

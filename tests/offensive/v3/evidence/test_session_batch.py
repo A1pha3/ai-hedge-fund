@@ -901,7 +901,9 @@ def test_sealed_batch_rejects_row_key_mismatch(tmp_path):
     import sqlite3
 
     world = build_batch_world(tmp_path)
-    publish_regime(world)
+    # R41: regime 成员会话断言生效后, 08-07 批必须配 08-07 的 regime 观察
+    # (旧 setup 以 08-06 regime 封 08-07 批——那是被本轮关闭的无效构造)。
+    publish_regime(world, session=date(2026, 8, 7))
     schedule = publish_schedule(world, session=date(2026, 8, 7))
     authority = world.sealer.seal_decision_batch(
         session=date(2026, 8, 7),  # 内容属于 08-07
@@ -927,3 +929,27 @@ def test_sealed_batch_rejects_row_key_mismatch(tmp_path):
     # 正常键照常读回 (恰等封存行不受影响)
     ok = world.sealer.sealed_batch(date(2026, 8, 7))
     assert ok == authority
+
+
+def test_regime_of_other_session_rejected(tmp_path):
+    """R41: regime 成员会话断言 (Op2 三成员对称收口).
+
+    修复前: _regime_binding 只解析固定 id 的 active 记录——regime 头属
+    另一会话时静默入批, 错位只能落到 ShadowSharedInput 的非类型化
+    pydantic 校验 (kernel/models.py)。排程/候选侧自 Op2 起均有同款断言。
+    """
+    world = build_batch_world(tmp_path)
+    publish_regime(world, session=SESSION + timedelta(days=1))
+    schedule = publish_schedule(world)
+    with pytest.raises(SessionBatchError) as rejected:
+        world.sealer.seal_decision_batch(
+            session=SESSION,
+            cutoff=CUTOFF,
+            schedule_evidence_id=schedule.evidence.evidence_id,
+            candidate_evidence_ids=(),
+        )
+    assert rejected.value.code == "regime_session_mismatch"
+    assert rejected.value.details["regime_session"] == (
+        SESSION + timedelta(days=1)
+    ).isoformat()
+    assert rejected.value.details["session"] == SESSION.isoformat()
