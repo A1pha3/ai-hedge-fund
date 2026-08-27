@@ -1282,3 +1282,60 @@ class TestVanishRaceReadSide:
         assert stopped.value.code == 2
         payload = json.loads(capsys.readouterr().out)
         assert payload["code"] == "params_missing"
+
+
+class TestPlaceholderTouchContract:
+    """R49 Op3: Op1 新守卫面 (`_touch_placeholder_dbs`) 的契约补钉.
+
+    复查发现三处未钉死语义: 占位创建权限 0600 (收窄语义, 回归不可察觉)、
+    os.open OSError 分支的 trial_root_placeholder_rejected (新错误码零
+    测试)、FileExistsError→空文件重验放行的 continue 路径。
+    """
+
+    def test_placeholder_permissions_tightened_0600(self, tmp_path) -> None:
+        root = tmp_path / "trial-root"
+        assert cli_main(TestGenesisSeed()._seed_argv(root, execute=True)) == 0
+        for name in TestFreshWorldGuardFamily.DB_NAMES:
+            mode = os.stat(root / name).st_mode & 0o777
+            assert mode == 0o600, f"{name}: {oct(mode)}"
+
+    def test_touch_oserror_typed_placeholder_rejected(
+        self, tmp_path, capsys, monkeypatch
+    ) -> None:
+        """非 FileExistsError 的 OSError (如 PermissionError) → 类型化拒绝."""
+        root = tmp_path / "trial-root"
+        root.mkdir()
+        real_open = os.open
+
+        def fake_open(path, flags, mode=0o777, **kwargs):
+            p = Path(path)
+            if p.parent == root and p.name in TestFreshWorldGuardFamily.DB_NAMES:
+                raise PermissionError(13, "Permission denied", str(p))
+            return real_open(path, flags, mode, **kwargs)
+
+        monkeypatch.setattr(os, "open", fake_open)
+        with pytest.raises(SystemExit) as stopped:
+            cli_main(TestGenesisSeed()._seed_argv(root, execute=True))
+        assert stopped.value.code == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["code"] == "trial_root_placeholder_rejected"
+        assert payload["details"]["name"] == "evidence.sqlite3"
+
+    def test_touch_fileexists_empty_reverify_continues(self, tmp_path, monkeypatch) -> None:
+        """窗口内出现空常规文件 → 重验通过 → 继续创建其余占位 (rc=0)."""
+        root = tmp_path / "trial-root"
+        root.mkdir()
+        real_open = os.open
+        first = TestFreshWorldGuardFamily.DB_NAMES[0]
+
+        def fake_open(path, flags, mode=0o777, **kwargs):
+            p = Path(path)
+            if p.parent == root and p.name == first:
+                p.write_bytes(b"")  # 敌手/同伴抢先创建空文件
+                raise FileExistsError(str(p))
+            return real_open(path, flags, mode, **kwargs)
+
+        monkeypatch.setattr(os, "open", fake_open)
+        assert cli_main(TestGenesisSeed()._seed_argv(root, execute=True)) == 0
+        for name in TestFreshWorldGuardFamily.DB_NAMES:
+            assert os.stat(root / name).st_size == 0
