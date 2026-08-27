@@ -226,13 +226,16 @@ def _require_pre_registered_fact(
     WAL sidecar 写进预注册治理事实文件 (发现 5: R34 只封了 0 字节)。
 
     两段防线:
-    1. **冷文件检查** — ``-wal`` sidecar 存在即以 ``checkpoint_code``
-       拒绝: 未 checkpoint 的 WAL 意味着注册/封存 writer 仍打开或曾
-       中断; 更危险的是 sidecar 复活 (对抗复现实锤): 主文件被替换成
-       任意字节后, SQLite 可经残留 ``-wal``/``-shm`` 读出旧写入 —
-       90 字节垃圾主文件 + 构造期 ``regime_trial_bundle`` 返回合法
-       封存 bundle, 组装静默成功。读侧组装只信任已 checkpoint 的
-       冷文件, 使「文件字节」与「消费到的事实」不脱钩。
+    1. **冷文件检查** — 非空 ``-wal`` sidecar 以 ``checkpoint_code`` 拒绝:
+       未 checkpoint 的 WAL 意味着注册/封存 writer 仍打开或曾中断; 更危险
+       的是 sidecar 复活 (对抗复现实锤): 主文件被替换成任意字节后, SQLite
+       可经残留 ``-wal``/``-shm`` 读出旧写入 — 90 字节垃圾主文件 + 构造期
+       ``regime_trial_bundle`` 返回合法封存 bundle, 组装静默成功。读侧组装
+       只信任已 checkpoint 的冷文件, 使「文件字节」与「消费到的事实」不
+       脱钩。**0 字节 ``-wal`` 空壳放行** (R47): 空壳是 checkpoint 完成后
+       SQLite 关闭语义的正常残留 (读路径自身的连接关闭就会留下), 其中无
+       任何可复活字节, 且 ``immutable=1`` 探测本就忽略 sidecar 只读主
+       文件 — 「存在即拒」会让组装器被自己的残骸砖死。
     2. **immutable 探测** — ``immutable=1`` 只读连接让 SQLite 完全
        跳过锁与 sidecar 创建, 探测本身零写痕; 垃圾/空 schema 统一
        类型化为 ``rejection_code`` (修复前以非类型化 sqlalchemy 异常
@@ -240,14 +243,17 @@ def _require_pre_registered_fact(
        ``-wal`` — 注册中断残留本就该 fail-closed 重跑注册, 而非由
        读侧组装恢复 (恢复=写), 冷文件检查已显式拒绝该形态。
     """
-    if (path.parent / f"{path.name}-wal").exists():
+    stale_wal = path.parent / f"{path.name}-wal"
+    if stale_wal.exists() and stale_wal.stat().st_size > 0:
         raise OfficialStackError(
             checkpoint_code,
             "a pre-registered governance fact file must be fully"
-            " checkpointed (no -wal sidecar) before read-side assembly —"
-            " an un-checkpointed WAL means the sealing/registration"
-            " writer is still open or was interrupted, and stale"
-            " sidecars can resurrect replaced main-file bytes",
+            " checkpointed before read-side assembly — a non-empty -wal"
+            " sidecar means the sealing/registration writer is still"
+            " open or was interrupted, and stale sidecars can resurrect"
+            " replaced main-file bytes (zero-byte shells are the benign"
+            " debris of completed checkpoints and carry no bytes to"
+            " resurrect)",
             fact_file=path.name,
             **details,
         )

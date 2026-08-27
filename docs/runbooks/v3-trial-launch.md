@@ -113,6 +113,14 @@ uv run python scripts/v3_trial_session.py advance \
     ⚠ **不可用 `data/price_cache/` 作 bar-source**：它是 qfq 前复权且无
     `pre_close`（`src/tools/price.py`），限价围栏/资本标记口径全错——
     数据完整性红线（AGENTS.md）。
+    ⚠ **decide 合法时间窗（R47 演练成文）**：SELECTED 候选证据的入库窗是
+    `[signal_date 15:00 UTC, +24h]`（北京 T0 23:00 ～ T+1 23:00）——证据
+    store 的 `ingested_at ∈ [observed_at, available_at]` 冻结契约强制。
+    窗口内的 crash-retry 重跑合法（同会话恰等复用）；跨窗（隔日及以后）
+    重跑/补驱动会在候选发布处以 `store_timeline_rejected`（ingested_at
+    must be between observed_at and available_at）**类型化拒绝——这是预期
+    PIT 行为，不是故障**（事后补写的候选永不满足 cutoff 前入库纪律）。
+    此类会话的官方出口与跳过会话一致：本步 NO_RUN 补记。
 2c. **错过会话补记**：enrollment 窗口内因故未 decide 的会话，在
     assessment 日期过后补 NO_RUN 终态（幂等，append-only spine）。
     ⚠ **会话只许前向驱动（R41）**：跳过的会话一律走本步 NO_RUN 补记，

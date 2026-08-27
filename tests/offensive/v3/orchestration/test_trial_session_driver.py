@@ -1380,3 +1380,52 @@ class TestDecideManifestPreflight:
         assert payload["code"] == "snapshot_load_failed"
         assert payload["details"]["global_reason"] == "readiness_date_mismatch"
         assert _tree_digest(world.root) + _tree_digest(world.identity_dir) == before
+
+
+# -- R47: CLI _fail code 恒碰撞收口 -------------------------------------------
+
+
+def test_driver_error_reports_typed_code_without_collision(capsys):
+    """R47 真实数据演练实锤 (D1): ``_fail("driver_failed", …, code=exc.code,
+    **exc.details)`` 的位置/关键字 ``code`` 恒碰撞 — 任何 driver 类型化错误
+    都被 TypeError 掩盖 (rc=1、stdout 无 typed JSON), R38/R41 同族第四处。
+
+    修复后 helper 以 ``exc.code`` 为权威码构造输出, rc=2。
+    """
+    import json
+
+    from scripts.v3_trial_session import _fail_driver
+    from src.screening.offensive.v3.orchestration.trial_session_driver import (
+        TrialSessionDriverError,
+    )
+
+    rc = _fail_driver(
+        TrialSessionDriverError(
+            "regime_session_regression",
+            "regime head regression",
+            active_session="2026-08-26",
+            requested_session="2026-08-12",
+        )
+    )
+    assert rc == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False
+    assert out["code"] == "regime_session_regression"
+    assert out["details"] == {
+        "active_session": "2026-08-26",
+        "requested_session": "2026-08-12",
+    }
+
+
+def test_driver_error_details_cannot_shadow_code():
+    """结构性保证: TrialSessionDriverError 构造器即拒绝 details 携带
+    code 键 (位置/关键字同名碰撞) — details 永远不可能遮蔽权威码,
+    _fail_driver 的同名键防御只是对鸭子/子类形态的纵深。"""
+    import pytest
+
+    from src.screening.offensive.v3.orchestration.trial_session_driver import (
+        TrialSessionDriverError,
+    )
+
+    with pytest.raises(TypeError, match="multiple values for argument 'code'"):
+        TrialSessionDriverError("outer_code", "m", code="inner")

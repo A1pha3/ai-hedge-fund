@@ -40,6 +40,19 @@ def _fail(code: str, message: str, **details: object) -> int:
     return 2
 
 
+def _fail_driver(exc: "TrialSessionDriverError") -> int:
+    """按 ``_fail`` 输出契约构造 driver 错误 (R47, D1 收口)。
+
+    ``exc.code`` 是权威码; details 里的同名 ``code`` 键显式弃用 —
+    此前的 ``_fail("driver_failed", str(exc), code=exc.code, **exc.details)``
+    位置/关键字 ``code`` 恒碰撞, 任何 driver 类型化错误都被 TypeError
+    掩盖 (R38/R41 同族第四处)。
+    """
+    details = dict(exc.details)
+    details.pop("code", None)
+    return _fail(exc.code, str(exc), **details)
+
+
 def _ok(payload: dict) -> int:
     print(json.dumps({"ok": True, **payload}, ensure_ascii=False, default=str))
     return 0
@@ -247,7 +260,7 @@ def _cmd_decide(args: argparse.Namespace) -> int:
             snapshot=snapshot, signal_session=signal_session, now=now
         )
     except TrialSessionDriverError as exc:
-        return _fail("driver_failed", str(exc), code=exc.code, **exc.details)
+        return _fail_driver(exc)
     return _ok(
         {
             "mode": "execute",
@@ -431,7 +444,7 @@ def _cmd_advance(args: argparse.Namespace) -> int:
             now=now,
         )
     except TrialSessionDriverError as exc:
-        return _fail("driver_failed", str(exc), code=exc.code, **exc.details)
+        return _fail_driver(exc)
     return _ok(
         {
             "mode": "execute",
@@ -473,7 +486,7 @@ def _cmd_finalize(args: argparse.Namespace) -> int:
     try:
         finalized = stack.runner.finalize_missed_sessions(now)
     except TrialSessionDriverError as exc:
-        return _fail("driver_failed", str(exc), code=exc.code, **exc.details)
+        return _fail_driver(exc)
     return _ok(
         {
             "mode": "execute",

@@ -1526,3 +1526,37 @@ def test_zero_byte_decisions_db_still_self_builds(tmp_path):
 
     stack = _build(world)
     assert stack.decision_store is not None
+
+
+# -- R47: 0 字节 -wal/-shm 残骸假阳性收口 -------------------------------------
+
+
+def test_zero_byte_sidecar_shells_tolerated(tmp_path):
+    """0 字节 -wal 空壳与 -shm 残骸放行 (R47 真实数据演练实锤 D4)。
+
+    修复前 (RED 实锤): 读侧组装自身的连接关闭会留下 0 字节 ``-wal`` 空壳与
+    ``-shm`` 残骸 (SQLite 关闭语义的正常残留, 无字节可复活); R35 冷文件检查
+    「``-wal`` 存在即拒」未区分空壳与非空, 组装器被**自己的残骸**砖死 —
+    首次 advance 之后任何后续组装恒 ``spine_not_checkpointed``。
+
+    修复后: 冷文件检查只拒**非空** ``-wal`` (未 checkpoint 的字节才构成
+    复活面); 0 字节空壳放行, ``immutable=1`` 探测本就忽略 sidecar 只读
+    主文件, 组装成功。
+    """
+    from src.screening.offensive.v3.orchestration.official_trial_stack import (
+        OfficialStackError,
+    )
+
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    (world.root / "spine.sqlite3-wal").write_bytes(b"")
+    (world.root / "governance.sqlite3-wal").write_bytes(b"")
+    (world.root / "spine.sqlite3-shm").write_bytes(b"\x00" * 32)
+    (world.root / "governance.sqlite3-shm").write_bytes(b"\x00" * 32)
+    try:
+        _build(world)
+    except OfficialStackError as exc:
+        pytest.fail(f"zero-byte sidecar shells must not block assembly: {exc.code}")
