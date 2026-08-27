@@ -1033,3 +1033,94 @@ def test_freeze_shared_input_rejects_late_schedule(rig: _Rig) -> None:
     cutoff = _frozen_trusted_at() - __import__("datetime").timedelta(minutes=1)
     with _pytest.raises(ValidationError):  # available_at > cutoff → 宪法 12 fail-closed
         _freeze_with_schedule(rig, cutoff)
+
+
+# =============================================================================
+# R45: a terminal NO_RUN spine status forbids decide-side pair creation
+# =============================================================================
+
+
+class _StubSpine:
+    """One fixed terminal-status read; the rejection must be zero-write."""
+
+    def __init__(self, current: SessionStatus | None) -> None:
+        self.current = current
+        self.calls = 0
+
+    def status(self, research_program_id: str, signal_session: date):
+        self.calls += 1
+        return self.current
+
+
+class _Sentinel:
+    """Any collaborator the rejected decide must never reach."""
+
+
+def _guard_request() -> SignalSessionRequest:
+    return SignalSessionRequest(
+        trial_id=TRIAL_ID,
+        signal_session=SIGNAL_DATE,
+    )
+
+
+def test_terminal_no_run_forbids_later_pair_creation(tmp_path: Path) -> None:
+    """finalize-missed 补记 NO_RUN 后, decide 侧不得再为该会话创建 pair。
+
+    官方出口是单向的: 错过会话的唯一补记是 NO_RUN (append-only spine),
+    其后再驱动决策会制造证据时间轴与决策库的分歧 —— R44 处置表登记的
+    设计缺口在 runner 注入链上重建为活跃守卫。
+    """
+
+    from src.screening.offensive.v3.orchestration.paired_trial import (
+        ForwardPairedTrialRunner,
+    )
+    from src.screening.offensive.v3.orchestration.trial_store import (
+        TrialArmDecisionStore,
+    )
+
+    spine = _StubSpine(SessionStatus.NO_RUN)
+    store = TrialArmDecisionStore(database_path=str(tmp_path / "trial.sqlite3"))
+    runner = ForwardPairedTrialRunner(
+        assembler=_Sentinel(),
+        capital_trial_root=_Sentinel(),
+        portfolio_id=PORTFOLIO,
+        sizing_config=_Sentinel(),
+        decision_store=store,
+        session_spine=spine,
+        research_program_id=PROGRAM,
+    )
+
+    with pytest.raises(PairedTrialRunnerError) as rejected:
+        runner.decide_signal_session(_guard_request())
+
+    assert rejected.value.code == "terminal_no_run_forbids_pair_creation"
+    assert spine.calls == 1
+
+
+def test_non_terminal_spine_status_does_not_block_decide(tmp_path: Path) -> None:
+    """未注入或非终态(NO RUN 以外)状态不拦: bare-runner fail-closed 与
+    活跃链的既有语义逐字节保持 —— 守卫只在注入链解锁后、且恰好命中
+    NO_RUN 终态时生效。"""
+
+    from src.screening.offensive.v3.orchestration.trial_store import (
+        TrialArmDecisionStore,
+    )
+
+    store = TrialArmDecisionStore(database_path=str(tmp_path / "trial.sqlite3"))
+    with pytest.raises(PairedTrialRunnerError) as missing_context:
+        ForwardPairedTrialRunner().decide_signal_session(_guard_request())
+    assert (
+        missing_context.value.code == "forward_input_authority_unavailable"
+    )
+
+    # Injected chain without both spine and program id: guard silent.
+    unlocked = ForwardPairedTrialRunner(
+        assembler=_Sentinel(),
+        capital_trial_root=_Sentinel(),
+        portfolio_id=PORTFOLIO,
+        sizing_config=_Sentinel(),
+        decision_store=store,
+    )
+    with pytest.raises(PairedTrialRunnerError) as proceeded:
+        unlocked.decide_signal_session(_guard_request())
+    assert proceeded.value.code != "terminal_no_run_forbids_pair_creation"

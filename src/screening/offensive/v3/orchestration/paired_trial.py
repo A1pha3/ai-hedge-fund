@@ -307,6 +307,28 @@ class ForwardPairedTrialRunner:
         )
 
         self._require_unlocked()
+        # R45 守卫: 会话真相前向唯序。spine 已带终态 NO_RUN 的会话是证据
+        # 时间轴的"本会话无运行"事实 —— 其后再提交 pair 会制造决策库与
+        # 证据时间轴的分歧; 错过会话的唯一官方出口是 finalize-missed。
+        # 仅在 spine+program 均注入且恰好命中 NO_RUN 时拒绝(零副作用,
+        # 先于 deadline/assemble 消费); 未注入或非终态形态不拦, 既有
+        # fail-closed 与幂等重放语义逐字节不变。RUN/BLOCKED/NO_SIGNAL
+        # 不在此拒: 同会话重放由 commit_pair 恰等幂等收敛 (R44 处置表)。
+        if (
+            self._session_spine is not None
+            and self._research_program_id is not None
+            and self._session_spine.status(
+                self._research_program_id, request.signal_session
+            )
+            is SessionStatus.NO_RUN
+        ):
+            raise PairedTrialRunnerError(
+                "terminal_no_run_forbids_pair_creation",
+                "the session spine carries a terminal NO_RUN status; a"
+                " forward trial never creates pairs behind its own"
+                " evidence timeline",
+                signal_session=request.signal_session.isoformat(),
+            )
         if request.deadlines is None:
             raise PairedTrialRunnerError(
                 "deadline_contract_required",
