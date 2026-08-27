@@ -603,20 +603,29 @@ class TestWorkerServer:
         # serve_once 需要在 accept 前启动 — 本测试由调用方线程驱动
         return data
 
-    def test_bind_serve_roundtrip(self, worker_world, tmp_path):
+    def _serve_capturing(self, server, result):
+        """serve_once 线程体: 逃逸捕获 — 线程内异常写入 result["exc"],
+        主线程显式断言无逃逸 (否则裸 KeyError 形态失败, 不可归因;
+        R42 登记的 test_peer_uid_rejected 全量套件内单次 flake 正是此盲区)。"""
         import threading
 
+        def run():
+            try:
+                result["response"] = server.serve_once()
+            except BaseException as exc:  # noqa: BLE001
+                result["exc"] = f"{type(exc).__name__}: {exc}"
+
+        t = threading.Thread(target=run)
+        t.start()
+        return t
+
+    def test_bind_serve_roundtrip(self, worker_world, tmp_path):
         server = self._server(worker_world, tmp_path, peer_uid_extractor=lambda c: os.getuid())
         sock_path = server.bind()
         assert sock_path.is_socket()
 
         result = {}
-
-        def run():
-            result["response"] = server.serve_once()
-
-        t = threading.Thread(target=run)
-        t.start()
+        t = self._serve_capturing(server, result)
         import socket as s
 
         conn = s.socket(s.AF_UNIX, s.SOCK_STREAM)
@@ -644,6 +653,7 @@ class TestWorkerServer:
         conn.close()
         t.join(timeout=10)
 
+        assert "exc" not in result, result.get("exc", "")
         resp = result["response"]
         assert resp["ok"] is True
         assert resp["stage_id"] == worker_world["receipt"].stage_id
@@ -653,7 +663,6 @@ class TestWorkerServer:
         server.close()
 
     def test_peer_uid_rejected(self, worker_world, tmp_path):
-        import threading
         import socket as s
 
         server = self._server(
@@ -661,12 +670,7 @@ class TestWorkerServer:
         )
         sock_path = server.bind()
         result = {}
-
-        def run():
-            result["response"] = server.serve_once()
-
-        t = threading.Thread(target=run)
-        t.start()
+        t = self._serve_capturing(server, result)
         conn = s.socket(s.AF_UNIX, s.SOCK_STREAM)
         conn.connect(str(sock_path))
         conn.sendall(b'{"op":"assemble"}')
@@ -679,12 +683,107 @@ class TestWorkerServer:
             data += chunk
         conn.close()
         t.join(timeout=10)
+        assert "exc" not in result, result.get("exc", "")
         assert result["response"]["ok"] is False
         assert result["response"]["code"] == "peer_uid_rejected"
         server.close()
 
+    def test_client_vanished_before_delivery_preserves_decision(
+        self, worker_world, tmp_path
+    ):
+        """对端在响应送达前消失 (发完请求即 SHUT_RD + close, 永不读)。
+
+        决策已作出 (peer_uid_rejected), 送达必然失败——serve_once 必须返回
+        已计算 response 并如实标注 delivered=False, 不得让传输层异常
+        裸逃逸杀死 daemon serve 循环 (单个消失客户端 = daemon 死亡)。
+        peer 检查内 sleep 保证客户端关闭先于 serve_once 的 sendall (确定性)。"""
+        import socket as s
+        import time
+
+        def rejecting_slow_peer(conn):
+            time.sleep(0.3)
+            return 99999
+
+        server = self._server(
+            worker_world, tmp_path, peer_uid_extractor=rejecting_slow_peer
+        )
+        sock_path = server.bind()
+        result = {}
+        t = self._serve_capturing(server, result)
+
+        conn = s.socket(s.AF_UNIX, s.SOCK_STREAM)
+        conn.connect(str(sock_path))
+        conn.sendall(b'{"op":"assemble"}')
+        conn.shutdown(s.SHUT_RD)  # 声明永不读, 触发对端写入 EPIPE
+        conn.close()
+        t.join(timeout=10)
+
+        assert "exc" not in result, result.get("exc", "")
+        resp = result["response"]
+        assert resp["ok"] is False
+        assert resp["code"] == "peer_uid_rejected"
+        assert resp["delivered"] is False
+        assert resp["delivery_error"]
+        server.close()
+
+    def test_accept_oserror_typed(self, worker_world, tmp_path):
+        """accept 的非 timeout OSError (fd 耗尽类) 必须类型化 accept_failed,
+        不得以 OSError 原样逃逸 (全量套件压力下 flake 将不可归因)。"""
+
+        class _EmfileSocket:
+            def settimeout(self, value):
+                pass
+
+            def accept(self):
+                raise OSError(24, "Too many open files")
+
+            def close(self):
+                pass
+
+        server = self._server(
+            worker_world, tmp_path, peer_uid_extractor=lambda c: os.getuid()
+        )
+        server.bind()
+        server._socket = _EmfileSocket()  # 鸭子替换: 只覆盖 serve_once 消费面
+        from src.screening.offensive.v3.orchestration.worker_server import (
+            WorkerServerError,
+        )
+
+        with pytest.raises(WorkerServerError) as ei:
+            server.serve_once()
+        assert ei.value.code == "accept_failed"
+        server.close()
+
+    def test_accept_timeout_still_typed_as_timeout(self, worker_world, tmp_path):
+        """accept 的 socket.timeout 必须保持 worker_server_timeout 语义,
+        不得被 accept_failed 的 OSError 分支吞掉 (except 顺序守护)。"""
+        import socket as s
+
+        class _TimeoutSocket:
+            def settimeout(self, value):
+                pass
+
+            def accept(self):
+                raise s.timeout("timed out")
+
+            def close(self):
+                pass
+
+        server = self._server(
+            worker_world, tmp_path, peer_uid_extractor=lambda c: os.getuid()
+        )
+        server.bind()
+        server._socket = _TimeoutSocket()
+        from src.screening.offensive.v3.orchestration.worker_server import (
+            WorkerServerError,
+        )
+
+        with pytest.raises(WorkerServerError) as ei:
+            server.serve_once()
+        assert ei.value.code == "worker_server_timeout"
+        server.close()
+
     def test_op_unknown_and_bad_request(self, worker_world, tmp_path):
-        import threading
         import socket as s
 
         server = self._server(worker_world, tmp_path, peer_uid_extractor=lambda c: os.getuid())
@@ -694,12 +793,7 @@ class TestWorkerServer:
             ({"op": "assemble", "session": "not-a-date"}, "request_invalid"),
         ):
             result = {}
-
-            def run():
-                result["response"] = server.serve_once()
-
-            t = threading.Thread(target=run)
-            t.start()
+            t = self._serve_capturing(server, result)
             conn = s.socket(s.AF_UNIX, s.SOCK_STREAM)
             conn.connect(str(sock_path))
             conn.sendall(json.dumps(payload).encode("utf-8"))
@@ -708,6 +802,7 @@ class TestWorkerServer:
                 pass
             conn.close()
             t.join(timeout=10)
+            assert "exc" not in result, (payload, result.get("exc", ""))
             assert result["response"]["ok"] is False, payload
             assert result["response"]["code"] == expected_code, payload
         server.close()

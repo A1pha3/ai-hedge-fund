@@ -176,7 +176,10 @@ class PrivilegedWorkerServer:
     # -- serving ------------------------------------------------------------
 
     def serve_once(self) -> dict:
-        """Accept 恰一个连接: 凭证检查 → 请求 → 响应 dict (同时返回给调用方)。"""
+        """Accept 恰一个连接: 凭证检查 → 请求 → 响应 dict (同时返回给调用方)。
+
+        决策与送达分离: 对端消失只影响送达 (response 标注 delivered=False),
+        传输层异常不得以裸 OSError 逃逸杀死调用方 serve 循环。"""
         if self._socket is None:
             raise WorkerServerError("worker_server_not_bound", "call bind() first")
         self._socket.settimeout(self._config.timeout_seconds)
@@ -185,6 +188,12 @@ class PrivilegedWorkerServer:
         except socket.timeout as exc:
             raise WorkerServerError(
                 "worker_server_timeout", "no client connected within timeout"
+            ) from exc
+        except OSError as exc:
+            # accept 侧资源类失败 (EMFILE/ENFILE 类) 类型化: 全量套件/运维压力
+            # 下裸 OSError 逃逸会把 flake 变成不可归因的 KeyError (R42 登记)。
+            raise WorkerServerError(
+                "accept_failed", "accept raised an OS-level error", reason=str(exc)
             ) from exc
         with conn:
             peer_uid = self._peer_uid(conn)
@@ -197,7 +206,19 @@ class PrivilegedWorkerServer:
                 }
             else:
                 response = self._handle(conn)
-            conn.sendall(json.dumps(response, ensure_ascii=False).encode("utf-8"))
+            try:
+                conn.sendall(
+                    json.dumps(response, ensure_ascii=False).encode("utf-8")
+                )
+            except OSError as exc:
+                # 对端在响应送达前消失 (EPIPE/ECONNRESET): 决策已作出——保留
+                # 已计算 response 并如实标注送达失败, 单个消失客户端不得以
+                # 裸传输异常杀死 daemon serve 循环。
+                response = {
+                    **response,
+                    "delivered": False,
+                    "delivery_error": f"{type(exc).__name__}: {exc}",
+                }
         return response
 
     def _handle(self, conn: socket.socket) -> dict:
