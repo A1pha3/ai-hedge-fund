@@ -194,6 +194,55 @@ def _load_snapshot(
     return snapshot
 
 
+def _decide_preflight(
+    *, calendar_path: Path, signal_session: date, now: datetime
+) -> None:
+    """decide 共享 pre-flight (R48 D6): dry-run/execute 同源, 构造栈之前。
+
+    镜像 advance 的 R40 先例与 R41 的 manifest 假信心修复: dry-run 报绿的
+    语义是『execute 的前置全部成立』。窗口外会话在 execute 必然晚失败于
+    候选发布 (``store_timeline_rejected``) 且先行发布孤儿 regime/排程证据;
+    日历外会话在 execute 必然失败于排程派生。『窗口内已提交候选的恰等
+    重放』这一逃生门需要 store 真相, 只能由 execute 侧 driver 守卫判定 —
+    dry-run 侧宁 reject 不假绿 (假红安全, 假绿害人), 拒绝详情写明该形态。
+    """
+    from src.screening.offensive.v3.evidence.trading_schedule import (
+        TradingScheduleError,
+        load_authoritative_dates,
+    )
+    from src.screening.offensive.v3.producers.auto import candidate_ingestion_window
+
+    try:
+        dates = load_authoritative_dates(calendar_path)
+    except (TradingScheduleError, OSError) as exc:
+        raise SystemExit(_fail("calendar_unreadable", str(exc)))
+    if signal_session not in dates:
+        raise SystemExit(
+            _fail(
+                "signal_session_not_in_calendar",
+                "the signal session is absent from the authoritative calendar",
+                signal_session=signal_session.isoformat(),
+            )
+        )
+    window_open, window_close = candidate_ingestion_window(signal_session)
+    if not (window_open <= now <= window_close):
+        raise SystemExit(
+            _fail(
+                "decide_window_violated",
+                "the signal session is outside its candidate ingestion window"
+                " [signal_date 15:00 UTC, +24h]; in-window decide is the only"
+                " first drive (missed sessions exit via finalize-missed"
+                " NO_RUN), and a re-drive after a committed in-window decide"
+                " stays legal on execute (exact-equal replay, driver-side"
+                " escape via committed candidates)",
+                signal_session=signal_session.isoformat(),
+                window_open=window_open.isoformat(),
+                window_close=window_close.isoformat(),
+                now=now.isoformat(),
+            )
+        )
+
+
 def _cmd_decide(args: argparse.Namespace) -> int:
     identity_dir = Path(args.identity_dir)
     trial_root = Path(args.trial_root)
@@ -206,13 +255,14 @@ def _cmd_decide(args: argparse.Namespace) -> int:
         calendar_path=calendar_path,
         trial_id=args.trial_id,
     )
-    # Readiness manifest pre-flight is shared by dry-run and execute (R41:
-    # the module docstring already promised manifest validation; a dry-run
-    # that cannot see a missing or session-mismatched manifest gives the
-    # operator false confidence). Loading is read-only (reports + caches).
-    # _load_snapshot 以 SystemExit 携带 typed JSON; 本入口把它收敛为返回码
-    # (R40 既有约定: 前置拒绝返回 rc=2 而非向调用方泄漏异常)。
+    # 候选入库窗 + 日历成员 pre-flight (R48 D6): dry-run/execute 共享,
+    # 在构造栈 (对 trial root 落 WAL+DDL) 与加载快照之前拒绝。
+    # _decide_preflight 与 _load_snapshot 同以 SystemExit 携带 typed JSON,
+    # 本入口统一收敛为返回码 (R40 约定: 前置拒绝 rc=2, 不向调用方泄漏异常)。
     try:
+        _decide_preflight(
+            calendar_path=calendar_path, signal_session=signal_session, now=now
+        )
         snapshot = _load_snapshot(
             Path(args.readiness_manifest), signal_session, data_dir=Path(args.data_dir)
         )

@@ -701,6 +701,9 @@ class TestAdversarial:
 
         R36 契约 (manifest 缺失仍报绿) 正是 R41 关闭的操作员假信心面;
         缺失/会话错位两形态的拒绝由 TestDecideManifestPreflight 钉死。
+        R48 D6 契约更新: 窗口 pre-flight 上线后 dry-run 必须显式注入窗口内
+        --now (旧版无 --now 即真实墙钟, 对陈旧会话假绿 — 正是 D6 关闭的
+        面注入 --now 后本测试守护『合法窗内 dry-run 仍字节级零写入』)。
         """
         from scripts.v3_trial_session import main as cli_main
 
@@ -718,6 +721,7 @@ class TestAdversarial:
                 "--readiness-manifest", str(publication.artifact_path),
                 "--data-dir", str(tmp_path),
                 "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--now", DECIDE_AT.isoformat(),
             ]
         )
         assert rc == 0
@@ -1045,7 +1049,10 @@ class TestSessionTruthOrderDiscipline:
             snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
         )
         before = _tree_digest(world.root)
-        world.now = DECIDE_AT + timedelta(hours=2)
+        # R48 D6: retro 尝试注入 EARLIER_SESSION 入库窗内的时刻 — 窗外形态
+        # 现由 decide_window_violated 先拦 (CLI dry-run 同源), 本测试钉的
+        # 会话真相序面 (regime_session_regression) 在窗内注入钟下保持可达。
+        world.now = datetime(2026, 8, 6, 9, 0, tzinfo=UTC)  # 仍在 08-05 入库窗内 (窗至 08-06 15:00) 且晚于身份 notBefore
         with pytest.raises(TrialSessionDriverError) as rejected:
             world.driver.decide_session(
                 snapshot=_snapshot(signal_date=EARLIER_SESSION),
@@ -1066,7 +1073,9 @@ class TestSessionTruthOrderDiscipline:
         first = world.driver.decide_session(
             snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
         )
-        world.now = DECIDE_AT + timedelta(hours=2)
+        # R48 D6: 同 test_retro_drive_rejected_zero_write — retro 尝试注入
+        # EARLIER_SESSION 入库窗内时刻, 使会话真相序面保持可达。
+        world.now = datetime(2026, 8, 6, 9, 0, tzinfo=UTC)  # 仍在 08-05 入库窗内 (窗至 08-06 15:00) 且晚于身份 notBefore
         with pytest.raises(TrialSessionDriverError):
             world.driver.decide_session(
                 snapshot=_snapshot(signal_date=EARLIER_SESSION),
@@ -1334,6 +1343,7 @@ class TestDecideManifestPreflight:
                 "--readiness-manifest", str(tmp_path / "missing.json"),
                 "--data-dir", str(tmp_path),
                 "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--now", DECIDE_AT.isoformat(),
             ]
         )
         payload = json.loads(capsys.readouterr().out)
@@ -1372,6 +1382,7 @@ class TestDecideManifestPreflight:
                 "--readiness-manifest", str(mislabeled),
                 "--data-dir", str(tmp_path),
                 "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--now", DECIDE_AT.isoformat(),
             ]
         )
         payload = json.loads(capsys.readouterr().out)
@@ -1429,3 +1440,139 @@ def test_driver_error_details_cannot_shadow_code():
 
     with pytest.raises(TypeError, match="multiple values for argument 'code'"):
         TrialSessionDriverError("outer_code", "m", code="inner")
+
+
+# ---------------------------------------------------------------------------
+# R48 D6: decide 会话真相守卫 — 窗口外拒绝 + 已提交重放逃生门 + CLI pre-flight
+# ---------------------------------------------------------------------------
+
+LATE_AT = datetime(2026, 8, 8, 15, 30, tzinfo=UTC)
+"""08-06 会话入库窗 [08-05 15:00, 08-06 15:00] (信封时间链) 之外的时刻。
+
+注: 驱动器世界的 _calendar_file 覆盖 08-06..08-21, 08-08 在日历内 —
+本节窗口测试与日历成员正交。
+"""
+
+
+class TestDecideWindowGuard:
+    def test_decide_outside_window_rejected_before_any_publication(
+        self, world: _DriverWorld
+    ) -> None:
+        """窗口外 + 无已提交候选: 零发布类型化拒绝 (regime/排程/候选全不动)。"""
+        world.driver.ensure_trial_registration()
+        snapshots_before = set(
+            world.stack.regime_repository.evidence_ids_by_kind("snapshot")
+        )
+        signals_before = set(
+            world.stack.btst_repository.evidence_ids_by_kind("signal")
+        )
+        with pytest.raises(TrialSessionDriverError) as rejected:
+            world.driver.decide_session(
+                snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=LATE_AT
+            )
+        assert rejected.value.code == "decide_window_violated"
+        assert rejected.value.details["signal_session"] == SIGNAL_SESSION.isoformat()
+        assert set(
+            world.stack.regime_repository.evidence_ids_by_kind("snapshot")
+        ) == snapshots_before
+        assert set(world.stack.btst_repository.evidence_ids_by_kind("signal")) == (
+            signals_before
+        )
+
+    def test_decide_outside_window_committed_replay_converges(
+        self, world: _DriverWorld, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """逃生门: 窗口内已提交会话的窗口外重驱动恰等收敛 (复验形态)。
+
+        驱动器世界的合成快照默认零候选 (NO_SIGNAL) — 逃生门前提是『已有
+        已提交 SELECTED 候选』, 故按 test_btst_producer_api 先例 patch
+        setup.detect 使首驱动真实产生并提交候选。
+        """
+        from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
+
+        def hit(self, ticker, trade_date, context):
+            return DetectionResult(
+                hit=True,
+                ticker=ticker,
+                trade_date=SIGNAL_SESSION.strftime("%Y%m%d"),
+                trigger_strength=0.90,
+                invalidation_condition="price below trigger close",
+                metadata={"range_based_stop_pct": -0.08},
+                degraded=False,
+                degradation_reason="",
+            )
+
+        monkeypatch.setattr(BtstBreakoutSetup, "detect", hit)
+        world.driver.ensure_trial_registration()
+        first = world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        committed = world.stack.btst_repository.evidence_ids_by_kind("signal")
+        assert committed, "escape-hatch premise: the in-window decide must commit SELECTED candidates"
+        world.now = LATE_AT
+        second = world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=LATE_AT
+        )
+        assert second.pair_key == first.pair_key
+        assert second.champion_status == first.champion_status
+
+
+class TestDecideCliPreflight:
+    def test_cli_dry_run_rejects_stale_session_zero_write(
+        self, world: _DriverWorld, tmp_path: Path, capsys
+    ) -> None:
+        """D6: 陈旧会话的 dry-run 不再假绿 — 构造栈之前类型化拒绝。
+
+        R41 manifest 假绿的精确同族: dry-run 报绿的语义是『execute 的前置
+        全部成立』; 窗口外会话 execute 必然失败, dry-run 必须先说。
+        """
+        from scripts.v3_trial_session import main as cli_main
+
+        reports = tmp_path / "reports"
+        reports.mkdir()
+        publication = _published_manifest(reports, SIGNAL_SESSION)
+        before = _tree_digest(world.root) + _tree_digest(world.identity_dir)
+        rc = cli_main(
+            [
+                "decide",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--readiness-manifest", str(publication.artifact_path),
+                "--data-dir", str(tmp_path),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--now", LATE_AT.isoformat(),
+            ]
+        )
+        assert rc == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is False
+        assert payload["code"] == "decide_window_violated"
+        assert _tree_digest(world.root) + _tree_digest(world.identity_dir) == before
+
+    def test_cli_dry_run_rejects_session_not_in_calendar(
+        self, world: _DriverWorld, tmp_path: Path, capsys
+    ) -> None:
+        """D6: 日历成员 pre-flight 与 advance 的 R40 语义对齐 (dry-run 即拒)。"""
+        from scripts.v3_trial_session import main as cli_main
+
+        reports = tmp_path / "reports"
+        reports.mkdir()
+        publication = _published_manifest(reports, date(2026, 8, 30))
+        rc = cli_main(
+            [
+                "decide",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--readiness-manifest", str(publication.artifact_path),
+                "--data-dir", str(tmp_path),
+                "--signal-session", "2026-08-30",
+                "--now", "2026-08-30T15:30:00+00:00",
+            ]
+        )
+        assert rc == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["code"] == "signal_session_not_in_calendar"

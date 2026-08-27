@@ -220,9 +220,11 @@ class OfficialTrialSessionDriver:
         """Publish (or reuse) the session evidence, then run the pair decision.
 
         重放幂等: 成员存在即复用 → cutoff 水位重导出不变 → 请求逐字段一致 →
-        ``commit_pair`` 同键恰等收敛。
+        ``commit_pair`` 同键恰等收敛。会话真相守卫
+        (:meth:`_require_decide_window`) 在任何发布之前运行 (R48 D6)。
         """
         published_at = self._clock() if now is None else now
+        self._require_decide_window(signal_session, published_at)
         publication = self.publish_session_evidence(
             snapshot=snapshot, signal_session=signal_session, now=published_at
         )
@@ -240,6 +242,47 @@ class OfficialTrialSessionDriver:
                 candidate_evidence_ids=publication.selected_candidate_evidence_ids,
                 deadlines=self.deadline_contract(schedule),
             )
+        )
+
+    def _require_decide_window(self, signal_session: date, now: datetime) -> None:
+        """会话真相守卫 (R48 D6): 只许窗内首驱动或已提交会话的恰等重放。
+
+        候选信封的 ``available_at`` 冻结在 ``candidate_ingestion_window``
+        的上界 (store 时间线契约双端闭), 窗口外首驱动必然晚失败于候选发布
+        (``store_timeline_rejected``) 且先行发布孤儿 regime/排程证据; 无
+        SELECTED 候选 (NO_SIGNAL) 的会话连 store 纪律都不经过 — 两者都会
+        把『错过会话官方出口 = NO_RUN 补记』(R41 前向唯序 / R47 runbook)
+        静默绕成事后 decide。窗口外仅当该会话已有已提交 SELECTED 候选
+        (窗口内驱动后 crash 的复验形态) 时放行, 由发布链复用路径恰等收敛;
+        逃生门复用 ``committed_selected_candidate_ids`` 单一实现, 不在
+        本层重写会话归属判定。
+        """
+        from src.screening.offensive.v3.evidence.session_batch import (
+            committed_selected_candidate_ids,
+        )
+        from src.screening.offensive.v3.producers.auto import (
+            candidate_ingestion_window,
+        )
+
+        window_open, window_close = candidate_ingestion_window(signal_session)
+        if window_open <= now <= window_close:
+            return
+        if committed_selected_candidate_ids(
+            self._stack.btst_repository,
+            signal_session,
+            now + _PUBLICATION_SETTLE,
+        ):
+            return
+        raise TrialSessionDriverError(
+            "decide_window_violated",
+            "the signal session is outside its candidate ingestion window"
+            " and has no committed candidates; in-window decide is the only"
+            " first drive, and missed sessions exit via finalize-missed"
+            " NO_RUN",
+            signal_session=signal_session.isoformat(),
+            window_open=window_open.isoformat(),
+            window_close=window_close.isoformat(),
+            now=now.isoformat(),
         )
 
     def publish_session_evidence(

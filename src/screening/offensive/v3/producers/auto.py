@@ -30,7 +30,7 @@ ingested_at = clock()) 必须落在此窗口内; 测试将 signal_date 选为 cl
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Final
 
 from src.screening.offensive.daily_action import scan_from_verified_snapshot
@@ -93,6 +93,18 @@ def produce_auto_signals(
     return tuple(envelopes)
 
 
+def candidate_ingestion_window(signal_session: date) -> tuple[datetime, datetime]:
+    """候选信封的合法入库窗 ``[observed_at, available_at]`` (双端闭)。
+
+    单一事实源 (R48 D6): ``_signal_envelope`` 的时间链与全部消费面守卫
+    (驱动器首步守卫 / CLI pre-flight) 共同消费本谓词, 派生规则 =
+    ``signal_date`` 15:00 UTC 起 24 小时窗。store 的时间线契约是双端闭
+    (``observed_at <= ingested_at <= available_at``), 守卫比较必须镜像。
+    """
+    session_start = datetime.combine(signal_session, time(15, 0), tzinfo=timezone.utc)
+    return session_start, session_start + timedelta(days=1)
+
+
 def _signal_envelope(
     *,
     snapshot: VerifiedDailyActionSnapshot,
@@ -104,14 +116,13 @@ def _signal_envelope(
 ) -> SignalEvidence:
     """构造一枚候选漏斗阶段的不可变信号信封。
 
-    时间链由 ``snapshot.signal_date`` 派生: observed_at = effective_at =
+    时间链由 ``snapshot.signal_date`` 经
+    :func:`candidate_ingestion_window` 派生: observed_at = effective_at =
     provider_published_at = signal_date 15:00 UTC, available_at =
     signal_date+1 15:00 UTC (24 小时窗口)。evidence_id 与 family_id 契约
     见模块 docstring。信封只携带原始候选字段, 不含任何授权/sizing 输出。
     """
-    session_start = datetime.combine(
-        snapshot.signal_date, time(15, 0), tzinfo=timezone.utc
-    )
+    session_start, window_close = candidate_ingestion_window(snapshot.signal_date)
     return SignalEvidence(
         evidence_id=(
             f"{producer_namespace}:{snapshot.snapshot_id}:"
@@ -128,7 +139,7 @@ def _signal_envelope(
         effective_at=session_start,
         provider_published_at=session_start,
         observed_at=session_start,
-        available_at=session_start + timedelta(days=1),
+        available_at=window_close,
         mode=ExecutionMode.RESEARCH_RECONSTRUCTION,
         source_authority=f"{producer_namespace}.producer",
         payload_content_hash=hashlib.sha256(

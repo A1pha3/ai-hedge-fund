@@ -904,3 +904,34 @@ def test_candidate_reader_rejects_caller_owned_active_projection(
         )
 
     assert getattr(rejected.value, "code", None) == "signal_record_untrusted"
+
+
+class TestCandidateIngestionWindow:
+    """D6 (R48): 候选入库窗谓词是信封时间链的单一事实源。
+
+    store 的时间线契约是双端闭 (``observed_at <= ingested_at <=
+    available_at``); 驱动器首步守卫与 CLI pre-flight 必须消费与
+    ``_signal_envelope`` 完全相同的派生, 不得各自复制常量。
+    """
+
+    def test_window_bounds_are_the_envelope_timestamps(self) -> None:
+        from src.screening.offensive.v3.producers.auto import (
+            _signal_envelope,
+            candidate_ingestion_window,
+        )
+
+        window_open, window_close = candidate_ingestion_window(SIGNAL_DATE)
+        assert window_open == datetime(2026, 8, 5, 15, 0, tzinfo=timezone.utc)
+        assert window_close == datetime(2026, 8, 6, 15, 0, tzinfo=timezone.utc)
+        assert window_close - window_open == timedelta(hours=24)
+
+        envelope = _signal_envelope(
+            snapshot=_snapshot(),
+            candidate=_candidate(),
+            stage=SignalStage.SELECTED,
+            behavior_fingerprint=BTST_FINGERPRINT,
+            strategy_semver=btst_producer.BTST_STRATEGY_SEMVER,
+            producer_namespace=btst_producer.BTST_PRODUCER_NAMESPACE,
+        )
+        assert envelope.observed_at == window_open
+        assert envelope.available_at == window_close
