@@ -1188,3 +1188,97 @@ class TestFreshWorldGuardFamily:
         assert stopped.value.code == 2
         assert self._fail_code(capsys) == "trial_root_not_fresh"
         assert (root / "evidence.sqlite3").read_bytes() == b"adversary"
+
+
+class TestVanishRaceReadSide:
+    """R49 Op2: D7 家族收尾 — bootstrap 读/检查侧两调用裸逃逸.
+
+    与 Op1 同族: is_file()/exists() 判真后的 lstat()/read_text() 在检查点
+    消失竞态 (清理/并发/敌手时序) 下裸抛 FileNotFoundError, 非类型化逃逸
+    (rc≠2 无 typed JSON)。修复语义: 守卫单次 lstat try/except → 类型化
+    trial_root_not_initialized; 读取点显式 FileNotFoundError → 复用同码
+    params_missing。
+    """
+
+    def _identity(self, tmp_path):
+        identity_dir = tmp_path / "identity"
+        generate_governance_identity(
+            identity_dir, clock=lambda: datetime(2026, 8, 6, 8, 0, tzinfo=UTC)
+        )
+        return identity_dir
+
+    def _world_with_placeholder_dbs(self, tmp_path):
+        root = tmp_path / "trial-root"
+        root.mkdir()
+        for name in TestFreshWorldGuardFamily.DB_NAMES:
+            (root / name).write_bytes(b"")
+        return root
+
+    def test_common_checks_vanish_race_typed_reject(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        """_common_checks 守卫点消失竞态 → 类型化拒绝 (修复前裸逃逸)."""
+        identity_dir = self._identity(tmp_path)
+        root = self._world_with_placeholder_dbs(tmp_path)
+        real_is_file, real_lstat = Path.is_file, Path.lstat
+        db_names = TestFreshWorldGuardFamily.DB_NAMES
+
+        def fake_is_file(self):
+            if self.parent == root and self.name in db_names:
+                return True
+            return real_is_file(self)
+
+        def fake_lstat(self):
+            if self.parent == root and self.name in db_names:
+                raise FileNotFoundError(str(self))
+            return real_lstat(self)
+
+        monkeypatch.setattr(Path, "is_file", fake_is_file)
+        monkeypatch.setattr(Path, "lstat", fake_lstat)
+        with pytest.raises(SystemExit) as stopped:
+            cli_main([
+                "seed-evidence",
+                "--identity-dir", str(identity_dir),
+                "--trial-root", str(root),
+                "--calendar", str(tmp_path / "cal.csv"),
+                "--readiness-manifest", str(tmp_path / "m.json"),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+            ])
+        assert stopped.value.code == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["code"] == "trial_root_not_initialized"
+
+    def test_seal_params_vanish_race_typed_reject(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        """params 读取点消失竞态 → 复用 params_missing 同码 (修复前裸逃逸)."""
+        identity_dir = self._identity(tmp_path)
+        root = self._world_with_placeholder_dbs(tmp_path)
+        params = tmp_path / "params.json"
+        params.write_text("{}", encoding="utf-8")
+        real_is_file, real_read_text = Path.is_file, Path.read_text
+
+        def fake_is_file(self):
+            if self == params:
+                return True
+            return real_is_file(self)
+
+        def fake_read_text(self, *args, **kwargs):
+            if self == params:
+                raise FileNotFoundError(str(self))
+            return real_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "is_file", fake_is_file)
+        monkeypatch.setattr(Path, "read_text", fake_read_text)
+        with pytest.raises(SystemExit) as stopped:
+            cli_main([
+                "seal-trial",
+                "--identity-dir", str(identity_dir),
+                "--trial-root", str(root),
+                "--trial-id", TRIAL_ID,
+                "--params", str(params),
+                "--now", (GOV_NOW + timedelta(days=2)).isoformat(),
+            ])
+        assert stopped.value.code == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["code"] == "params_missing"

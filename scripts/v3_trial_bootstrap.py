@@ -221,9 +221,12 @@ def _common_checks(*, identity_dir: Path, trial_root: Path) -> dict:
         "governance.sqlite3",
     ):
         path = trial_root / name
-        if not path.is_file():
+        try:
+            mode = path.lstat().st_mode
+        except FileNotFoundError:
+            # 守卫点消失竞态 (R49 Op2, D7 家族): 类型化拒绝, 不裸逃逸。
+            # dangling symlink 由此归入 path_rejected (lstat 见 symlink)。
             raise SystemExit(_fail("trial_root_not_initialized", name))
-        mode = path.lstat().st_mode
         if not stat.S_ISREG(mode):
             raise SystemExit(_fail("trial_root_path_rejected", name))
     return {"namespaces": summary.get("namespaces")}
@@ -751,7 +754,12 @@ def _cmd_seal_trial(args: argparse.Namespace) -> int:
     if not params_path.is_file():
         raise SystemExit(_fail("params_missing", str(params_path)))
     try:
-        raw_params = json.loads(params_path.read_text(encoding="utf-8"))
+        raw_params_text = params_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        # 读取点消失竞态 (R49 Op2, D7 家族): 复用 params_missing 同码。
+        raise SystemExit(_fail("params_missing", str(params_path)))
+    try:
+        raw_params = json.loads(raw_params_text)
     except ValueError as exc:
         raise SystemExit(_fail("params_unparsable", str(exc)))
     required_keys = (

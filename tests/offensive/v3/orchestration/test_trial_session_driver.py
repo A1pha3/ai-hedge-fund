@@ -1674,3 +1674,44 @@ class TestDecideCliExecuteWindow:
         assert (
             world.stack.btst_repository.evidence_ids_by_kind("signal") == ()
         ), "rejected execute must not publish candidates"
+
+
+class TestAdvanceBarVanishRace:
+    """R49 Op2: advance bar 读取点消失竞态的类型化收口.
+
+    R40 preflight (bar_sessions_missing) 与 R41 句法防御 (bar_csv_invalid)
+    之间的缝隙: preflight 判在的 CSV 在读取点消失 (清理/竞态) →
+    pandas FileNotFoundError 绕过 ``except CourtBarCsvError`` 裸 rc=1。
+    修复后类型化 ``bar_csv_missing`` (rc=2)。
+    """
+
+    def test_cli_advance_bar_vanish_race_typed(
+        self, world: _DriverWorld, tmp_path: Path, monkeypatch, capsys
+    ) -> None:
+        import scripts.v3_seed_market_bars as bars_module
+        from scripts.v3_trial_session import main as cli_main
+
+        window = (SIGNAL_SESSION, SIGNAL_SESSION + timedelta(days=1))
+        bar_dir = _court_bar_dir(tmp_path, window)
+
+        def fake_read(csv_path, session):
+            raise FileNotFoundError(str(csv_path))
+
+        monkeypatch.setattr(bars_module, "bars_from_court_csv", fake_read)
+        rc = cli_main(
+            [
+                "advance",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--through-session", window[-1].isoformat(),
+                "--bar-source", str(bar_dir),
+                "--execute",
+            ]
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert rc == 2
+        assert payload["ok"] is False
+        assert payload["code"] == "bar_csv_missing"

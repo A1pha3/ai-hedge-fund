@@ -456,6 +456,23 @@ def _cmd_advance(args: argparse.Namespace) -> int:
             bars_by_session[session] = bars_from_court_csv(
                 source / f"daily_{session:%Y%m%d}.csv", session
             )
+        except FileNotFoundError as exc:
+            # preflight 判在的 CSV 于读取点消失 (R49 Op2, D7 家族):
+            # pandas 的裸 FileNotFoundError 不得绕过类型化面。
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "code": "bar_csv_missing",
+                        "message": str(exc),
+                        "details": {
+                            "path": str(source / f"daily_{session:%Y%m%d}.csv")
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return 2
         except CourtBarCsvError as exc:
             # _fail 的首个位置参数就是顶层 code, 底层拒绝码要进 details.code
             # ——键名与位置参数同名, kwargs 无法表达, 只能按 _fail 的输出
