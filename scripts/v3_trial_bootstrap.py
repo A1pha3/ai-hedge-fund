@@ -21,7 +21,8 @@ fixture 能构造; 生产身份 v1 缺 exchange-calendar 键与全部治理签�
                   首个 ``decide`` 幂等复用种子观察, 不产生第二 revision;
   enroll-spine    从权威日历派生 enrollment 窗口注册 spine
                   (signal_session ∈ [--start, --end], assessment_date =
-                  排程末位 = T+10); 二次注册类型化拒绝 (spine 冻结语义);
+                  排程末位 = T+10); 恰等重放幂等跳过 + assessment 漂移
+                  类型化拒绝 (R50 Op2; spine INSERT-only 冻结语义不变);
   seal-trial      从参数文件派生互证绑定 (SAP↔trial hash↔policy 指纹)
                   的 baseline/target PolicySnapshot + TrialManifest +
                   SAP + PolicyActivation, 用治理键签名 →
@@ -652,6 +653,65 @@ def _cmd_seed_evidence(args: argparse.Namespace) -> int:
     )
 
 
+def _cold_read_enrollments(program: str, spine_path: Path) -> dict[date, date]:
+    """只读 spine 注册探针 (dry-run 计划面; 零写, R50 Op2)。
+
+    ``immutable=1`` 冷读 (R35 组装器同款): 只读主文件, 不创建 -shm/-wal,
+    不触碰任何字节。spine 不存在 = 尚无注册 (合法首跑形态); 活 WAL 的未
+    checkpoint 增量不进计划面 — execute 面经 spine 本体连接权威读取。
+    """
+    import sqlite3
+
+    if not spine_path.is_file():
+        return {}
+    conn = sqlite3.connect(f"file:{spine_path}?immutable=1", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT signal_session, assessment_date FROM expected_sessions"
+            " WHERE research_program_id = ?",
+            (program,),
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        # genesis-seed 的 0 字节空占位是合法 fresh-world 形态 — 表缺失 =
+        # 零注册, 不是损坏 (execute 面的 SessionSpine 构造器会落 DDL)。
+        if "no such table" in str(exc):
+            return {}
+        raise SystemExit(_fail("spine_unreadable", str(exc), path=str(spine_path)))
+    except sqlite3.DatabaseError as exc:
+        raise SystemExit(_fail("spine_unreadable", str(exc), path=str(spine_path)))
+    finally:
+        conn.close()
+    return {
+        date.fromisoformat(signal): date.fromisoformat(assessment)
+        for signal, assessment in rows
+    }
+
+
+def _split_enrollments(
+    enrollments: list[tuple[date, date]],
+    enrolled: dict[date, date],
+) -> tuple[list[tuple[date, date]], list[tuple[date, date]], list[tuple[date, date]]]:
+    """把窗口派生 enrollment 按已注册集合三分 (R50 Op2)。
+
+    fresh = 新会话 (待插入); skipped = 恰等重放 (同 session 且同
+    assessment=T+10, 幂等跳过 — publish/commit_pair/seed 同族纪律);
+    drifted = 同 session 异 assessment (日历修订是分歧, 绝不静默幂等,
+    由调用方类型化拒绝)。spine 本体的 INSERT-only/冻结语义零变化。
+    """
+    fresh: list[tuple[date, date]] = []
+    skipped: list[tuple[date, date]] = []
+    drifted: list[tuple[date, date]] = []
+    for session, assessment in enrollments:
+        prior = enrolled.get(session)
+        if prior is None:
+            fresh.append((session, assessment))
+        elif prior == assessment:
+            skipped.append((session, assessment))
+        else:
+            drifted.append((session, assessment))
+    return fresh, skipped, drifted
+
+
 def _cmd_enroll_spine(args: argparse.Namespace) -> int:
     now = _parse_now(args.now)
     identity_dir = Path(args.identity_dir)
@@ -691,12 +751,35 @@ def _cmd_enroll_spine(args: argparse.Namespace) -> int:
         raise SystemExit(
             _fail("enrollment_window_empty", "no enrollable sessions in window")
         )
+    # R50 Op2: 已注册集合三分 — 恰等重放幂等跳过 (修复前 IntegrityError
+    # 砖死 crash-retry 与操作员重跑), 漂移类型化拒绝 (修复前落到 spine 的
+    # 误导性 duplicate 码)。日历成长后重跑可闭合此前被跳过的窗口尾部
+    # 间隙会话 (修复前永久无法注册, finalize-missed 对其永久失明)。
+    enrolled = _cold_read_enrollments(args.research_program, trial_root / "spine.sqlite3")
+    fresh, skipped, drifted = _split_enrollments(enrollments, enrolled)
+    if drifted:
+        raise SystemExit(
+            _fail(
+                "enrollment_assessment_drift",
+                "a session is already enrolled with a different assessment"
+                " date; a revised calendar is a divergence, not a replay",
+                conflicts=[
+                    {
+                        "session": session.isoformat(),
+                        "enrolled_assessment": enrolled[session].isoformat(),
+                        "derived_assessment": assessment.isoformat(),
+                    }
+                    for session, assessment in drifted
+                ],
+            )
+        )
     if not args.execute:
         return _ok(
             {
                 "mode": "dry-run",
                 "plan": ["enroll expected sessions (assessment = T+10)"],
-                "sessions": [s.isoformat() for s, _ in enrollments],
+                "sessions": [s.isoformat() for s, _ in fresh],
+                "already_enrolled": len(skipped),
                 "insufficient_forward_sessions": gaps,
                 **(checks or {}),
             }
@@ -715,13 +798,14 @@ def _cmd_enroll_spine(args: argparse.Namespace) -> int:
     spine = SessionSpine(
         database_path=str(trial_root / "spine.sqlite3"), clock=lambda: now
     )
+    count = 0
     try:
-        count = spine.enroll_expected_sessions(
-            tuple(
-                SessionEnrollment(args.research_program, session, assessment)
-                for session, assessment in enrollments
-            )
-        )
+        pending = [
+            SessionEnrollment(args.research_program, session, assessment)
+            for session, assessment in fresh
+        ]
+        if pending:
+            count = spine.enroll_expected_sessions(tuple(pending))
     except SessionSpineError as exc:
         raise SystemExit(
             _fail(
@@ -734,15 +818,16 @@ def _cmd_enroll_spine(args: argparse.Namespace) -> int:
         # 冷读纪律 (R35): 引擎 dispose 使 -wal 确定性 checkpoint 进主文件,
         # 官方栈组装器的冷读探测才能看到已落盘的 enrollment。
         spine._engine.dispose()
-    return _ok(
-        {
-            "mode": "execute",
-            "enrolled": count,
-            "first_session": enrollments[0][0].isoformat(),
-            "last_assessment": enrollments[-1][1].isoformat(),
-            "following_session_count": FOLLOWING_SESSION_COUNT,
-        }
-    )
+    payload = {
+        "mode": "execute",
+        "enrolled": count,
+        "skipped_existing": len(skipped),
+        "following_session_count": FOLLOWING_SESSION_COUNT,
+    }
+    if fresh:
+        payload["first_session"] = fresh[0][0].isoformat()
+        payload["last_assessment"] = fresh[-1][1].isoformat()
+    return _ok(payload)
 
 
 def _cmd_seal_trial(args: argparse.Namespace) -> int:

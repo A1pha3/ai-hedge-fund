@@ -7,7 +7,8 @@
                   readiness 指纹绑定) + bars schema 落盘; 首个 driver decide
                   幂等复用种子观察 (不产生第二 revision);
   enroll-spine:   权威日历派生 (signal, assessment=T+10) enrollment;
-                  二次注册 session_already_enrolled 类型化拒绝;
+                  恰等重放幂等跳过, assessment 漂移 enrollment_assessment_drift
+                  类型化拒绝 (R50 Op2 契约更新);
   seal-trial:     参数文件 → 四 artifact 内部互证派生 → 四治理键签名 →
                   封存 → stage 签发 → 回执归档; 同参数重放逐字节幂等。
 
@@ -674,7 +675,105 @@ class TestEnrollSpine:
         first_signal = date.fromisoformat(rows[0][0])
         assert date.fromisoformat(rows[0][1]) > first_signal
 
-    def test_double_enroll_fails_closed(self, tmp_path) -> None:
+    # R50 Op2 契约更新: 旧 test_double_enroll_fails_closed (恰等二次注册
+    # 类型化拒绝) 被有意废弃 — enroll-spine 收敛到全栈『恰等重放幂等收敛,
+    # 分歧类型化拒绝』家族纪律。后继契约: test_reenroll_exact_duplicate_is_idempotent
+    # (恰等 → rc=0/skipped_existing) 与 test_assessment_drift_rejected_typed
+    # (漂移 → enrollment_assessment_drift)。
+
+    def test_reenroll_exact_duplicate_is_idempotent(self, tmp_path, capsys) -> None:
+        """R50 Op2 (D-A): 恰等重放幂等收敛 (publish/commit_pair/seed 同族纪律).
+
+        修复前: 第二次同参重跑 spine INSERT IntegrityError → rc=2
+        spine_enroll_failed, crash-retry 与操作员重跑均被砖。
+        """
+        import sqlite3
+
+        identity_dir, root = _fresh_layout(tmp_path)
+        calendar = _calendar_file(tmp_path)
+        argv = [
+            "enroll-spine",
+            "--identity-dir", str(identity_dir),
+            "--trial-root", str(root),
+            "--calendar", str(calendar),
+            "--start", SIGNAL_SESSION.isoformat(),
+            "--end", (SIGNAL_SESSION + timedelta(days=2)).isoformat(),
+            "--now", DECIDE_AT.isoformat(),
+            "--execute",
+        ]
+        assert cli_main(argv) == 0
+        capsys.readouterr()
+        assert cli_main(argv) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+        assert payload["enrolled"] == 0
+        assert payload["skipped_existing"] == 3
+        with sqlite3.connect(
+            f"file:{root / 'spine.sqlite3'}?mode=ro", uri=True
+        ) as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM expected_sessions"
+            ).fetchone()[0]
+        assert count == 3
+
+    def test_gap_closure_after_calendar_growth(self, tmp_path, capsys) -> None:
+        """R50 Op2 (D-B): 日历成长后重跑补注册尾部间隙会话 (修复前永久盲区).
+
+        修复前: 首轮 enroll 时窗口尾部会话因前向不足 10 被跳过, 日历成长后
+        重跑必然先撞已注册会话的 IntegrityError → 间隙会话永久无法注册,
+        finalize-missed 对它们永久失明。
+        """
+        import sqlite3
+
+        identity_dir, root = _fresh_layout(tmp_path)
+
+        def _cal(name: str, count: int) -> Path:
+            path = tmp_path / name
+            path.write_text(
+                json.dumps(
+                    [
+                        (SIGNAL_SESSION + timedelta(days=o)).strftime("%Y%m%d")
+                        for o in range(count)
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            return path
+
+        def _argv(cal: Path) -> list[str]:
+            return [
+                "enroll-spine",
+                "--identity-dir", str(identity_dir),
+                "--trial-root", str(root),
+                "--calendar", str(cal),
+                "--start", SIGNAL_SESSION.isoformat(),
+                "--end", (SIGNAL_SESSION + timedelta(days=3)).isoformat(),
+                "--now", DECIDE_AT.isoformat(),
+                "--execute",
+            ]
+
+        # 13 会话日历: SIGNAL+3 只有 9 个前向 → 间隙被跳过, 前 3 个注册
+        assert cli_main(_argv(_cal("cal-short.json", 13))) == 0
+        grown = _cal("cal-grown.json", 16)
+        capsys.readouterr()
+        assert cli_main(_argv(grown)) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["enrolled"] == 1
+        assert payload["skipped_existing"] == 3
+        with sqlite3.connect(
+            f"file:{root / 'spine.sqlite3'}?mode=ro", uri=True
+        ) as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM expected_sessions"
+            ).fetchone()[0]
+        assert count == 4
+
+    def test_assessment_drift_rejected_typed(self, tmp_path, capsys) -> None:
+        """R50 Op2: 同 session 异 assessment → enrollment_assessment_drift.
+
+        日历修订是分歧, 不是幂等重放; 修复前落到 spine 的误导性 duplicate
+        码 (方向同为拒绝, 但不可诊断)。
+        """
         identity_dir, root = _fresh_layout(tmp_path)
         calendar = _calendar_file(tmp_path)
         argv = [
@@ -688,8 +787,65 @@ class TestEnrollSpine:
             "--execute",
         ]
         assert cli_main(argv) == 0
-        with pytest.raises(SystemExit):
-            cli_main(argv)
+        revised = tmp_path / "cal-revised.json"
+        sessions = [
+            SIGNAL_SESSION + timedelta(days=o) for o in range(16)
+        ]
+        sessions.remove(SIGNAL_SESSION + timedelta(days=5))
+        revised.write_text(
+            json.dumps([s.strftime("%Y%m%d") for s in sessions]),
+            encoding="utf-8",
+        )
+        capsys.readouterr()
+        with pytest.raises(SystemExit) as stopped:
+            cli_main([
+                "enroll-spine",
+                "--identity-dir", str(identity_dir),
+                "--trial-root", str(root),
+                "--calendar", str(revised),
+                "--start", SIGNAL_SESSION.isoformat(),
+                "--end", SIGNAL_SESSION.isoformat(),
+                "--now", DECIDE_AT.isoformat(),
+                "--execute",
+            ])
+        assert stopped.value.code == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is False
+        assert payload["code"] == "enrollment_assessment_drift"
+        conflict = payload["details"]["conflicts"][0]
+        assert conflict["enrolled_assessment"] != conflict["derived_assessment"]
+
+    def test_dry_run_discloses_already_enrolled_zero_write(
+        self, tmp_path, capsys
+    ) -> None:
+        """R50 Op2: dry-run 冷读 spine 披露 already_enrolled, 且零写突变.
+
+        修复前 dry-run 对已注册会话报『计划注册』而 execute 实际拒绝 —
+        计划失真 (D6 宁假红不假绿同族)。
+        """
+        identity_dir, root = _fresh_layout(tmp_path)
+        calendar = _calendar_file(tmp_path)
+        spine_path = root / "spine.sqlite3"
+        argv_execute = [
+            "enroll-spine",
+            "--identity-dir", str(identity_dir),
+            "--trial-root", str(root),
+            "--calendar", str(calendar),
+            "--start", SIGNAL_SESSION.isoformat(),
+            "--end", SIGNAL_SESSION.isoformat(),
+            "--now", DECIDE_AT.isoformat(),
+            "--execute",
+        ]
+        assert cli_main(argv_execute) == 0
+        capsys.readouterr()
+        before = spine_path.read_bytes()
+        argv_dry = [a for a in argv_execute if a != "--execute"]
+        assert cli_main(argv_dry) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+        assert payload["already_enrolled"] == 1
+        assert payload["sessions"] == []
+        assert spine_path.read_bytes() == before
 
     def test_inverted_window_rejected(self, tmp_path) -> None:
         identity_dir, root = _fresh_layout(tmp_path)
