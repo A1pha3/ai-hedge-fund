@@ -847,6 +847,30 @@ class TestEnrollSpine:
         assert payload["sessions"] == []
         assert spine_path.read_bytes() == before
 
+    def test_dry_run_on_zero_byte_placeholder_spine(self, tmp_path, capsys) -> None:
+        """R50 Op3 P1: 0 字节占位 spine (genesis-seed 合法形态) + dry-run →
+        零注册形态而非 spine_unreadable (no-such-table = 零注册语义 pin;
+        该分支是 R50 Op2 GREEN 期自抓自修缺陷的回归防线)。"""
+        identity_dir, root = _fresh_layout(tmp_path)
+        calendar = _calendar_file(tmp_path)
+        spine_path = root / "spine.sqlite3"
+        assert spine_path.read_bytes() == b""
+        before = spine_path.read_bytes()
+        assert cli_main([
+            "enroll-spine",
+            "--identity-dir", str(identity_dir),
+            "--trial-root", str(root),
+            "--calendar", str(calendar),
+            "--start", SIGNAL_SESSION.isoformat(),
+            "--end", SIGNAL_SESSION.isoformat(),
+            "--now", DECIDE_AT.isoformat(),
+        ]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+        assert payload["already_enrolled"] == 0
+        assert payload["sessions"] == [SIGNAL_SESSION.isoformat()]
+        assert spine_path.read_bytes() == before
+
     def test_inverted_window_rejected(self, tmp_path) -> None:
         identity_dir, root = _fresh_layout(tmp_path)
         with pytest.raises(SystemExit):

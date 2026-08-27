@@ -1322,6 +1322,58 @@ class TestCourtBarCsvMalformed:
         assert payload["details"]["code"] == "bar_csv_columns_missing"
         assert _tree_digest(world.root) + _tree_digest(world.identity_dir) == before
 
+    def test_cli_execute_wrong_session_csv_typed_zero_write(
+        self, world: _DriverWorld, tmp_path: Path, capsys
+    ) -> None:
+        """R50 Op3 P2: 错日快照经 CLI advance → 类型化 JSON (details.code =
+        bar_csv_session_mismatch), 栈构造之前拒绝 (trial root 字节级零突变)。
+
+        Op1 新码的 CLI 流经面 pin — 既有 CLI 测试只钉 columns_missing 码,
+        会话归属码的流经路径未钉则未来可静默退化为裸 traceback。
+        """
+        from scripts.v3_trial_session import main as cli_main
+
+        bar_dir = tmp_path / "court-wrong-session"
+        bar_dir.mkdir(parents=True, exist_ok=True)
+        good = _court_bar_dir(tmp_path, [SIGNAL_SESSION])
+        (good / f"daily_{SIGNAL_SESSION:%Y%m%d}.csv").rename(
+            bar_dir / f"daily_{SIGNAL_SESSION:%Y%m%d}.csv"
+        )
+        wrong_day = SIGNAL_SESSION + timedelta(days=1)
+        (bar_dir / f"daily_{wrong_day:%Y%m%d}.csv").write_text(
+            _COURT_HEADER
+            + (
+                f"300001.SZ,{SIGNAL_SESSION + timedelta(days=2):%Y%m%d},"
+                "11.0,12.0,10.5,11.5,10.9,5.5,1000,11000\n"
+            ),
+            encoding="utf-8",
+        )
+        before = _tree_digest(world.root) + _tree_digest(world.identity_dir)
+        rc = cli_main(
+            [
+                "advance",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--through-session", wrong_day.isoformat(),
+                "--bar-source", str(bar_dir),
+                "--now", LATER_AT.isoformat(),
+                "--execute",
+            ]
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert rc == 2
+        assert payload["ok"] is False
+        assert payload["code"] == "bar_csv_invalid"
+        assert payload["details"]["code"] == "bar_csv_session_mismatch"
+        assert payload["details"]["expected"] == f"{wrong_day:%Y%m%d}"
+        assert payload["details"]["found"] == [
+            f"{SIGNAL_SESSION + timedelta(days=2):%Y%m%d}"
+        ]
+        assert _tree_digest(world.root) + _tree_digest(world.identity_dir) == before
+
 
 class TestCourtBarCsvContentIntegrity:
     """R50 Op1: bar 快照内容完整性 — 会话归属 (trade_date) + 数值健全性.
