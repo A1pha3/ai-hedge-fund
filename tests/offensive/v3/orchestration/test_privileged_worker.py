@@ -584,6 +584,33 @@ class TestWorkerServer:
             **kw,
         )
 
+    @staticmethod
+    def _drain(conn) -> bytes:
+        """Drain one client connection to EOF, tolerating transport races.
+
+        R46: 服务端快速拒绝 (peer-uid/bad-request) 会在客户端进入
+        shutdown/recv 前完整拆除连接 —— 套件负载下表现为 OSError(57
+        ENOTCONN)/ECONNRESET/EPIPE 的不可归因 flake (R45 轮 evaluator
+        基线 run 与 scoped 集群各实证一次)。被测行为断言全部锚在服务端
+        捕获的 ``result["response"]``, 这里的排水字节只是清管道; 因此传
+        输层异常按"对端已收尾"处理, 不吞断言失败。
+        """
+
+        data = b""
+        try:
+            while True:
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+        except OSError:
+            pass
+        try:
+            conn.close()
+        except OSError:
+            pass
+        return data
+
     def _client_roundtrip(self, sock_path, request, uid=None):
         import socket as s
 
@@ -592,16 +619,12 @@ class TestWorkerServer:
         conn = s.socket(s.AF_UNIX, s.SOCK_STREAM)
         conn.connect(str(sock_path))
         conn.sendall(json.dumps(request).encode("utf-8"))
-        conn.shutdown(s.SHUT_WR)
-        data = b""
-        while True:
-            chunk = conn.recv(65536)
-            if not chunk:
-                break
-            data += chunk
-        conn.close()
+        try:
+            conn.shutdown(s.SHUT_WR)
+        except OSError:
+            pass  # 服务端可能已在快速拒绝路径上完整关连接
         # serve_once 需要在 accept 前启动 — 本测试由调用方线程驱动
-        return data
+        return self._drain(conn)
 
     def _serve_capturing(self, server, result):
         """serve_once 线程体: 逃逸捕获 — 线程内异常写入 result["exc"],
@@ -643,14 +666,11 @@ class TestWorkerServer:
                 }
             ).encode("utf-8")
         )
-        conn.shutdown(s.SHUT_WR)
-        data = b""
-        while True:
-            chunk = conn.recv(65536)
-            if not chunk:
-                break
-            data += chunk
-        conn.close()
+        try:
+            conn.shutdown(s.SHUT_WR)
+        except OSError:
+            pass
+        data = self._drain(conn)
         t.join(timeout=10)
 
         assert "exc" not in result, result.get("exc", "")
@@ -674,14 +694,11 @@ class TestWorkerServer:
         conn = s.socket(s.AF_UNIX, s.SOCK_STREAM)
         conn.connect(str(sock_path))
         conn.sendall(b'{"op":"assemble"}')
-        conn.shutdown(s.SHUT_WR)
-        data = b""
-        while True:
-            chunk = conn.recv(65536)
-            if not chunk:
-                break
-            data += chunk
-        conn.close()
+        try:
+            conn.shutdown(s.SHUT_WR)
+        except OSError:
+            pass  # 快速拒绝路径: 服务端可能已完整关连接 (R46 竞态家族)
+        self._drain(conn)
         t.join(timeout=10)
         assert "exc" not in result, result.get("exc", "")
         assert result["response"]["ok"] is False
@@ -797,10 +814,11 @@ class TestWorkerServer:
             conn = s.socket(s.AF_UNIX, s.SOCK_STREAM)
             conn.connect(str(sock_path))
             conn.sendall(json.dumps(payload).encode("utf-8"))
-            conn.shutdown(s.SHUT_WR)
-            while conn.recv(65536):
-                pass
-            conn.close()
+            try:
+                conn.shutdown(s.SHUT_WR)
+            except OSError:
+                pass  # 快速拒绝路径: 服务端可能已完整关连接 (R46 竞态家族)
+            self._drain(conn)
             t.join(timeout=10)
             assert "exc" not in result, (payload, result.get("exc", ""))
             assert result["response"]["ok"] is False, payload
