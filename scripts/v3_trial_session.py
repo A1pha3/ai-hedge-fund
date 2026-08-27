@@ -194,23 +194,17 @@ def _load_snapshot(
     return snapshot
 
 
-def _decide_preflight(
-    *, calendar_path: Path, signal_session: date, now: datetime
-) -> None:
-    """decide 共享 pre-flight (R48 D6): dry-run/execute 同源, 构造栈之前。
+def _decide_preflight(*, calendar_path: Path, signal_session: date) -> None:
+    """日历成员 pre-flight (R48 D6): dry-run/execute 共享, 构造栈之前。
 
-    镜像 advance 的 R40 先例与 R41 的 manifest 假信心修复: dry-run 报绿的
-    语义是『execute 的前置全部成立』。窗口外会话在 execute 必然晚失败于
-    候选发布 (``store_timeline_rejected``) 且先行发布孤儿 regime/排程证据;
-    日历外会话在 execute 必然失败于排程派生。『窗口内已提交候选的恰等
-    重放』这一逃生门需要 store 真相, 只能由 execute 侧 driver 守卫判定 —
-    dry-run 侧宁 reject 不假绿 (假红安全, 假绿害人), 拒绝详情写明该形态。
+    日历外会话在 execute 必然失败于排程派生 (driver 同款
+    ``signal_session_not_in_calendar``), 无 store 依赖即可判定, 故两面
+    都在构造栈之前拒绝 (R40 语义)。
     """
     from src.screening.offensive.v3.evidence.trading_schedule import (
         TradingScheduleError,
         load_authoritative_dates,
     )
-    from src.screening.offensive.v3.producers.auto import candidate_ingestion_window
 
     try:
         dates = load_authoritative_dates(calendar_path)
@@ -224,6 +218,19 @@ def _decide_preflight(
                 signal_session=signal_session.isoformat(),
             )
         )
+
+
+def _decide_window_preflight(*, signal_session: date, now: datetime) -> None:
+    """候选入库窗 pre-flight (R48 D6, D8 收敛为 dry-run 专属)。
+
+    dry-run 报绿的语义是『execute 的前置全部成立』: 窗口外会话的首次
+    execute 必然失败, dry-run 必须先说 (宁假红不假绿)。execute 面的窗口
+    判定由 driver 首步守卫 (:meth:`_require_decide_window`) 以 store 真相
+    权威执行 — CLI 无 store 读面, 若在 execute 面拦截会让『窗口内已提交
+    候选的窗口外恰等重放』这一合法逃生门不可达 (D8 实锤的语义分裂)。
+    """
+    from src.screening.offensive.v3.producers.auto import candidate_ingestion_window
+
     window_open, window_close = candidate_ingestion_window(signal_session)
     if not (window_open <= now <= window_close):
         raise SystemExit(
@@ -232,9 +239,10 @@ def _decide_preflight(
                 "the signal session is outside its candidate ingestion window"
                 " [signal_date 15:00 UTC, +24h]; in-window decide is the only"
                 " first drive (missed sessions exit via finalize-missed"
-                " NO_RUN), and a re-drive after a committed in-window decide"
-                " stays legal on execute (exact-equal replay, driver-side"
-                " escape via committed candidates)",
+                " NO_RUN). On --execute the driver-side guard re-evaluates"
+                " with store truth: a committed in-window decide may replay"
+                " (exact-equal), anything else is rejected before any"
+                " publication",
                 signal_session=signal_session.isoformat(),
                 window_open=window_open.isoformat(),
                 window_close=window_close.isoformat(),
@@ -255,14 +263,14 @@ def _cmd_decide(args: argparse.Namespace) -> int:
         calendar_path=calendar_path,
         trial_id=args.trial_id,
     )
-    # 候选入库窗 + 日历成员 pre-flight (R48 D6): dry-run/execute 共享,
-    # 在构造栈 (对 trial root 落 WAL+DDL) 与加载快照之前拒绝。
-    # _decide_preflight 与 _load_snapshot 同以 SystemExit 携带 typed JSON,
-    # 本入口统一收敛为返回码 (R40 约定: 前置拒绝 rc=2, 不向调用方泄漏异常)。
+    # pre-flight (R48 D6/D8): 日历成员两面共享; 窗口检查 dry-run 专属
+    # (execute 面由 driver 守卫以 store 真相权威判定)。各 helper 与
+    # _load_snapshot 同以 SystemExit 携带 typed JSON, 本入口统一收敛为
+    # 返回码 (R40 约定: 前置拒绝 rc=2, 不向调用方泄漏异常)。
     try:
-        _decide_preflight(
-            calendar_path=calendar_path, signal_session=signal_session, now=now
-        )
+        _decide_preflight(calendar_path=calendar_path, signal_session=signal_session)
+        if not args.execute:
+            _decide_window_preflight(signal_session=signal_session, now=now)
         snapshot = _load_snapshot(
             Path(args.readiness_manifest), signal_session, data_dir=Path(args.data_dir)
         )

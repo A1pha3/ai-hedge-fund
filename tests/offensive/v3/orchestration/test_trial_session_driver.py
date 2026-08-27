@@ -1576,3 +1576,101 @@ class TestDecideCliPreflight:
         assert rc == 2
         payload = json.loads(capsys.readouterr().out)
         assert payload["code"] == "signal_session_not_in_calendar"
+
+
+class TestDecideCliExecuteWindow:
+    """D8 (R48): execute 面窗口判定让位于 driver 逃生门 — CLI 两层语义合一。
+
+    D6 的 CLI pre-flight 原在 execute 面同样拦截窗口外会话, 使 driver 的
+    已提交重放逃生门从操作员面不可达 (与 runbook 成文矛盾)。D8 后:
+    execute 面由 driver 首步守卫以 store 真相权威判定。
+    """
+
+    def test_cli_execute_outside_window_committed_no_signal_boundary(
+        self, world: _DriverWorld, tmp_path: Path, tmp_path_factory, capsys
+    ) -> None:
+        """NO_SIGNAL 已提交会话的窗外重驱: driver 守卫拒绝且 pair 原样保留。
+
+        逃生门条件是『已提交 SELECTED 候选』(候选在场的 crash 复验形态);
+        NO_SIGNAL pair (零候选) 不满足 — 窗外重驱被类型化拒绝。该拒绝
+        fail-closed 且无危害 (pair 已完整, 重驱本无必要); 合成世界无法在
+        CLI 面构造候选在场的同源快照 (真实加载零命中), 候选在场的窗外
+        恰等收敛由 driver 级测试钉死 (TestDecideWindowGuard)。
+        """
+        from scripts.v3_trial_session import main as cli_main
+
+        reports = tmp_path_factory.mktemp("reports-d8a")
+        publication = _published_manifest(reports, SIGNAL_SESSION)
+        common = [
+            "decide",
+            "--identity-dir", str(world.identity_dir),
+            "--trial-root", str(world.root),
+            "--trial-id", TRIAL_ID,
+            "--calendar", str(world.calendar_path),
+            "--readiness-manifest", str(publication.artifact_path),
+            "--data-dir", str(tmp_path),
+            "--signal-session", SIGNAL_SESSION.isoformat(),
+        ]
+        rc = cli_main([*common, "--now", DECIDE_AT.isoformat(), "--execute"])
+        assert rc == 0
+        capsys.readouterr()  # 丢弃首次 (窗内 execute) 输出, 只断言重驱形态
+        pair_key = (
+            TRIAL_ID,
+            SIGNAL_SESSION.isoformat(),
+            "daily-action-20260806",
+        )
+        champion, challenger = world.stack.decision_store.pair(pair_key)
+        first_rows = (champion, challenger)
+        # R35/R41 冷读纪律: dispose + gc 让 -wal checkpoint 进主文件。
+        world.stack.spine._engine.dispose()
+        world.stack.runner._assembler._governance._engine.dispose()
+        gc.collect()
+        rc = cli_main([*common, "--now", LATE_AT.isoformat(), "--execute"])
+        assert rc == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is False
+        assert payload["code"] == "decide_window_violated"
+        # pair 原样保留 (拒绝无危害), 窗内重放仍恰等收敛。
+        assert (
+            world.stack.decision_store.pair(pair_key) == first_rows
+        ), "rejected re-drive must leave the committed pair byte-identical"
+        # 窗内重放 (同源真实快照, LATER_AT 仍在窗内) 恰等收敛。
+        rc = cli_main([*common, "--now", LATER_AT.isoformat(), "--execute"])
+        assert rc == 0
+        assert world.stack.decision_store.pair(pair_key) == first_rows
+
+    def test_cli_execute_outside_window_uncommitted_typed_rejection(
+        self, world: _DriverWorld, tmp_path: Path, tmp_path_factory, capsys
+    ) -> None:
+        from scripts.v3_trial_session import main as cli_main
+
+        world.driver.ensure_trial_registration()
+        snapshots_before = set(
+            world.stack.regime_repository.evidence_ids_by_kind("snapshot")
+        )
+        reports = tmp_path_factory.mktemp("reports-d8b")
+        publication = _published_manifest(reports, SIGNAL_SESSION)
+        rc = cli_main(
+            [
+                "decide",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--readiness-manifest", str(publication.artifact_path),
+                "--data-dir", str(tmp_path),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--now", LATE_AT.isoformat(),
+                "--execute",
+            ]
+        )
+        assert rc == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is False
+        assert payload["code"] == "decide_window_violated"
+        assert set(
+            world.stack.regime_repository.evidence_ids_by_kind("snapshot")
+        ) == snapshots_before, "rejected execute must not publish regime evidence"
+        assert (
+            world.stack.btst_repository.evidence_ids_by_kind("signal") == ()
+        ), "rejected execute must not publish candidates"

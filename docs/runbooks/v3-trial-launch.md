@@ -121,12 +121,14 @@ uv run python scripts/v3_trial_session.py advance \
     must be between observed_at and available_at）**类型化拒绝——这是预期
     PIT 行为，不是故障**（事后补写的候选永不满足 cutoff 前入库纪律）。
     此类会话的官方出口与跳过会话一致：本步 NO_RUN 补记。
-    ⚠ **decide dry-run 假绿收口（R48 D6）**：decide 的 dry-run/execute
-    共享 pre-flight——会话不在日历（`signal_session_not_in_calendar`）或
-    已出入库窗（`decide_window_violated`）在构造栈之前类型化拒绝；
-    **dry-run 现在要求显式 `--now` 落在窗内才报绿**（缺省真实墙钟对陈旧
-    会话必然拒绝）。窗口内已提交会话的窗口外重驱动仍合法（execute 侧
-    driver 逃生门按已提交候选恰等重放收敛；dry-run 侧宁拒不假绿）。
+    ⚠ **decide dry-run 假绿收口（R48 D6，D8 分层收敛）**：日历成员
+    （`signal_session_not_in_calendar`）在 dry-run/execute 双面于构造栈
+    之前类型化拒绝；**入库窗检查（`decide_window_violated`）是 dry-run
+    专属**——dry-run 现在要求显式 `--now` 落在窗内才报绿（缺省真实墙钟
+    对陈旧会话必然拒绝）。execute 面的窗口判定由 driver 首步守卫以
+    store 真相权威执行：窗口外未提交 → 零发布类型化拒绝；窗口内已提交
+    SELECTED 候选的窗口外重驱 → 恰等重放收敛（crash 复验形态；NO_SIGNAL
+    pair 无候选不在逃生门内——pair 已完整，窗外重驱本无必要，拒绝无害）。
 2c. **错过会话补记**：enrollment 窗口内因故未 decide 的会话，在
     assessment 日期过后补 NO_RUN 终态（幂等，append-only spine）。
     ⚠ **会话只许前向驱动（R41）**：跳过的会话一律走本步 NO_RUN 补记，
