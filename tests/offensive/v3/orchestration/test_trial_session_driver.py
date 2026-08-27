@@ -1323,6 +1323,130 @@ class TestCourtBarCsvMalformed:
         assert _tree_digest(world.root) + _tree_digest(world.identity_dir) == before
 
 
+class TestCourtBarCsvContentIntegrity:
+    """R50 Op1: bar 快照内容完整性 — 会话归属 (trade_date) + 数值健全性.
+
+    会话归属与 regime/schedule/candidate 三侧 session-mismatch 守卫同族
+    (R7 Op2 / R9 / R41): 错日快照以 filename 会话身份入库官方证据时间轴
+    会污染 limit 围栏 → 成交判定 → marks; 与 qfq 复权红线不同, 会话归属
+    恰好是从字节可证的 (fetch 产物恒带 trade_date 单值列)。
+    """
+
+    def _write(self, tmp_path: Path, content: str) -> Path:
+        path = tmp_path / "daily_20260806.csv"
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_missing_trade_date_column_rejected(self, tmp_path: Path) -> None:
+        """缺 trade_date 列 = 无法证明会话归属 → 列校验即拒 (qfq 红线同面)。"""
+        from scripts.v3_seed_market_bars import (
+            CourtBarCsvError,
+            bars_from_court_csv,
+        )
+
+        path = self._write(
+            tmp_path,
+            "ts_code,open,high,low,close,pre_close\n300001.SZ,11,12,10.5,11.5,10.9\n",
+        )
+        with pytest.raises(CourtBarCsvError) as rejected:
+            bars_from_court_csv(path, SIGNAL_SESSION)
+        assert rejected.value.code == "bar_csv_columns_missing"
+        assert "trade_date" in rejected.value.details["missing_columns"]
+
+    def test_wrong_session_rows_rejected(self, tmp_path: Path) -> None:
+        """错日快照 (daily_20260806.csv 装着 20260807 的行) → 会话归属拒绝.
+
+        修复前 DID NOT RAISE: 错日价格以 0806 会话身份静默入库, 错误
+        pre_close 直接污染 limit 围栏与成交判定。
+        """
+        from scripts.v3_seed_market_bars import (
+            CourtBarCsvError,
+            bars_from_court_csv,
+        )
+
+        path = self._write(
+            tmp_path,
+            _COURT_HEADER
+            + "300001.SZ,20260807,11.0,12.0,10.5,11.5,10.9,5.5,1000,11000\n",
+        )
+        with pytest.raises(CourtBarCsvError) as rejected:
+            bars_from_court_csv(path, SIGNAL_SESSION)
+        assert rejected.value.code == "bar_csv_session_mismatch"
+        assert rejected.value.details["expected"] == "20260806"
+        assert rejected.value.details["found"] == ["20260807"]
+
+    def test_mixed_session_rows_rejected(self, tmp_path: Path) -> None:
+        """同文件混合 trade_date → 同码拒绝, details 携 distinct 值列表."""
+        from scripts.v3_seed_market_bars import (
+            CourtBarCsvError,
+            bars_from_court_csv,
+        )
+
+        path = self._write(
+            tmp_path,
+            _COURT_HEADER
+            + "300001.SZ,20260806,11.0,12.0,10.5,11.5,10.9,5.5,1000,11000\n"
+            + "000001.SZ,20260807,11.0,12.0,10.5,11.5,10.9,5.5,1000,11000\n",
+        )
+        with pytest.raises(CourtBarCsvError) as rejected:
+            bars_from_court_csv(path, SIGNAL_SESSION)
+        assert rejected.value.code == "bar_csv_session_mismatch"
+        assert rejected.value.details["found"] == ["20260807"]
+
+    def test_nan_price_typed_rejection(self, tmp_path: Path) -> None:
+        """NaN pre_close → 类型化拒绝 (修复前 int(nan) 在类型化 try 块外
+        裸抛 ValueError, rc=1 无 typed JSON — R49 Op2 D7 同族)."""
+        from scripts.v3_seed_market_bars import (
+            CourtBarCsvError,
+            bars_from_court_csv,
+        )
+
+        path = self._write(
+            tmp_path,
+            _COURT_HEADER
+            + "300001.SZ,20260806,11.0,12.0,10.5,11.5,,5.5,1000,11000\n",
+        )
+        with pytest.raises(CourtBarCsvError) as rejected:
+            bars_from_court_csv(path, SIGNAL_SESSION)
+        assert rejected.value.code == "bar_csv_row_invalid"
+        assert rejected.value.details["columns"] == ["pre_close"]
+
+    def test_ohlc_order_violation_rejected(self, tmp_path: Path) -> None:
+        """high < low → 类型化拒绝 (修复前静默入库 nonsense bar; fill 判定
+        用 min/max(open, fence), 垃圾 bar 直接污染成交语义)."""
+        from scripts.v3_seed_market_bars import (
+            CourtBarCsvError,
+            bars_from_court_csv,
+        )
+
+        path = self._write(
+            tmp_path,
+            _COURT_HEADER
+            + "300001.SZ,20260806,11.0,10.0,12.0,11.5,10.9,5.5,1000,11000\n",
+        )
+        with pytest.raises(CourtBarCsvError) as rejected:
+            bars_from_court_csv(path, SIGNAL_SESSION)
+        assert rejected.value.code == "bar_csv_row_invalid"
+        assert rejected.value.details["ts_code"] == "300001.SZ"
+
+    def test_nonpositive_price_rejected(self, tmp_path: Path) -> None:
+        """close <= 0 → 类型化拒绝 (修复前静默入库)."""
+        from scripts.v3_seed_market_bars import (
+            CourtBarCsvError,
+            bars_from_court_csv,
+        )
+
+        path = self._write(
+            tmp_path,
+            _COURT_HEADER
+            + "300001.SZ,20260806,0.0,10.0,9.0,11.5,10.9,5.5,1000,11000\n",
+        )
+        with pytest.raises(CourtBarCsvError) as rejected:
+            bars_from_court_csv(path, SIGNAL_SESSION)
+        assert rejected.value.code == "bar_csv_row_invalid"
+        assert rejected.value.details["columns"] == ["open"]
+
+
 class TestDecideManifestPreflight:
     """R41: decide dry-run 的 readiness manifest pre-flight (docstring 对齐)."""
 

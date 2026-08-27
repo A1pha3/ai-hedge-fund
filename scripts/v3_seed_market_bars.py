@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from datetime import date
 from pathlib import Path
@@ -45,9 +46,11 @@ class CourtBarCsvError(RuntimeError):
 
 
 #: 未复权 pro.daily 日快照的必需列 (price_cache 的 qfq 快照缺 pre_close,
-#: 在列校验层即被拒——runbook 红线的句法执行面)。
+#: 在列校验层即被拒——runbook 红线的句法执行面; trade_date 是会话归属的
+#: 唯一字节证据, 缺失即无法证明行属于请求会话)。
 _COURT_CSV_REQUIRED_COLUMNS = (
     "ts_code",
+    "trade_date",
     "open",
     "high",
     "low",
@@ -78,6 +81,24 @@ def bars_from_court_csv(csv_path: Path, session: date) -> dict[str, DailyBar]:
             path=str(csv_path),
             session=session.isoformat(),
         )
+    expected_date = session.strftime("%Y%m%d")
+    offending_dates = {
+        value for value in df["trade_date"].tolist() if value != expected_date
+    }
+    if offending_dates:
+        # 会话归属守卫 (R50 Op1): 与 regime/schedule/candidate 三侧
+        # session-mismatch 守卫同族 (R7/R9/R41)。错日快照以 filename 会话
+        # 身份入库官方证据时间轴会污染 limit 围栏 → 成交判定 → marks;
+        # 会话归属是从字节可证的, 不校验即放行属静默污染。
+        raise CourtBarCsvError(
+            "bar_csv_session_mismatch",
+            "snapshot rows do not belong to the requested session"
+            " (a mislabeled or copied file must not enter the evidence"
+            " timeline under the filename's session identity)",
+            path=str(csv_path),
+            expected=expected_date,
+            found=sorted(str(value) for value in offending_dates),
+        )
     out: dict[str, DailyBar] = {}
     for row in df.itertuples(index=False):
         ts_code = str(row.ts_code)
@@ -91,11 +112,13 @@ def bars_from_court_csv(csv_path: Path, session: date) -> dict[str, DailyBar]:
             )
         symbol = ts_code.split(".")[0]
         try:
-            open_c = round(float(row.open) * 100)
-            high_c = round(float(row.high) * 100)
-            low_c = round(float(row.low) * 100)
-            close_c = round(float(row.close) * 100)
-            pre_c = round(float(row.pre_close) * 100)
+            prices = {
+                "open": float(row.open),
+                "high": float(row.high),
+                "low": float(row.low),
+                "close": float(row.close),
+                "pre_close": float(row.pre_close),
+            }
         except (ValueError, TypeError) as exc:
             raise CourtBarCsvError(
                 "bar_csv_row_invalid",
@@ -104,6 +127,36 @@ def bars_from_court_csv(csv_path: Path, session: date) -> dict[str, DailyBar]:
                 ts_code=ts_code,
                 reason=str(exc),
             ) from exc
+        non_finite = sorted(
+            name
+            for name, value in prices.items()
+            if not math.isfinite(value) or value <= 0.0
+        )
+        if non_finite:
+            # 数值健全性 (R50 Op1): NaN/inf/非正值显式拒绝——此前 NaN 只靠
+            # round() 无小数位转 int 的隐式行为拦截 (诊断仅 reason 字符串),
+            # 非正值/OHLC 序违反则完全静默; fill 判定用 min/max(open, fence),
+            # nonsense bar 直接污染成交语义。
+            raise CourtBarCsvError(
+                "bar_csv_row_invalid",
+                "a price field is not a finite positive number",
+                path=str(csv_path),
+                ts_code=ts_code,
+                columns=non_finite,
+            )
+        open_c = round(prices["open"] * 100)
+        high_c = round(prices["high"] * 100)
+        low_c = round(prices["low"] * 100)
+        close_c = round(prices["close"] * 100)
+        pre_c = round(prices["pre_close"] * 100)
+        if not (high_c >= max(open_c, close_c) and low_c <= min(open_c, close_c)):
+            raise CourtBarCsvError(
+                "bar_csv_row_invalid",
+                "OHLC ordering violated (high must bound open/close, low"
+                " must not exceed them)",
+                path=str(csv_path),
+                ts_code=ts_code,
+            )
         cap = limit_up_cap_pct_for_ticker(symbol)
 
         def _half_up(x: float) -> int:
