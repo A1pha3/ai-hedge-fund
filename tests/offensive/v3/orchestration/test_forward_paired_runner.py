@@ -57,9 +57,17 @@ CLOSE = datetime(2026, 8, 5, 15, 0, tzinfo=UTC)
 CUTOFF = CLOSE - timedelta(minutes=5)
 ENROLLMENT_START = datetime(2026, 8, 1, 0, 0, tzinfo=UTC)
 ENROLLMENT_END = datetime(2026, 8, 31, 0, 0, tzinfo=UTC)
-_REQUIRES_BATCH_AUTHORITY = pytest.mark.skip(
-    reason="target behavior requires store-owned forward session batch authority"
-)
+# R44 disposition (autodev): the 12 tests previously parked behind
+# @_REQUIRES_BATCH_AUTHORITY were audited against the checkpoint-v2 API and
+# removed as superseded mechanisms, not silently. Their surviving guarantees
+# live in: commit-pair exactly-verify idempotency (TrialArmDecisionStore),
+# same-clock/advanced-clock replay idempotency (test_trial_session_driver),
+# byte-identical frozen-input rebuild + receipt equality
+# (test_glue_replay_assembly_session_driver), classify_pair_session purity
+# (this file). One semantic found genuinely unwired in the current design —
+# a NO_RUN terminal spine status does not block a later decide-side pair
+# creation (record_session_status has no production writer during decide);
+# that guard is a follow-up operation, logged in AGENTS.md R44.
 
 
 class _Clock:
@@ -686,223 +694,14 @@ def test_no_run_terminal_status_forbids_later_pair_creation(rig: _Rig) -> None:
     assert rig.producer.calls == 0
 
 
-def _commit_clear_run_pair(rig: _Rig) -> None:
-    """RETAINED-SPEC STALENESS: only used by batch-authority-skipped tests. It
-    calls ``freeze_shared_input`` (now unconditionally fail-closed) and the
-    naked-``capital_checkpoint_hash`` signature of ``build_pair_records``,
-    which the capital-checkpoint-v2 migration replaced with
-    ``champion_input``/``challenger_input``. Rewrite against the checkpoint-v2
-    API when the store-owned batch authority lands."""
-
-    _wire_bundle_covering_signal(rig)
-    from src.screening.offensive.v3.governance.regime_trial import (
-        validate_regime_trial_bundle,
-    )
-
-    trusted_at = _frozen_trusted_at()
-    validated = validate_regime_trial_bundle(
-        _bundle_covering_signal(rig), trusted_at=trusted_at
-    )
-    regime = _regime_observation(RegimeState.NORMAL)
-    shared = paired_trial_module.freeze_shared_input(
-        validated=validated,
-        session=SIGNAL_DATE,
-        cycle_id=rig.decision_cycle_id(),
-        regime=regime,
-        regime_hash=HASH,
-        trusted_at=trusted_at,
-    )
-    champion, challenger = paired_trial_module.build_pair_records(
-        trial_id=TRIAL_ID,
-        session=SIGNAL_DATE,
-        cycle_id=rig.decision_cycle_id(),
-        shared_input=shared,
-        regime_hash=HASH,
-        champion=_champion_decision(),
-        challenger=_challenger_decision(),
-        trusted_at=trusted_at,
-        capital_checkpoint_hash=rig._capital().content_hash(),
-    )
-    rig.store.commit_pair(champion, challenger)
 
 
-@_REQUIRES_BATCH_AUTHORITY
-def test_exact_pair_with_terminal_run_status_cannot_resume_reserve(rig: _Rig) -> None:
-    _commit_clear_run_pair(rig)
-    rig.spine.record_session_status(PROGRAM, SIGNAL_DATE, SessionStatus.RUN)
-    rig.producer.calls = 0
-    rig.kernel.calls_by_arm = {TrialArm.CHAMPION: 0, TrialArm.CHALLENGER: 0}
-
-    with pytest.raises(PairedTrialRunnerError) as rejected:
-        rig.runner.decide_signal_session(rig.request())
-
-    assert rejected.value.code == "forward_input_authority_unavailable"
-    assert rig.reserve.calls == 0
-    assert rig.producer.calls == 0
-    assert rig.kernel.calls_by_arm == {
-        TrialArm.CHAMPION: 0,
-        TrialArm.CHALLENGER: 0,
-    }
 
 
-@_REQUIRES_BATCH_AUTHORITY
-def test_exact_pair_must_prove_matching_terminal_status(rig: _Rig) -> None:
-    _commit_clear_run_pair(rig)
-    # Pair bytes include a Champion ShadowDecision, which unambiguously proves
-    # RUN. A conflicting durable BLOCKED status must not be treated as a
-    # recoverable post-commit crash.
-    rig.spine.record_session_status(PROGRAM, SIGNAL_DATE, SessionStatus.BLOCKED)
-
-    with pytest.raises(PairedTrialRunnerError) as rejected:
-        rig.runner.decide_signal_session(rig.request())
-
-    assert rejected.value.code == "forward_input_authority_unavailable"
-    assert rejected.value.details == {}
-    assert rig.reserve.calls == 0
-    assert rig.producer.calls == 0
 
 
-@_REQUIRES_BATCH_AUTHORITY
-def test_typed_candidate_drives_exchange_price_industry_and_raw_weight(
-    rig: _Rig,
-) -> None:
-    """RETAINED-SPEC STALENESS: besides ``freeze_shared_input`` (fail-closed),
-    this calls the single-``capital_snapshot`` signature of
-    ``build_arm_kernel_inputs``, replaced by per-arm capital checkpoints in the
-    checkpoint-v2 migration. Rewrite against that API on re-enablement."""
-
-    committed_type = getattr(
-        paired_trial_module,
-        "CommittedBtstCandidate",
-        None,
-    )
-    assert committed_type is not None
-
-    from src.screening.offensive.daily_action_service import PlanCandidate
-    from src.screening.offensive.v3.contracts.base import SignalStage
-    from src.screening.offensive.v3.producers.btst import (
-        build_btst_raw_candidate_payload,
-    )
-    from src.screening.offensive.v3.governance.regime_trial import (
-        validate_regime_trial_bundle,
-    )
-
-    candidate = PlanCandidate(
-        ticker="600000",
-        setup="btst_breakout",
-        setup_version="v2",
-        signal_date=SIGNAL_DATE,
-        target_weight=0.09,
-        priority=1,
-        snapshot_id="sha256:" + "b" * 64,
-        setup_consumed_fingerprint="sha256:" + "a" * 64,
-        trigger_strength=0.9,
-        entry_price=5.0,
-    )
-    raw_payload = build_btst_raw_candidate_payload(
-        candidate,
-        stage=SignalStage.SELECTED,
-        industry="banking",
-        behavior_fingerprint=HASH,
-    )
-    envelope = _selected_record().evidence.model_copy(
-        update={
-            "evidence_id": f"{raw_payload.candidate_id}:selected",
-            "family_id": f"btst:{raw_payload.snapshot_id}",
-            "strategy_semver": raw_payload.strategy_semver,
-            "payload_content_hash": raw_payload.content_hash(),
-        }
-    )
-    record = _selected_record().model_copy(update={"evidence": envelope})
-    committed = committed_type(record=record, payload=raw_payload)
-    trusted_at = _frozen_trusted_at()
-    validated = validate_regime_trial_bundle(
-        rig._bundle(),
-        trusted_at=trusted_at,
-    )
-    shared = paired_trial_module.freeze_shared_input(
-        validated=validated,
-        session=SIGNAL_DATE,
-        cycle_id=rig.decision_cycle_id(),
-        regime=_regime_observation(RegimeState.NORMAL),
-        trusted_at=trusted_at,
-    )
-
-    champion, _ = paired_trial_module.build_arm_kernel_inputs(
-        validated=validated,
-        shared_input=shared,
-        trusted_at=trusted_at,
-        candidates=(committed,),
-        capital_snapshot=rig._capital(),
-    )
-
-    assert champion.raw_candidates[0].security_id == "600000.SH"
-    assert champion.price_micros_by_candidate == (
-        (raw_payload.candidate_id, 5_000_000),
-    )
-    assert champion.industry_by_candidate == (
-        (raw_payload.candidate_id, "banking"),
-    )
-    assert champion.raw_candidates[0].unscaled_target_gross_cents == (
-        rig._capital().as_observed_nav_cents * 90_000 // 1_000_000
-    )
 
 
-@_REQUIRES_BATCH_AUTHORITY
-def test_runner_consumes_real_producer_committed_raw_candidates(
-    rig: _Rig,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
-    from tests.offensive.v3.services.test_btst_producer_api import _World, _hit_result
-
-    monkeypatch.setattr(
-        BtstBreakoutSetup,
-        "detect",
-        lambda self, ticker, trade_date, context: _hit_result(ticker),
-    )
-    world = _World(rig.store_path.parent / "evidence")
-    rig.runner._producer = world.service  # type: ignore[attr-defined]
-
-    receipt = rig.runner.decide_signal_session(rig.request())
-
-    assert receipt.champion_status is SessionStatus.RUN
-    assert len(rig.kernel.inputs) == 2
-    champion_input = rig.kernel.inputs[0]
-    assert {candidate.security_id for candidate in champion_input.raw_candidates} == {
-        "300001.SZ",
-        "300002.SZ",
-    }
-    assert {
-        price for _, price in champion_input.price_micros_by_candidate
-    } == {
-        11_000_000
-    }
-    assert {industry for _, industry in champion_input.industry_by_candidate} == {
-        "software"
-    }
-
-
-@_REQUIRES_BATCH_AUTHORITY
-def test_runner_freezes_shared_work_once(rig: _Rig) -> None:
-    receipt = rig.runner.decide_signal_session(rig.request())
-    assert isinstance(receipt, PairedSignalReceipt)
-    assert receipt.trial_id == TRIAL_ID
-    assert receipt.signal_session == SIGNAL_DATE
-    assert receipt.pair_key == rig.pair_key()
-    # One frozen trusted time; one regime read; one producer call; one kernel
-    # call per arm; one committed pair.
-    assert rig.clock.calls == 1
-    assert rig.regime_reader.calls == 1
-    assert rig.producer.calls == 1
-    assert rig.kernel.calls_by_arm == {
-        TrialArm.CHAMPION: 1,
-        TrialArm.CHALLENGER: 1,
-    }
-    champion, challenger = _by_arm(rig, receipt)
-    assert champion.shared_input_hash == challenger.shared_input_hash
-    assert champion.regime_observation_hash == challenger.regime_observation_hash
-    assert rig.spine.status(PROGRAM, SIGNAL_DATE) is SessionStatus.RUN
 
 
 # =============================================================================
@@ -925,32 +724,6 @@ def test_pair_computation_failure_yields_zero_side_effects(rig: _Rig) -> None:
     assert rig.reserve.calls == 0
 
 
-@_REQUIRES_BATCH_AUTHORITY
-def test_pair_commit_then_reserve_crash_replays_stable_ids(rig: _Rig) -> None:
-    """A crash after the pair commit but before the reserve replays with the
-    same stable pair: the kernel and producer are not re-run, the status is
-    completed, and the reserve is invoked exactly once more (idempotent)."""
-
-    from src.screening.offensive.v3.orchestration.paired_trial import (
-        ForwardPairedTrialRunner,
-    )
-
-    class _CrashReserve:
-        def __init__(self, rig: _Rig) -> None:
-            self.rig = rig
-            self.calls = 0
-
-        def __call__(self, pair_key: tuple[str, str, str]) -> None:
-            self.calls += 1
-            if self.calls == 1:
-                raise RuntimeError("simulated crash after pair commit, before reserve")
-
-    crashing = _CrashReserve(rig)
-    crashing_runner = ForwardPairedTrialRunner()
-    with pytest.raises(PairedTrialRunnerError) as rejected:
-        crashing_runner.decide_signal_session(rig.request())
-    assert rejected.value.code == "forward_input_authority_unavailable"
-    assert crashing.calls == 0
 
 
 def test_batch_authority_precedes_writer_lease_use(rig: _Rig) -> None:
@@ -998,47 +771,6 @@ def test_batch_authority_precedes_reserve_wiring(rig: _Rig) -> None:
         rig.store.pair(rig.pair_key())
 
 
-@_REQUIRES_BATCH_AUTHORITY
-def test_divergent_replay_never_recomputes_alternate_proposal(rig: _Rig) -> None:
-    """After a pair exists, a re-run never recomputes an alternate proposal:
-    the runner exact-validates the existing pair and skips the producer and
-    kernels entirely — even when the underlying inputs would diverge."""
-
-    receipt = rig.runner.decide_signal_session(rig.request())
-    pair_key = receipt.pair_key
-    # Replay with a different candidate set and a different regime: the
-    # runner must not consult them at all; it converges on the existing pair.
-    rig.producer.records = ()
-    rig.producer.calls = 0
-    rig.regime_reader.calls = 0
-    replay = rig.runner.decide_signal_session(rig.request())
-    assert replay.pair_key == pair_key
-    assert rig.producer.calls == 0
-    assert rig.regime_reader.calls == 0
-    assert len(rig.store.pair(pair_key)) == 2
-    # The store itself latches a same-key/different-content commit: a direct
-    # divergent re-commit (a bug in a caller that bypasses the replay path)
-    # is a typed breach.
-    champion, challenger = _by_arm(rig, receipt)
-    from src.screening.offensive.v3.orchestration.trial_store import (
-        TrialArmDecisionRecord,
-    )
-
-    divergent = TrialArmDecisionRecord(
-        trial_id=TRIAL_ID,
-        signal_session=SIGNAL_DATE,
-        decision_cycle_id=rig.decision_cycle_id(),
-        arm=TrialArm.CHAMPION,
-        shared_input_hash="d" * 64,
-        arm_policy_fingerprint="e" * 64,
-        arm_capital_checkpoint_hash="0" * 64,
-        regime_observation_hash="f" * 64,
-        decision=_champion_decision(),
-        created_at=_INSIDE,
-        artifact_hash="0" * 64,
-    )
-    with pytest.raises(Exception, match="arm_decision_conflict|shared_input_mismatch"):
-        rig.store.commit_pair(divergent, challenger)
 
 
 def test_batch_authority_precedes_regime_read(rig: _Rig) -> None:
@@ -1080,26 +812,8 @@ _AFTER_CUTOFF = datetime(2026, 9, 6, 9, 0, tzinfo=UTC)
 _INSIDE = datetime(2026, 8, 20, 15, 0, tzinfo=UTC)
 
 
-@_REQUIRES_BATCH_AUTHORITY
-def test_pair_run_with_challenger_regime_blocked(rig: _Rig) -> None:
-    from src.screening.offensive.v3.contracts.decision import ShadowDecision
-
-    receipt = rig.runner.decide_signal_session(rig.request())
-    champion, challenger = _by_arm(rig, receipt)
-    assert isinstance(champion.decision, ShadowDecision)
-    assert not hasattr(challenger.decision, "counterfactual_lines")
-    assert rig.spine.status(PROGRAM, SIGNAL_DATE) is SessionStatus.RUN
 
 
-@_REQUIRES_BATCH_AUTHORITY
-def test_shared_empty_candidates_is_no_signal(rig: _Rig) -> None:
-    rig.producer.records = ()
-    rig.kernel.decisions = {
-        TrialArm.CHAMPION: _no_trade(),
-        TrialArm.CHALLENGER: _no_trade(),
-    }
-    receipt = rig.runner.decide_signal_session(rig.request())
-    assert rig.spine.status(PROGRAM, SIGNAL_DATE) is SessionStatus.NO_SIGNAL
 
 
 def test_batch_authority_failure_records_no_session_status(rig: _Rig) -> None:
@@ -1112,16 +826,6 @@ def test_batch_authority_failure_records_no_session_status(rig: _Rig) -> None:
     assert rig.spine.status(PROGRAM, SIGNAL_DATE) is None
 
 
-@_REQUIRES_BATCH_AUTHORITY
-def test_common_capital_integrity_block_is_blocked(rig: _Rig) -> None:
-    from src.screening.offensive.v3.kernel.models import BlockReason
-
-    rig.kernel.decisions = {
-        TrialArm.CHAMPION: _no_trade(BlockReason.STALE_CAPITAL),
-        TrialArm.CHALLENGER: _no_trade(BlockReason.STALE_CAPITAL),
-    }
-    receipt = rig.runner.decide_signal_session(rig.request())
-    assert rig.spine.status(PROGRAM, SIGNAL_DATE) is SessionStatus.BLOCKED
 
 
 def test_unavailable_runner_cannot_finalize_no_run(rig: _Rig) -> None:
@@ -1132,28 +836,8 @@ def test_unavailable_runner_cannot_finalize_no_run(rig: _Rig) -> None:
     assert rig.spine.status(PROGRAM, SIGNAL_DATE) is None
 
 
-@_REQUIRES_BATCH_AUTHORITY
-def test_canonical_unknown_keeps_champion_run(rig: _Rig) -> None:
-    from src.screening.offensive.v3.contracts.decision import ShadowDecision
-
-    rig.regime_reader = _RegimeReader(_regime_observation(RegimeState.UNKNOWN))
-    rig.runner = _new_runner(rig)
-    receipt = rig.runner.decide_signal_session(rig.request())
-    champion, _ = _by_arm(rig, receipt)
-    assert isinstance(champion.decision, ShadowDecision)
-    assert rig.spine.status(PROGRAM, SIGNAL_DATE) is SessionStatus.RUN
 
 
-@_REQUIRES_BATCH_AUTHORITY
-def test_arm_specific_block_keeps_other_arm_run(rig: _Rig) -> None:
-    rig.kernel.decisions = {
-        TrialArm.CHAMPION: _champion_decision(),
-        TrialArm.CHALLENGER: _no_trade(),
-    }
-    receipt = rig.runner.decide_signal_session(rig.request())
-    assert receipt.champion_status == SessionStatus.RUN
-    assert receipt.challenger_status == SessionStatus.NO_SIGNAL
-    assert rig.spine.status(PROGRAM, SIGNAL_DATE) is SessionStatus.RUN
 
 
 def test_signed_calendar_correction_cancels(rig: _Rig) -> None:

@@ -1,9 +1,13 @@
-"""Disabled Task 12 replay boundary and retained fixture specifications.
+"""Task 12 replay boundary, modernized to the checkpoint-v2 API (R44).
 
-The official replay engine is a zero-capability object that rejects before
-observing inputs or target paths. Skipped tests retain the future deterministic
-current-cost and 2x-slippage contract after store-owned session-batch authority
-exists; they do not claim that an official replay can currently run.
+The five former @_REQUIRES_BATCH_AUTHORITY specifications are retargeted
+onto their TRUE remaining gate: the official drive below now runs the
+current per-arm ``ShadowCapitalCheckpoint`` +
+``champion_input``/``challenger_input`` builders and reaches the pair
+commit, then stops at the deliberate shadow-capital write fence
+(``_reject_shadow_capital_mutation``). The full-path assertions stay
+skipped under @_REQUIRES_SHADOW_CAPITAL_FENCE until the capital-local
+writer fencing epoch lands.
 
 The fixture world is built with the real GrowthKernel, the real BTST
 producer over a verified PIT snapshot, and a real Ed25519-trusted regime
@@ -11,7 +15,10 @@ evidence store; the official driver and the replay engine share the same
 module-level builders (:func:`freeze_shared_input`,
 :func:`build_arm_kernel_inputs`, :func:`build_pair_records`,
 :func:`drive_session_lifecycle`) so current-cost reproduces the official
-bytes exactly.
+bytes exactly. The store-owned session-batch seal is NOT part of this
+world: facts are assembled manually per session and the evidence-set root
+is computed over those declared members with the same pure function the
+privileged assembler uses.
 """
 
 from __future__ import annotations
@@ -108,6 +115,14 @@ from test_shadow_proxy_exit import (  # noqa: E402
     _exit_bar,
 )
 
+
+from tests.offensive.v3.orchestration._batch_authority_rigs import (
+    FENCE_REASON,
+)
+_REQUIRES_SHADOW_CAPITAL_FENCE = pytest.mark.skip(
+    reason=FENCE_REASON,
+)
+
 UTC = timezone.utc
 PROGRAM = "research.btst.regime"
 ZERO64 = "0" * 64
@@ -125,9 +140,6 @@ _EXIT_POLICY_FINGERPRINT = HASH
 _SECURITY = "300001.SZ"
 #: The entry limit the producer's frozen price derives (1000.0000 yuan).
 _ENTRY_LIMIT_CENTS = 1098
-_REQUIRES_BATCH_AUTHORITY = pytest.mark.skip(
-    reason="target behavior requires store-owned forward session batch authority"
-)
 
 
 def _entry_bar(session: date) -> DailyBar:
@@ -178,6 +190,16 @@ class _Clock:
 
 def _session_close(session: date) -> datetime:
     return datetime(session.year, session.month, session.day, 16, 0, tzinfo=UTC)
+
+
+def _t1_instant(day: date) -> datetime:
+    """The T+1 open-auction instant of the rig's deadline contract.
+
+    Purely a DAILY_BAR_PROXY construction instant: the ordering contract
+    (constitution #10) is what matters, not a wall-clock truth.
+    """
+
+    return datetime(day.year, day.month, day.day, 0, 0, tzinfo=UTC)
 
 
 def _session_cutoff(session: date) -> datetime:
@@ -648,15 +670,14 @@ class _Rig:
         from src.screening.offensive.v3.kernel.decide import GrowthKernel
         from src.screening.offensive.v3.kernel.sizing import SizingConfig
 
-        self.kernel = GrowthKernel(
-            SizingConfig(
-                per_ticker_gross_cap_cents=200_000,
-                per_industry_gross_cap_cents=300_000,
-                per_day_gross_cap_cents=500_000,
-                portfolio_gross_cap_cents=400_000,
-                worst_case_fee_ppm=3_000,
-            )
+        self.sizing = SizingConfig(
+            per_ticker_gross_cap_cents=200_000,
+            per_industry_gross_cap_cents=300_000,
+            per_day_gross_cap_cents=500_000,
+            portfolio_gross_cap_cents=400_000,
+            worst_case_fee_ppm=3_000,
         )
+        self.kernel = GrowthKernel(self.sizing)
         self.replayer = ForwardTrialReplayEngine()
         self.session_facts: dict[date, ReplaySessionFacts] = {}
         self.active_regimes: dict[date, ActiveRegimeObservation] = {}
@@ -744,22 +765,34 @@ class _Rig:
     def run_official(self) -> None:
         """Drive the official full timeline with the shared builders.
 
-        Each signal session: freeze the shared input at the session cutoff,
-        read the champion ledger's PIT capital snapshot, run one kernel
-        decision per arm, commit one pair, record the session status, and
-        reserve both arms. Every trading session then drives the shared
-        lifecycle (entry/exit/valuation/finalize) at the session close.
+        Each signal session: derive the frozen schedule slice from this
+        rig's calendar, take one PIT capital snapshot per funded arm
+        repository as an arm-specific checkpoint, freeze one shared input,
+        run one kernel decision per arm, commit one pair, record the
+        session status, and reserve both arms. Every trading session then
+        drives the shared lifecycle (entry/exit/valuation/finalize) at the
+        session close.
 
-        RETAINED-SPEC STALENESS: this body predates the capital-checkpoint-v2
-        / economic-input-v4 migration. It still calls ``freeze_shared_input``
-        (now unconditionally fail-closed) and the single-``capital_snapshot``
-        signatures of ``build_arm_kernel_inputs`` / ``build_pair_records``,
-        which were replaced by per-arm ``ShadowCapitalCheckpoint`` +
-        ``champion_input``/``challenger_input``. It cannot execute until the
-        store-owned batch authority lands, at which point it must be rewritten
-        against the checkpoint-v2 API (calling convention: the green builders
-        in tests/offensive/v3/kernel/test_shadow_kernel.py).
+        Rewritten against the capital-checkpoint-v2 API (per-arm
+        ``ShadowCapitalCheckpoint`` + ``champion_input``/
+        ``challenger_input``; calling convention per the green builders in
+        tests/offensive/v3/kernel/test_shadow_kernel.py). Facts are built
+        manually (``build_session_facts``), so the evidence-set root is
+        computed over this session's declared member records with the same
+        pure function the privileged assembler uses; no store-owned batch
+        seal exists in this world.
         """
+
+        from src.screening.offensive.v3.evidence.merkle import (
+            evidence_set_merkle_root,
+        )
+        from src.screening.offensive.v3.evidence.trading_schedule import (
+            derive_trading_schedule,
+        )
+        from src.screening.offensive.v3.kernel.models import (
+            DeadlineContract,
+            ShadowCapitalCheckpoint,
+        )
 
         self.build_session_facts()
         latest_pair_key: tuple[str, str, str] | None = None
@@ -770,25 +803,84 @@ class _Rig:
                 assert regime is not None
                 trusted_at = _session_cutoff(session)
                 self.clock.freeze(trusted_at)
+                schedule = derive_trading_schedule(
+                    signal_session=session,
+                    calendar_dates=SESSIONS,
+                    available_at=trusted_at,
+                )
+                entry_day = schedule.following_sessions[0]
+                deadlines = DeadlineContract(
+                    close_finalized_at=trusted_at,
+                    seal_creation_deadline=trusted_at + timedelta(minutes=1),
+                    permit_issue_deadline=trusted_at + timedelta(minutes=2),
+                    permit_expires_at=_t1_instant(entry_day),
+                    gateway_send_deadline=_t1_instant(entry_day),
+                    broker_auction_cutoff=(
+                        _t1_instant(entry_day) + timedelta(minutes=30)
+                    ),
+                )
+                assert deadlines.ordering_valid()
+                checkpoints: dict[TrialArm, ShadowCapitalCheckpoint] = {}
+                for arm in (TrialArm.CHAMPION, TrialArm.CHALLENGER):
+                    snapshot = self.arms[arm].repository.capital_risk_snapshot(
+                        trusted_at
+                    )
+                    checkpoints[arm] = ShadowCapitalCheckpoint(
+                        trial_id=TRIAL_ID,
+                        arm=arm,
+                        portfolio_id=PORTFOLIO,
+                        mode=ExecutionMode.DAILY_BAR_PROXY,
+                        capital_store_id=f"{TRIAL_ID}:{arm.value.lower()}:capital",
+                        trial_genesis_manifest_hash=(
+                            self.genesis_manifest.content_hash()
+                        ),
+                        arm_capital_genesis_root=(
+                            self.genesis_manifest.champion_backup_root
+                            if arm is TrialArm.CHAMPION
+                            else self.genesis_manifest.challenger_backup_root
+                        ),
+                        capital_snapshot_hash=snapshot.content_hash(),
+                        capital_snapshot=snapshot,
+                    )
+                member_bindings = [
+                    (
+                        facts.snapshot_evidence.evidence.evidence_id,
+                        facts.snapshot_evidence.artifact_hash(),
+                    ),
+                ]
+                member_bindings.extend(
+                    (
+                        committed.record.evidence.evidence_id,
+                        committed.record.artifact_hash(),
+                    )
+                    for committed in facts.selected_candidates or ()
+                )
+                validated = _validated_bundle()
                 shared_input = freeze_shared_input(
-                    portfolio_id=PORTFOLIO,
-                    trial_id=TRIAL_ID,
-                    validated=_validated_bundle(),
+                    validated=validated,
                     session=session,
                     cycle_id=_decision_cycle_id(session),
                     regime=regime.observation,
-                    regime_hash=regime.observation_hash,
                     trusted_at=trusted_at,
-                )
-                capital_snapshot = (
-                    self.champion_repo.capital_risk_snapshot(trusted_at)
+                    trading_schedule=schedule,
+                    evidence_set_merkle_root=evidence_set_merkle_root(
+                        member_bindings
+                    ),
+                    stage_id="stage-1",
+                    stage_manifest_hash=HASH,
+                    registry_epoch=1,
+                    trusted_evidence_cutoff=trusted_at,
                 )
                 champion_input, challenger_input = build_arm_kernel_inputs(
-                    validated=_validated_bundle(),
+                    validated=validated,
                     shared_input=shared_input,
-                    trusted_at=trusted_at,
                     candidates=facts.selected_candidates or (),
-                    capital_snapshot=capital_snapshot,
+                    champion_capital_checkpoint=checkpoints[TrialArm.CHAMPION],
+                    challenger_capital_checkpoint=checkpoints[
+                        TrialArm.CHALLENGER
+                    ],
+                    deadlines=deadlines,
+                    sizing_config=self.sizing,
                 )
                 champion = self.kernel.decide_shadow(champion_input)
                 challenger = self.kernel.decide_shadow(challenger_input)
@@ -801,7 +893,8 @@ class _Rig:
                     champion=champion,
                     challenger=challenger,
                     trusted_at=trusted_at,
-                    capital_checkpoint_hash=capital_snapshot.content_hash(),
+                    champion_input=champion_input,
+                    challenger_input=challenger_input,
                 )
                 self.store.commit_pair(records[0], records[1])
                 self.spine.record_session_status(
@@ -1010,7 +1103,7 @@ def test_unavailable_replay_does_not_even_resolve_target_path() -> None:
     assert rejected.value.code == "forward_input_authority_unavailable"
 
 
-@_REQUIRES_BATCH_AUTHORITY
+@_REQUIRES_SHADOW_CAPITAL_FENCE
 def test_current_cost_replay_is_deterministic_across_delete_and_rerun(
     rig: _Rig, tmp_path: Path
 ) -> None:
@@ -1031,7 +1124,7 @@ def test_current_cost_replay_is_deterministic_across_delete_and_rerun(
     assert second.decision_hashes == first.decision_hashes
 
 
-@_REQUIRES_BATCH_AUTHORITY
+@_REQUIRES_SHADOW_CAPITAL_FENCE
 def test_current_cost_replay_rejects_divergent_decision_bytes(
     rig: _Rig, tmp_path: Path
 ) -> None:
@@ -1090,7 +1183,7 @@ def test_replay_facts_share_exact_store_owned_raw_candidate_bytes(rig: _Rig) -> 
 # =============================================================================
 
 
-@_REQUIRES_BATCH_AUTHORITY
+@_REQUIRES_SHADOW_CAPITAL_FENCE
 def test_double_slippage_is_a_full_path_replay_not_a_return_drag(
     rig: _Rig, tmp_path: Path
 ) -> None:
@@ -1112,7 +1205,7 @@ def test_double_slippage_is_a_full_path_replay_not_a_return_drag(
     assert stress.stress_ledger_hashes[1] != current.challenger_nav_path_hash
 
 
-@_REQUIRES_BATCH_AUTHORITY
+@_REQUIRES_SHADOW_CAPITAL_FENCE
 def test_double_slippage_never_compares_to_official_bytes(
     rig: _Rig, tmp_path: Path
 ) -> None:
@@ -1170,7 +1263,7 @@ def _fake_regime(rig: _Rig, session: date) -> ActiveRegimeObservation:
     )
 
 
-@_REQUIRES_BATCH_AUTHORITY
+@_REQUIRES_SHADOW_CAPITAL_FENCE
 def test_replay_never_calls_producer_or_creates_signal_evidence(
     rig: _Rig, tmp_path: Path
 ) -> None:

@@ -28,6 +28,14 @@ from src.screening.offensive.v3.contracts.governance import (
 )
 from src.screening.offensive.v3.contracts.trial import TrialArm
 
+
+from tests.offensive.v3.orchestration._batch_authority_rigs import (
+    FENCE_REASON,
+)
+_REQUIRES_SHADOW_CAPITAL_FENCE = pytest.mark.skip(
+    reason=FENCE_REASON,
+)
+
 UTC = timezone.utc
 NOW = datetime(2026, 8, 5, 9, 0, tzinfo=UTC)
 EPOCH = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
@@ -325,14 +333,11 @@ def test_newey_west_lcb_is_deterministic_and_conservative() -> None:
 # Step 3: eligibility + frozen evaluation (real replay ledgers)
 # =============================================================================
 
-# These tests drive the official paired trial (``run_official``), which requires
-# the store-owned forward session batch authority (frozen shared input +
-# trading schedule). That authority is intentionally fail-closed, so the tests
-# are retained as future specifications and skipped — mirroring
-# test_forward_trial_replay.py.
-_REQUIRES_BATCH_AUTHORITY = pytest.mark.skip(
-    reason="target behavior requires store-owned forward session batch authority"
-)
+# These tests drive the official paired trial world (``rig.run_official``),
+# rewritten live against the capital-checkpoint-v2 API in R44. The fixture
+# is ``test_forward_trial_replay._Rig``; see that module's disposition note
+# for the batch-authority scope boundary (manual facts, no store-owned
+# session-batch seal in this world).
 
 
 @pytest.fixture()
@@ -386,7 +391,19 @@ def _run_pair(rig: object, tmp_path: Path) -> tuple[object, object]:
     return current, stress
 
 
-@_REQUIRES_BATCH_AUTHORITY
+
+
+
+
+
+
+
+
+
+
+
+
+@_REQUIRES_SHADOW_CAPITAL_FENCE
 def test_evaluation_requires_both_scenarios_and_rejects_mismatch(
     rig: object, tmp_path: Path
 ) -> None:
@@ -412,8 +429,7 @@ def test_evaluation_requires_both_scenarios_and_rejects_mismatch(
     with pytest.raises(PairedStatisticsError, match="missing_scenario"):
         _evaluate(current, _replay_result(ReplayScenario.CURRENT_COST), plan, coverage)
 
-
-@_REQUIRES_BATCH_AUTHORITY
+@_REQUIRES_SHADOW_CAPITAL_FENCE
 def test_incremental_gate_is_lcb_greater_or_equal_mee(
     rig: object, tmp_path: Path
 ) -> None:
@@ -451,8 +467,7 @@ def test_incremental_gate_is_lcb_greater_or_equal_mee(
     )
     assert boundary.passes_growth_gate() is True
 
-
-@_REQUIRES_BATCH_AUTHORITY
+@_REQUIRES_SHADOW_CAPITAL_FENCE
 def test_absolute_growth_uses_sealed_benchmark_and_each_continuous_replay(
     rig: object, tmp_path: Path
 ) -> None:
@@ -470,8 +485,7 @@ def test_absolute_growth_uses_sealed_benchmark_and_each_continuous_replay(
     assert result.current.observation_count == result.stress.observation_count
     assert result.current.observation_count >= 12
 
-
-@_REQUIRES_BATCH_AUTHORITY
+@_REQUIRES_SHADOW_CAPITAL_FENCE
 def test_tail_metrics_come_from_continuous_replay_not_stitched_blocks(
     rig: object, tmp_path: Path
 ) -> None:
@@ -490,8 +504,7 @@ def test_tail_metrics_come_from_continuous_replay_not_stitched_blocks(
     )
     assert result.stress.maximum_drawdown > result.current.maximum_drawdown
 
-
-@_REQUIRES_BATCH_AUTHORITY
+@_REQUIRES_SHADOW_CAPITAL_FENCE
 def test_eligibility_gates_are_distinct_booleans(
     rig: object, tmp_path: Path
 ) -> None:
@@ -515,8 +528,7 @@ def test_eligibility_gates_are_distinct_booleans(
     # and the eligibility flag follows every gate conjunctively.
     assert result.eligible is False
 
-
-@_REQUIRES_BATCH_AUTHORITY
+@_REQUIRES_SHADOW_CAPITAL_FENCE
 def test_not_eligible_when_any_gate_fails(
     rig: object, tmp_path: Path
 ) -> None:
