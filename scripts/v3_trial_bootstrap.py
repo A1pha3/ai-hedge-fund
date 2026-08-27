@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import stat
 import sys
@@ -69,6 +70,60 @@ _PREPLACED_DB_NAMES = (
     "spine.sqlite3",
     "governance.sqlite3",
 )
+
+
+def _assert_fresh_world(trial_root: Path) -> None:
+    """fresh-world 零写守卫 — dry-run 与 execute 共用的单一实现 (R49)。
+
+    每库恰好一次 ``stat(follow_symlinks=False)`` 同时取 mode 与 size：
+    symlink (dangling 或指现有文件)、目录或非常规文件 →
+    ``trial_root_path_rejected``；非空常规文件 → ``trial_root_not_fresh``；
+    缺失 → 合法起点。此前 execute 面是独立的 ``exists()+stat()`` 两调用
+    循环——检查点消失竞态下裸抛 FileNotFoundError（D7 同族，R48 D7 扫描
+    漏网），且与 dry-run 面是同义而不同源的两套守卫。
+    """
+    for name in _PREPLACED_DB_NAMES:
+        path = trial_root / name
+        try:
+            info = path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(info.st_mode):
+            raise SystemExit(_fail("trial_root_path_rejected", name))
+        if info.st_size > 0:
+            raise SystemExit(
+                _fail(
+                    "trial_root_not_fresh",
+                    "a preplaced database is non-empty; genesis-seed only"
+                    " constructs a fresh world (use a new trial root)",
+                    name=name,
+                )
+            )
+
+
+def _touch_placeholder_dbs(trial_root: Path) -> None:
+    """四库空占位独占无跟随创建 (R49)。
+
+    守卫全量通过后逐库 ``O_CREAT|O_EXCL|O_NOFOLLOW`` 创建：守卫→创建
+    残余窗口内出现的 symlink 被跟随拒绝、常规文件走 ``FileExistsError``
+    → 全量重验空性（非空即拒，已创建的空占位不回滚——append-only 起点
+    无需撤销）。0600：资本真相库，收紧此前 ``write_bytes`` 的 umask 默认。
+    """
+    _assert_fresh_world(trial_root)
+    for name in _PREPLACED_DB_NAMES:
+        path = trial_root / name
+        try:
+            fd = os.open(
+                path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+            )
+        except FileExistsError:
+            _assert_fresh_world(trial_root)
+            continue
+        except OSError as exc:
+            raise SystemExit(
+                _fail("trial_root_placeholder_rejected", f"{name}: {exc}", name=name)
+            )
+        os.close(fd)
 
 
 class _PathGuardError(RuntimeError):
@@ -309,24 +364,9 @@ def _cmd_genesis_seed(args: argparse.Namespace) -> int:
         raise SystemExit(_fail("unit_price_invalid", str(args.unit_price_cents)))
 
     # fresh-world 守卫 (零写): 四库占位存在且非空 = 世界已越权初始化。
-    # 缺失/空 0 字节是合法起点 (execute 期补 touch)。
-    for name in _PREPLACED_DB_NAMES:
-        path = trial_root / name
-        try:
-            mode = path.lstat().st_mode
-        except FileNotFoundError:
-            continue
-        if not stat.S_ISREG(mode):
-            raise SystemExit(_fail("trial_root_path_rejected", name))
-        if path.stat().st_size > 0:
-            raise SystemExit(
-                _fail(
-                    "trial_root_not_fresh",
-                    "a preplaced database is non-empty; genesis-seed only"
-                    " constructs a fresh world (use a new trial root)",
-                    name=name,
-                )
-            )
+    # 缺失/空 0 字节是合法起点 (execute 期补 touch)。dry-run 与 execute
+    # 共用同一单一实现 — R49 前是同义而不同源的两套循环。
+    _assert_fresh_world(trial_root)
 
     if not args.execute:
         return _ok(
@@ -395,21 +435,8 @@ def _cmd_genesis_seed(args: argparse.Namespace) -> int:
 
     # 四库空占位。execute 期重验空性 (dry-run 与 --execute 之间可能隔了
     # 任意长的墙钟; 陈旧 dry-run 的放行不构成 execute 的事实) — 任一非空
-    # 即拒绝, 与零写阶段同码。
-    for name in _PREPLACED_DB_NAMES:
-        path = trial_root / name
-        if path.exists():
-            if path.stat().st_size > 0:
-                raise SystemExit(
-                    _fail(
-                        "trial_root_not_fresh",
-                        "a preplaced database is non-empty; genesis-seed only"
-                        " constructs a fresh world (use a new trial root)",
-                        name=name,
-                    )
-                )
-        else:
-            path.write_bytes(b"")
+    # 即拒绝, 与零写阶段同码。独占无跟随创建关闭守卫→创建残余窗口 (R49)。
+    _touch_placeholder_dbs(trial_root)
 
     seed_dir = trial_root / "genesis-seed"
     try:

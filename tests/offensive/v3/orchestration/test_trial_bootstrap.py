@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -1085,3 +1086,105 @@ class TestFullLaunchSequence:
                 "SELECT count(*) FROM trial_arm_decisions"
             ).fetchone()
         assert pairs[0] >= 2  # 双臂各一条
+
+
+class TestFreshWorldGuardFamily:
+    """R49: genesis-seed execute 面四库占位守卫家族收口.
+
+    三面缺陷 (对抗审查实锤, 同一 execute 块):
+      F1  exists()+stat() 两调用 TOCTOU — 文件在检查点消失时裸
+          FileNotFoundError 逃逸 (非类型化, D7 同族; R48 D7 扫描漏网);
+      F2  占位创建 write_bytes(b"") 跟随预置 dangling symlink 写穿到
+          trial root 外 (R5 家族在 R39 新增路径上的漏网实例);
+      F3  dry-run 面 (lstat+S_ISREG 拒 symlink) 与 execute 面
+          (exists+stat 跟随 symlink) 同一守卫两面行为分歧 — dry-run 绿
+          execute 放行, R47/D6 假绿同族。
+
+    修复不变式: 守卫单一实现 (单次 stat(follow_symlinks=False) 取
+    mode+size), 两面同源; 占位创建 O_CREAT|O_EXCL|O_NOFOLLOW 独占无
+    跟随; FileExistsError 重验空性否则类型化拒绝。
+    """
+
+    DB_NAMES = ("evidence.sqlite3", "bars-evidence.sqlite3",
+                "spine.sqlite3", "governance.sqlite3")
+
+    def _fail_code(self, capsys) -> str:
+        payload = json.loads(capsys.readouterr().out)
+        return payload["code"]
+
+    def test_execute_dangling_symlink_db_rejected_zero_escape(
+        self, tmp_path, capsys
+    ) -> None:
+        """F2 PoC: 预置 dangling symlink → 类型化拒绝, root 外零创建."""
+        root = tmp_path / "trial-root"
+        root.mkdir()
+        victim = tmp_path / "outside" / "victim.sqlite3"
+        victim.parent.mkdir()
+        (root / "evidence.sqlite3").symlink_to(victim)
+        with pytest.raises(SystemExit) as stopped:
+            cli_main(TestGenesisSeed()._seed_argv(root, execute=True))
+        assert stopped.value.code == 2
+        assert self._fail_code(capsys) == "trial_root_path_rejected"
+        assert not victim.exists()  # 写穿面: 修复前 write_bytes 落盘 victim
+        assert not (root / "evidence.sqlite3").is_file() or (
+            root / "evidence.sqlite3").is_symlink()
+
+    def test_dry_run_and_execute_same_verdict_on_symlink(
+        self, tmp_path, capsys
+    ) -> None:
+        """F3: 同一预置 symlink 形态两面判定一致 (同码同拒)."""
+        target = tmp_path / "decoy.sqlite3"
+        target.write_bytes(b"")  # 存在且为空的 symlink 目标
+        for execute in (False, True):
+            root = tmp_path / f"trial-root-{execute}"
+            root.mkdir()
+            (root / "spine.sqlite3").symlink_to(target)
+            with pytest.raises(SystemExit) as stopped:
+                cli_main(TestGenesisSeed()._seed_argv(root, execute=execute))
+            assert stopped.value.code == 2
+            assert self._fail_code(capsys) == "trial_root_path_rejected"
+
+    def test_vanish_race_no_raw_escape(self, tmp_path, monkeypatch) -> None:
+        """F1 竞态等价形态: exists 判真后检查点消失 → 按缺失收敛, 无裸逃逸."""
+        root = tmp_path / "trial-root"
+        root.mkdir()
+        real_exists, real_stat = Path.exists, Path.stat
+
+        def fake_exists(self: Path) -> bool:
+            if self.parent == root and self.name in TestFreshWorldGuardFamily.DB_NAMES:
+                return True
+            return real_exists(self)
+
+        def fake_stat(self: Path, *, follow_symlinks: bool = True):
+            if self.parent == root and self.name in TestFreshWorldGuardFamily.DB_NAMES:
+                raise FileNotFoundError(str(self))
+            return real_stat(self, follow_symlinks=follow_symlinks)
+
+        monkeypatch.setattr(Path, "exists", fake_exists)
+        monkeypatch.setattr(Path, "stat", fake_stat)
+        assert cli_main(TestGenesisSeed()._seed_argv(root, execute=True)) == 0
+        for name in self.DB_NAMES:
+            # 断言面绕过本测试对 Path.stat 的注入 (patch 仍在生效)
+            assert os.stat(root / name).st_size == 0
+
+    def test_guard_to_touch_window_nonempty_rejected(
+        self, tmp_path, capsys, monkeypatch
+    ) -> None:
+        """残余窗口: 守卫通过后占位名被预置非空内容 → O_EXCL 失败重验即拒."""
+        root = tmp_path / "trial-root"
+        root.mkdir()
+        real_open = os.open
+
+        def fake_open(path, flags, mode=0o777, **kwargs):
+            p = Path(path)
+            if p.parent == root and p.name in TestFreshWorldGuardFamily.DB_NAMES:
+                p.write_bytes(b"adversary")
+                raise FileExistsError(str(p))
+            return real_open(path, flags, mode, **kwargs)
+
+        monkeypatch.setattr(os, "open", fake_open)
+        with pytest.raises(SystemExit) as stopped:
+            cli_main(TestGenesisSeed()._seed_argv(root, execute=True))
+        assert stopped.value.code == 2
+        assert self._fail_code(capsys) == "trial_root_not_fresh"
+        assert (root / "evidence.sqlite3").read_bytes() == b"adversary"
