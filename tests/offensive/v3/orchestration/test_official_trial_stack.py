@@ -1560,3 +1560,55 @@ def test_zero_byte_sidecar_shells_tolerated(tmp_path):
         _build(world)
     except OfficialStackError as exc:
         pytest.fail(f"zero-byte sidecar shells must not block assembly: {exc.code}")
+# -- R48 D7: -wal 冷检查的单次 stat 收敛 (R47 交付对抗审查返工) ----------------
+
+
+def _receipted_world(tmp_path):
+    world = _official_archive_world(tmp_path)
+    only = _issue_receipt(
+        world.issuer, stage_id="stage-solo", issued_at=GOV_NOW - timedelta(minutes=1)
+    )
+    write_stage_issuance_receipt(world.root, only)
+    return world
+
+
+def test_zero_byte_wal_shell_assembly_succeeds(tmp_path):
+    """0 字节 -wal 空壳显式放行 (R47 D4 语义钉死; 此前仅由夹具残骸隐式覆盖)。"""
+    world = _receipted_world(tmp_path)
+    (world.root / "spine.sqlite3-wal").write_bytes(b"")
+    (world.root / "governance.sqlite3-wal").write_bytes(b"")
+    _build(world)
+
+
+def test_wal_stat_race_missing_file_converges_to_absent(tmp_path, monkeypatch):
+    """D7 (R48): exists()+stat() 两调用竞态的确定性等价形态。
+
+    修复前 (RED): ``stale_wal.exists()`` 判真后文件消失 (清理/并发/敌手
+    时序), ``stale_wal.stat()`` 裸抛 FileNotFoundError — 守卫以非类型化
+    异常逃逸 (rc≠2 无 typed JSON, D1 错误掩蔽同族)。修复后单次 stat 且
+    FileNotFoundError 视为无 sidecar, 收敛到『无 -wal = 放行』语义。
+    monkeypatch 定向注入: 仅对 spine 的 -wal 路径, stat 抛
+    FileNotFoundError — 旧实现 exists→stat 序列的竞态中间态复现。
+    """
+    from pathlib import Path as _Path
+
+    world = _receipted_world(tmp_path)
+    wal = world.root / "spine.sqlite3-wal"
+    real_exists, real_stat = _Path.exists, _Path.stat
+
+    def racing_exists(self):
+        # 竞态前半: exists 判真 (文件此刻在场 — 不预置实体文件, 使两 patch
+        # 精确刻画『exists=True 之后消失』的中间态)。
+        if self == wal:
+            return True
+        return real_exists(self)
+
+    def racing_stat(self, *, follow_symlinks=True):
+        # 竞态后半: stat 时文件已消失。
+        if self == wal:
+            raise FileNotFoundError(2, "race: file vanished between exists and stat", str(self))
+        return real_stat(self, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(_Path, "exists", racing_exists)
+    monkeypatch.setattr(_Path, "stat", racing_stat)
+    _build(world)

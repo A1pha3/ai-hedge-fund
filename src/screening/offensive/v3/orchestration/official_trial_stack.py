@@ -244,7 +244,15 @@ def _require_pre_registered_fact(
        读侧组装恢复 (恢复=写), 冷文件检查已显式拒绝该形态。
     """
     stale_wal = path.parent / f"{path.name}-wal"
-    if stale_wal.exists() and stale_wal.stat().st_size > 0:
+    # 单次 stat (R48 D7): exists()+stat() 两调用之间存在竞态 — exists 判真
+    # 后文件消失 (清理/并发/敌手时序) 会让 stat() 裸抛 FileNotFoundError,
+    # 守卫以非类型化异常逃逸。FileNotFoundError 视为无 sidecar, 与
+    # 『不存在 = 放行』语义合一; OSError 其余形态照旧向上传播。
+    try:
+        has_live_wal = stale_wal.stat().st_size > 0
+    except FileNotFoundError:
+        has_live_wal = False
+    if has_live_wal:
         raise OfficialStackError(
             checkpoint_code,
             "a pre-registered governance fact file must be fully"
