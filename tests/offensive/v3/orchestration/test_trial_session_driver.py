@@ -731,6 +731,50 @@ class TestFinalizeDryRunPlanFidelity:
         assert payload["already_terminal"] == []
         assert payload["not_yet_assessed"] == []
 
+    def test_dry_run_garbage_spine_typed_rejection_zero_write(
+        self, world: _DriverWorld, tmp_path: Path, capsys
+    ) -> None:
+        """R51 Op3 pin: 垃圾字节 spine → typed spine_unreadable rc=2 零写痕.
+
+        _cold_read_enrollments/_cold_read_spine_statuses 的 DatabaseError→
+        spine_unreadable fail-closed 分支 (R51 Op2 新守卫面) 无 pin 则未来
+        可静默退化为非类型化逃逸; immutable 冷读在损坏路径同样零写痕
+        (字节不变、无 -wal/-shm 新增)。
+        """
+        from scripts.v3_trial_session import main as cli_main
+
+        root = tmp_path / "corrupt-root"
+        root.mkdir()
+        for name in (
+            "evidence.sqlite3",
+            "bars-evidence.sqlite3",
+            "governance.sqlite3",
+        ):
+            (root / name).write_bytes(b"")
+        spine = root / "spine.sqlite3"
+        spine.write_bytes(b"not a sqlite database at all\n\x00\x01")
+        (root / TRIAL_ID).mkdir()
+        (root / TRIAL_ID / "genesis-manifest.json").write_text("{}")
+        before = spine.read_bytes()
+        before_entries = sorted(p.name for p in root.iterdir())
+
+        with pytest.raises(SystemExit) as stopped:
+            cli_main(
+                [
+                    "finalize-missed",
+                    "--identity-dir", str(world.identity_dir),
+                    "--trial-root", str(root),
+                    "--trial-id", TRIAL_ID,
+                    "--calendar", str(world.calendar_path),
+                    "--now", "2026-08-20T15:00:00+00:00",
+                ]
+            )
+        assert stopped.value.code == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is False
+        assert payload["code"] == "spine_unreadable"
+        assert spine.read_bytes() == before
+        assert sorted(p.name for p in root.iterdir()) == before_entries
 
 # ---------------------------------------------------------------------------
 # Adversarial: state conflicts / mismatches / CLI dry-run zero-write
