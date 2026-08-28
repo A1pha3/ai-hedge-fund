@@ -186,6 +186,7 @@ def test_all_stages_recorded_in_order_when_gate_open_and_manifest_present(fake_r
     assert "btst_court_fetch.py" in invocations[0]
     assert " seed-evidence " in f" {invocations[1]} "
     assert " decide " in f" {invocations[2]} "
+    assert f"--trial-root {fake_repo}/{TRIAL_ROOT_REL} " in f" {invocations[2]} "
     assert " finalize-missed " in f" {invocations[3]} "
     records = _history(fake_repo)
     assert [r["stage"] for r in records] == list(STAGES)
@@ -205,6 +206,28 @@ def test_seed_invocation_carries_session_manifest_and_execute(fake_repo: Path) -
     assert "--now" in seed_line
     # seed-evidence 子命令不接受 --trial-id (生产 argv 预检实锤: argparse 即败)
     assert "--trial-id" not in seed_line
+    # trial-root 必须 canonical 绝对路径 (R56 首夜实锤: 相对路径在 BlobStore
+    # 构造处 blob_root_not_canonical traceback, seed 失败 → decide 链式搁浅)
+    assert f"--trial-root {fake_repo}/{TRIAL_ROOT_REL} " in f" {seed_line} "
+
+
+def test_seed_skipped_once_trial_underway(fake_repo: Path) -> None:
+    # regime 观察是单 id 修正链且首夜后由 decide 逐会话追加 (runbook):
+    # decisions 库在位 = trial 已开工, 再播必 seed_conflict — 结构性 skip。
+    _seed_pair_stores(
+        fake_repo,
+        pairs=["2026-01-01"],
+        spine_rows=[("research.btst.regime", "2026-01-01", "2026-01-15")],
+    )
+    proc = _run_nightly(fake_repo, "--selftest-once")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    records = _history(fake_repo)
+    seed = next(r for r in records if r["stage"] == "seed")
+    assert seed["rc"] == 0
+    assert seed["detail"] == "skipped_trials_underway"
+    assert not [l for l in _invocations(fake_repo) if " seed-evidence " in f" {l} "]
+    # decide 照常 (regime 链归 decide 所有)
+    assert " decide " in f" {_invocations(fake_repo)[1]} "
 
 
 def test_gate_closed_skips_seed_and_decide_but_runs_other_stages(fake_repo: Path) -> None:

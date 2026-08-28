@@ -6,10 +6,13 @@
 #
 # 五阶段 (顺序执行, 单阶段失败不中止后续, 整体 rc = 失败阶段数):
 #   1. fetch    — bar 源幂等续传 (scripts/btst_court_fetch.py, runbook 2b 前置)
-#   2. seed     — 首会话 regime 证据播种 (v3_trial_bootstrap.py seed-evidence)
-#                 与 decide 共用双门; 缺席则 decide execute 在官方栈构造处以
-#                 evidence_not_seeded/bars_store_not_seeded 冷读拒绝 (R37 守卫)。
-#                 同内容重放由 store 恰等幂等收敛 (reused_existing), 不烧证据。
+#   2. seed     — 首夜 bootstrap: regime 证据播种 (v3_trial_bootstrap.py
+#                 seed-evidence), 与 decide 共用双门; 缺席则 decide execute 在
+#                 官方栈构造处以 evidence_not_seeded/bars_store_not_seeded
+#                 冷读拒绝 (R37 守卫)。regime 观察是单 id 修正链且首夜后由
+#                 decide 逐会话追加 (runbook), 故 trial 开工 (decisions 库在位)
+#                 后本阶段 skip; 首夜 crash 重试若异时刻重放会 seed_conflict
+#                 (typed, 只记失败不停链) — decide 复用首播观察照常收敛。
 #   3. decide   — 今日信号会话决策 (v3_trial_session.py decide --execute)
 #                 门: 本地时刻 >= 23:00 (decide 窗 15:00 UTC 开) 且今日
 #                 readiness manifest 在位; 缺一为 skipped 记录而非失败 —
@@ -40,15 +43,18 @@ ENUM_PY="${V3N_ENUM_PY:-$PY}"
 TRIAL_CLI="${V3N_TRIAL_CLI:-scripts/v3_trial_session.py}"
 BOOTSTRAP_CLI="${V3N_BOOTSTRAP_CLI:-scripts/v3_trial_bootstrap.py}"
 FETCH="${V3N_FETCH:-scripts/btst_court_fetch.py}"
-IDENTITY_DIR="${V3N_IDENTITY_DIR:-data/v3_governance_identity}"
-TRIAL_ROOT="${V3N_TRIAL_ROOT:-data/v3_trial_root}"
+# 数据路径默认全部锚定 $REPO 绝对化 (R56 首夜实锤: 相对 trial-root 在
+# BlobStore 构造处被 canonical-absolute 守卫拒绝 blob_root_not_canonical —
+# R31 路径纪律要求调用方供 canonical 绝对路径, 脚本不得依赖 cd 后的相对语义)
+IDENTITY_DIR="${V3N_IDENTITY_DIR:-$REPO/data/v3_governance_identity}"
+TRIAL_ROOT="${V3N_TRIAL_ROOT:-$REPO/data/v3_trial_root}"
 TRIAL_ID="${V3N_TRIAL_ID:-trial-btst-regime-r1}"
 RESEARCH_PROGRAM="${V3N_RESEARCH_PROGRAM:-research.btst.regime}"
-CALENDAR="${V3N_CALENDAR:-data/reports/trade_calendar.json}"
-BAR_SOURCE="${V3N_BAR_SOURCE:-data/research/btst_court/raw/daily}"
-DATA_DIR="${V3N_DATA_DIR:-data}"
-REPORTS_DIR="${V3N_REPORTS_DIR:-data/reports}"
-HISTORY="${V3N_HISTORY:-logs/cron/v3_nightly_history.jsonl}"
+CALENDAR="${V3N_CALENDAR:-$REPO/data/reports/trade_calendar.json}"
+BAR_SOURCE="${V3N_BAR_SOURCE:-$REPO/data/research/btst_court/raw/daily}"
+DATA_DIR="${V3N_DATA_DIR:-$REPO/data}"
+REPORTS_DIR="${V3N_REPORTS_DIR:-$REPO/data/reports}"
+HISTORY="${V3N_HISTORY:-$REPO/logs/cron/v3_nightly_history.jsonl}"
 DECIDE_GATE="${V3N_DECIDE_GATE:-2300}"
 NOW_HHMM="${V3N_NOW_HHMM:-$(date +%H%M)}"
 TODAY_COMPACT="${V3N_TODAY:-$(date +%Y%m%d)}"
@@ -156,10 +162,15 @@ else
     GATE_REASON=""
 fi
 
-# ---- 阶段 2: seed 首会话 regime 证据 (decide 的栈构造硬前提, runbook 日度步 2) ----
+# ---- 阶段 2: seed 首夜 bootstrap (decide 的栈构造硬前提, runbook 日度步 2) ----
+# trial 开工 (decisions 库在位 = 首 decide 已发生) 后 regime 修正链归 decide
+# 所有, 再播必 seed_conflict (单 id 单线程序列) — 结构性 skip, 不留每夜噪音。
 if [ -n "$GATE_REASON" ]; then
     echo "[$(date '+%F %T')] [v3-nightly] seed 跳过: $GATE_REASON"
     record "seed" 0 "$GATE_REASON"
+elif [ -f "$TRIAL_ROOT/decisions.sqlite3" ]; then
+    echo "[$(date '+%F %T')] [v3-nightly] seed 跳过: trial 已开工 (decisions 库在位), regime 链归 decide"
+    record "seed" 0 "skipped_trials_underway"
 else
     echo "[$(date '+%F %T')] [v3-nightly] === 阶段 seed: $TODAY_DASH regime 播种 ==="
     OUT=$("$PY" "$BOOTSTRAP_CLI" seed-evidence \
