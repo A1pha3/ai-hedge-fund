@@ -43,3 +43,17 @@ uv run python scripts/v3_governance_identity.py check --dir data/v3_governance_i
 本原语不解锁 `ForwardPairedTrialRunner`、不激活任何 envelope、不连接
 broker; 它只把"真实治理身份"从缺项变成 owner 三步操作。特权 worker
 独立进程 + UDS 边界、两臂 capital 台账路径约定是启动清单的后续项。
+
+## 轮换记录（2026-08-28，R53 Op1，owner 常设授权执行）
+
+- v1 目录（2026-08-22 生成，4 命名空间，仅演练用、从未签署生产事实）已
+  改名废弃：`data/v3_governance_identity-revoked-20260828`（密钥有效期至
+  2027-08，按保管纪律冷备后可归档）。
+- v2 身份在 canonical 路径 `data/v3_governance_identity` 全新生成（绝不
+  原地改写：v1 先整体改名，generate 在空路径落盘）。8 命名空间 9 键：
+  regime / exchange-calendar / btst-bars / btst + governance.trial.manifest /
+  governance.sap.manifest / governance.policy.activation / governance.stage.manifest，
+  `check` 全绿，有效期至 2027-08-28。
+- v2 补齐了生产启动的两块硬前提：exchange-calendar 签发面（排程证据
+  生产者命名空间，v1 的 sse-sessions 命名空间为已废弃身份）与全部治理
+  签发键（seal-trial 的四签名面，v1 完全缺失）。

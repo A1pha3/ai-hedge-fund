@@ -36,12 +36,12 @@ uv run python scripts/v3_governance_identity.py check --dir data/v3_governance_i
 
 ## 启动顺序
 
-0. **前置（owner）**：身份目录 v2 再生成（R38 起治理签发四键随默认生成集
-   产出；v1 目录缺 exchange-calendar/治理键，见 v3-governance-identity.md：
-   新目录 generate、旧目录改名废弃，绝不原地改写）。
+0. **前置（owner）**：身份目录 v2（R53 Op1 已于 2026-08-28 执行：v1 改名
+   `data/v3_governance_identity-revoked-20260828` 废弃，v2 在 canonical
+   路径 `data/v3_governance_identity` 生成，8 命名空间 `check` 全绿，
+   有效期至 2027-08-28）。巡检命令：
 ```bash
-uv run python scripts/v3_governance_identity.py generate --dir <新目录>
-uv run python scripts/v3_governance_identity.py check --dir <新目录>
+uv run python scripts/v3_governance_identity.py check --dir data/v3_governance_identity
 # namespaces 应含 regime/exchange-calendar/btst-bars/btst + 四个 governance.*
 ```
 1. **genesis-seed（R39 生产入口，fresh-world 构造器；dry-run 默认零写入，
