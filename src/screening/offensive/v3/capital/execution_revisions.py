@@ -670,6 +670,10 @@ class FinalLotFill:
     side: ExecutionSide
     quantity: int
     gross_cents: int
+    # The winning revision's event identity, so per-exit consumption
+    # recorded by the replay can be attributed back to the active fact
+    # the correction decision supersedes.
+    event_id: str = ""
 
 
 def replay_final_lot_fills(fills: list[FinalLotFill]) -> LotReplayState:
@@ -682,6 +686,8 @@ def replay_final_lot_fills(fills: list[FinalLotFill]) -> LotReplayState:
     """
 
     state = LotReplayState()
+    if state.consumed_basis_by_exit_event is None:
+        state.consumed_basis_by_exit_event = {}
     for fill in sorted(fills, key=lambda item: item.stream_version):
         if fill.side is ExecutionSide.ENTRY:
             state.quantity += fill.quantity
@@ -697,6 +703,7 @@ def replay_final_lot_fills(fills: list[FinalLotFill]) -> LotReplayState:
         else:
             consumed = 0
         consumed = max(0, min(consumed, max(state.basis_cents, 0)))
+        state.consumed_basis_by_exit_event[fill.event_id] = consumed
         state.consumed_basis_total_cents += consumed
         state.quantity -= fill.quantity
         state.basis_cents -= consumed
@@ -787,6 +794,7 @@ def final_lot_fills(
                     side=ExecutionSide(str(fact["side"])),
                     quantity=int(fact["corrected_quantity"] or 0),
                     gross_cents=int(fact["corrected_gross_cents"] or 0),
+                    event_id=str(row.economic_event_id),
                 )
             )
         elif revision_kind == "FILL":
@@ -811,6 +819,7 @@ def final_lot_fills(
                     side=side,
                     quantity=quantity,
                     gross_cents=gross,
+                    event_id=str(row.economic_event_id),
                 )
             )
         # FEE / FEE_BUST / FEE_CORRECTION: no lot quantity/basis facts.

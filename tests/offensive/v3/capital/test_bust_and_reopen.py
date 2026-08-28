@@ -1490,6 +1490,126 @@ def test_property_interleaved_bust_correction_sequences_conserve(
             assert snapshot.completeness is RiskSnapshotCompleteness.COMPLETE
 
 
+class TestCorrectionDerivesFromProjectionTruth:
+    """R52 Op1: 更正决策与投影同源 (collapsed final-fill 重放).
+
+    R51 收口门 hypothesis 反例实锤: 决策路径从 event 级重放推导
+    corrected_consumed_basis, 与投影的 revision-collapsed 重放在
+    『entry 更正晚于 exit』序列上分歧 — event 级 basis 走负后比例消费
+    -900 直接进入 ExecutionRevisionFact (ge=0) ValidationError, 合法
+    更正被拒; 正常序列则记录与投影错配的消费归因 (静默家族)。
+    """
+
+    def test_hypothesis_counterexample_exit_correction_succeeds(
+        self, tmp_path: Path
+    ) -> None:
+        """反例确定性固化: 6 步全成功 + 投影/守恒/不可能态语义全钉死."""
+        repository = CapitalRepository.initialize(
+            tmp_path / f"capital-{uuid.uuid4().hex}.sqlite3"
+        )
+        deposit(repository, 10_000_000, 0)
+        repo_record_fill_revision = repository.record_fill_revision
+
+        # 1. entry e1 50@10
+        repo_record_fill_revision(fill_request(
+            "exec-e1", repository, price_micros=10_000_000, quantity=50,
+            step=1,
+        ))
+        # 2. full exit x2 50@11
+        repo_record_fill_revision(fill_request(
+            "exec-x2", repository, order_id="ord-exit",
+            side=ExecutionSide.EXIT, price_micros=11_000_000, quantity=50,
+            step=2,
+        ))
+        # 3. correct entry e1 -> 75@15
+        repository.record_execution_correction(correction_request(
+            "exec-e1", repository, revision=2, superseded_quantity=50,
+            corrected_price_micros=15_000_000, corrected_quantity=75,
+            step=3,
+        ))
+        # 4. exit x3 25@11
+        repo_record_fill_revision(fill_request(
+            "exec-x3", repository, order_id="ord-exit",
+            side=ExecutionSide.EXIT, price_micros=11_000_000, quantity=25,
+            step=4,
+        ))
+        # 5. correct entry e1 -> 50@8: quantity_after = -25 不可能态保留
+        repository.record_execution_correction(correction_request(
+            "exec-e1", repository, revision=3, superseded_quantity=75,
+            corrected_price_micros=8_000_000, corrected_quantity=50,
+            step=5,
+        ))
+        row = _position_row(repository)
+        assert (int(row.settled_quantity_units), int(row.cost_basis_cents)) == (
+            -25,
+            0,
+        )
+
+        # 6. correct exit x2 50@11 -> 1@9 (RED: ValidationError -900)
+        receipt, _ = repository.record_execution_correction(correction_request(
+            "exec-x2", repository, revision=2, order_id="ord-exit",
+            side=ExecutionSide.EXIT, superseded_quantity=50,
+            corrected_price_micros=9_000_000, corrected_quantity=1,
+            step=6,
+        ))
+        # collapsed 推导: prior (-25, 0, x2 消费 40000); 反转 x2 →
+        # (25, 40000); 修正后 exit 1 股比例消费 40000*1//25 = 1600。
+        assert receipt.applied_consumed_basis_cents == 1600
+        assert receipt.reversed_consumed_basis_cents == 40000
+        assert receipt.reopened is True
+        assert receipt.reconciliation_halted is False
+        # 投影 == collapsed 重放 (e1 50@8, x2 1@9, x3 25@11):
+        # (50,40000) → x2 消费 800 → (49,39200) → x3 消费 20000 → (24,19200)
+        row = _position_row(repository)
+        assert int(row.settled_quantity_units) == 24
+        assert int(row.cost_basis_cents) == 19200
+        repository.assert_conservation()
+
+    def test_exit_correction_consumption_matches_projection_after_entry_correction(
+        self, tmp_path: Path
+    ) -> None:
+        """静默家族 pin: entry 更正后 exit 更正记录 collapsed 消费归因."""
+        repository = CapitalRepository.initialize(
+            tmp_path / f"capital-{uuid.uuid4().hex}.sqlite3"
+        )
+        deposit(repository, 10_000_000, 0)
+        # entry e1 100@10 (gross 100000) → exit x2 50 (消费 50000) →
+        # correct entry e1 100@12 (gross 120000): 投影 collapsed truth
+        # 里 x2 的消费重算为 60000, 而非 event 级历史 booking 的 50000。
+        repository.record_fill_revision(fill_request(
+            "exec-e1", repository, price_micros=10_000_000, quantity=100,
+            step=1,
+        ))
+        repository.record_fill_revision(fill_request(
+            "exec-x2", repository, order_id="ord-exit",
+            side=ExecutionSide.EXIT, price_micros=11_000_000, quantity=50,
+            step=2,
+        ))
+        repository.record_execution_correction(correction_request(
+            "exec-e1", repository, revision=2, superseded_quantity=100,
+            corrected_price_micros=12_000_000, corrected_quantity=100,
+            step=3,
+        ))
+        # correct exit x2 50@11 -> 50@13 (价格更正, 数量不变):
+        # collapsed: prior (50, 60000, x2 消费 60000); 反转 x2 →
+        # (100, 120000); exit 50 股比例消费 120000*50//100 = 60000,
+        # 恰等于投影 collapsed truth 里 x2 的消费 (修复前记录的是
+        # event 级历史 booking 50000, 与投影错配)。
+        receipt, _ = repository.record_execution_correction(correction_request(
+            "exec-x2", repository, revision=2, order_id="ord-exit",
+            side=ExecutionSide.EXIT, superseded_quantity=50,
+            corrected_price_micros=13_000_000, corrected_quantity=50,
+            step=4,
+        ))
+        assert receipt.reversed_consumed_basis_cents == 60000
+        assert receipt.applied_consumed_basis_cents == 60000
+        # 投影: (100,120000) → x2 消费 60000 → (50, 60000)
+        row = _position_row(repository)
+        assert int(row.settled_quantity_units) == 50
+        assert int(row.cost_basis_cents) == 60000
+        repository.assert_conservation()
+
+
 def _next_revision(repository: CapitalRepository, execution_id: str) -> int:
     rows = _registry_rows(repository, execution_id)
     return max(int(row.revision) for row in rows) + 1

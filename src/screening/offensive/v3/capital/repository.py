@@ -4622,130 +4622,6 @@ class CapitalRepository:
             "consumed_basis_cents": fact.corrected_consumed_basis_cents,
         }
 
-    def _lot_event_facts(
-        self,
-        conn: sa.engine.Connection,
-        position_lineage_id: str,
-        economic_lot_id: str,
-        upto_stream_version: int | None = None,
-    ) -> tuple[LotEventFact, ...]:
-        """The lot's trade/revision facts in stream order (pure inputs)."""
-
-        rows = conn.execute(
-            sa.text(
-                "SELECT economic_event_id, stream_version, event_kind,"
-                " payload_json FROM economic_events"
-                " WHERE position_lineage_id = :lineage"
-                " AND economic_lot_id = :lot"
-                " ORDER BY stream_version"
-            ),
-            {"lineage": position_lineage_id, "lot": economic_lot_id},
-        ).all()
-        facts: list[LotEventFact] = []
-        for row in rows:
-            if (
-                upto_stream_version is not None
-                and int(row.stream_version) > upto_stream_version
-            ):
-                break
-            kind = EconomicEventKind(row.event_kind)
-            payload = CapitalCommandPayload.model_validate_json(
-                row.payload_json
-            )
-            if kind is EconomicEventKind.TRADE_EXECUTED:
-                gross_cents = 0
-                side = ExecutionSide.ENTRY
-                quantity = 0
-                for leg in payload.legs:
-                    if leg.asset_kind is EconomicAssetKind.CASH:
-                        gross_cents = scaled_int(
-                            leg.cash_amount, CENT_SCALE, "cash_amount"
-                        )
-                        side = (
-                            ExecutionSide.ENTRY
-                            if leg.direction is EconomicLegDirection.DEBIT
-                            else ExecutionSide.EXIT
-                        )
-                    elif leg.asset_kind is EconomicAssetKind.SECURITY:
-                        quantity = int(leg.quantity)
-                facts.append(
-                    LotEventFact(
-                        event_id=row.economic_event_id,
-                        stream_version=int(row.stream_version),
-                        kind="TRADE",
-                        side=side,
-                        gross_cents=gross_cents,
-                        quantity=quantity,
-                    )
-                )
-                continue
-            if (
-                kind is EconomicEventKind.LATE_CORRECTION
-                and payload.execution_revision is not None
-                and payload.execution_revision.fact_kind
-                is ExecutionRevisionFactKind.FILL
-            ):
-                fact = payload.execution_revision
-                facts.append(
-                    LotEventFact(
-                        event_id=row.economic_event_id,
-                        stream_version=int(row.stream_version),
-                        kind="REVISION",
-                        revision_kind=fact.revision_kind,
-                        superseded_side=fact.side,
-                        superseded_gross_cents=(
-                            int(fact.superseded_gross_cents)
-                            if fact.superseded_gross_cents is not None
-                            else 0
-                        ),
-                        superseded_quantity=(
-                            int(fact.superseded_quantity)
-                            if fact.superseded_quantity is not None
-                            else 0
-                        ),
-                        reversed_consumed_basis_cents=(
-                            int(fact.reversed_consumed_basis_cents)
-                            if fact.reversed_consumed_basis_cents is not None
-                            else 0
-                        ),
-                        corrected_gross_cents=(
-                            int(fact.corrected_gross_cents)
-                            if fact.corrected_gross_cents is not None
-                            else 0
-                        ),
-                        corrected_quantity=(
-                            int(fact.corrected_quantity)
-                            if fact.corrected_quantity is not None
-                            else 0
-                        ),
-                        corrected_consumed_basis_cents=(
-                            int(fact.corrected_consumed_basis_cents)
-                            if fact.corrected_consumed_basis_cents is not None
-                            else 0
-                        ),
-                    )
-                )
-        return tuple(facts)
-
-    def _replayed_basis_consumed_by_exit(
-        self,
-        conn: sa.engine.Connection,
-        position_lineage_id: str,
-        economic_lot_id: str,
-        exit_event_id: str,
-    ) -> int:
-        """Exact basis one exit event consumed, recomputed from history."""
-
-        state = LotReplayState()
-        for fact in self._lot_event_facts(
-            conn, position_lineage_id, economic_lot_id
-        ):
-            replay_lot_fact(state, fact)
-            if fact.event_id == exit_event_id:
-                break
-        assert state.consumed_basis_by_exit_event is not None
-        return state.consumed_basis_by_exit_event.get(exit_event_id, 0)
-
     def _record_execution_bust_or_correction(
         self, request: ExecutionRevisionRequest
     ) -> tuple[ExecutionRevisionReceipt, CapitalRiskSnapshot]:
@@ -4893,15 +4769,30 @@ class CapitalRepository:
             )
             superseded_gross = int(active["gross_cents"])
             superseded_quantity = int(active["quantity"])
+            # R52 Op1: the decision derives from the same replayed truth the
+            # position projection and the conservation report use — the
+            # revision-collapsed final-fill replay (this revision's registry
+            # row is inserted only after this derivation, so the replay is
+            # exactly the pre-correction state). The event-level replay
+            # keeps historically booked consumption, which diverges from the
+            # projection once an entry correction follows an exit and goes
+            # negative after a downsizing correction (R51 gate hypothesis
+            # counterexample).
+            prior_state = replay_final_lot_fills(
+                final_lot_fills(conn, lineage, lot)
+            )
             reversed_consumed_basis: int | None = None
             if superseded_side is ExecutionSide.EXIT:
-                reversed_consumed_basis = (
-                    int(active["consumed_basis_cents"])
-                    if active["consumed_basis_cents"] is not None
-                    else self._replayed_basis_consumed_by_exit(
-                        conn, lineage, lot, active["event_id"]
+                by_exit = prior_state.consumed_basis_by_exit_event or {}
+                reversed_consumed_basis = by_exit.get(active["event_id"])
+                if reversed_consumed_basis is None:
+                    raise CapitalConflict(
+                        "revision_active_fact_missing",
+                        "the superseded exit has no collapsed consumption"
+                        " fact to reverse",
+                        execution_id=request.execution_id,
+                        event_id=active["event_id"],
                     )
-                )
 
             corrected_gross = 0
             if request.revision_kind is ExecutionRevisionKind.CORRECTED:
@@ -4932,9 +4823,6 @@ class CapitalRepository:
             # Replayed lot state around this revision: before, after the
             # reversal only (for the corrected exit's basis rule), and
             # after the whole fact.
-            prior_state = LotReplayState()
-            for fact in self._lot_event_facts(conn, lineage, lot):
-                replay_lot_fact(prior_state, fact)
             quantity_before = prior_state.quantity
             basis_before = prior_state.basis_cents
             reversed_only = LotEventFact(
@@ -4969,12 +4857,18 @@ class CapitalRepository:
                     )
                 else:
                     corrected_consumed_basis = 0
-                # Consumption is capped at the lot's available basis (see
-                # replay_lot_fact): an oversized corrected exit exports the
-                # excess shares as a preserved negative quantity.
-                corrected_consumed_basis = min(
-                    corrected_consumed_basis,
-                    max(reversed_state.basis_cents, 0),
+                # Consumption is bounded by the lot's non-negative basis
+                # (see replay_final_lot_fills): an oversized corrected exit
+                # exports the excess shares as a preserved negative
+                # quantity, and a never-negative floor keeps an impossible
+                # lot's corrections legal instead of deriving negative
+                # consumption.
+                corrected_consumed_basis = max(
+                    0,
+                    min(
+                        corrected_consumed_basis,
+                        max(reversed_state.basis_cents, 0),
+                    ),
                 )
 
             # Final-fact truth: this execution's active contribution is
