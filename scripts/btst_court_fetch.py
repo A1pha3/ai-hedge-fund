@@ -8,7 +8,7 @@
                                   封板质量字段 first_time/open_times/fd_amount 免费入库).
 - pro.index_member_all(l1_code=...) → 申万一级行业成员史 (in_date/out_date, PIT 行业映射).
 
-幂等: 已存在的 per-day 文件跳过. 限速: 失败指数退避, 连续失败中止 (不写空文件).
+幂等: 已存在的 per-day 文件跳过. 限速: 失败指数退避; 空返回/缺列日跳过不落盘 (缺列打印 [bad-schema], 汇总暴露缺口, 重跑续传).
 """
 
 from __future__ import annotations
@@ -73,6 +73,15 @@ def fetch_daily_panel(pro, sessions: list[str]) -> tuple[int, int]:
         df = _fetch_retry(lambda d=d: pro.daily(trade_date=d, fields=",".join(_DAILY_COLS)), label=f"daily {d}")
         if df is None or df.empty:
             # 无返回当天不落盘 (下次重试), 连续空由汇总计数暴露.
+            time.sleep(_CALL_SLEEP_S)
+            continue
+        missing_cols = [c for c in _DAILY_COLS if c not in df.columns]
+        if missing_cols:
+            # schema 漂移 (字段改名/部分缺失) 类型化跳过该日: 入口列契约
+            # 破损绝不用裸 KeyError 中止整个运行 (后续会话与 limit_list/SW
+            # 阶段照常); 不落盘 → 汇总 missing 口径照常暴露缺口, 续传重跑.
+            print(f"  [bad-schema] daily {d}: missing columns {missing_cols} — day skipped, rerun to resume")
+            time.sleep(_CALL_SLEEP_S)
             continue
         _write_atomic_csv(path, df[_DAILY_COLS])
         ok += 1
