@@ -83,7 +83,8 @@ fi
 
 # ---- 阶段 2: decide 今日信号会话 (窗口 + manifest 双门) ----
 MANIFEST="$REPORTS_DIR/daily_action_readiness_${TODAY_COMPACT}.json"
-if [ "$NOW_HHMM" -lt "$DECIDE_GATE" ]; then
+# 10# 强制十进制: 00-09 时段的 HHMM 前导零否则落 bash 八进制报错语义
+if [ "$((10#$NOW_HHMM))" -lt "$((10#$DECIDE_GATE))" ]; then
     echo "[$(date '+%F %T')] [v3-nightly] decide 跳过: 未到窗口 ($NOW_HHMM < $DECIDE_GATE 北京)"
     record "decide" 0 "skipped_gate_closed"
 elif [ ! -f "$MANIFEST" ]; then

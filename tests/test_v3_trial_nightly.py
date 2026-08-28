@@ -155,6 +155,16 @@ def test_gate_closed_skips_decide_but_runs_other_stages(fake_repo: Path) -> None
     assert len(_invocations(fake_repo)) == 2  # fetch + finalize, 无 decide
 
 
+def test_gate_compare_is_octal_safe_for_early_morning_hours(fake_repo: Path) -> None:
+    # 00-09 时段 HHMM 前导零: 门比较必须十进制 (无 stderr 八进制报错、语义恒为跳过)
+    proc = _run_nightly(fake_repo, "--selftest-once", now_hhmm="0805")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "integer expression" not in proc.stderr
+    records = _history(fake_repo)
+    decide = next(r for r in records if r["stage"] == "decide")
+    assert decide["detail"] == "skipped_gate_closed"
+
+
 def test_manifest_missing_skips_decide_but_runs_other_stages(fake_repo: Path) -> None:
     proc = _run_nightly(fake_repo, "--selftest-once", manifest=False)
     assert proc.returncode == 0, proc.stdout + proc.stderr
