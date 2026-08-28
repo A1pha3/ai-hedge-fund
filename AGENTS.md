@@ -15,6 +15,22 @@ uv run python src/main.py --daily-action   # 读缓存, ~3 秒, 输出次日 BUY
 - **`--daily-action`**：凸性 setup（BTST 涨停突破 T+10、OversoldBounce 超跌反弹 T+5，默认暂停）→ Kelly 仓位 → paper trading。**在当前 legacy 实现中与 `--auto` 是两套独立系统**，只共享缓存数据；目标态会共享不可变 Evidence Store/Outcome/Capital Truth 基础设施，但 producer namespace、edge 与评分永久独立。
 - 入口在 `src/cli/dispatcher.py`（命令分发），核心逻辑在 `src/screening/offensive/`。
 
+## 分支卫生（autodev 会话收尾必做，勿让用户手动清理）
+
+autodev 每个 operation 在隔离 worktree + 临时分支 `autodev/op-<id>` 交付，合并进 main 后分支残留是常态而非异常。**任何把 autodev 分支合并进 main 的会话，必须在集成完成后立即清理**，不要留积压：
+
+```bash
+# 1) 官方清理口（内核逐项重验后只删「已有 effect_integrated 回执」的操作分支，fail-safe）
+python3 /Users/matrix/.zcode/skills/autodev/cli/autodev.py prune-operations --repo "$(git rev-parse --show-toplevel)"
+
+# 2) 兜底清扫（只删已合并分支：-d 拒绝未合并，天然安全；覆盖归档 runtime 的 autodev-archive/* 残留）
+git branch --merged main | grep -vE '^\*|main$' | xargs -n1 git branch -d
+```
+
+- **禁止** `git branch -D` 强删任何 `autodev/*` 分支（先按上述流程验证已合并）。
+- 脏工作树先核对未提交内容是否已在 main（autodev 收尾常留已交付内容的工作副本），确认后 `git worktree remove --force`。
+- 不要用 cron/launchd 做此事：外置卷受 macOS TCC 保护，cron 启动的进程读不了卷上文件（见下文守护进程一节的实测记录）。
+
 ## 长期目标架构宪章（Revision 2 于 2026-07-26 已批准，尚未全部实现）
 
 完整、唯一权威设计见 [`docs/superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md`](docs/superpowers/specs/2026-07-19-evidence-gated-growth-kernel-design.md)。本节是所有 Agent 修改、实现或审阅相关代码时必须遵守的短约束；下文“当前状态”描述的是 legacy 现实，**不得据此声称目标架构已经上线**。若旧文档与该设计冲突，以该设计为准；实际行为仍以代码、版本化策略快照和可重验台账为准。
