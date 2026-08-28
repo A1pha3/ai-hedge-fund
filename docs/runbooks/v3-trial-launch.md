@@ -161,3 +161,28 @@ uv run python scripts/v3_trial_session.py finalize-missed \
 本 runbook 是清单与顺序，不是权限——runner 解锁、daemon 部署形态、
 身份密钥物理保管始终是 owner 决策。R18/R20/R21 消除的只是三块技术
 缺口。
+
+## 生产 Trial Root 登记（2026-08-28，R53b Op2，owner 常设授权执行）
+
+- 生产 root：`data/v3_trial_root`（绝对路径
+  `/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork/data/v3_trial_root`）
+- trial_id：`trial-btst-regime-r1`；research_program：`research.btst.regime`
+- genesis：10000 单位 @ ¥10.00（runbook 默认，DAILY_BAR_PROXY 绑定，
+  `broker_account_id=None`）；seal manifest hash `0e981670…`；
+  stage `stage-trial-btst-regime-r1-001`（回执归档于
+  `<root>/archive/stage-issuance/trial-btst-regime-r1/`）
+- 治理参数：`config/trials/trial-btst-regime-r1-params.json`（入册审计）。
+  派生规则成文：champion/challenger 行为指纹 = sha256(各 policy section
+  canonical JSON bytes)；attempt checkpoint = sha256("attempt-ledger:genesis:
+  no-prior-attempts")（全局 attempt ledger 基础设施未建前的创世声明）；
+  enrollment 2026-08-28..09-27（spine 已注册 20 会话，assessment=T+10，
+  末次 2026-10-16）；stage loss budget 200000 cents（policy 0.02 cap ×
+  ¥100,000 资本）
+- 日度驱动（每晚）：
+  1. 日度管道产出当日 readiness manifest（~18:30 北京）
+  2. `v3_trial_bootstrap.py seed-evidence --signal-session <当日> --execute`
+     （首会话必须；后续会话由 decide 幂等复用/追加 regime 修正链）
+  3. `v3_trial_session.py decide --signal-session <当日> --execute`
+     （窗口 [当日 15:00 UTC, +24h] 内）
+  4. bar 源续传（`btst_court_fetch.py`）+ `advance --through-session <最新>`
+  5. 错过会话一律 `finalize-missed` 补 NO_RUN，绝不回头补 decide

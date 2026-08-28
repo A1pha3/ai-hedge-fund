@@ -1,0 +1,236 @@
+{
+  "trial_id": "trial-btst-regime-r1",
+  "research_program_id": "research.btst.regime",
+  "baseline_policy": {
+    "schema_major": 2,
+    "policy_id": "growth-kernel-v3",
+    "policy_version": "policy-v1",
+    "policy_epoch": 1,
+    "authority_epoch": 1,
+    "risk_epoch": 1,
+    "runtime_mode": "shadow",
+    "capital": {
+      "governed_tiers": [
+        2,
+        5,
+        10
+      ],
+      "exploration_aggregate_gross_cap": "0.02",
+      "portfolio_gross_cap": "0.02",
+      "single_name_gross_cap": "0.01",
+      "industry_gross_cap": "0.02",
+      "daily_entry_gross_cap": "0.02",
+      "stage_loss_budget_cap": "0.02"
+    },
+    "risk": {
+      "drawdown_scale_start": "0.10",
+      "drawdown_halt": "0.15",
+      "halt_is_latched": true,
+      "inherited_risk_counts_on_restart": true
+    },
+    "adv": {
+      "lookback_sessions": 20,
+      "max_participation_rate": "0.05",
+      "missing_data_behavior": "fail_closed"
+    },
+    "producers": {
+      "btst_enabled": true,
+      "oversold_bounce_enabled": false,
+      "btst_regime_admission_mode": "IGNORE",
+      "regime_sizing_enabled": false,
+      "streak_sizing_enabled": false,
+      "trigger_strength_sizing_enabled": false,
+      "composite_sizing_enabled": false
+    },
+    "execution": {
+      "entry_session_ordinal": 1,
+      "exit_session_ordinal": 10,
+      "order_type": "opening_auction_limit",
+      "time_in_force": "opening_auction",
+      "seal_deadline_after_t0_close_minutes": 240,
+      "permit_deadline_before_auction_minutes": 20,
+      "gateway_send_deadline_before_auction_minutes": 10,
+      "broker_auction_submission_cutoff_cn": "09:20:00",
+      "worst_case_cost_multiplier": "2"
+    },
+    "versions": {
+      "execution_contract_version": "t0-close-t1-open-t10-open.v1",
+      "cost_version": "cn-a-share-costs.v1",
+      "board_rule_version": "ashare-board-prefix-v1",
+      "calendar_version": "sse-sessions-v1",
+      "lot_rule_version": "cn-board-lot.v1",
+      "price_boundary_version": "sse-szse-price-limits.v1",
+      "setup_version": "daily-action-setups-v1",
+      "exit_policy_version": "t10-open.v1",
+      "governance_version": "growth-kernel-governance.v2"
+    },
+    "evidence_gates": {
+      "min_mature_outcomes": 150,
+      "min_decision_days": 60,
+      "min_effective_sample_size": "60",
+      "min_distinct_tickers": 80,
+      "min_forward_months": 12,
+      "adverse_window_required": true,
+      "chronological_fold_gate_required": true,
+      "capacity_stress_required": true,
+      "tail_risk_gate_required": true,
+      "fresh_evidence_per_tier_required": true,
+      "slippage_stress_multiple": "2",
+      "minimum_economic_effect": "0.001",
+      "incremental_minimum_economic_effect": "0.001"
+    }
+  },
+  "target_policy": {
+    "schema_major": 2,
+    "policy_id": "growth-kernel-v3",
+    "policy_version": "policy-v2",
+    "policy_epoch": 1,
+    "authority_epoch": 1,
+    "risk_epoch": 1,
+    "runtime_mode": "shadow",
+    "capital": {
+      "governed_tiers": [
+        2,
+        5,
+        10
+      ],
+      "exploration_aggregate_gross_cap": "0.02",
+      "portfolio_gross_cap": "0.02",
+      "single_name_gross_cap": "0.01",
+      "industry_gross_cap": "0.02",
+      "daily_entry_gross_cap": "0.02",
+      "stage_loss_budget_cap": "0.02"
+    },
+    "risk": {
+      "drawdown_scale_start": "0.10",
+      "drawdown_halt": "0.15",
+      "halt_is_latched": true,
+      "inherited_risk_counts_on_restart": true
+    },
+    "adv": {
+      "lookback_sessions": 20,
+      "max_participation_rate": "0.05",
+      "missing_data_behavior": "fail_closed"
+    },
+    "producers": {
+      "btst_enabled": true,
+      "oversold_bounce_enabled": false,
+      "btst_regime_admission_mode": "NORMAL_ONLY",
+      "regime_sizing_enabled": false,
+      "streak_sizing_enabled": false,
+      "trigger_strength_sizing_enabled": false,
+      "composite_sizing_enabled": false
+    },
+    "execution": {
+      "entry_session_ordinal": 1,
+      "exit_session_ordinal": 10,
+      "order_type": "opening_auction_limit",
+      "time_in_force": "opening_auction",
+      "seal_deadline_after_t0_close_minutes": 240,
+      "permit_deadline_before_auction_minutes": 20,
+      "gateway_send_deadline_before_auction_minutes": 10,
+      "broker_auction_submission_cutoff_cn": "09:20:00",
+      "worst_case_cost_multiplier": "2"
+    },
+    "versions": {
+      "execution_contract_version": "t0-close-t1-open-t10-open.v1",
+      "cost_version": "cn-a-share-costs.v1",
+      "board_rule_version": "ashare-board-prefix-v1",
+      "calendar_version": "sse-sessions-v1",
+      "lot_rule_version": "cn-board-lot.v1",
+      "price_boundary_version": "sse-szse-price-limits.v1",
+      "setup_version": "daily-action-setups-v1",
+      "exit_policy_version": "t10-open.v1",
+      "governance_version": "growth-kernel-governance.v2"
+    },
+    "evidence_gates": {
+      "min_mature_outcomes": 150,
+      "min_decision_days": 60,
+      "min_effective_sample_size": "60",
+      "min_distinct_tickers": 80,
+      "min_forward_months": 12,
+      "adverse_window_required": true,
+      "chronological_fold_gate_required": true,
+      "capacity_stress_required": true,
+      "tail_risk_gate_required": true,
+      "fresh_evidence_per_tier_required": true,
+      "slippage_stress_multiple": "2",
+      "minimum_economic_effect": "0.001",
+      "incremental_minimum_economic_effect": "0.001"
+    }
+  },
+  "trial": {
+    "family_id": "btst.limit-up-breakout",
+    "economic_lineage_id": "eline-trial-btst-regime-r1",
+    "attempt_ledger_checkpoint_before_trial": "c8da35676658f67a24671726d62322dcf4d304589f81a328143ec646a4bbb61b",
+    "attempt_budget_reservation_id": "attempt-trial-btst-regime-r1-001",
+    "statistical_governance_policy_version": "stat-gov.v1",
+    "champion_behavior_fingerprint": "ad1c7e3196f14db49a8635fc818627a778fb6189f59049c8129e3da51416f225",
+    "challenger_behavior_fingerprint": "1eb20168cf29717c4efdc6db889c20e5c02320775d9385ebed26832a71276a1b",
+    "primary_metric": "PORTFOLIO_LOG_GROWTH",
+    "minimum_economic_effect": "0.001",
+    "weight_selection_rule": "fixed-50-50",
+    "issued_at": "2026-08-28T03:55:00+00:00",
+    "enrollment_start": "2026-08-28T04:00:00+00:00",
+    "enrollment_end": "2026-09-27T04:00:00+00:00",
+    "followup_finality_date": "2026-10-27T04:00:00+00:00",
+    "fixed_assessment_date": "2026-11-26T04:00:00+00:00",
+    "execution_version": "t0-close-t1-open-t10-open.v1",
+    "cost_version": "cn-a-share-costs.v1",
+    "execution_mode": "daily_bar_proxy",
+    "benchmark_definition": "csi300-total-return",
+    "capacity_policy": "capacity.v1",
+    "tail_risk_policy": "tail.v1",
+    "estimator": "wild-bootstrap",
+    "one_sided_confidence_level": "0.95",
+    "bootstrap_method": "wild",
+    "bootstrap_repetitions": 10000,
+    "bootstrap_seed": 42,
+    "block_rule": "monthly",
+    "ess_definition": "kish",
+    "missing_censoring_itt_rule": "itt",
+    "fold_boundaries": [
+      "2026-10-15",
+      "2026-11-15"
+    ],
+    "purge_embargo": "purge-5d",
+    "promotion_boolean_expression": "lcb > mee",
+    "multiplicity_policy": "program-global",
+    "canonical_outcome_counting_rule": "plan-line-contract",
+    "stage_loss_measurement_basis": "stage-budget",
+    "expires_at": "2026-12-26T04:00:00+00:00",
+    "expected_signal_cutoff": "2026-08-29T03:55:00+00:00",
+    "trusted_at": "2026-08-28T04:00:00+00:00"
+  },
+  "sap": {
+    "one_sided_confidence_level": "0.95",
+    "bootstrap_method": "wild",
+    "repetitions": 10000,
+    "seed": 42,
+    "block_rule": "monthly",
+    "multiplicity_policy": "program-global",
+    "alpha_or_evalue_budget_consumption_id": "budget-trial-btst-regime-r1-001",
+    "expires_at": "2026-12-26T04:00:00+00:00"
+  },
+  "activation": {
+    "portfolio_id": "pf-trial-btst-regime-r1",
+    "mode": "daily_bar_proxy",
+    "predecessor_policy_activation_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "policy_epoch": 1,
+    "authority_epoch": 1,
+    "risk_epoch": 1,
+    "effective_from": "2026-08-28T04:00:00+00:00",
+    "expires_at": "2026-12-26T04:00:00+00:00"
+  },
+  "stage": {
+    "stage_id": "stage-trial-btst-regime-r1-001",
+    "stage_sample_reservation_id": "smp-trial-btst-regime-r1-001",
+    "alpha_sample_consumption_id": "alpha-trial-btst-regime-r1-001",
+    "alpha_or_evalue_budget_consumption_id": "budget-trial-btst-regime-r1-001",
+    "attempt_ledger_checkpoint_hash": "c8da35676658f67a24671726d62322dcf4d304589f81a328143ec646a4bbb61b",
+    "stage_loss_budget_id": "loss-trial-btst-regime-r1-001",
+    "stage_loss_version": 1,
+    "maximum_loss_budget_cents": 200000,
+    "issued_at": "2026-08-28T03:55:00+00:00"
+  }
+}
