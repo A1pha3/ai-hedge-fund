@@ -530,23 +530,99 @@ def _cmd_advance(args: argparse.Namespace) -> int:
     )
 
 
+def _cold_read_spine_statuses(program: str, spine_path: Path) -> dict[date, str]:
+    """只读 spine 状态探针 (dry-run 计划面; 零写, R51 Op2)。
+
+    ``immutable=1`` 冷读 (R35 组装器 / R50 Op2 enroll 冷读同款): 只读主
+    文件, 不创建 -shm/-wal, 不触碰任何字节; 最新 revision = 当前状态。
+    """
+    import sqlite3
+
+    if not spine_path.is_file():
+        return {}
+    conn = sqlite3.connect(f"file:{spine_path}?immutable=1", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT r.signal_session, r.status"
+            " FROM session_status_revisions AS r"
+            " JOIN (SELECT signal_session, MAX(revision) AS rev"
+            "       FROM session_status_revisions"
+            "       WHERE research_program_id = ?"
+            "       GROUP BY signal_session) AS latest"
+            " ON latest.signal_session = r.signal_session"
+            "  AND latest.rev = r.revision"
+            " WHERE r.research_program_id = ?",
+            (program, program),
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        # 0 字节占位 = 零注册合法形态 (R50 Op2 P1 语义) — 表缺失不是损坏。
+        if "no such table" in str(exc):
+            return {}
+        raise SystemExit(_fail("spine_unreadable", str(exc), path=str(spine_path)))
+    except sqlite3.DatabaseError as exc:
+        raise SystemExit(_fail("spine_unreadable", str(exc), path=str(spine_path)))
+    finally:
+        conn.close()
+    return {date.fromisoformat(signal): status for signal, status in rows}
+
+
+def _finalize_dry_run_plan(*, program: str, spine_path: Path, today: date) -> dict:
+    """finalize-missed 的 spine 级计划 (R51 Op2; enroll R50 Op2 同族保真)。
+
+    判定语义与 runner ``finalize_missed_sessions`` 同源: 评估窗已过 +
+    无终态 (或 DATA_UNKNOWN 可升级) = NO_RUN 候选。诚实边界: pair 排除
+    (已决策会话) 属 decision-store truth, CLI 无 store 读面不越权冷读
+    decisions — execute 面以 store 权威执行, 本计划宁可高估不漏披。
+    """
+    from scripts.v3_trial_bootstrap import _cold_read_enrollments
+    from src.screening.offensive.v3.evidence.session_spine import SessionStatus
+
+    enrolled = _cold_read_enrollments(program, spine_path)
+    statuses = {
+        session: (SessionStatus(raw) if raw is not None else None)
+        for session, raw in _cold_read_spine_statuses(program, spine_path).items()
+    }
+    upgradable = SessionStatus.DATA_UNKNOWN
+    candidates: list[str] = []
+    already: list[str] = []
+    pending: list[str] = []
+    for session in sorted(enrolled):
+        if enrolled[session] > today:
+            pending.append(session.isoformat())
+            continue
+        status = statuses.get(session)
+        if status is None or status is upgradable:
+            candidates.append(session.isoformat())
+        else:
+            already.append(session.isoformat())
+    return {
+        "no_run_spine_candidates": candidates,
+        "already_terminal": already,
+        "not_yet_assessed": pending,
+        "note": (
+            "spine-level plan; execute additionally excludes sessions with"
+            " committed decision pairs (decision-store truth)"
+        ),
+    }
+
+
 def _cmd_finalize(args: argparse.Namespace) -> int:
     identity_dir = Path(args.identity_dir)
     trial_root = Path(args.trial_root)
     now = _parse_now(args.now)
-    _dry_run_checks(
+    checks = _dry_run_checks(
         identity_dir=identity_dir,
         trial_root=trial_root,
         calendar_path=Path(args.calendar),
         trial_id=args.trial_id,
     )
     if not args.execute:
-        return _ok(
-            {
-                "mode": "dry-run",
-                "plan": ["finalize_missed_sessions (NO_RUN bookkeeping, idempotent)"],
-            }
+        plan = _finalize_dry_run_plan(
+            program=args.research_program,
+            spine_path=trial_root / "spine.sqlite3",
+            today=now.date(),
         )
+        return _ok({"mode": "dry-run", **plan, **(checks or {})})
     stack = _build_stack(
         identity_dir=identity_dir,
         trial_root=trial_root,

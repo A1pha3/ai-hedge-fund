@@ -656,6 +656,82 @@ class TestAdvanceAndFinalize:
         assert again == ()
 
 
+class TestFinalizeDryRunPlanFidelity:
+    """R51 Op2: finalize dry-run 披露 spine 级 NO_RUN 计划 (enroll R50 Op2 同族).
+
+    静态字符串 plan 不给操作员任何计划真相; 冷读 (immutable=1, 零写痕)
+    披露候选/已终态/评估窗未到三分 + 诚实边界注记 (pair 排除属
+    decision-store truth, execute 面权威执行)。
+    """
+
+    def test_dry_run_discloses_no_run_candidates_zero_write(
+        self, world: _DriverWorld, tmp_path: Path, capsys
+    ) -> None:
+        from scripts.v3_trial_session import main as cli_main
+
+        world.driver.ensure_trial_registration()
+        world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        # spine 级诚实边界: 08-06 的 pair 落在决策库 (spine 无终态行)、
+        # 08-13 无 pair 且 assessment 已过 — 两者都是 spine 级候选;
+        # pair 排除属 decision-store truth, execute 面权威执行 (注记成文)。
+        before = _tree_digest(world.root) + _tree_digest(world.identity_dir)
+        rc = cli_main(
+            [
+                "finalize-missed",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--now", "2026-08-20T15:00:00+00:00",
+            ]
+        )
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+        assert payload["mode"] == "dry-run"
+        assert payload["no_run_spine_candidates"] == ["2026-08-06", "2026-08-13"]
+        assert payload["already_terminal"] == []
+        assert payload["not_yet_assessed"] == []
+        assert "decision" in payload["note"]
+        assert _tree_digest(world.root) + _tree_digest(world.identity_dir) == before
+
+    def test_dry_run_zero_enrollment_placeholder_spine(
+        self, world: _DriverWorld, tmp_path: Path, capsys
+    ) -> None:
+        """0 字节占位 spine = 零注册合法形态 (R50 Op2 P1 语义) → 零候选."""
+        from scripts.v3_trial_session import main as cli_main
+
+        root = tmp_path / "fresh-root"
+        root.mkdir()
+        for name in (
+            "evidence.sqlite3",
+            "bars-evidence.sqlite3",
+            "spine.sqlite3",
+            "governance.sqlite3",
+        ):
+            (root / name).write_bytes(b"")
+        (root / TRIAL_ID).mkdir()
+        (root / TRIAL_ID / "genesis-manifest.json").write_text("{}")
+        rc = cli_main(
+            [
+                "finalize-missed",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--now", "2026-08-20T15:00:00+00:00",
+            ]
+        )
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+        assert payload["no_run_spine_candidates"] == []
+        assert payload["already_terminal"] == []
+        assert payload["not_yet_assessed"] == []
+
+
 # ---------------------------------------------------------------------------
 # Adversarial: state conflicts / mismatches / CLI dry-run zero-write
 # ---------------------------------------------------------------------------
