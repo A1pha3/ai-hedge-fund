@@ -199,5 +199,37 @@ def test_next_trigger_math_is_pure_and_date_rolling() -> None:
     assert 23 * 3600 <= seconds <= 24 * 3600
 
 
+def test_dispatch_picks_earliest_of_two_triggers() -> None:
+    # 双触发 (R54 Op2): 18:01 v2 管道 + 23:05 v3 夜间链, 取最早
+    env = dict(os.environ)
+    for key in [k for k in env if k.startswith("DAEMON_")]:
+        env.pop(key)
+    env["DAEMON_TRIGGER_HH"] = "18"
+    env["DAEMON_TRIGGER_MM"] = "1"
+    env["DAEMON_NIGHT_HH"] = "23"
+    env["DAEMON_NIGHT_MM"] = "5"
+
+    def dispatch(now: int) -> str:
+        proc = subprocess.run(
+            ["bash", str(DAEMON), "--selftest-dispatch", str(now)],
+            cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=30,
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        return proc.stdout.strip()
+
+    noon = 1787889600        # 12:00 → 18:01 管道先到
+    assert dispatch(noon) == "pipeline"
+    evening = noon + 7 * 3600  # 19:00 → 今晚 23:05 夜间链
+    assert dispatch(evening) == "nightly"
+    night = noon + 12 * 3600   # 次日 00:00 → 当日 18:01 管道
+    assert dispatch(night) == "pipeline"
+
+
+def test_production_loop_wires_v3_nightly_stage() -> None:
+    # 接线 pin: 生产循环必须调用 v3 夜间链脚本 (防止 dispatch 与脚本脱钩)
+    script = DAEMON.read_text()
+    assert "scripts/v3_trial_nightly.sh" in script
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

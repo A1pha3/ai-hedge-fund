@@ -19,12 +19,18 @@
 #      失败时以 daemon 自身 (printf) 显式写失败行进 status_history.jsonl
 #      (date/daemon_error/rc/attempt), 并当晚有界重试 (默认 10 次 × 30min),
 #      全部失败留终态 gave_up 行, 退出码 97。绝不静默跳过当日。
-#   3. selftest 注入面 (--selftest-once / --print-config / 
-#      --selftest-next-trigger) — 环境变量 (DAEMON_REPO/DAEMON_PY/
-#      DAEMON_PIPELINE/DAEMON_STATUS_HISTORY/DAEMON_MAX_ATTEMPTS/
-#      DAEMON_RETRY_INTERVAL/DAEMON_TRIGGER_HH/DAEMON_TRIGGER_MM) 可覆盖
-#      全部配置供 hermetic 测试; selftest 路径在单实例锁之前解析,
-#      绝不触碰生产锁与 pid 文件。生产默认 (环境变量未设) 行为不变。
+#   3. selftest 注入面 (--selftest-once / --print-config /
+#      --selftest-next-trigger / --selftest-dispatch) — 环境变量
+#      (DAEMON_REPO/DAEMON_PY/DAEMON_PIPELINE/DAEMON_STATUS_HISTORY/
+#      DAEMON_MAX_ATTEMPTS/DAEMON_RETRY_INTERVAL/DAEMON_TRIGGER_HH/
+#      DAEMON_TRIGGER_MM/DAEMON_NIGHT_HH/DAEMON_NIGHT_MM) 可覆盖全部配置
+#      供 hermetic 测试; selftest 路径在单实例锁之前解析, 绝不触碰生产锁
+#      与 pid 文件。生产默认 (环境变量未设) 行为不变。
+#
+# 双触发调度 (2026-08-28 R54 Op2): 每天 18:01 v2 每日管道 +
+# 23:05 v3 Trial 夜间运维链 (scripts/v3_trial_nightly.sh: bar 刷新 →
+# decide 今日会话 → finalize-missed)。两触发互相独立, 各自失败不波及对方。
+# 已知边界 (v1 同语义): 机器休眠/关机错过触发点不补跑。
 #
 # 用法 (在项目目录):
 #   nohup bash scripts/daily_daemon.sh >> logs/cron/daemon.log 2>&1 &
@@ -44,13 +50,15 @@ MAX_ATTEMPTS="${DAEMON_MAX_ATTEMPTS:-10}"
 RETRY_INTERVAL="${DAEMON_RETRY_INTERVAL:-1800}"
 TRIGGER_HH="${DAEMON_TRIGGER_HH:-18}"
 TRIGGER_MM="${DAEMON_TRIGGER_MM:-1}"
+NIGHT_HH="${DAEMON_NIGHT_HH:-23}"
+NIGHT_MM="${DAEMON_NIGHT_MM:-5}"
 
 cd "$REPO" || { echo "cd fail" >&2; exit 80; }
 
 # ---- selftest 模式判定 (必须先于生产锁: selftest 绝不触碰锁/pid) ----
 SELFTEST=0
 case "${1:-}" in
-    --selftest-once|--print-config|--selftest-next-trigger) SELFTEST=1 ;;
+    --selftest-once|--print-config|--selftest-next-trigger|--selftest-dispatch) SELFTEST=1 ;;
 esac
 
 # ---- 调度数学: 纯 bash (R54: 不依赖应用解释器) ----
@@ -114,6 +122,14 @@ run_once() {
     done
 }
 
+run_nightly() {
+    echo "[$(date '+%F %T')] === v3 夜间链开始 ==="
+    bash scripts/v3_trial_nightly.sh
+    local rc=$?
+    echo "[$(date '+%F %T')] === v3 夜间链结束 rc=$rc ==="
+    return $rc
+}
+
 # ---- selftest 注入面 (零锁、零 pid、零循环) ----
 if [ "$SELFTEST" -eq 1 ]; then
     case "$1" in
@@ -126,10 +142,23 @@ if [ "$SELFTEST" -eq 1 ]; then
             echo "RETRY_INTERVAL=$RETRY_INTERVAL"
             echo "TRIGGER_HH=$TRIGGER_HH"
             echo "TRIGGER_MM=$TRIGGER_MM"
+            echo "NIGHT_HH=$NIGHT_HH"
+            echo "NIGHT_MM=$NIGHT_MM"
             exit 0 ;;
         --selftest-next-trigger)
             # $2=hh $3=mm $4=now_epoch (缺省 = 真实 now)
             next_trigger_seconds "${4:-$(date +%s)}" "${2:-$TRIGGER_HH}" "${3:-$TRIGGER_MM}"
+            exit 0 ;;
+        --selftest-dispatch)
+            # $2=now_epoch: 双触发取最早, 输出 pipeline | nightly
+            now="${2:-$(date +%s)}"
+            s_pipe=$(next_trigger_seconds "$now" "$TRIGGER_HH" "$TRIGGER_MM")
+            s_night=$(next_trigger_seconds "$now" "$NIGHT_HH" "$NIGHT_MM")
+            if [ "$s_pipe" -le "$s_night" ]; then
+                echo "pipeline"
+            else
+                echo "nightly"
+            fi
             exit 0 ;;
         --selftest-once)
             run_once
@@ -164,16 +193,27 @@ fi
 find logs/cron -name 'pipeline_*.log' -mtime +90 -delete 2>/dev/null
 
 while true; do
-    # 距下一个触发点的秒数 (纯 bash 算术, R54: 解释器故障不影响调度)
-    SLEEP=$(next_trigger_seconds "$(date +%s)" "$TRIGGER_HH" "$TRIGGER_MM")
+    # 双触发取最早 (18:01 v2 管道 / 23:05 v3 夜间链); 纯 bash 算术 (R54)
+    now=$(date +%s)
+    S_PIPE=$(next_trigger_seconds "$now" "$TRIGGER_HH" "$TRIGGER_MM")
+    S_NIGHT=$(next_trigger_seconds "$now" "$NIGHT_HH" "$NIGHT_MM")
+    if [ "$S_PIPE" -le "$S_NIGHT" ]; then
+        SLEEP=$S_PIPE; WHAT=每日管道; KIND=pipe
+    else
+        SLEEP=$S_NIGHT; WHAT=v3夜间链; KIND=night
+    fi
     # 合法性防御 (发现 B): 保留为纵深 — 非法值时空转风暴
     if ! [[ "$SLEEP" =~ ^[1-9][0-9]*$ ]] || [ "$SLEEP" -gt 90000 ]; then
         echo "[$(date '+%F %T')] SLEEP 非法 ('$SLEEP') — 等 300s 后重算 (防空转风暴)"
         sleep 300
         continue
     fi
-    echo "[$(date '+%F %T')] 下次触发: $(date -v+${SLEEP}S '+%F %T') (sleep ${SLEEP}s)"
+    echo "[$(date '+%F %T')] 下次触发 ($WHAT): $(date -v+${SLEEP}S '+%F %T') (sleep ${SLEEP}s)"
     sleep_chunked "$SLEEP"
-    run_once
+    if [ "$KIND" = pipe ]; then
+        run_once
+    else
+        run_nightly
+    fi
     find logs/cron -name 'pipeline_*.log' -mtime +90 -delete 2>/dev/null
 done
