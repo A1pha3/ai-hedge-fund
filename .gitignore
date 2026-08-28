@@ -2,6 +2,7 @@
 # 治理身份目录 (私钥) — 绝不入 git (runbook 纪律, R23 执行发现)
 data/v3_governance_identity/
 data/v3_governance_identity-*/
+data/v3_trial_root/
 # Generated reports are local runtime artifacts, not source-of-truth.
 data/reports/
 !data/reports/
