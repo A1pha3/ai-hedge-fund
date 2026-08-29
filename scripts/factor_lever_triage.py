@@ -42,10 +42,13 @@ from winrate_payoff_decomposition import (  # noqa: E402
     net_returns,
     production_aligned,
 )
+from factor_factory_eval import _register_candidate  # noqa: E402  (单一实现)
 
 REPO_ROOT = _SCRIPTS.parent
 DEFAULT_COURT = REPO_ROOT / "data/research/btst_court/event_tables/event_table_v1.csv.gz"
 DEFAULT_FACTOR = REPO_ROOT / "data/research/btst_court/factors/seal_quality_v0.csv"
+DEFAULT_TRIAGE_REGISTRY = (REPO_ROOT
+                           / "data/reports/factor_factory/triage_registry.jsonl")
 GATE_TS = 0.50          # 现行生产阈值 (daily_action._MIN_TRIGGER_STRENGTH)
 TOP_K = 3
 KEEP_Q = 0.5
@@ -175,13 +178,30 @@ def run_triage(*, court_path: Path, factor_csv: Path,
     }
 
 
-def main() -> int:
+def register_triage(registry_path: Path, payload: dict) -> dict:
+    """预注册账本 (R70): 复用工厂 _register_candidate 单一实现, 追加 triage
+    verdict 与门内样本事实 (usable_rows/gated_days) — bench 重评到期判定的
+    事实依据 (scripts/factor_bench_status.py)。"""
+    name = Path(payload["candidate_factor"]).stem
+    return _register_candidate(
+        registry_path, name,
+        fingerprint=f"triage:{name}:{payload['direction']}",
+        extra={
+            "verdict": payload["verdict"],
+            "usable_rows": payload["usable_rows"],
+            "gated_days": payload["gated_days"],
+        },
+    )
+
+
+def main_with_argv(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--court", default=str(DEFAULT_COURT))
     parser.add_argument("--factor-csv", default=str(DEFAULT_FACTOR))
     parser.add_argument("--factor-direction", default="invert",
                         choices=["invert", "straight"])
-    args = parser.parse_args()
+    parser.add_argument("--registry", default=str(DEFAULT_TRIAGE_REGISTRY))
+    args = parser.parse_args(argv)
     try:
         payload = run_triage(court_path=Path(args.court), factor_csv=Path(args.factor_csv),
                              factor_direction=args.factor_direction)
@@ -189,8 +209,16 @@ def main() -> int:
         print(json.dumps({"ok": False, "code": exc.code, "details": exc.details},
                          ensure_ascii=False))
         return 1
+    entry = register_triage(Path(args.registry), payload)
+    payload["registry"] = {k: entry[k] for k in
+                           ("name", "first_seen", "unique_candidate_ordinal",
+                            "run_count", "verdict")}
     print(json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=1))
     return 0 if payload["verdict"] == "challenger_ready" else 2
+
+
+def main() -> int:
+    return main_with_argv(sys.argv[1:])
 
 
 if __name__ == "__main__":

@@ -125,3 +125,60 @@ def test_duplicate_factor_keys_typed(tmp_path: Path) -> None:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ---- R70: triage 结果机器可读记账 (预注册账本, 复用工厂单一实现) ----
+
+def test_register_triage_first_and_rerun(tmp_path: Path) -> None:
+    from factor_lever_triage import register_triage
+
+    reg = tmp_path / "triage_registry.jsonl"
+    payload = {
+        "candidate_factor": "seal_quality_v0.csv",
+        "direction": "invert",
+        "usable_rows": 1395,
+        "gated_days": 114,
+        "verdict": "deferred",
+    }
+    entry = register_triage(reg, payload)
+    assert entry["first_seen"] is True
+    assert entry["name"] == "seal_quality_v0"
+    assert entry["unique_candidate_ordinal"] == 1
+    assert entry["run_count"] == 1
+    assert entry["verdict"] == "deferred"
+    assert entry["usable_rows"] == 1395
+    assert entry["gated_days"] == 114
+    rerun = register_triage(reg, payload)
+    assert rerun["first_seen"] is False
+    assert rerun["run_count"] == 2
+    assert rerun["unique_candidate_ordinal"] == 1
+    lines = [json.loads(x) for x in reg.read_text().splitlines() if x.strip()]
+    assert len(lines) == 2
+
+
+def test_register_triage_new_factor_next_ordinal(tmp_path: Path) -> None:
+    from factor_lever_triage import register_triage
+
+    reg = tmp_path / "triage_registry.jsonl"
+    register_triage(reg, {"candidate_factor": "a_v0.csv", "direction": "invert",
+                          "usable_rows": 1, "gated_days": 1, "verdict": "deferred"})
+    entry = register_triage(reg, {"candidate_factor": "b_v0.csv", "direction": "straight",
+                                  "usable_rows": 2, "gated_days": 1, "verdict": "challenger_ready"})
+    assert entry["first_seen"] is True
+    assert entry["unique_candidate_ordinal"] == 2
+    assert entry["verdict"] == "challenger_ready"
+
+
+def test_main_writes_registry(tmp_path: Path, capsys) -> None:
+    """main 接线: run 后记账落盘 (显式 --registry 指到 tmp)。"""
+    import factor_lever_triage as flt
+
+    court_path, factor_path = _synthetic_world(tmp_path, mode="stable")
+    reg = tmp_path / "triage_registry.jsonl"
+    argv = ["--court", str(court_path), "--factor-csv", str(factor_path),
+            "--factor-direction", "invert", "--registry", str(reg)]
+    monkey_out = capsys.disabled() if False else None
+    rc = flt.main_with_argv(argv)
+    assert reg.is_file()
+    rows = [json.loads(x) for x in reg.read_text().splitlines() if x.strip()]
+    assert rows and rows[0]["name"] == "factor"

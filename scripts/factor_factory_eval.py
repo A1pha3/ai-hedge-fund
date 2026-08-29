@@ -125,7 +125,8 @@ def _attach_factor(aligned: pd.DataFrame, args) -> tuple[pd.DataFrame, str, str 
 
 
 def _register_candidate(registry_path: Path, name: str,
-                        fingerprint: str | None) -> dict:
+                        fingerprint: str | None,
+                        extra: dict | None = None) -> dict:
     """预注册账本 (append-only JSONL): 第 N 个唯一候选 + 重复运行如实披露。"""
     entry_fingerprint = fingerprint or f"column:{name}"
     records = []
@@ -145,6 +146,8 @@ def _register_candidate(registry_path: Path, name: str,
         "run_count": (prior[-1]["run_count"] + 1) if prior else 1,
         "registered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    if extra:
+        entry.update(extra)
     registry_path.parent.mkdir(parents=True, exist_ok=True)
     with registry_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
