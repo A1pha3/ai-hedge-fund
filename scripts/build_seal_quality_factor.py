@@ -7,8 +7,8 @@
 预注册规格 (**单一规格, 三腿方向声明, 零自由参数** — 等权秩平均, 改腿/改权
 = 新候选重注册):
     factor(D, 票) = mean( rank_pct(−first_time),      # 首封越早 秩越高
-                          rank_pct(open_times),        # 炸板越少 秩越高
-                          rank_pct(−fd_amount) )       # 封单越大 秩越高
+                          rank_pct(−open_times),       # 炸板越少 秩越高
+                          rank_pct(+fd_amount) )       # 封单越大 秩越高
 秩基 = **当日全市场涨停板** (lu_D 快照内横截面), 非跨日。单腿缺失取可得腿
 均值; 三腿全缺 → 无行并计数 (不冒充中性值)。
 
