@@ -97,19 +97,24 @@ def run_fetch(
     today: str,
     fetch_fn,
     rate_sleep: float = 0.2,
+    start: str | None = None,
 ) -> dict:
     """续传主循环。fetch_fn(trade_date) -> DataFrame | None (hermetic 注入点)。
 
+    start: 有界回补窗起点 (含) — 只补 [start, expected] 的缺口;
+    None (默认) = 从最新缓存之后追平 (日更语义)。研究回补历史时用。
     返回摘要 dict; 失败抛 LhbFetchError (类型化, CLI 层转 JSON)。
     """
     if not (len(today) == 8 and today.isdigit()):
         raise LhbFetchError("invalid_today", {"today": today})
+    if start is not None and not (len(start) == 8 and start.isdigit()):
+        raise LhbFetchError("invalid_start", {"start": start})
     expected = expected_session(calendar_path, today)
     cache_dir.mkdir(parents=True, exist_ok=True)
     cached = _cached_sessions(cache_dir)
     missing = [
         s for s in load_calendar_sessions(calendar_path)
-        if expected >= s > max(cached, default="")
+        if expected >= s > max(cached, default="") and (start is None or s >= start)
     ]
     fetched, empty_days = [], []
     for session in missing:
@@ -148,6 +153,8 @@ def main() -> int:
         help="期望会话锚点 (YYYYMMDD, 默认今天; hermetic 注入)",
     )
     parser.add_argument("--rate-sleep", type=float, default=0.2)
+    parser.add_argument("--start", default=None,
+                        help="有界回补窗起点 (YYYYMMDD, 含); 默认从最新缓存追平")
     args = parser.parse_args()
 
     from src.tools.tushare_api import _get_pro
@@ -160,6 +167,7 @@ def main() -> int:
             today=args.today,
             fetch_fn=lambda d: pro.top_inst(trade_date=d),
             rate_sleep=args.rate_sleep,
+            start=args.start,
         )
     except LhbFetchError as exc:
         print(json.dumps({"ok": False, "code": exc.code, "details": exc.details},
