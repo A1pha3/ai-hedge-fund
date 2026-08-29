@@ -233,3 +233,80 @@ def test_production_loop_wires_v3_nightly_stage() -> None:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ---- R58: 第三触发 18:30 研究数据刷新 (三路 dispatch) ----
+
+
+def test_print_config_reports_research_trigger_defaults(fake_repo: Path) -> None:
+    env = dict(os.environ)
+    for key in [k for k in env if k.startswith("DAEMON_")]:
+        env.pop(key)
+    env["DAEMON_REPO"] = str(REPO_ROOT)
+    proc = subprocess.run(
+        ["bash", str(DAEMON), "--print-config"],
+        cwd=str(fake_repo), env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    config = dict(
+        line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line
+    )
+    assert config["RESEARCH_HH"] == "18"
+    assert config["RESEARCH_MM"] == "30"
+
+
+def test_dispatch_picks_research_trigger_when_earliest() -> None:
+    # 三触发 (R58): 18:01 管道 / 18:30 research / 23:05 夜间链, 取最早
+    env = dict(os.environ)
+    for key in [k for k in env if k.startswith("DAEMON_")]:
+        env.pop(key)
+    env["DAEMON_TRIGGER_HH"] = "18"
+    env["DAEMON_TRIGGER_MM"] = "1"
+    env["DAEMON_RESEARCH_HH"] = "18"
+    env["DAEMON_RESEARCH_MM"] = "30"
+    env["DAEMON_NIGHT_HH"] = "23"
+    env["DAEMON_NIGHT_MM"] = "5"
+
+    def dispatch(now: int) -> str:
+        proc = subprocess.run(
+            ["bash", str(DAEMON), "--selftest-dispatch", str(now)],
+            cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=30,
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        return proc.stdout.strip()
+
+    noon = 1787889600            # 12:00 → 18:01 管道先到
+    assert dispatch(noon) == "pipeline"
+    late_pipe = noon + 7 * 3600  # 19:00 → 管道与 research 已过 → 23:05 夜间链
+    assert dispatch(late_pipe) == "nightly"
+    after_pipe = int(noon + 6 * 3600 + 10 * 60)  # 18:10 → 当日 18:30 research 最近
+    assert dispatch(after_pipe) == "research"
+    night = noon + 12 * 3600     # 次日 00:00 → 当日 18:01 管道
+    assert dispatch(night) == "pipeline"
+
+
+def test_dispatch_research_defaults_to_1830_without_env() -> None:
+    # 生产默认 (DAEMON_* 未设): research 触发 18:30 — 12:00 时晚于 18:01
+    env = dict(os.environ)
+    for key in [k for k in env if k.startswith("DAEMON_")]:
+        env.pop(key)
+
+    def dispatch(now: int) -> str:
+        proc = subprocess.run(
+            ["bash", str(DAEMON), "--selftest-dispatch", str(now)],
+            cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=30,
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        return proc.stdout.strip()
+
+    noon = 1787889600
+    assert dispatch(noon) == "pipeline"            # 18:01 先于 18:30
+    after_1801 = int(noon + 6 * 3600 + 20 * 60)    # 18:20 → research 18:30 最近
+    assert dispatch(after_1801) == "research"
+
+
+def test_production_loop_wires_research_refresh_stage() -> None:
+    # 接线 pin: 生产循环必须调用研究数据刷新脚本
+    script = DAEMON.read_text()
+    assert "scripts/research_data_refresh.sh" in script
+    assert "run_research_refresh" in script

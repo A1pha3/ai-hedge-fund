@@ -50,6 +50,8 @@ MAX_ATTEMPTS="${DAEMON_MAX_ATTEMPTS:-10}"
 RETRY_INTERVAL="${DAEMON_RETRY_INTERVAL:-1800}"
 TRIGGER_HH="${DAEMON_TRIGGER_HH:-18}"
 TRIGGER_MM="${DAEMON_TRIGGER_MM:-1}"
+RESEARCH_HH="${DAEMON_RESEARCH_HH:-18}"
+RESEARCH_MM="${DAEMON_RESEARCH_MM:-30}"
 NIGHT_HH="${DAEMON_NIGHT_HH:-23}"
 NIGHT_MM="${DAEMON_NIGHT_MM:-5}"
 
@@ -130,6 +132,14 @@ run_nightly() {
     return $rc
 }
 
+run_research_refresh() {
+    echo "[$(date '+%F %T')] === 研究数据刷新开始 ==="
+    bash scripts/research_data_refresh.sh
+    local rc=$?
+    echo "[$(date '+%F %T')] === 研究数据刷新结束 rc=$rc ==="
+    return $rc
+}
+
 # ---- selftest 注入面 (零锁、零 pid、零循环) ----
 if [ "$SELFTEST" -eq 1 ]; then
     case "$1" in
@@ -144,18 +154,23 @@ if [ "$SELFTEST" -eq 1 ]; then
             echo "TRIGGER_MM=$TRIGGER_MM"
             echo "NIGHT_HH=$NIGHT_HH"
             echo "NIGHT_MM=$NIGHT_MM"
+            echo "RESEARCH_HH=$RESEARCH_HH"
+            echo "RESEARCH_MM=$RESEARCH_MM"
             exit 0 ;;
         --selftest-next-trigger)
             # $2=hh $3=mm $4=now_epoch (缺省 = 真实 now)
             next_trigger_seconds "${4:-$(date +%s)}" "${2:-$TRIGGER_HH}" "${3:-$TRIGGER_MM}"
             exit 0 ;;
         --selftest-dispatch)
-            # $2=now_epoch: 双触发取最早, 输出 pipeline | nightly
+            # $2=now_epoch: 三触发取最早, 输出 pipeline | research | nightly
             now="${2:-$(date +%s)}"
             s_pipe=$(next_trigger_seconds "$now" "$TRIGGER_HH" "$TRIGGER_MM")
+            s_research=$(next_trigger_seconds "$now" "$RESEARCH_HH" "$RESEARCH_MM")
             s_night=$(next_trigger_seconds "$now" "$NIGHT_HH" "$NIGHT_MM")
-            if [ "$s_pipe" -le "$s_night" ]; then
+            if [ "$s_pipe" -le "$s_research" ] && [ "$s_pipe" -le "$s_night" ]; then
                 echo "pipeline"
+            elif [ "$s_research" -le "$s_night" ]; then
+                echo "research"
             else
                 echo "nightly"
             fi
@@ -193,15 +208,19 @@ fi
 find logs/cron -name 'pipeline_*.log' -mtime +90 -delete 2>/dev/null
 
 while true; do
-    # 双触发取最早 (18:01 v2 管道 / 23:05 v3 夜间链); 纯 bash 算术 (R54)
+    # 三触发取最早 (18:01 v2 管道 / 18:30 研究数据刷新 / 23:05 v3 夜间链)
     now=$(date +%s)
     S_PIPE=$(next_trigger_seconds "$now" "$TRIGGER_HH" "$TRIGGER_MM")
+    S_RESEARCH=$(next_trigger_seconds "$now" "$RESEARCH_HH" "$RESEARCH_MM")
     S_NIGHT=$(next_trigger_seconds "$now" "$NIGHT_HH" "$NIGHT_MM")
-    if [ "$S_PIPE" -le "$S_NIGHT" ]; then
-        SLEEP=$S_PIPE; WHAT=每日管道; KIND=pipe
-    else
-        SLEEP=$S_NIGHT; WHAT=v3夜间链; KIND=night
+    S_MIN="$S_PIPE"; WHAT=每日管道; KIND=pipe
+    if [ "$S_RESEARCH" -lt "$S_MIN" ]; then
+        S_MIN="$S_RESEARCH"; WHAT=研究数据刷新; KIND=research
     fi
+    if [ "$S_NIGHT" -lt "$S_MIN" ]; then
+        S_MIN="$S_NIGHT"; WHAT=v3夜间链; KIND=night
+    fi
+    SLEEP="$S_MIN"
     # 合法性防御 (发现 B): 保留为纵深 — 非法值时空转风暴
     if ! [[ "$SLEEP" =~ ^[1-9][0-9]*$ ]] || [ "$SLEEP" -gt 90000 ]; then
         echo "[$(date '+%F %T')] SLEEP 非法 ('$SLEEP') — 等 300s 后重算 (防空转风暴)"
@@ -212,6 +231,8 @@ while true; do
     sleep_chunked "$SLEEP"
     if [ "$KIND" = pipe ]; then
         run_once
+    elif [ "$KIND" = research ]; then
+        run_research_refresh
     else
         run_nightly
     fi
