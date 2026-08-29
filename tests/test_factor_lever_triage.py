@@ -137,6 +137,7 @@ def test_register_triage_first_and_rerun(tmp_path: Path) -> None:
         "candidate_factor": "seal_quality_v0.csv",
         "direction": "invert",
         "usable_rows": 1395,
+        "aligned_rows": 1464,
         "gated_days": 114,
         "verdict": "deferred",
     }
@@ -147,6 +148,7 @@ def test_register_triage_first_and_rerun(tmp_path: Path) -> None:
     assert entry["run_count"] == 1
     assert entry["verdict"] == "deferred"
     assert entry["usable_rows"] == 1395
+    assert entry["aligned_rows"] == 1464
     assert entry["gated_days"] == 114
     rerun = register_triage(reg, payload)
     assert rerun["first_seen"] is False
@@ -161,9 +163,11 @@ def test_register_triage_new_factor_next_ordinal(tmp_path: Path) -> None:
 
     reg = tmp_path / "triage_registry.jsonl"
     register_triage(reg, {"candidate_factor": "a_v0.csv", "direction": "invert",
-                          "usable_rows": 1, "gated_days": 1, "verdict": "deferred"})
+                          "usable_rows": 1, "aligned_rows": 2, "gated_days": 1,
+                          "verdict": "deferred"})
     entry = register_triage(reg, {"candidate_factor": "b_v0.csv", "direction": "straight",
-                                  "usable_rows": 2, "gated_days": 1, "verdict": "challenger_ready"})
+                                  "usable_rows": 2, "aligned_rows": 3, "gated_days": 1,
+                                  "verdict": "challenger_ready"})
     assert entry["first_seen"] is True
     assert entry["unique_candidate_ordinal"] == 2
     assert entry["verdict"] == "challenger_ready"

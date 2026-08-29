@@ -37,6 +37,7 @@ def _triage_row(name: str, verdict: str, usable_rows: int, **kw) -> dict:
         "registered_at": "2026-08-30T00:00:00Z",
         "verdict": verdict,
         "usable_rows": usable_rows,
+        "aligned_rows": usable_rows + 44,  # 对齐全行数恒大于门内行数 (剔除小日)
         "gated_days": 100,
     }
     row.update(kw)
@@ -104,25 +105,62 @@ def test_missing_court_typed(tmp_path: Path) -> None:
 
 def test_deferred_growth_past_threshold_due(tmp_path: Path) -> None:
     factory, triage = _court_factory_registry(tmp_path)
-    _write_registry(triage, [_triage_row("seal_quality_v0", "deferred", 100)])
-    court = _court_path(tmp_path, 120)  # 120 >= 100*1.2 → due
+    _write_registry(triage, [_triage_row("seal_quality_v0", "deferred", 56,
+                                         aligned_rows=100)])
+    court = _court_path(tmp_path, 120)  # aligned 120 >= 100*1.2 → due
     out = bench_status(factory_registry=factory, triage_registry=triage,
                        court_path=court)
     row = {r["name"]: r for r in out["triage_candidates"]}["seal_quality_v0"]
     assert row["verdict"] == "deferred"
+    assert row["re_eval_metric"] == "aligned_rows"
     assert row["re_eval_due"] is True
     assert out["re_eval_due_any"] is True
 
 
 def test_deferred_below_threshold_not_due(tmp_path: Path) -> None:
     factory, triage = _court_factory_registry(tmp_path)
-    _write_registry(triage, [_triage_row("seal_quality_v0", "deferred", 100)])
-    court = _court_path(tmp_path, 119)  # 119 < 120 → not due
+    _write_registry(triage, [_triage_row("seal_quality_v0", "deferred", 56,
+                                         aligned_rows=100)])
+    court = _court_path(tmp_path, 119)  # aligned 119 < 120 → not due
     out = bench_status(factory_registry=factory, triage_registry=triage,
                        court_path=court)
     row = out["triage_candidates"][0]
     assert row["re_eval_due"] is False
     assert out["re_eval_due_any"] is False
+
+
+def test_mixed_metric_never_creates_false_due(tmp_path: Path) -> None:
+    """R70 Op2 缺陷回归: 门内 usable_rows (56) 恒小于对齐行数, 若误用对齐
+    行数对比 usable_rows×1.2 (67) 会恒真假阳性 — 同口径后不得发生。"""
+    factory, triage = _court_factory_registry(tmp_path)
+    _write_registry(triage, [_triage_row("seal_quality_v0", "deferred", 56,
+                                         aligned_rows=100)])
+    court = _court_path(tmp_path, 80)  # 80 < 120 (aligned 口径) → not due
+    out = bench_status(factory_registry=factory, triage_registry=triage,
+                       court_path=court)
+    assert out["triage_candidates"][0]["re_eval_due"] is False
+
+
+def test_legacy_row_without_aligned_disclosed_not_due(tmp_path: Path) -> None:
+    factory, triage = _court_factory_registry(tmp_path)
+    _write_registry(triage, [_triage_row("seal_quality_v0", "deferred", 956,
+                                         aligned_rows=None)])
+    court = _court_path(tmp_path, 1400)
+    out = bench_status(factory_registry=factory, triage_registry=triage,
+                       court_path=court)
+    row = out["triage_candidates"][0]
+    assert row["re_eval_metric"] == "legacy_row"
+    assert row["re_eval_due"] is False  # 如实不判, 绝不假阳性
+
+
+def test_registry_corrupt_line_typed(tmp_path: Path) -> None:
+    factory, triage = _court_factory_registry(tmp_path)
+    triage.write_text("{not json}\n", encoding="utf-8")
+    court = _court_path(tmp_path, 100)
+    with pytest.raises(BenchStatusError) as exc:
+        bench_status(factory_registry=factory, triage_registry=triage,
+                     court_path=court)
+    assert exc.value.code == "registry_corrupt"
 
 
 def test_challenger_ready_never_due(tmp_path: Path) -> None:
@@ -138,7 +176,7 @@ def test_latest_record_wins_per_name(tmp_path: Path) -> None:
     factory, triage = _court_factory_registry(tmp_path)
     old = _triage_row("seal_quality_v0", "challenger_ready", 10,
                       run_count=1, registered_at="2026-08-01T00:00:00Z")
-    new = _triage_row("seal_quality_v0", "deferred", 1000,
+    new = _triage_row("seal_quality_v0", "deferred", 56, aligned_rows=1000,
                       run_count=2, registered_at="2026-08-30T00:00:00Z")
     _write_registry(triage, [old, new])
     court = _court_path(tmp_path, 1200)

@@ -87,17 +87,25 @@ def bench_status(*, factory_registry: Path, triage_registry: Path,
         row = latest[name]
         verdict = row.get("verdict")
         usable = row.get("usable_rows")
+        # 口径纪律 (R70 Op3 修复): 到期判定必须同口径 — 当前生产对齐行数
+        # 对比记账时的 aligned_rows。usable_rows 是 triage 门内行数 (剔除小日),
+        # 与对齐全行数恒差一截, 拿来对比会永久假阳性 (Op2 真跑实锤)。
+        row_aligned = row.get("aligned_rows")
         due = False
-        if verdict == "deferred" and type(usable) is int and usable > 0:
-            due = court_summary["aligned_rows"] >= usable * RE_EVAL_GROWTH
+        metric = "legacy_row"
+        if verdict == "deferred" and type(row_aligned) is int and row_aligned > 0:
+            due = court_summary["aligned_rows"] >= row_aligned * RE_EVAL_GROWTH
+            metric = "aligned_rows"
         candidates.append({
             "name": name,
             "verdict": verdict,
             "direction": row.get("direction"),
             "usable_rows": usable,
+            "aligned_rows": row_aligned,
             "gated_days": row.get("gated_days"),
             "run_count": row.get("run_count"),
             "registered_at": row.get("registered_at"),
+            "re_eval_metric": metric,
             "re_eval_due": bool(due),
         })
 

@@ -85,7 +85,8 @@ def _load_factor_work(factor_csv: Path, factor_direction: str):
     return fac[["signal_date", "ts_code", "cand"]]
 
 
-def _gate_work(court_path: Path, factor_csv: Path, factor_direction: str) -> pd.DataFrame:
+def _gate_work(court_path: Path, factor_csv: Path,
+               factor_direction: str) -> tuple[pd.DataFrame, int]:
     if not court_path.is_file():
         _typed("court_table_not_found", {"path": str(court_path)})
     if not factor_csv.is_file():
@@ -102,7 +103,7 @@ def _gate_work(court_path: Path, factor_csv: Path, factor_direction: str) -> pd.
     gate["r_strength"] = gate.groupby("signal_date")["trigger_strength"].rank(pct=True)
     gate["r_cand"] = gate.groupby("signal_date")["cand"].rank(pct=True)
     gate["composite"] = (gate["r_strength"] + gate["r_cand"]) / 2
-    return gate
+    return gate, int(len(aligned))
 
 
 def _day_sets(gate: pd.DataFrame) -> list[dict]:
@@ -159,7 +160,7 @@ def _uplift_stats(days: list[dict], lever: str) -> dict:
 
 def run_triage(*, court_path: Path, factor_csv: Path,
                factor_direction: str = "invert") -> dict:
-    gate = _gate_work(court_path, factor_csv, factor_direction)
+    gate, aligned_rows = _gate_work(court_path, factor_csv, factor_direction)
     days = _day_sets(gate)
     if not days:
         _typed("gated_days_too_few", {"days": 0})
@@ -170,6 +171,7 @@ def run_triage(*, court_path: Path, factor_csv: Path,
         "candidate_factor": str(factor_csv.name),
         "direction": factor_direction,
         "usable_rows": int(len(gate)),
+        "aligned_rows": aligned_rows,
         "gated_days": len(days),
         "gate_ts": GATE_TS,
         "levers": levers,
@@ -189,6 +191,7 @@ def register_triage(registry_path: Path, payload: dict) -> dict:
         extra={
             "verdict": payload["verdict"],
             "usable_rows": payload["usable_rows"],
+            "aligned_rows": payload["aligned_rows"],
             "gated_days": payload["gated_days"],
         },
     )
