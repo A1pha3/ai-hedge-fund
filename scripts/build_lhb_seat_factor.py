@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """龙虎榜机构席位质量因子 (R60, owner 数据效率工作线④).
 
-定义: 因子(D) = 信号日 D **之前** 3 个已完成交易日窗口内, 该票机构席位
-金额加权净买比的均值 —
+定义: 因子(D) = 窗口内该票机构席位金额加权净买比的均值 —
+窗口默认**止于 D 当日** (R64 纠错: 合约 T0 收盘后决策 18:06/23:05, 决策
+截断 = 当日 23:00 北京; 当日榜 ~18:00 发布故合法可用; `--window-end prior`
+保留旧 T-1 保守变体) —
     daily_ratio(t) = (Σbuy(t) − Σsell(t)) / (Σbuy(t) + Σsell(t))
     factor(D) = Σ_t w(t)·daily_ratio(t) / Σ_t w(t),  w(t) = Σbuy(t)+Σsell(t)
 窗口 = 权威日历中严格 < D 的最近 3 个会话; 窗口内 ≥1 次上榜即有值,
@@ -82,8 +84,16 @@ def build_factor(
     start: str,
     end: str,
     window: int = WINDOW,
+    window_end: str = "day",
 ) -> tuple[pd.DataFrame, dict]:
-    """返回 (因子帧 signal_date/ts_code/factor, 摘要 dict)。"""
+    """返回 (因子帧 signal_date/ts_code/factor, 摘要 dict)。
+
+    window_end: "day" (默认, R64 纠错) — 窗口止于 D 当日 (含): 合约 T0 收盘后
+    决策 (18:06/23:05), 当日榜 ~18:00 发布, 早于决策截断 23:00 北京, 合法可用;
+    "prior" — 旧 T-1 语义 (严格 <D), 保守变体保留供对照。
+    """
+    if window_end not in ("day", "prior"):
+        _typed("invalid_window_end", {"window_end": window_end})
     sessions = load_calendar_sessions(calendar_path)
     if not (len(start) == 8 and start.isdigit() and len(end) == 8 and end.isdigit()):
         _typed("invalid_date_args", {"start": start, "end": end})
@@ -100,8 +110,11 @@ def build_factor(
     missing_window_files = 0
     for idx, day in enumerate(in_range):
         pos = sessions.index(day)
-        window_sessions = sessions[max(0, pos - window):pos]
-        window_sessions = [s for s in window_sessions if s < day]
+        if window_end == "day":
+            window_sessions = sessions[max(0, pos - window + 1):pos + 1]
+        else:
+            window_sessions = sessions[max(0, pos - window):pos]
+            window_sessions = [s for s in window_sessions if s < day]
         per_day: dict[str, list[tuple[float, float]]] = {}
         for s in window_sessions:
             if not (lhb_dir / f"{s}.csv").is_file():
@@ -137,12 +150,16 @@ def main() -> int:
     parser.add_argument("--end", default=time.strftime("%Y%m%d"))
     parser.add_argument("--out", required=True)
     parser.add_argument("--window", type=int, default=WINDOW)
+    parser.add_argument("--window-end", default="day", choices=["day", "prior"],
+                        help="day=窗口含信号日当日榜 (决策截断语义, 默认); "
+                             "prior=旧 T-1 保守变体")
     args = parser.parse_args()
 
     try:
         factor, summary = build_factor(
             lhb_dir=Path(args.lhb_dir), calendar_path=Path(args.calendar),
-            start=args.start, end=args.end, window=args.window)
+            start=args.start, end=args.end, window=args.window,
+            window_end=args.window_end)
     except LhbFetchError as exc:  # 日历错误复用 fetcher 的类型化码
         print(json.dumps({"ok": False, "code": exc.code, "details": exc.details},
                          ensure_ascii=False), file=sys.stderr)

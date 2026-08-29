@@ -58,40 +58,63 @@ def test_day_ratio_weighted_by_amount(tmp_path: Path) -> None:
     assert ratios["000002.SZ"] == pytest.approx((-1.0, 50.0))
 
 
-def test_pit_day_d_lhb_never_enters_day_d_factor(tmp_path: Path) -> None:
-    """生死线: D 日巨幅榜单不得影响 D 的因子值。"""
+def test_pit_day_d_lhb_legal_in_day_window_and_d1_rejected(tmp_path: Path) -> None:
+    """R64 纠错后的 PIT 锚: 决策截断 = 当日 23:00 北京, D 日榜 (~18:00 发布)
+    **合法进入** D 的因子 (day 窗口); 跨日泄漏 (D+1 的行进入 D) 仍拒绝。"""
     cal = _write_cal(tmp_path, CAL)
-    # D-1 (0105): 温和净买 0.5
-    _write_lhb(tmp_path, "20260105", [
-        {"ts_code": "000001.SZ", "buy": 150.0, "sell": 100.0},
-    ])
-    # D (0106): 巨幅净买 (若泄漏将彻底改变因子)
+    # D (0106): 巨幅净买 — day 窗口下合法进入 D 的因子
     _write_lhb(tmp_path, "20260106", [
         {"ts_code": "000001.SZ", "buy": 9_999_999.0, "sell": 0.0},
     ])
     factor, _ = build_factor(lhb_dir=tmp_path / "lhb_cache", calendar_path=cal,
-                             start="20260106", end="20260106")
+                             start="20260106", end="20260106", window_end="day")
     row = factor[factor["ts_code"] == "000001.SZ"].iloc[0]
     assert row["signal_date"] == "20260106"
-    assert row["factor"] == pytest.approx(0.2)  # 只用了 0105 的 (150-100)/250=0.2, 未泄漏 0106 巨值
-    # D+1 (0107): D 的巨值此时才合法进入
-    factor2, _ = build_factor(lhb_dir=tmp_path / "lhb_cache", calendar_path=cal,
-                              start="20260107", end="20260107")
-    row2 = factor2[factor2["ts_code"] == "000001.SZ"].iloc[0]
-    # 窗口会话 = 0102/0105/0106 (0102 无文件) — 0105(ratio=0.2, w=250) +
-    # 0106(ratio=1.0, w=1e7) 金额加权
-    assert row2["factor"] == pytest.approx(
-        (0.2 * 250 + 1.0 * 9_999_999) / (250 + 9_999_999), abs=1e-6)
+    assert row["factor"] == pytest.approx(1.0)  # 当日榜 (净买比 1.0) 合法计入
+    # D+1 (0107) 的行不得进入 D (跨日泄漏拒绝, 与 window_end 无关)
+    _write_lhb(tmp_path, "20260107", [
+        {"ts_code": "000001.SZ", "buy": 5_000_000.0, "sell": 0.0},
+    ])
+    factor_d, _ = build_factor(lhb_dir=tmp_path / "lhb_cache", calendar_path=cal,
+                               start="20260106", end="20260106", window_end="day")
+    assert factor_d[factor_d["ts_code"] == "000001.SZ"].iloc[0]["factor"] == pytest.approx(1.0)
+    # prior 变体: 旧 T-1 语义逐字节保留 (D 日榜不进 D)
+    factor_prior, _ = build_factor(lhb_dir=tmp_path / "lhb_cache", calendar_path=cal,
+                                   start="20260106", end="20260106", window_end="prior")
+    assert len(factor_prior) == 0  # 仅有的 0106 榜不在 prior 窗口内
+
+
+def test_day_window_includes_signal_day_and_weights(tmp_path: Path) -> None:
+    """day 窗口 = [D-2, D] 三会话 (含当日), 金额加权手算精确。"""
+    cal = _write_cal(tmp_path, CAL)
+    _write_lhb(tmp_path, "20260104", [   # 窗口外 (0107 的窗口 = 0105/0106/0107)
+        {"ts_code": "000001.SZ", "buy": 100.0, "sell": 0.0},
+    ])
+    _write_lhb(tmp_path, "20260105", [
+        {"ts_code": "000001.SZ", "buy": 150.0, "sell": 100.0},   # ratio 0.2, w 250
+    ])
+    _write_lhb(tmp_path, "20260106", [
+        {"ts_code": "000001.SZ", "buy": 60.0, "sell": 40.0},     # ratio 0.2, w 100
+    ])
+    _write_lhb(tmp_path, "20260107", [
+        {"ts_code": "000001.SZ", "buy": 100.0, "sell": 0.0},     # ratio 1.0, w 100
+    ])
+    factor, _ = build_factor(lhb_dir=tmp_path / "lhb_cache", calendar_path=cal,
+                             start="20260107", end="20260107", window_end="day")
+    row = factor[factor["ts_code"] == "000001.SZ"].iloc[0]
+    expected = (0.2 * 250 + 0.2 * 100 + 1.0 * 100) / (250 + 100 + 100)
+    assert row["factor"] == pytest.approx(expected)
 
 
 def test_window_is_strictly_before_and_three_sessions(tmp_path: Path) -> None:
+    # prior 变体契约 (R64 后为兼容保留语义): 窗口严格 <D
     cal = _write_cal(tmp_path, CAL)
     # 0102: +1.0; 0105: -1.0; 0106: +1.0 → 因子(0107) 窗口=0102/0105/0106
     _write_lhb(tmp_path, "20260102", [{"ts_code": "000001.SZ", "buy": 10.0, "sell": 0.0}])
     _write_lhb(tmp_path, "20260105", [{"ts_code": "000001.SZ", "buy": 0.0, "sell": 10.0}])
     _write_lhb(tmp_path, "20260106", [{"ts_code": "000001.SZ", "buy": 10.0, "sell": 0.0}])
     factor, summary = build_factor(lhb_dir=tmp_path / "lhb_cache", calendar_path=cal,
-                                   start="20260107", end="20260107")
+                                   start="20260107", end="20260107", window_end="prior")
     row = factor[factor["ts_code"] == "000001.SZ"].iloc[0]
     assert row["factor"] == pytest.approx((10 - 10 + 10) / 30)  # 加权: (1-1+1)/3
     assert summary["window"] == 3
@@ -102,7 +125,7 @@ def test_missing_window_files_counted_not_silent(tmp_path: Path) -> None:
     # 只写 0102; 0105/0106 缺文件 → 因子(0107) 仍从 0102 得值, 缺文件计数=2
     _write_lhb(tmp_path, "20260102", [{"ts_code": "000001.SZ", "buy": 10.0, "sell": 0.0}])
     factor, summary = build_factor(lhb_dir=tmp_path / "lhb_cache", calendar_path=cal,
-                                   start="20260107", end="20260107")
+                                   start="20260107", end="20260107", window_end="prior")
     row = factor[factor["ts_code"] == "000001.SZ"].iloc[0]
     assert row["factor"] == 1.0
     assert summary["missing_window_files"] == 2
@@ -192,6 +215,14 @@ def test_fetch_no_start_daily_catchup_semantics_unchanged(tmp_path: Path) -> Non
                                   pd.DataFrame([{"trade_date": s, "ts_code": "x"}]))[1],
               rate_sleep=0)
     assert calls == ["20260106"]  # 只追平 max(cached) 之后
+
+
+def test_invalid_window_end_typed(tmp_path: Path) -> None:
+    cal = _write_cal(tmp_path, CAL)
+    with pytest.raises(LhbFactorError) as ei:
+        build_factor(lhb_dir=tmp_path / "lhb_cache", calendar_path=cal,
+                     start="20260107", end="20260107", window_end="tomorrow")
+    assert ei.value.code == "invalid_window_end"
 
 
 if __name__ == "__main__":
