@@ -112,10 +112,15 @@ def run_fetch(
     expected = expected_session(calendar_path, today)
     cache_dir.mkdir(parents=True, exist_ok=True)
     cached = _cached_sessions(cache_dir)
-    missing = [
-        s for s in load_calendar_sessions(calendar_path)
-        if expected >= s > max(cached, default="") and (start is None or s >= start)
-    ]
+    sessions = load_calendar_sessions(calendar_path)
+    if start is None:
+        # 日更追平语义 (R58): 从最新缓存之后到期望会话
+        missing = [s for s in sessions if expected >= s > max(cached, default="")]
+    else:
+        # 有界回补窗 (R61): [start, expected] 内所有未缓存会话 —
+        # 缓存最晚位置无关 (回补既有缓存之前的历史正是本语义的存在理由)
+        missing = [s for s in sessions
+                   if start <= s <= expected and s not in cached]
     fetched, empty_days = [], []
     for session in missing:
         try:

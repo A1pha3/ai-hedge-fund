@@ -161,5 +161,38 @@ def test_fetch_start_invalid_typed(tmp_path: Path) -> None:
     assert "invalid_start" in str(ei.value)
 
 
+def test_fetch_start_backfills_gaps_below_cached_max(tmp_path: Path) -> None:
+    """R61 生死线: --start 能回补既有缓存**之前**的历史缺口 (R60 实锤阻塞)。"""
+    cal = _write_cal(tmp_path, CAL)
+    cache = tmp_path / "lhb_cache"
+    cache.mkdir()
+    (cache / "20260105.csv").write_text("trade_date,ts_code\n", encoding="utf-8")
+    calls: list[str] = []
+
+    def fetch_fn(session: str):
+        calls.append(session)
+        return pd.DataFrame([{"trade_date": session, "ts_code": "x"}])
+
+    summary = run_fetch(cache_dir=cache, calendar_path=cal, today="20260107",
+                        fetch_fn=fetch_fn, rate_sleep=0, start="20260101")
+    # 窗口 [0101, 0106(expected=0107 之前)] 减已缓存 0105 → 01/02/06
+    assert calls == ["20260101", "20260102", "20260106"]
+    assert summary["fetched"] == ["20260101", "20260102", "20260106"]
+
+
+def test_fetch_no_start_daily_catchup_semantics_unchanged(tmp_path: Path) -> None:
+    """无 start: 日更追平语义逐字节回归 — 缓存之前的历史缺口不被触碰。"""
+    cal = _write_cal(tmp_path, CAL)
+    cache = tmp_path / "lhb_cache"
+    cache.mkdir()
+    (cache / "20260105.csv").write_text("trade_date,ts_code\n", encoding="utf-8")
+    calls: list[str] = []
+    run_fetch(cache_dir=cache, calendar_path=cal, today="20260107",
+              fetch_fn=lambda s: (calls.append(s),
+                                  pd.DataFrame([{"trade_date": s, "ts_code": "x"}]))[1],
+              rate_sleep=0)
+    assert calls == ["20260106"]  # 只追平 max(cached) 之后
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
