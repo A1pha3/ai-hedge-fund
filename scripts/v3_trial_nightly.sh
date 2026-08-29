@@ -17,7 +17,10 @@
 #                 门: 本地时刻 >= 23:00 (decide 窗 15:00 UTC 开) 且今日
 #                 readiness manifest 在位; 缺一为 skipped 记录而非失败 —
 #                 decide 窗口只开 24h, 错过即由 finalize-missed 走 NO_RUN,
-#                 绝不回头补 decide (R41 前向唯序纪律)。
+#                 绝不回头补 decide (R41 前向唯序纪律)。R57 三分类: 『无
+#                 manifest』按权威日历分流 — 交易日响亮失败
+#                 trading_day_no_manifest (烧会话不可再静默假绿); 周末/假日
+#                 维持静默; 日历过期/不可读响亮 calendar_stale/calendar_unresolved。
 #   4. advance  — pair 执行窗口推进 (v3_trial_session.py advance --execute)
 #                 只推进 decisions 库已有 pair 的会话; through =
 #                 min(spine T+10 评估会话, bar 源最新会话); 枚举面 fail-closed。
@@ -194,10 +197,43 @@ else
     fi
 fi
 
-# ---- 阶段 3: decide 今日信号会话 (窗口 + manifest 双门) ----
+# ---- 阶段 3: decide 今日信号会话 (窗口 + manifest 双门; R57 三分类收口) ----
 if [ -n "$GATE_REASON" ]; then
-    echo "[$(date '+%F %T')] [v3-nightly] decide 跳过: $GATE_REASON"
-    record "decide" 0 "$GATE_REASON"
+    if [ "$GATE_REASON" = "skipped_no_manifest" ]; then
+        # R57: 『无 manifest』不再一律静默。管道以 manifest 存在为交易日代理 →
+        # 交易日管道失败 (当日官方会话被烧, R41 前向唯序下不可回头补 decide)
+        # 与休市日设计性跳过在历史里逐字节不可区分、链 rc=0 假绿。权威交易日历
+        # (与管道同源) 可判今日是否交易日, 三分类:
+        #   今日 ∈ 日历              → trading_day_no_manifest (rc=4, 响亮:
+        #                               decide 窗约 24h, 当晚人工补跑可救);
+        #   今日 ∉ 日历 且 ≤ max     → 周末/假日, 维持设计性静默 skip;
+        #   今日 > max (过期)/不可读 → calendar_stale/calendar_unresolved
+        #                               (rc=4, 分类不可信即运维缺口, fail-closed)。
+        # seed 同门静默 skip 保持: 首夜种子缺席由 decide 响亮信号承载, 不双计。
+        CAL_MAX=""
+        if [ -r "$CALENDAR" ]; then
+            CAL_MAX=$(grep -oE '"[0-9]{8}"' "$CALENDAR" 2>/dev/null | tr -d '"' | LC_ALL=C sort | tail -1)
+        fi
+        if grep -q "\"$TODAY_COMPACT\"" "$CALENDAR" 2>/dev/null; then
+            echo "[$(date '+%F %T')] [v3-nightly] decide 失败: 交易日无 readiness manifest (上游管道失败/未产出) — decide 窗约 24h, 当晚人工补跑可救"
+            record "decide" 4 "trading_day_no_manifest"
+            FAILS=$((FAILS + 1))
+        elif [ -z "$CAL_MAX" ]; then
+            echo "[$(date '+%F %T')] [v3-nightly] decide 失败: 权威日历不可读/缺失 ($CALENDAR) — 无法分类今日是否交易日, fail-closed"
+            record "decide" 4 "calendar_unresolved"
+            FAILS=$((FAILS + 1))
+        elif [ "$TODAY_COMPACT" \> "$CAL_MAX" ]; then
+            echo "[$(date '+%F %T')] [v3-nightly] decide 失败: 权威日历过期 (max=$CAL_MAX < 今日 $TODAY_COMPACT) — 请刷新日历"
+            record "decide" 4 "calendar_stale"
+            FAILS=$((FAILS + 1))
+        else
+            echo "[$(date '+%F %T')] [v3-nightly] decide 跳过: 非交易日无 manifest (休市日设计性跳过)"
+            record "decide" 0 "skipped_no_manifest"
+        fi
+    else
+        echo "[$(date '+%F %T')] [v3-nightly] decide 跳过: $GATE_REASON"
+        record "decide" 0 "$GATE_REASON"
+    fi
 else
     echo "[$(date '+%F %T')] [v3-nightly] === 阶段 decide: $TODAY_DASH ==="
     OUT=$("$PY" "$TRIAL_CLI" decide \

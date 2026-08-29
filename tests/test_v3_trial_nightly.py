@@ -19,6 +19,9 @@ R55 补全的两处断层:
   (镜像 daily_daemon R54 Op1 语义)。
 - seed/decide 共用双门: 本地时刻 < 23:00 或今日 readiness manifest 缺失
   → skipped 记录, 绝不调用 CLI (typed 拒绝语义由 CLI 权威, 夜间链只如实转记)。
+  R57 收紧: decide 门的「无 manifest」三分性 — 交易日 (今日 ∈ 权威日历)
+  响亮失败 trading_day_no_manifest (烧会话不可再静默); 周末/假日维持静默;
+  日历过期/不可读响亮 calendar_stale/calendar_unresolved (fail-closed)。
 - advance 只推进 decisions 库已有 pair 的会话; 枚举面 fail-closed
   (pair 不在 spine / spine 缺失 → 阶段失败, 绝不静默跳过)。
 - selftest 面 (--selftest-once) 零锁、零 pid、零生产状态。
@@ -254,6 +257,9 @@ def test_gate_compare_is_octal_safe_for_early_morning_hours(fake_repo: Path) -> 
 
 
 def test_manifest_missing_skips_seed_and_decide_but_runs_other_stages(fake_repo: Path) -> None:
+    # R57 契约收紧: 静默 skip 仅限「非交易日」(今日 ∉ 日历且 ≤ max); 日历缺失已改为
+    # 响亮 calendar_unresolved, 故本回归锚显式供给周末日历 (今日 20260101 介于两会话间)。
+    _write_calendar(fake_repo, ["20251231", "20260105"])
     proc = _run_nightly(fake_repo, "--selftest-once", manifest=False)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     records = _history(fake_repo)
@@ -261,6 +267,64 @@ def test_manifest_missing_skips_seed_and_decide_but_runs_other_stages(fake_repo:
         skipped = next(r for r in records if r["stage"] == stage)
         assert skipped["detail"] == "skipped_no_manifest"
     assert len(_invocations(fake_repo)) == 2
+
+
+# ---- R57: decide 门交易日烧会话收口 (『无 manifest』三分类) ----
+# 管道以 manifest 存在为交易日代理 → 交易日管道失败与休市日跳过在历史里逐字节
+# 不可区分, R41 前向唯序下错过夜即烧官方会话。权威日历 (与管道同源) 三分类:
+# 交易日 → 响亮; 周末/假日 → 静默; 日历过期/不可读 → 响亮 (分类不可信即缺口)。
+
+
+def _write_calendar(fake_repo: Path, sessions: list[str]) -> str:
+    path = fake_repo / "data" / "reports" / "trade_calendar.json"
+    path.write_text(json.dumps(sessions), encoding="utf-8")
+    return str(path)
+
+
+def test_trading_day_without_manifest_fails_loud(fake_repo: Path) -> None:
+    _write_calendar(fake_repo, ["20251231", "20260101", "20260105"])
+    proc = _run_nightly(fake_repo, "--selftest-once", manifest=False)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    records = _history(fake_repo)
+    decide = next(r for r in records if r["stage"] == "decide")
+    assert decide["rc"] == 4
+    assert decide["detail"] == "trading_day_no_manifest"
+    # seed 同门静默 skip 保持 — 首夜种子缺席由 decide 响亮信号承载, 不双计
+    seed = next(r for r in records if r["stage"] == "seed")
+    assert seed["rc"] == 0
+    assert seed["detail"] == "skipped_no_manifest"
+    # manifest 是 decide CLI 硬输入: 缺失时绝不调用
+    assert not [l for l in _invocations(fake_repo) if " decide " in f" {l} "]
+
+
+def test_non_trading_day_without_manifest_stays_silent(fake_repo: Path) -> None:
+    # 周末/假日 (今日 ∉ 日历但 ≤ max): 设计性静默 skip, 链 rc=0 (逐字节回归)
+    _write_calendar(fake_repo, ["20251231", "20260105"])
+    proc = _run_nightly(fake_repo, "--selftest-once", manifest=False)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    decide = next(r for r in _history(fake_repo) if r["stage"] == "decide")
+    assert decide["rc"] == 0
+    assert decide["detail"] == "skipped_no_manifest"
+
+
+def test_stale_calendar_without_manifest_fails_loud(fake_repo: Path) -> None:
+    # 今日 > 日历 max (过期): 无法确认今日是否交易日 → 响亮失败 (fail-closed)
+    _write_calendar(fake_repo, ["20251231"])
+    proc = _run_nightly(fake_repo, "--selftest-once", manifest=False)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    decide = next(r for r in _history(fake_repo) if r["stage"] == "decide")
+    assert decide["rc"] == 4
+    assert decide["detail"] == "calendar_stale"
+
+
+def test_missing_calendar_without_manifest_fails_loud(fake_repo: Path) -> None:
+    # 日历文件缺失: 分类不可信 → 响亮失败 (日历缺失本身即运维缺口 —
+    # 管道/decide/advance 全部消费同一日历)
+    proc = _run_nightly(fake_repo, "--selftest-once", manifest=False)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    decide = next(r for r in _history(fake_repo) if r["stage"] == "decide")
+    assert decide["rc"] == 4
+    assert decide["detail"] == "calendar_unresolved"
 
 
 def test_stage_failure_recorded_without_aborting_later_stages(fake_repo: Path) -> None:
