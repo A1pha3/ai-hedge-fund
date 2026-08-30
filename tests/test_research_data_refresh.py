@@ -298,3 +298,25 @@ def test_refresh_preflight_failure_exits_97_zero_stages(refresh_repo: Path) -> N
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ---- R73: freshness court 数据集携带 regime 漂移状态 ----
+
+def test_freshness_court_regime_drift_disclosed(tmp_path: Path) -> None:
+    """无 manifest → checked=False 如实未知; 有 manifest+修订 → drift=True 响亮。"""
+    cal = _build_world(tmp_path, with_lhb=True)
+    report = check_freshness(repo_root=tmp_path, calendar_path=cal, today="20260106")
+    court_row = [r for r in report["datasets"] if r["dataset"] == "court"][0]
+    assert court_row["regime_drift"] == {"checked": False, "drift": False,
+                                         "changed_sessions": []}
+
+    manifest = (tmp_path / "data/research/btst_court/event_tables/manifest_v1.json")
+    manifest.write_text(json.dumps({"regime_window": {"20260105": "crisis"}}),
+                        encoding="utf-8")
+    report = check_freshness(repo_root=tmp_path, calendar_path=cal,
+                             today="20260106",
+                             regime_history={"20260105": "normal"})
+    court_row = [r for r in report["datasets"] if r["dataset"] == "court"][0]
+    assert court_row["regime_drift"]["drift"] is True
+    assert court_row["regime_drift"]["changed_sessions"] == [
+        {"session": "20260105", "manifest": "crisis", "current": "normal"}]

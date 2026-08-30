@@ -38,6 +38,8 @@ from _btst_court_common import (  # noqa: E402
     WINDOW_A_START,
     load_regime_history,
     load_sessions,
+    regime_window_fingerprint,
+    regime_window_labels,
 )
 
 from src.screening.offensive.atr_utils import compute_atr  # noqa: E402
@@ -202,6 +204,11 @@ def main() -> None:
     # 缺标签日 fail-closed 剔除信号日并披露 — 绝不静默退化 normal (07-14 大亏日正在空窗内).
     regime_missing = [s for s in sessions_cal if s not in regime]
     sessions_cal = [s for s in sessions_cal if s in regime]
+    # R73: 构建消费的 regime 输入钉进 manifest (窗内标签+指纹) — regime_history
+    # 是可变文件 (最后写者赢), 夜链自动化后历史标签修订会静默重分类 gate_blocked;
+    # 指纹让消费面 (bench_status/freshness) 能检测「宇宙在修订下漂移」而非沉默.
+    regime_window = regime_window_labels(regime, sessions_cal)
+    regime_input_fingerprint = regime_window_fingerprint(regime_window)
     if regime_missing:
         print(f"  [warn] regime 缺标签 {len(regime_missing)} 天, 剔除: {regime_missing}")
         if len(regime_missing) / max(1, len(regime_missing) + len(sessions_cal)) > 0.10:
@@ -339,6 +346,8 @@ def main() -> None:
         },
         "window": {"start": WINDOW_A_START, "end": end, "sessions": len(sessions)},
         "regime_missing_sessions": regime_missing,
+        "regime_window": regime_window,
+        "regime_input_fingerprint": regime_input_fingerprint,
         "funnel": funnel,
         "universe_audit": universe_audit,
         "cross_check_vs_panel": xcheck,

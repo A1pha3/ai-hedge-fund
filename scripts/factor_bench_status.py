@@ -33,11 +33,16 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 from winrate_payoff_decomposition import production_aligned  # noqa: E402
+from _btst_court_common import (  # noqa: E402
+    load_regime_history,
+    regime_drift_status,
+)
 
 REPO_ROOT = _SCRIPTS.parent
 DEFAULT_FACTORY_REGISTRY = REPO_ROOT / "data/reports/factor_factory/registry.jsonl"
 DEFAULT_TRIAGE_REGISTRY = REPO_ROOT / "data/reports/factor_factory/triage_registry.jsonl"
 DEFAULT_COURT = REPO_ROOT / "data/research/btst_court/event_tables/event_table_v1.csv.gz"
+DEFAULT_COURT_MANIFEST = DEFAULT_COURT.parent / "manifest_v1.json"
 RE_EVAL_GROWTH = 1.2  # 门内样本较记账时增长 ≥20% → 重评到期 (预注册)
 
 
@@ -63,7 +68,9 @@ def _read_jsonl(path: Path, code: str) -> list[dict]:
 
 
 def bench_status(*, factory_registry: Path, triage_registry: Path,
-                 court_path: Path) -> dict:
+                 court_path: Path,
+                 court_manifest: Path | None = None,
+                 regime_history: dict[str, str] | None = None) -> dict:
     if not court_path.is_file():
         raise BenchStatusError("court_table_missing", {"path": str(court_path)})
     court = pd.read_csv(court_path, dtype={"signal_date": str, "ts_code": str})
@@ -73,6 +80,19 @@ def bench_status(*, factory_registry: Path, triage_registry: Path,
         "days": int(aligned["signal_date"].nunique()),
         "last_date": str(aligned["signal_date"].max()),
     }
+    # R73: court 构建消费的 regime 输入 vs 当前 regime_history — 历史标签修订
+    # 会静默重分类 gate_blocked → aligned 宇宙漂移; 在此响亮披露而非沉默.
+    manifest_path = court_manifest or (court_path.parent / "manifest_v1.json")
+    regime_drift: dict = {"checked": False, "drift": False, "changed_sessions": []}
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise BenchStatusError("court_manifest_corrupt",
+                                   {"path": str(manifest_path), "error": str(exc)}) from exc
+        history = (regime_history if regime_history is not None
+                   else load_regime_history())
+        regime_drift = regime_drift_status(manifest, history)
     _read_jsonl(factory_registry, "factory_registry_missing")  # fail-closed 存在性
     triage_rows = _read_jsonl(triage_registry, "triage_registry_missing")
 
@@ -111,6 +131,7 @@ def bench_status(*, factory_registry: Path, triage_registry: Path,
 
     return {
         "court": court_summary,
+        "regime_drift": regime_drift,
         "re_eval_growth": RE_EVAL_GROWTH,
         "triage_candidates": candidates,
         "re_eval_due_any": any(c["re_eval_due"] for c in candidates),
@@ -122,11 +143,15 @@ def main() -> int:
     parser.add_argument("--factory-registry", default=str(DEFAULT_FACTORY_REGISTRY))
     parser.add_argument("--triage-registry", default=str(DEFAULT_TRIAGE_REGISTRY))
     parser.add_argument("--court", default=str(DEFAULT_COURT))
+    parser.add_argument("--court-manifest", default=None,
+                        help="默认 <court 目录>/manifest_v1.json")
     args = parser.parse_args()
     try:
         payload = bench_status(factory_registry=Path(args.factory_registry),
                                triage_registry=Path(args.triage_registry),
-                               court_path=Path(args.court))
+                               court_path=Path(args.court),
+                               court_manifest=(Path(args.court_manifest)
+                                               if args.court_manifest else None))
     except BenchStatusError as exc:
         print(json.dumps({"ok": False, "code": exc.code, "details": exc.details},
                          ensure_ascii=False))

@@ -31,6 +31,12 @@ import pandas as pd
 
 from fetch_lhb_daily import LhbFetchError, expected_session, load_calendar_sessions
 
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from _btst_court_common import load_regime_history, regime_drift_status  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # (名称, 相对 repo-root 路径, 语义) — session: 逐会话文件名精确; bulk: 目录 mtime 日期;
@@ -93,7 +99,8 @@ def _latest_bulk_mtime_date(directory: Path) -> str | None:
 
 
 def check_freshness(
-    *, repo_root: Path, calendar_path: Path, today: str
+    *, repo_root: Path, calendar_path: Path, today: str,
+    regime_history: dict[str, str] | None = None,
 ) -> dict:
     """返回 {datasets: [...], expected_session}。日历问题抛 LhbFetchError。"""
     expected = expected_session(calendar_path, today)
@@ -111,14 +118,27 @@ def check_freshness(
         else:
             latest = _latest_bulk_mtime_date(path)
         floor = court_floor if semantics == "court" else expected
-        rows.append({
+        row = {
             "dataset": name,
             "path": str(path),
             "semantics": semantics,
             "latest": latest,
             "expected": expected,
             "stale": latest is None or latest < floor,
-        })
+        }
+        if semantics == "court":
+            # R73: court 重建消费的 regime 输入 vs 当前 regime_history —
+            # 历史标签修订会静默改变评估宇宙; 漂移必须响亮而非沉默.
+            manifest_path = path.parent / "manifest_v1.json"
+            if manifest_path.is_file():
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                history = (regime_history if regime_history is not None
+                           else load_regime_history())
+                row["regime_drift"] = regime_drift_status(manifest, history)
+            else:
+                row["regime_drift"] = {"checked": False, "drift": False,
+                                       "changed_sessions": []}
+        rows.append(row)
     return {"today": today, "expected_session": expected, "datasets": rows}
 
 

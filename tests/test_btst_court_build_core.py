@@ -175,3 +175,49 @@ def test_cross_check_classification(monkeypatch, tmp_path):
     assert out["absent"] == 1
     assert {"ticker": "600001", "date": "20260810", "replay": 0.75, "panel": 0.8} in out["details"]
     assert {"ticker": "600002", "date": "20260811", "status": "not_in_replay"} in out["details"]
+
+
+# ---- R73: regime 输入指纹与漂移检测 (单一实现 _btst_court_common) ----
+
+from _btst_court_common import (  # noqa: E402
+    regime_drift_status,
+    regime_window_fingerprint,
+    regime_window_labels,
+)
+
+
+def test_regime_window_fingerprint_deterministic_and_sensitive():
+    """同窗同标签恒同指纹 (键序无关); 标签修订或窗口扩张即变。"""
+    window = {"20260105": "normal", "20260106": "crisis"}
+    flipped = dict(reversed(list(window.items())))
+    assert regime_window_fingerprint(window) == regime_window_fingerprint(flipped)
+    revised = dict(window, **{"20260106": "normal"})
+    assert regime_window_fingerprint(window) != regime_window_fingerprint(revised)
+    widened = dict(window, **{"20260107": "normal"})
+    assert regime_window_fingerprint(window) != regime_window_fingerprint(widened)
+
+
+def test_regime_window_labels_skips_missing_sessions():
+    """缺标签会话不进窗口 — 与构建器剔除语义一致 (缺失披露走 regime_missing)。"""
+    regime = {"20260105": "normal"}
+    assert regime_window_labels(regime, ["20260105", "20260106"]) == {"20260105": "normal"}
+
+
+def test_regime_drift_status_three_states():
+    """无漂移 / 标签修订 / 会话缺失 / 旧构建无窗口 — 四形态各自如实。"""
+    manifest = {"regime_window": {"20260105": "normal", "20260106": "crisis"}}
+    same = regime_drift_status(manifest, {"20260105": "normal", "20260106": "crisis"})
+    assert same == {"checked": True, "drift": False, "changed_sessions": []}
+
+    revised = regime_drift_status(manifest, {"20260105": "normal", "20260106": "normal"})
+    assert revised["checked"] is True and revised["drift"] is True
+    assert revised["changed_sessions"] == [
+        {"session": "20260106", "manifest": "crisis", "current": "normal"}]
+
+    missing_now = regime_drift_status(manifest, {"20260105": "normal"})
+    assert missing_now["drift"] is True
+    assert missing_now["changed_sessions"] == [
+        {"session": "20260106", "manifest": "crisis", "current": None}]
+
+    legacy = regime_drift_status({"regime_missing_sessions": []}, {})
+    assert legacy == {"checked": False, "drift": False, "changed_sessions": []}

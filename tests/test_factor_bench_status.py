@@ -203,3 +203,60 @@ def test_deterministic_output(tmp_path: Path) -> None:
     # 输出按名字排序 — 与 registry 行序无关
     assert [r["name"] for r in one["triage_candidates"]] == [
         "a_v0", "b_v0"]
+
+
+# ---- R73: court regime 输入漂移检测 ----
+
+def test_regime_drift_detected_on_label_revision(tmp_path: Path) -> None:
+    """构建钉 crisis、当前 normal → regime_drift=true 类型化披露 (修订不沉默)。"""
+    factory, triage = _court_factory_registry(tmp_path)
+    _write_registry(triage, [_triage_row("seal_quality_v0", "deferred", 56,
+                                         aligned_rows=100)])
+    court = _court_path(tmp_path, 100)
+    manifest = tmp_path / "manifest_v1.json"
+    manifest.write_text(json.dumps({"regime_window": {"20260105": "crisis"}}),
+                        encoding="utf-8")
+    out = bench_status(factory_registry=factory, triage_registry=triage,
+                       court_path=court, court_manifest=manifest,
+                       regime_history={"20260105": "normal"})
+    assert out["regime_drift"]["checked"] is True
+    assert out["regime_drift"]["drift"] is True
+    assert out["regime_drift"]["changed_sessions"] == [
+        {"session": "20260105", "manifest": "crisis", "current": "normal"}]
+
+
+def test_regime_drift_clean_when_labels_match(tmp_path: Path) -> None:
+    factory, triage = _court_factory_registry(tmp_path)
+    _write_registry(triage, [_triage_row("f", "deferred", 56, aligned_rows=100)])
+    court = _court_path(tmp_path, 100)
+    manifest = tmp_path / "manifest_v1.json"
+    manifest.write_text(json.dumps({"regime_window": {"20260105": "normal"}}),
+                        encoding="utf-8")
+    out = bench_status(factory_registry=factory, triage_registry=triage,
+                       court_path=court, court_manifest=manifest,
+                       regime_history={"20260105": "normal"})
+    assert out["regime_drift"] == {"checked": True, "drift": False,
+                                   "changed_sessions": []}
+
+
+def test_regime_drift_not_checked_without_manifest(tmp_path: Path) -> None:
+    """旧构建 (无 manifest / 无 regime_window) → checked=False 如实未知。"""
+    factory, triage = _court_factory_registry(tmp_path)
+    _write_registry(triage, [_triage_row("f", "deferred", 56, aligned_rows=100)])
+    court = _court_path(tmp_path, 100)
+    out = bench_status(factory_registry=factory, triage_registry=triage,
+                       court_path=court)
+    assert out["regime_drift"] == {"checked": False, "drift": False,
+                                   "changed_sessions": []}
+
+
+def test_regime_drift_corrupt_manifest_typed(tmp_path: Path) -> None:
+    factory, triage = _court_factory_registry(tmp_path)
+    _write_registry(triage, [_triage_row("f", "deferred", 56, aligned_rows=100)])
+    court = _court_path(tmp_path, 100)
+    manifest = tmp_path / "manifest_v1.json"
+    manifest.write_text("{not json", encoding="utf-8")
+    with pytest.raises(BenchStatusError) as exc:
+        bench_status(factory_registry=factory, triage_registry=triage,
+                     court_path=court, court_manifest=manifest)
+    assert exc.value.code == "court_manifest_corrupt"
