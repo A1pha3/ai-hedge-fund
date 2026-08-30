@@ -54,3 +54,92 @@ def test_join_records_attaches_returns_and_realized_flag():
     b = next(j for j in joined if j["ticker"] == "999999")
     assert b["realized"] is False  # no price series for this ticker
     assert b["return_t10"] is None
+
+
+# ---------------------------------------------------------------------------
+# R80 Op1: 计划层容量拦截标注 (capacity_blocked) — R79 Op3 工件的消费端
+# ---------------------------------------------------------------------------
+
+from pathlib import Path  # noqa: E402
+
+from scripts.join_setup_outputs_with_returns import (  # noqa: E402
+    load_capacity_index,
+    load_logged_records,
+)
+
+
+def _records() -> list[dict]:
+    return [
+        {"ticker": "000001", "signal_date": "20260101", "plan_eligible": True},
+        {"ticker": "000002", "signal_date": "20260101", "plan_eligible": True},
+    ]
+
+
+def test_join_records_annotates_capacity_blocks():
+    df = _series()
+    index = {"20260101": {"000001": "portfolio_cap"}}
+    joined = join_records(_records(), {"000001": df, "000002": df}, index)
+    a = next(j for j in joined if j["ticker"] == "000001")
+    assert a["capacity_blocked"] is True
+    assert a["capacity_block_reason"] == "portfolio_cap"
+    b = next(j for j in joined if j["ticker"] == "000002")
+    assert b["capacity_blocked"] is False
+    assert b["capacity_block_reason"] == ""
+
+
+def test_join_records_without_index_matches_legacy_behavior():
+    """capacity_index 缺省 = 旧行为逐位兼容 (False/空串), gross/net 列不变。"""
+    df = _series()
+    with_index = join_records(_records(), {"000001": df, "000002": df},
+                              {"20260101": {"000001": "portfolio_cap"}})
+    without = join_records(_records(), {"000001": df, "000002": df})
+    assert [j["capacity_blocked"] for j in without] == [False, False]
+    for a, b in zip(with_index, without):
+        assert a["return_t10"] == b["return_t10"]
+        assert a["return_t10_net"] == b["return_t10_net"]
+
+
+def test_load_logged_records_excludes_capacity_sibling_files(tmp_path: Path):
+    """``YYYYMMDD.capacity.jsonl`` 兄弟工件是计划层拦截证据, 混入 join 会以
+    缺字段行污染 panel — glob 必须排除 (R79 Op3 工件出现当日即触发)。"""
+    log_dir = tmp_path / "setup_output_log"
+    log_dir.mkdir()
+    (log_dir / "20260101.jsonl").write_text(
+        '{"ticker": "000001", "signal_date": "20260101", "plan_eligible": true}\n',
+        encoding="utf-8",
+    )
+    (log_dir / "20260101.capacity.jsonl").write_text(
+        '{"schema_version": 1, "signal_date": "20260101", "ticker": "000002", '
+        '"reason": "portfolio_cap"}\n',
+        encoding="utf-8",
+    )
+    records = load_logged_records(log_dir)
+    assert [r["ticker"] for r in records] == ["000001"]
+
+
+def test_load_capacity_index_missing_artifact_all_clear(tmp_path: Path):
+    records = _records()
+    index = load_capacity_index({r["signal_date"] for r in records}, log_dir=tmp_path)
+    assert index == {"20260101": {}}
+    joined = join_records(records, {}, index)
+    assert all(j["capacity_blocked"] is False for j in joined)
+
+
+def test_load_capacity_index_reads_and_normalizes(tmp_path: Path):
+    """合法行读入 + ticker 归一化 split(".")[0] + 无 ticker 行跳过。"""
+    log_dir = tmp_path / "setup_output_log"
+    log_dir.mkdir()
+    (log_dir / "20260101.capacity.jsonl").write_text(
+        '{"signal_date": "20260101", "ticker": "000001.SZ", "reason": "portfolio_cap"}\n'
+        '{"signal_date": "20260101", "ticker": "", "reason": "portfolio_cap"}\n'
+        "not-json-at-all\n",
+        encoding="utf-8",
+    )
+    index = load_capacity_index(["20260101"], log_dir=log_dir)
+    assert index["20260101"] == {"000001": "portfolio_cap"}
+
+
+def test_load_capacity_index_malformed_signal_date_degrades_to_empty(tmp_path: Path):
+    """畸形 signal_date 不阻塞 join — advisory 语义 (无工件降级为 False)。"""
+    index = load_capacity_index(["not-a-date"], log_dir=tmp_path)
+    assert index == {"not-a-date": {}}

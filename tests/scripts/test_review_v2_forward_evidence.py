@@ -343,3 +343,73 @@ def test_report_old_positional_calls_unchanged() -> None:
     ]
     text = build_report([], panel, {}, _health(), since="2026-08-14")
     assert "通过组" in text
+
+
+# ---------------------------------------------------------------------------
+# R80 Op1: 被挡对照三分 — 容量拦组独立成组, 通过组不再混入从未成交的票
+# ---------------------------------------------------------------------------
+
+def _panel_row(ticker: str, net_t10: float, **extra) -> dict:
+    row = {
+        "ticker": ticker,
+        "signal_date": "20260815",
+        "block_reason": "",
+        "capacity_blocked": False,
+        "capacity_block_reason": "",
+        "realized": True,
+        "return_t10": net_t10 * 100.0,
+    }
+    row.update(extra)
+    return row
+
+
+def test_capacity_blocked_group_reported_separately() -> None:
+    """容量拦组独立成节; 通过组不含容量拦票 (此前三分前它会被算进通过组)。"""
+    panel = [
+        _panel_row("600001", 0.05),                              # 通过 (实际放行)
+        _panel_row("600002", 0.03, capacity_blocked=True,
+                   capacity_block_reason="portfolio_cap"),        # 容量拦
+        _panel_row("600003", -0.07, block_reason="regime_gate_halt"),  # gate 拦
+    ]
+    text = build_report([], panel, {}, _health(), since="2026-08-14")
+    assert "容量拦组（组合帽/行业/单票拦截，若放行会买这些）" in text
+    assert "通过组（实际放行动量票 — 容量拦不混入）" in text
+    assert "容量拦组期望显著为正 = 容量帽在挡钱" in text
+
+    def _section_stats(label: str) -> str:
+        after = text.split(label, 1)[1]
+        return after.split("\n")[1]  # 组名行的下一行 = 统计行
+
+    # 分组计数: 通过 n=1 (容量拦票不混入) / 容量拦 n=1 / 被挡 n=1 — 互斥不双计
+    assert "n=1" in _section_stats("通过组（实际放行动量票")
+    assert "n=1" in _section_stats("容量拦组（组合帽")
+    assert "n=1" in _section_stats("被挡组（gate")
+
+
+def test_capacity_blocked_and_gate_blocked_are_disjoint() -> None:
+    """畸形行 (block_reason 与 capacity_blocked 同真) 只进容量拦组 —
+    容量拦是更下游的事实, 优先级语义保证两组互斥。"""
+    panel = [
+        _panel_row("600001", 0.02, block_reason="regime_gate_halt",
+                   capacity_blocked=True, capacity_block_reason="portfolio_cap"),
+        _panel_row("600002", 0.04),
+    ]
+    text = build_report([], panel, {}, _health(), since="2026-08-14")
+    # 容量拦组 n=1; gate 被挡组 n=0 (显示 (无样本)); 通过组 n=1
+    assert "容量拦组" in text
+    assert "n=1" in text
+    assert "regime 闸拦截子集" not in text  # regime 子集从被挡组派生, 不含容量拦
+
+
+def test_legacy_rows_without_capacity_fields_keep_old_grouping() -> None:
+    """旧行 (无 capacity_* 字段, R79 工件出现前的 panel) 走原二分不回归。"""
+    panel = [
+        {"ticker": "600001", "signal_date": "20260815", "block_reason": "regime_gate_halt",
+         "realized": True, "return_t10": -12.0},
+        {"ticker": "600002", "signal_date": "20260815", "block_reason": "",
+         "realized": True, "return_t10": 8.0},
+    ]
+    text = build_report([], panel, {}, _health(), since="2026-08-14")
+    assert "被挡组" in text
+    assert "regime 闸拦截子集" in text
+    assert "n=1" in text

@@ -7,7 +7,8 @@
    冻结分布: 按信号日聚类 bootstrap CI90 (n≥30 才出判定语, R10 纪律), 保守
    单侧衰减判定 (前向 CI 上界低于先验期望才立案, R77 Op1).
 2. 被挡候选对照组 — panel (setup_output_panel.jsonl) 里被拦截候选的事后
-   T+10 收益: gate/门禁到底挡掉了钱还是挡掉了亏损 (反事实).
+   T+10 收益: gate/门禁与容量 (portfolio_cap/行业/单票, R80 Op1 三分) 到底
+   挡掉了钱还是挡掉了亏损 (反事实, 两组互斥).
 3. ⭐双信号子集 — 同日也在 --auto Top-N 的成交/被挡票 vs 其余 (当前 CI 跨 0,
    样本累积后重估).
 4. 台账健康 — NAV/回撤/持仓/待结算计划一览.
@@ -292,16 +293,25 @@ def build_report(
     lines.append("")
 
     # ---- 2. 被挡候选对照组 (反事实) ----
-    lines.append("二、被挡候选对照组（panel, T+10 事后收益）")
+    # R80 Op1 三分: 容量拦 (capacity_blocked, 计划层 portfolio_cap/行业/单票)
+    # 优先于 gate 拦 — 容量拦是更下游的事实, 两组互斥, 通过组不再混入从未
+    # 成交的票 (此前被容量拦票以空 block_reason 落入通过组, 污染反事实对照)。
+    def _realized_t10(row: dict) -> bool:
+        return bool(row.get("realized")) and row.get("return_t10") is not None
+
+    capacity_blocked = [
+        row for row in panel_rows if row.get("capacity_blocked") and _realized_t10(row)
+    ]
     blocked = [
         row for row in panel_rows
-        if row.get("block_reason") and row.get("realized") and row.get("return_t10") is not None
+        if row.get("block_reason") and not row.get("capacity_blocked") and _realized_t10(row)
     ]
     taken = [
         row for row in panel_rows
-        if not row.get("block_reason") and row.get("realized") and row.get("return_t10") is not None
+        if not row.get("block_reason") and not row.get("capacity_blocked") and _realized_t10(row)
     ]
-    if not blocked and not taken:
+    lines.append("二、被挡候选对照组（panel, T+10 事后收益）")
+    if not blocked and not taken and not capacity_blocked:
         lines.append("  （panel 在复查窗口内无已实现样本）")
     else:
         # R77 Op2: panel return_t10 是 gross (T+1 开盘→T+10 收盘), 与先验/第一节
@@ -320,7 +330,9 @@ def build_report(
         )
         lines.append("  被挡组（gate/门禁拦截，若放行会买这些）:")
         lines.extend(_fmt_slice(_slice_stats(_net(blocked)), indent="    "))
-        lines.append("  通过组（实际放行动量票）:")
+        lines.append("  容量拦组（组合帽/行业/单票拦截，若放行会买这些）:")
+        lines.extend(_fmt_slice(_slice_stats(_net(capacity_blocked)), indent="    "))
+        lines.append("  通过组（实际放行动量票 — 容量拦不混入）:")
         lines.extend(_fmt_slice(_slice_stats(_net(taken)), indent="    "))
         regime_blocked = [r for r in blocked if "regime" in str(r["block_reason"])]
         if regime_blocked:
@@ -379,6 +391,7 @@ def build_report(
     lines.append("")
     lines.append("复查判据：n≥30 且前向聚类 CI90 上界低于先验期望才立案复查 edge 衰减（R77 语义，"
                  "点估计 vs 先验 CI 仅披露）；被挡组期望显著为负 = 闸在赚钱；"
+                 "容量拦组期望显著为正 = 容量帽在挡钱（只披露，参数去留属 owner 评估门）；"
                  "双信号子集达到 n≥10 且方向一致后再考虑调整展示措辞。")
     return "\n".join(lines)
 
