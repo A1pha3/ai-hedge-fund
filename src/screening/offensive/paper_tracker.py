@@ -488,6 +488,10 @@ class PaperTracker:
             seen_buy_keys.add(key)
 
         if not matured:
+            # R71 Op3 (DEFECT-2): 早退路径必须重置披露缓存 — last_closed_positions
+            # 是「本次调用平了哪些仓」的事实, 渲染消费方 (daily_action closed_positions)
+            # 读到上一批残留会重复披露。
+            self.last_closed_positions = []
             return []
 
         # 批量取 T+N 收益 (复用 fetch_actual_returns — 与 north-star 同口径)
@@ -575,7 +579,22 @@ class PaperTracker:
                 if per_pos_ret is not None:
                     realized_pnl, exit_price = per_pos_ret
                 else:
-                    realized_pnl = ret_pct / 100.0  # 百分数 → 小数 (last resort)
+                    # R71 Op3 (DEFECT-1): last-resort 也必须按本仓位 buy_date 重锚 —
+                    # 批次锚 (earliest) 的 ret_pct 对非 earliest 仓位是别的持仓窗口的
+                    # 收益 (PoC: 真实 -5% 记成 +30%)。本位锚无 day_N (停牌/数据未成熟)
+                    # → 诚实跳过保持仓, 绝不写错窗 P&L。
+                    pos_returns = fetch_actual_returns(
+                        tickers=[ticker], from_date=buy_date, to_date=as_of,
+                        use_data_fetcher=use_data_fetcher,
+                    )
+                    pos_ret_pct = pos_returns.get(ticker, {}).get(day_key)
+                    if pos_ret_pct is None:
+                        logger.info(
+                            "close_matured: %s %s 无本仓位锚定的 day_%d 收益, 跳过 (停牌/数据未成熟?)",
+                            buy_date, ticker, horizon,
+                        )
+                        continue
+                    realized_pnl = pos_ret_pct / 100.0  # 百分数 → 小数
                     exit_price = entry_price * (1 + realized_pnl)
 
             # 写 EXIT 记录 (幂等 key = (date, ticker) 与 BUY 对齐)
