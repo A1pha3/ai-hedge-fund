@@ -199,3 +199,44 @@ def test_decay_verdict_deterministic() -> None:
     a = build_report(trades, [], {}, _health(), since="2026-08-14")
     b = build_report(trades, [], {}, _health(), since="2026-08-14")
     assert a == b
+
+
+# ---------------------------------------------------------------------------
+# R77 Op2: 反事实 panel 口径一致性 (gross → net 单一实现转换 + 口径披露)
+# ---------------------------------------------------------------------------
+
+def test_counterfactual_groups_converted_to_net() -> None:
+    """gross 小正 (panel 原值 +0.3%/+0.4%) → 扣 ROUNDTRIP_COST 后为负。
+
+    RED (旧代码): 通过组胜率 100% / 期望 +0.35% (乐观偏置);
+    GREEN: 胜率 0% / 期望 -0.30% — 与先验/第一节同净口径。
+    """
+    panel = [
+        {"ticker": "600001", "signal_date": "20260815", "block_reason": "", "realized": True, "return_t10": 0.3},
+        {"ticker": "600002", "signal_date": "20260815", "block_reason": "", "realized": True, "return_t10": 0.4},
+    ]
+    text = build_report([], panel, {}, _health(), since="2026-08-14")
+    assert "期望 -0.30%" in text
+    assert "期望 +0.35%" not in text
+    assert "胜率 0.0%" in text
+
+
+def test_counterfactual_regime_subset_converted_to_net() -> None:
+    """regime 拦截子集同转换: gross -12.0% → net -12.65%。"""
+    panel = [
+        {"ticker": "600001", "signal_date": "20260815", "block_reason": "regime_gate_halt", "realized": True, "return_t10": -12.0},
+    ]
+    text = build_report([], panel, {}, _health(), since="2026-08-14")
+    assert "期望 -12.65%" in text
+    assert "期望 -12.00%" not in text
+
+
+def test_counterfactual_discloses_cost_basis_and_exit_leg() -> None:
+    """口径披露行: gross 来源 + 扣费基准 + live ledger T+10 开盘退出腿差异。"""
+    panel = [
+        {"ticker": "600001", "signal_date": "20260815", "block_reason": "", "realized": True, "return_t10": 8.0},
+    ]
+    text = build_report([], panel, {}, _health(), since="2026-08-14")
+    assert "口径" in text
+    assert "0.65%" in text
+    assert "T+10 开盘退出" in text

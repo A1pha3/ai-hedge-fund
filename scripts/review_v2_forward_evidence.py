@@ -32,7 +32,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from src.screening.offensive.known_distributions import KNOWN_DISTRIBUTIONS  # noqa: E402
-from scripts.winrate_payoff_decomposition import cluster_boot_ci_low  # noqa: E402
+from scripts.winrate_payoff_decomposition import (  # noqa: E402
+    ROUNDTRIP_COST,
+    cluster_boot_ci_low,
+    net_returns,
+)
 
 LOW_CONFIDENCE_N = 10  # 与 setup_performance.LOW_CONFIDENCE_N 同例: 小样本不驱动决策
 DEFAULT_SINCE = "2026-08-14"  # 台账重置开新档日 (regime gate 语义起点)
@@ -261,14 +265,28 @@ def build_report(
     if not blocked and not taken:
         lines.append("  （panel 在复查窗口内无已实现样本）")
     else:
+        # R77 Op2: panel return_t10 是 gross (T+1 开盘→T+10 收盘), 与先验/第一节
+        # 的净口径混算会系统性高估反事实胜率 (gross 小赢单扣费后实为负)。
+        # 经 net_returns 单一实现转换; live ledger 退出腿为 T+10 开盘, 差异如实披露。
+        def _net(rows):
+            return [
+                v for v in net_returns([float(r["return_t10"]) / 100.0 for r in rows])
+                if v is not None
+            ]
+
+        lines.append(
+            "  口径: panel return_t10 = T+1 开盘→T+10 收盘 gross，此处经 net_returns"
+            f"单一实现扣往返成本 {ROUNDTRIP_COST:.2%}；live ledger 为 T+10 开盘退出 —"
+            "退出腿差异如实披露。"
+        )
         lines.append("  被挡组（gate/门禁拦截，若放行会买这些）:")
-        lines.extend(_fmt_slice(_slice_stats([float(r["return_t10"]) / 100.0 for r in blocked]), indent="    "))
+        lines.extend(_fmt_slice(_slice_stats(_net(blocked)), indent="    "))
         lines.append("  通过组（实际放行动量票）:")
-        lines.extend(_fmt_slice(_slice_stats([float(r["return_t10"]) / 100.0 for r in taken]), indent="    "))
+        lines.extend(_fmt_slice(_slice_stats(_net(taken)), indent="    "))
         regime_blocked = [r for r in blocked if "regime" in str(r["block_reason"])]
         if regime_blocked:
             lines.append("  其中 regime 闸拦截子集（危机/避险日反事实）:")
-            lines.extend(_fmt_slice(_slice_stats([float(r["return_t10"]) / 100.0 for r in regime_blocked]), indent="    "))
+            lines.extend(_fmt_slice(_slice_stats(_net(regime_blocked)), indent="    "))
     lines.append("")
 
     # ---- 3. ⭐双信号子集 ----
