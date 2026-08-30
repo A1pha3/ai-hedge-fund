@@ -30,9 +30,13 @@ from scripts.validate_auto300_gate_removal import (
     _forward_return,
     _summarize,
 )
+from scripts.winrate_payoff_decomposition import ROUNDTRIP_COST, net_returns
 
 LOG_DIR = Path("data/reports/setup_output_log")
 PANEL = Path("data/reports/setup_output_panel.jsonl")
+# 每行披露的扣费基准 (R78 Op2: panel 在源头同排产出净口径列, 防未来消费者
+# 重蹈 R77-Op2 同族 gross/净混算; gross 列保留 — 既有消费者兼容)。
+NET_COST_BASIS = ROUNDTRIP_COST
 
 
 def load_logged_records(log_dir: Path = LOG_DIR) -> list[dict]:
@@ -75,8 +79,16 @@ def join_records(records: list[dict], series: dict[str, pd.DataFrame]) -> list[d
             )
         rets = cache[key]
         out = dict(rec)
+        gross = []
         for h in HORIZONS:
             out[f"return_t{h}"] = rets[h]
+            gross.append(rets[h])
+        # panel 列单位是百分数 (与 _forward_return 一致); net_returns 吃小数 —
+        # /100 进、×100 出, 净列保持百分数同单位。
+        nets = net_returns([None if g is None else g / 100.0 for g in gross])
+        for h, net in zip(HORIZONS, nets):
+            out[f"return_t{h}_net"] = None if net is None else net * 100.0
+        out["net_cost_basis"] = NET_COST_BASIS
         out["realized"] = rets[10] is not None
         joined.append(out)
     return joined
