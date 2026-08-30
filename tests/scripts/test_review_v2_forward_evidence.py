@@ -75,7 +75,8 @@ def test_build_report_compares_forward_with_frozen_prior() -> None:
         since="2026-08-14",
     )
     assert "btst_breakout" in text
-    assert "先验（n=1458）" in text
+    # 先验行动态派生 (旧断言硬编码 n=1458, court 重建刷新先验后漂移失效)
+    assert f"先验（n={_PRIOR.n}）" in text
     assert "CI" in text
     # 双信号子集: 600487 在 20260814 的 Top-N 里 → 全部 12 笔进子集
     assert "双信号子集" in text
@@ -95,3 +96,106 @@ def test_build_report_panel_counterfactual_groups() -> None:
     assert "regime 闸拦截子集" in text
     # 窗口外样本不进入统计: 被挡组只有 -12.0 一个 → n=1
     assert "n=1" in text
+
+
+# ---------------------------------------------------------------------------
+# R77 Op1: 衰减判定统计硬化 (聚类 CI + n≥30 判定门 + 保守单侧)
+# ---------------------------------------------------------------------------
+
+from scripts.review_v2_forward_evidence import (  # noqa: E402
+    DECISION_MIN_N,
+    cluster_ci90,
+)
+from src.screening.offensive.known_distributions import (  # noqa: E402
+    KNOWN_DISTRIBUTIONS,
+)
+
+_PRIOR = KNOWN_DISTRIBUTIONS[("btst_breakout", 10)]
+
+
+def _zero_cost_trade(net_return: float, signal_date: str, seq: int) -> dict:
+    """零成本合成 trade — closed_trade_net_return 恰等于 net_return。"""
+    return {
+        "trade_id": f"t{seq}",
+        "ticker": "600487",
+        "setup": "btst_breakout",
+        "signal_date": signal_date,
+        "raw_entry_price": 10.0,
+        "quantity": 1,
+        "entry_commission": 0.0,
+        "entry_tax": 0.0,
+        "entry_slippage": 0.0,
+        "raw_exit_price": 10.0 * (1.0 + net_return),
+        "exit_commission": 0.0,
+        "exit_tax": 0.0,
+        "exit_slippage": 0.0,
+    }
+
+
+def _trades_world(nets: list[float], dates: list[str]) -> list[dict]:
+    assert len(nets) == len(dates)
+    return [_zero_cost_trade(r, d, i) for i, (r, d) in enumerate(zip(nets, dates))]
+
+
+def _health() -> dict:
+    return {"latest_valuation": None, "state_counts": {}}
+
+
+def test_cluster_ci90_bounds_contain_mean() -> None:
+    rets = [0.01, -0.02, 0.03, 0.05, -0.01, 0.02, -0.03, 0.04]
+    days = ["20260814"] * 4 + ["20260815"] * 4
+    lo, hi = cluster_ci90(rets, days)
+    mean = sum(rets) / len(rets)
+    assert lo <= mean <= hi
+
+
+def test_cluster_ci90_insufficient_days_returns_none() -> None:
+    assert cluster_ci90([0.01], ["20260814"]) is None
+    assert cluster_ci90([0.01, 0.02], ["20260814", "20260814"]) is None
+
+
+def test_true_decay_world_fires_case_filing() -> None:
+    """n=40 恒定深负 → CI90 上界必低于先验期望 → 立案判定语 (判定门之上)。"""
+    nets = [-0.05] * 40
+    dates = [f"202608{d:02d}" for d in range(1, 9) for _ in range(5)]
+    assert len({*dates}) == 8
+    text = build_report(_trades_world(nets, dates), [], {}, _health(), since="2026-08-14")
+    assert stats_hold(text, n=40)
+    assert "立案复查 edge 衰减" in text
+    assert DECISION_MIN_N == 30
+
+
+def stats_hold(text: str, *, n: int) -> bool:  # noqa: E303 — 可读性辅助
+    return f"n={n}" in text
+
+
+def test_noise_world_small_n_no_verdict() -> None:
+    """n=15 点估计越出先验 CI → 旧逻辑会假告警; 新逻辑只披露不判定 (RED→GREEN 核心)。"""
+    # 点估计 -2% < prior.ci_low (≈ -1.30%) — 旧判定语必输出「需立案复查」
+    assert -0.02 < _PRIOR.ci_low
+    nets = [-0.02] * 15
+    dates = [f"202608{d:02d}" for d in range(1, 4) for _ in range(5)]
+    text = build_report(_trades_world(nets, dates), [], {}, _health(), since="2026-08-14")
+    # 判定语 (箭头+警告行) 不出现; 收尾「复查判据」说明行的措辞不算判定
+    assert "→ ⚠️" not in text
+    assert "只披露不判定" in text
+
+
+def test_consistent_world_no_false_alarm() -> None:
+    """n=40 均值≈先验期望、CI 覆盖 → 「edge 未衰减」而非告警。"""
+    up = _PRIOR.expected_return + 0.08
+    down = _PRIOR.expected_return - 0.08
+    nets = [up, down] * 20  # 均值恰 = 先验期望
+    dates = [f"202608{d:02d}" for d in range(1, 9) for _ in range(5)]
+    text = build_report(_trades_world(nets, dates), [], {}, _health(), since="2026-08-14")
+    assert "edge 未衰减" in text
+    assert "→ ⚠️" not in text
+
+
+def test_decay_verdict_deterministic() -> None:
+    nets = [-0.05, 0.02, -0.03, 0.04] * 10
+    dates = [f"202608{d:02d}" for d in range(1, 6) for _ in range(8)]
+    trades = _trades_world(nets, dates)
+    a = build_report(trades, [], {}, _health(), since="2026-08-14")
+    b = build_report(trades, [], {}, _health(), since="2026-08-14")
+    assert a == b
