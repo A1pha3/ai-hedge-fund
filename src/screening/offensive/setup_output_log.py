@@ -221,6 +221,113 @@ def log_setup_outputs(
     return target
 
 
+def _capacity_skip_row(
+    skip: Any, *, signal_date: str, logged_at: str
+) -> dict | None:
+    """duck-type CapacitySkip → 结构化行; 无 ticker 的行拒绝为 None。"""
+    ticker = getattr(skip, "ticker", None)
+    if not ticker:
+        return None
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "signal_date": signal_date,
+        "ticker": str(ticker),
+        "reason": str(getattr(skip, "reason", "") or "unknown"),
+        "industry": str(getattr(skip, "industry", "") or ""),
+        "detail": str(getattr(skip, "detail", "") or ""),
+        "logged_at": logged_at,
+    }
+
+
+def log_capacity_skips(
+    signal_date: date,
+    skips: Iterable[Any],
+    *,
+    out_dir: Path | str = _DEFAULT_DIR,
+) -> Path:
+    """把计划层容量拦截 (CapacitySkip) 落为当日兄弟工件 ``YYYYMMDD.capacity.jsonl``。
+
+    2026-08-27 实证: open_weight 58.86% 下 14 只 plan_eligible 全部被
+    portfolio_cap 拦截、台账零计划, 事件本身零持久痕迹 — 检测行有本模块的
+    合并守卫, 容量拦截却只存在于 service_run 内存对象, 『为什么当日信号没
+    变成交易』的历史不可重建。本工件补齐计划层的证据耐久性。
+
+    语义分流 (与主日志的 fail-closed 不同): 容量拦截是**可重推导的派生证据**
+    (渲染层每次重算), 丢失不孤儿任何计划 — 写失败由调用方 fail-open (WARNING),
+    不阻断计划创建; 主日志则是计划的存在性证据, 写失败必须阻断 (2026-08-23
+    Item 3 纪律)。重跑合并: (ticker, reason) 键晚运行覆盖, 确定性排序; 目录
+    链守卫与原子写与主日志同一实现。
+    """
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    _require_secure_directory(out)
+    compact = signal_date.strftime("%Y%m%d")
+    logged_at = datetime.now(timezone.utc).isoformat()
+
+    new_records = [
+        row
+        for row in (
+            _capacity_skip_row(s, signal_date=compact, logged_at=logged_at)
+            for s in skips
+        )
+        if row is not None
+    ]
+    target = out / f"{compact}.capacity.jsonl"
+    existing = _load_existing_records(target)
+    merged: dict[tuple[str, str], dict] = {}
+    for record in existing:
+        key = (str(record.get("ticker", "")), str(record.get("reason", "")))
+        merged[key] = record
+    for record in new_records:  # 晚运行覆盖同键
+        key = (record["ticker"], record["reason"])
+        merged[key] = record
+    records = [merged[k] for k in sorted(merged)]
+
+    payload = "\n".join(
+        json.dumps(rec, ensure_ascii=False, allow_nan=False, sort_keys=True) for rec in records
+    )
+    if payload:
+        payload += "\n"
+
+    fd, tmp = tempfile.mkstemp(dir=str(out), prefix=f".{compact}_capacity_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return target
+
+
+def load_capacity_skips(
+    signal_date: date,
+    *,
+    out_dir: Path | str = _DEFAULT_DIR,
+) -> list[dict]:
+    """只读回读当日容量拦截行; 文件缺失/损坏行跳过, 绝不抛 (advisory 消费面)。"""
+    compact = signal_date.strftime("%Y%m%d")
+    target = Path(out_dir) / f"{compact}.capacity.jsonl"
+    if not target.exists():
+        return []
+    rows: list[dict] = []
+    for line in read_regular_bytes(target, max_bytes=_MAX_LOG_FILE_BYTES).decode("utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # 半截行不致命 — 派生证据的消费面宁缺毋抛
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
 def audit_signal_log_coverage(
     sessions: Iterable[str],
     *,

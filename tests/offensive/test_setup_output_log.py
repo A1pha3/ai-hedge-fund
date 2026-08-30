@@ -305,3 +305,116 @@ def test_log_directory_chain_rejects_symlink(tmp_path):
 def _read_log(out_dir, compact: str) -> list[dict]:
     path = out_dir / f"{compact}.jsonl"
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+# ---- R79 Op3: 容量拦截持久证据 (计划层『为什么没变成交易』的历史可重建性) ----
+
+
+class _Skip:
+    """duck-type CapacitySkip (ticker/reason/industry/detail)。"""
+
+    def __init__(self, ticker: str, reason: str, industry: str, detail: str):
+        self.ticker = ticker
+        self.reason = reason
+        self.industry = industry
+        self.detail = detail
+
+
+def test_log_capacity_skips_writes_structured_rows(tmp_path):
+    from src.screening.offensive.setup_output_log import (
+        log_capacity_skips,
+        load_capacity_skips,
+    )
+
+    skips = [
+        _Skip("002396", "portfolio_cap", "电力", "组合敞口 59% + 本票 8% > 60% 上限"),
+        _Skip("688790", "portfolio_cap", "半导体", "组合敞口 59% + 本票 5% > 60% 上限"),
+    ]
+    log_capacity_skips(date(2026, 8, 27), skips, out_dir=tmp_path)
+    path = tmp_path / "20260827.capacity.jsonl"
+    assert path.exists()
+    rows = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    assert len(rows) == 2
+    assert rows[0]["schema_version"] == 1
+    assert rows[0]["signal_date"] == "20260827"
+    assert {r["ticker"] for r in rows} == {"002396", "688790"}
+    assert all(r["reason"] == "portfolio_cap" for r in rows)
+    assert "detail" in rows[0] and "logged_at" in rows[0]
+    # 只读回读
+    loaded = load_capacity_skips(date(2026, 8, 27), out_dir=tmp_path)
+    assert len(loaded) == 2
+
+
+def test_log_capacity_skips_rerun_merge_same_key_overrides(tmp_path):
+    """重跑合并: 同 (ticker, reason) 晚运行覆盖 detail, 异 reason 共存。"""
+    from src.screening.offensive.setup_output_log import (
+        log_capacity_skips,
+        load_capacity_skips,
+    )
+
+    log_capacity_skips(
+        date(2026, 8, 27), [_Skip("002396", "portfolio_cap", "电力", "d1")],
+        out_dir=tmp_path,
+    )
+    log_capacity_skips(
+        date(2026, 8, 27),
+        [_Skip("002396", "portfolio_cap", "电力", "d2-later-run"),
+         _Skip("600108", "industry_concentration", "电力", "行业已 2 仓")],
+        out_dir=tmp_path,
+    )
+    loaded = load_capacity_skips(date(2026, 8, 27), out_dir=tmp_path)
+    by_key = {(r["ticker"], r["reason"]): r for r in loaded}
+    assert len(loaded) == 2  # 同键覆盖, 不重复
+    assert by_key[("002396", "portfolio_cap")]["detail"] == "d2-later-run"
+    assert ("600108", "industry_concentration") in by_key
+
+
+def test_load_capacity_skips_missing_file_returns_empty(tmp_path):
+    from src.screening.offensive.setup_output_log import load_capacity_skips
+
+    assert load_capacity_skips(date(2026, 8, 28), out_dir=tmp_path) == []
+
+
+def test_capacity_file_breaks_no_coverage_audit(tmp_path):
+    """audit_signal_log_coverage 对 .capacity.jsonl 兄弟文件无假缺失/假会话。"""
+    from src.screening.offensive.setup_output_log import (
+        audit_signal_log_coverage,
+        log_capacity_skips,
+        log_setup_outputs,
+    )
+
+    calendar = tmp_path / "trade_calendar.json"
+    calendar.write_text(json.dumps({"sessions": ["20260827"]}))
+    log_setup_outputs(
+        date(2026, 8, 27), [], [], regime="normal", out_dir=tmp_path
+    )
+    log_capacity_skips(
+        date(2026, 8, 27), [_Skip("002396", "portfolio_cap", "电力", "d")],
+        out_dir=tmp_path,
+    )
+    gaps = audit_signal_log_coverage(
+        ["20260827"], before="20260828", log_dir=tmp_path
+    )
+    assert gaps == []  # 兄弟文件不产生假缺失
+
+
+def test_capacity_skips_symlink_dir_rejected(tmp_path):
+    """目录链守卫复用: symlink 目录 fail-closed (镜像主日志纪律)。"""
+    import os
+    from src.screening.offensive.setup_output_log import (
+        SetupOutputLogError,
+        log_capacity_skips,
+    )
+
+    real = tmp_path / "real"
+    real.mkdir()
+    linked = tmp_path / "linked_logs"
+    os.symlink(real, linked)
+    try:
+        log_capacity_skips(
+            date(2026, 8, 20), [_Skip("300009", "portfolio_cap", "x", "d")],
+            out_dir=linked,
+        )
+    except SetupOutputLogError:
+        return
+    raise AssertionError("symlinked log dir must be rejected before write")

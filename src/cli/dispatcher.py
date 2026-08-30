@@ -1271,6 +1271,24 @@ def _resolve_daily_action(
                     scan,
                     new_entry_block=snapshot_block_reason,
                 )
+        # 容量拦截持久证据 (R79; 2026-08-27 实证 14 只 eligible 全被敞口帽拦截
+        # 后零痕迹): 检测行有 setup_output_log 守卫, 容量拦截却是只存在于
+        # service_run 的内存对象 — 『为什么当日信号没变成交易』的历史不可重建。
+        # 语义分流: 容量拦截是可重推导的派生证据, 写失败 fail-open (WARNING)
+        # 不阻断计划创建 — 与主日志的存在性证据 fail-closed (Item 3) 不同。
+        try:
+            from src.screening.offensive.setup_output_log import log_capacity_skips
+
+            capacity_skips = tuple(
+                getattr(getattr(v2_run, "service_run", None), "capacity_skipped", ()) or ()
+            )
+            if capacity_skips:
+                log_capacity_skips(signal_date, capacity_skips)
+        except Exception:
+            logger.warning(
+                "daily-action capacity skip log failed (advisory, 不阻断)",
+                exc_info=True,
+            )
         # 信号覆盖断层哨点 (2026-08-17 BUG-1; 2026-08-18 审查项 2 接入 v2 路径):
         # 此前只挂在 legacy generate_daily_action — 生产 --daily-action 走本函数
         # (scan_from_verified_snapshot + DailyActionService), 哨点从不执行, 华正
