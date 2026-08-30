@@ -218,5 +218,36 @@ def test_factor_csv_duplicate_keys_fail_closed(court_csv: Path, tmp_path: Path) 
     assert ei.value.code == "factor_csv_duplicate_keys"
 
 
+def test_render_md_empty_bucket_discloses_dash() -> None:
+    """空桶 (n=0 → expectancy/winrate=None) 渲染 'E=—' 不裸崩 (R71 Op2)。
+
+    真实可达: 覆盖率/可用行门均过但全部可用日 n=5 → 桶 1 恒空。
+    payload 级直测 — 不经 evaluate 管道也必须守住同一渲染契约。
+    """
+    from factor_factory_eval import render_md
+    payload = {
+        "factor": "thin", "registry": {
+            "unique_candidate_ordinal": 1, "run_count": 1, "first_seen": True},
+        "rows": {"usable_rows": 15, "court_rows": 15, "coverage": 1.0,
+                 "signal_days": 3},
+        "overall_t10_net": {"expectancy": 0.01, "winrate": 0.5, "payoff": None,
+                            "cluster_ci_low_90": None, "n": 15},
+        "daily_ic": {"ic_mean": None, "ic_ci_low_90": None, "ic_days": 0},
+        "buckets_t10_net": {
+            "buckets": {
+                "1": {"n": 0, "winrate": None, "expectancy": None},
+                "2": {"n": 5, "winrate": 0.4, "expectancy": -0.01},
+            },
+            "bucket_monotonicity_spearman": None,
+            "top_minus_bottom_spread_t10": None,  # Q5 空时 spread 同为 None
+        },
+        "decay_spread": {}, "regime_spread": {},
+    }
+    md = render_md(payload)
+    assert "Q1: E=— 胜率=— n=0" in md
+    assert "top−bottom spread T+10: —" in md
+    assert "Q2: E=-0.0100 胜率=0.4000 n=5" in md
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

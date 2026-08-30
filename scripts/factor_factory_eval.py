@@ -293,11 +293,17 @@ def render_md(payload: dict) -> str:
         L.append(f"日度 IC: mean={ic['ic_mean']:.4f}"
                  f" CI90low={ic['ic_ci_low_90']:.4f} ({ic['ic_days']} 日)")
     b = payload["buckets_t10_net"]
-    L.append(f"桶单调性 (Spearman): {b['bucket_monotonicity_spearman']}"
-             f" · top−bottom spread T+10: {b['top_minus_bottom_spread_t10']:.4f}")
+    mono = b["bucket_monotonicity_spearman"]
+    spread = b["top_minus_bottom_spread_t10"]
+    spread_s = f"{spread:.4f}" if spread is not None else "—"
+    L.append(f"桶单调性 (Spearman): {mono if mono is not None else '—'}"
+             f" · top−bottom spread T+10: {spread_s}")
     for k, v in b["buckets"].items():
-        e = v["expectancy"]
-        L.append(f"  Q{k}: E={e:.4f} 胜率={v['winrate']:.4f} n={v['n']}")
+        e, w = v["expectancy"], v["winrate"]
+        if e is None:
+            L.append(f"  Q{k}: E=— 胜率=— n={v['n']}")
+        else:
+            L.append(f"  Q{k}: E={e:.4f} 胜率={w:.4f} n={v['n']}")
     for h, d in payload.get("decay_spread", {}).items():
         L.append(f"  衰减 {h}: spread={d['spread']:.4f} (top={d['top_e']:.4f}"
                  f" bottom={d['bottom_e']:.4f})")
