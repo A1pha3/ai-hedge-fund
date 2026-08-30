@@ -49,6 +49,9 @@ N_BOOT = 10_000
 BOOT_SEED = 20260822  # 每次调用新建 seeded RNG — 可复现与进程历史/行序无关 (R13)
 PRIMARY_HORIZON = 10  # BTST 固定合约
 CONTRAST_HORIZONS = (5,)
+# 预注册阈值触发器判定门槛 (AGENTS.md 项1; R10/R77 判定纪律同款)
+THRESHOLD_TRIGGER_MIN_N = MIN_CELL_N
+THRESHOLD_TRIGGER_ANCHOR = "production_aligned/t10"
 
 STRENGTH_BUCKETS: tuple[tuple[float, str], ...] = (
     (0.50, "0.50-0.60"),
@@ -269,6 +272,94 @@ def _fmt(v: object, pct: bool = True) -> str:
     return f"{x:+.2%}" if pct else f"{x:.2f}"
 
 
+def threshold_trigger_status(
+    rows: list[dict[str, object]],
+    *,
+    min_n: int = THRESHOLD_TRIGGER_MIN_N,
+) -> dict[str, object]:
+    """预注册阈值上调触发器的机械判定面 (AGENTS.md 项1, R77 Op3 判定表自动化)。
+
+    锚定 production_aligned / T+10 (固定合约口径) 分组行, 恒等复现 R77 Op3
+    的人工判定:
+
+      条件①  strength=≥0.70     n≥min_n 且净口径聚类 CI90 下界 > 0
+      条件②  strength=0.50-0.60  n≥min_n 且净期望 < 0
+
+    合取 (①且②) 点亮 = 具备启动阈值上调正式评估的资格 (owner 决策 +
+    预注册; 本工具只判定不提案)。n<min_n / 桶行缺失 / 统计缺失 = 未判定 =
+    恒不点亮 (保守: 未知不驱动参数变更)。『稳定越零』是跨刷新性质 —
+    单次刷新只报告本次状态, 稳定性由连续多次刷新的逐次记录累积。
+    """
+    by_group = {str(r.get("group")): r for r in rows}
+
+    def _condition(group: str, *, stat_key: str, lit_when) -> dict[str, object]:
+        row = by_group.get(group)
+        if row is None:
+            return {"lit": False, "judged": False, "n": None, "stat": None,
+                    "reason": f"桶行缺失 ({group}) — 未判定, 恒不点亮"}
+        n = row.get("n")
+        stat = row.get(stat_key)
+        if not isinstance(n, int) or n < min_n:
+            return {"lit": False, "judged": False, "n": n, "stat": stat,
+                    "reason": f"n={n} < {min_n} — 只披露不判定 (R10)"}
+        if not isinstance(stat, (int, float)) or isinstance(stat, bool):
+            return {"lit": False, "judged": False, "n": n, "stat": stat,
+                    "reason": f"{stat_key} 缺失 (样本不足) — 未判定, 恒不点亮"}
+        lit = lit_when(float(stat))
+        return {
+            "lit": lit,
+            "judged": True,
+            "n": n,
+            "stat": stat,
+            "reason": (
+                f"{stat_key}={stat:+.4f} — {'点亮' if lit else '未点亮'}"
+            ),
+        }
+
+    c1 = _condition(
+        "strength=≥0.70", stat_key="cluster_ci_low_90", lit_when=lambda ci: ci > 0
+    )
+    c2 = _condition(
+        "strength=0.50-0.60", stat_key="expectancy", lit_when=lambda e: e < 0
+    )
+    armed = bool(c1["lit"]) and bool(c2["lit"])
+    if armed:
+        verdict = "合取点亮 — 满足启动阈值上调正式评估的资格 (owner 决策 + 预注册; 本工具不提案)"
+    elif c1["lit"]:
+        verdict = "条件①点亮, 条件②未点亮 — 合取不成立, 阈值 0.50 维持 (条件②正是防止砍掉正期望桶)"
+    elif c2["lit"]:
+        verdict = "条件②点亮, 条件①未点亮 — 合取不成立, 阈值 0.50 维持"
+    else:
+        verdict = "两条件均未点亮 — 阈值 0.50 维持"
+    return {
+        "rule": (
+            "预注册触发器 (AGENTS.md 项1): ①≥0.70 桶净口径 CI90 下界>0 且 "
+            "②0.50-0.60 桶净期望<0 (均需 n≥min_n) — 合取点亮才启动阈值上调"
+            "正式评估; 稳定性由连续多次刷新的逐次记录累积, 单次刷新只报告本次状态"
+        ),
+        "anchor": THRESHOLD_TRIGGER_ANCHOR,
+        "min_n": min_n,
+        "condition_1_strong_bucket_ci_above_zero": c1,
+        "condition_2_mid_bucket_expectancy_negative": c2,
+        "conjunction_armed": armed,
+        "verdict": verdict,
+    }
+
+
+def attach_threshold_trigger(
+    payload: dict[str, object],
+    *,
+    min_n: int = THRESHOLD_TRIGGER_MIN_N,
+) -> dict[str, object]:
+    """把触发器判定挂到 payload (production_aligned 缺席时 no-op)。"""
+    aligned = (payload.get("universes") or {}).get("production_aligned")
+    if not aligned:
+        return payload
+    rows = aligned["horizons"].get("t10", [])  # type: ignore[union-attr]
+    payload["threshold_trigger"] = threshold_trigger_status(rows, min_n=min_n)
+    return payload
+
+
 def render_md(payload: dict[str, object], date_str: str) -> str:
     L: list[str] = []
     L.append(f"# court 全候选胜率×赔率分解 ({date_str})")
@@ -306,6 +397,28 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
                 L.append(f"  E 偏离 {e_dev_pp:.2f}pp / 胜率偏离 {w_dev_pp:+.2f}pp — {status}。")
             except ImportError:
                 L.append("- 先验对齐披露不可用 (known_distributions 导入失败)。")
+    trigger = payload.get("threshold_trigger")
+    if isinstance(trigger, dict):
+        c1 = trigger["condition_1_strong_bucket_ci_above_zero"]
+        c2 = trigger["condition_2_mid_bucket_expectancy_negative"]
+
+        def _cond_line(label: str, cond: dict) -> str:
+            stat = cond.get("stat")
+            n = cond.get("n")
+            stat_txt = _fmt(stat) if isinstance(stat, (int, float)) else "—"
+            n_txt = str(n) if isinstance(n, int) else "—"
+            state = "点亮" if cond.get("lit") else (
+                "未判定" if not cond.get("judged") else "未点亮"
+            )
+            return f"- {label}: **{state}** ({stat_txt}, n={n_txt})"
+
+        L.append("### 阈值触发器状态 (预注册, 只判定不提案)")
+        L.append("")
+        L.append(_cond_line("条件① ≥0.70 桶净口径 CI90 下界>0", c1))
+        L.append(_cond_line("条件② 0.50-0.60 桶净期望<0", c2))
+        L.append(f"- **合取: {'点亮' if trigger.get('conjunction_armed') else '未点亮'}** — {trigger.get('verdict')}")
+        L.append(f"  (锚 {trigger.get('anchor')}; 『稳定越零』由连续多次刷新逐次记录累积)")
+        L.append("")
     L.append("## 纪律")
     L.append("")
     L.append("- 本报告是诊断证据, 不是参数变更提案; 任何阈值/先验/仓位调整 =")
@@ -368,6 +481,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"court 事件表缺失: {court_table}")
     ev = pd.read_csv(court_table)
     payload = decompose(ev, universes=tuple(args.universes))
+    attach_threshold_trigger(payload)
     payload["court_rows"] = len(ev)
     payload["court_sessions"] = int(ev["signal_date"].nunique())
     report_dir.mkdir(parents=True, exist_ok=True)

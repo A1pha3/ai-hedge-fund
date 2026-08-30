@@ -15,9 +15,12 @@ import pytest
 
 from scripts.winrate_payoff_decomposition import (
     MIN_CELL_N,
+    THRESHOLD_TRIGGER_MIN_N,
     attribution,
+    attach_threshold_trigger,
     net_returns,
     strength_bucket,
+    threshold_trigger_status,
     win_loss_stats,
 )
 
@@ -238,6 +241,150 @@ class TestProductionAlignedUniverse:
         all_n = payload["universes"]["all_candidates"]["horizons"]["t10"][0]["n"]
         aligned_n = payload["universes"]["production_aligned"]["horizons"]["t10"][0]["n"]
         assert all_n == 12 and aligned_n == 10
+
+
+class TestThresholdTriggerStatus:
+    """预注册阈值触发器机械判定面 (AGENTS.md 项1; R77 Op3 判定表自动化)。
+
+    锚定 production_aligned/T+10 分组行:
+      条件① strength=≥0.70     n≥min_n 且净口径聚类 CI90 下界 > 0
+      条件② strength=0.50-0.60  n≥min_n 且净期望 < 0
+    合取点亮才进入阈值上调正式评估资格; n<min_n / 桶行缺失 / 统计缺失 =
+    未判定 = 恒不点亮 (保守: 未知不驱动参数变更)。
+    """
+
+    @staticmethod
+    def _row(group, n, expectancy=None, ci=None, winrate=None):
+        return {
+            "group": group, "n": n, "wins": 0, "winrate": winrate,
+            "avg_win": None, "avg_loss": None, "payoff": None,
+            "expectancy": expectancy, "cluster_ci_low_90": ci,
+            "attribution_vs_all": None,
+        }
+
+    def _rows(self, strong=None, mid=None):
+        rows = []
+        if strong is not None:
+            rows.append(self._row("strength=≥0.70", **strong))
+        if mid is not None:
+            rows.append(self._row("strength=0.50-0.60", **mid))
+        return rows
+
+    def test_min_n_constant_matches_discipline(self):
+        assert THRESHOLD_TRIGGER_MIN_N == 30  # R10/R77 判定纪律
+
+    def test_conjunction_armed_when_both_lit(self):
+        status = threshold_trigger_status(self._rows(
+            strong=dict(n=315, expectancy=0.0201, ci=0.0023),
+            mid=dict(n=303, expectancy=-0.0097, ci=-0.018),
+        ))
+        assert status["condition_1_strong_bucket_ci_above_zero"]["lit"] is True
+        assert status["condition_2_mid_bucket_expectancy_negative"]["lit"] is True
+        assert status["conjunction_armed"] is True
+        assert "正式评估" in status["verdict"]
+
+    def test_condition1_only(self):
+        status = threshold_trigger_status(self._rows(
+            strong=dict(n=315, expectancy=0.0201, ci=0.0023),
+            mid=dict(n=303, expectancy=0.0097, ci=-0.018),
+        ))
+        assert status["condition_1_strong_bucket_ci_above_zero"]["lit"] is True
+        assert status["condition_2_mid_bucket_expectancy_negative"]["lit"] is False
+        assert status["conjunction_armed"] is False
+        assert "维持" in status["verdict"]
+
+    def test_condition2_only(self):
+        status = threshold_trigger_status(self._rows(
+            strong=dict(n=315, expectancy=0.0201, ci=-0.001),
+            mid=dict(n=303, expectancy=-0.0097, ci=-0.018),
+        ))
+        assert status["condition_1_strong_bucket_ci_above_zero"]["lit"] is False
+        assert status["condition_2_mid_bucket_expectancy_negative"]["lit"] is True
+        assert status["conjunction_armed"] is False
+
+    def test_condition1_strictly_above_zero(self):
+        """CI90 下界恰为 0 不算越零 (严格 >)。"""
+        status = threshold_trigger_status(self._rows(
+            strong=dict(n=315, expectancy=0.02, ci=0.0)))
+        assert status["condition_1_strong_bucket_ci_above_zero"]["lit"] is False
+
+    def test_condition2_strictly_negative(self):
+        """期望恰为 0 不算转负 (严格 <)。"""
+        status = threshold_trigger_status(self._rows(
+            mid=dict(n=303, expectancy=0.0, ci=-0.018)))
+        assert status["condition_2_mid_bucket_expectancy_negative"]["lit"] is False
+
+    def test_missing_ci_not_judged_never_lit(self):
+        status = threshold_trigger_status(self._rows(
+            strong=dict(n=315, expectancy=0.02, ci=None)))
+        c1 = status["condition_1_strong_bucket_ci_above_zero"]
+        assert c1["judged"] is False
+        assert c1["lit"] is False
+
+    def test_small_n_not_judged_never_lit(self):
+        """n<min_n 只披露不判定 (R10): 即使点估计越界也恒不点亮。"""
+        status = threshold_trigger_status(self._rows(
+            strong=dict(n=29, expectancy=0.02, ci=0.05),
+            mid=dict(n=10, expectancy=-0.09, ci=-0.2),
+        ))
+        assert status["condition_1_strong_bucket_ci_above_zero"]["judged"] is False
+        assert status["condition_1_strong_bucket_ci_above_zero"]["lit"] is False
+        assert status["condition_2_mid_bucket_expectancy_negative"]["judged"] is False
+        assert status["condition_2_mid_bucket_expectancy_negative"]["lit"] is False
+        assert status["conjunction_armed"] is False
+
+    def test_missing_bucket_row_not_lit(self):
+        status = threshold_trigger_status(self._rows(mid=dict(n=303, expectancy=-0.01)))
+        c1 = status["condition_1_strong_bucket_ci_above_zero"]
+        assert c1["judged"] is False and c1["lit"] is False
+        assert "缺失" in c1["reason"]
+
+    def test_custom_min_n_respected(self):
+        status = threshold_trigger_status(
+            self._rows(
+                strong=dict(n=6, expectancy=0.02, ci=0.01),
+                mid=dict(n=6, expectancy=-0.01, ci=-0.02),
+            ),
+            min_n=5,
+        )
+        assert status["conjunction_armed"] is True
+
+    def test_pure_and_deterministic(self):
+        rows = self._rows(
+            strong=dict(n=315, expectancy=0.0201, ci=0.0023),
+            mid=dict(n=303, expectancy=0.0097, ci=-0.018),
+        )
+        assert threshold_trigger_status(rows) == threshold_trigger_status(rows)
+        # 输入行不被修改 (纯函数)
+        assert rows[0]["n"] == 315
+
+    def test_attach_noop_without_aligned_universe(self):
+        payload = {"universes": {"all_candidates": {"horizons": {"t10": []}}}}
+        out = attach_threshold_trigger(payload)
+        assert "threshold_trigger" not in out
+
+    def test_attach_and_render_integration(self):
+        from scripts.winrate_payoff_decomposition import render_md
+        rows = [
+            self._row("ALL", 1500, expectancy=0.0055, ci=-0.0128, winrate=0.4633),
+            self._row("strength=<0.50", 477, expectancy=-0.0153, ci=-0.0403),
+            self._row("strength=0.50-0.60", 303, expectancy=0.0097, ci=-0.018),
+            self._row("strength=0.60-0.70", 405, expectancy=0.0154, ci=0.0007),
+            self._row("strength=≥0.70", 315, expectancy=0.0201, ci=0.0023),
+        ]
+        payload = {"universes": {"production_aligned": {"horizons": {"t10": rows}}}}
+        attach_threshold_trigger(payload)
+        assert "threshold_trigger" in payload
+        md = render_md(payload, "20260831")
+        assert "阈值触发器状态" in md
+        assert "条件①" in md and "条件②" in md
+        assert "合取" in md
+
+    def test_render_without_trigger_unchanged(self):
+        from scripts.winrate_payoff_decomposition import render_md
+        payload = {"universes": {"all_candidates": {"horizons": {"t10": []}}}}
+        md = render_md(payload, "20260831")
+        assert "阈值触发器状态" not in md
 
 
 class TestDeterministicAcrossCalls:
