@@ -34,6 +34,7 @@ if str(_SCRIPTS) not in sys.path:
 
 from winrate_payoff_decomposition import production_aligned  # noqa: E402
 from _btst_court_common import (  # noqa: E402
+    load_manifest_mapping,
     load_regime_history,
     regime_drift_status,
 )
@@ -85,11 +86,10 @@ def bench_status(*, factory_registry: Path, triage_registry: Path,
     manifest_path = court_manifest or (court_path.parent / "manifest_v1.json")
     regime_drift: dict = {"checked": False, "drift": False, "changed_sessions": []}
     if manifest_path.is_file():
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise BenchStatusError("court_manifest_corrupt",
-                                   {"path": str(manifest_path), "error": str(exc)}) from exc
+        manifest = load_manifest_mapping(manifest_path)
+        if manifest is None:
+            # 损坏 JSON 与合法 JSON 非 dict 形状同入 typed — 读取绝不裸崩 (R73 Op3)
+            raise BenchStatusError("court_manifest_corrupt", {"path": str(manifest_path)})
         history = (regime_history if regime_history is not None
                    else load_regime_history())
         regime_drift = regime_drift_status(manifest, history)

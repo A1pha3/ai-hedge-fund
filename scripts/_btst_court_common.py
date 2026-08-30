@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -69,6 +70,60 @@ def load_sessions(start: str, end: str) -> list[str]:
 def load_regime_history() -> dict[str, str]:
     payload = json.loads(_REGIME_PATH.read_text(encoding="utf-8"))
     return {str(k).replace("-", "")[:8]: str(v) for k, v in payload.items()}
+
+
+# ---- regime 输入指纹与漂移检测 (R73; 构建与消费面共用此单一实现) ----
+
+
+def regime_window_labels(
+    regime: dict[str, str], sessions: list[str]
+) -> dict[str, str]:
+    """构建窗内实际消费的 {session: label} (缺标签会话不出现 — 与构建器剔除语义一致)."""
+    return {s: regime[s] for s in sessions if s in regime}
+
+
+def regime_window_fingerprint(window: dict[str, str]) -> str:
+    """canonical hash (排序键 JSON, 分隔符固定): 同窗同标签恒同指纹,
+    任一标签修订即变 — manifest 钉住的是「本次构建消费了什么」。"""
+    canonical = json.dumps(window, sort_keys=True, ensure_ascii=True,
+                           separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def regime_drift_status(
+    manifest: dict, regime_history: dict[str, str]
+) -> dict:
+    """manifest 钉住的 regime_window vs 当前 regime_history → 漂移判定.
+
+    manifest 无 regime_window (旧构建) → checked=False (如实未知, 不假报漂移);
+    任一会话标签修订或缺失 → drift=True 附逐会话 changed 清单.
+    """
+    window = manifest.get("regime_window")
+    if not isinstance(window, dict) or not window:
+        return {"checked": False, "drift": False, "changed_sessions": []}
+    changed = []
+    for session in sorted(window):
+        pinned = window[session]
+        current = regime_history.get(session)
+        if current != pinned:
+            changed.append({"session": session, "manifest": pinned,
+                            "current": current})
+    return {"checked": True, "drift": bool(changed), "changed_sessions": changed}
+
+
+def load_manifest_mapping(path: Path) -> dict | None:
+    """读 manifest JSON → dict; 缺失/损坏/非 dict 形状 → None.
+
+    单一实现 (R73 Op3): freshness (降级披露) 与 bench (typed 拒绝) 共用读取
+    与形状校验, 失败处置语义由调用方决定 — 读取本身绝不裸崩。
+    """
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # ValueError 覆盖 JSONDecodeError
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def forward_open_returns(

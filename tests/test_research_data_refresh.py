@@ -320,3 +320,20 @@ def test_freshness_court_regime_drift_disclosed(tmp_path: Path) -> None:
     assert court_row["regime_drift"]["drift"] is True
     assert court_row["regime_drift"]["changed_sessions"] == [
         {"session": "20260105", "manifest": "crisis", "current": "normal"}]
+
+
+# ---- R73 Op3: freshness 对损坏 manifest 降级不崩 (仪表可用性) ----
+
+def test_freshness_court_corrupt_manifest_degrades_loud(tmp_path: Path, caplog) -> None:
+    """manifest 损坏 JSON → 仪表正常输出, court 行 checked=False + WARNING (不裸崩)。"""
+    import logging
+
+    cal = _build_world(tmp_path, with_lhb=True)
+    manifest = (tmp_path / "data/research/btst_court/event_tables/manifest_v1.json")
+    manifest.write_text("{not json", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        report = check_freshness(repo_root=tmp_path, calendar_path=cal, today="20260106")
+    court_row = [r for r in report["datasets"] if r["dataset"] == "court"][0]
+    assert court_row["regime_drift"] == {"checked": False, "drift": False,
+                                         "changed_sessions": []}
+    assert any("manifest" in r.message for r in caplog.records)

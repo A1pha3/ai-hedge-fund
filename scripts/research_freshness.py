@@ -29,15 +29,23 @@ from pathlib import Path
 
 import pandas as pd
 
+import logging
+
 from fetch_lhb_daily import LhbFetchError, expected_session, load_calendar_sessions
 
 _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from _btst_court_common import load_regime_history, regime_drift_status  # noqa: E402
+from _btst_court_common import (  # noqa: E402
+    load_manifest_mapping,
+    load_regime_history,
+    regime_drift_status,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+logger = logging.getLogger(__name__)
 
 # (名称, 相对 repo-root 路径, 语义) — session: 逐会话文件名精确; bulk: 目录 mtime 日期;
 # court: 事件表内 max signal_date (R72; 容差见 COURT_LAG_TOLERANCE)
@@ -130,14 +138,20 @@ def check_freshness(
             # R73: court 重建消费的 regime 输入 vs 当前 regime_history —
             # 历史标签修订会静默改变评估宇宙; 漂移必须响亮而非沉默.
             manifest_path = path.parent / "manifest_v1.json"
-            if manifest_path.is_file():
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest = load_manifest_mapping(manifest_path)
+            if manifest is None:
+                # 损坏/形状非法 → 降级为如实未知 + 响亮日志, 仪表绝不裸崩 (R73 Op3;
+                # 镜像 _latest_court_signal 的降级纪律)
+                logger.warning(
+                    "freshness: court manifest 不可读或形状非法 (%s), regime 漂移状态未知",
+                    manifest_path,
+                )
+                row["regime_drift"] = {"checked": False, "drift": False,
+                                       "changed_sessions": []}
+            else:
                 history = (regime_history if regime_history is not None
                            else load_regime_history())
                 row["regime_drift"] = regime_drift_status(manifest, history)
-            else:
-                row["regime_drift"] = {"checked": False, "drift": False,
-                                       "changed_sessions": []}
         rows.append(row)
     return {"today": today, "expected_session": expected, "datasets": rows}
 

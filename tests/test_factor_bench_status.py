@@ -260,3 +260,18 @@ def test_regime_drift_corrupt_manifest_typed(tmp_path: Path) -> None:
         bench_status(factory_registry=factory, triage_registry=triage,
                      court_path=court, court_manifest=manifest)
     assert exc.value.code == "court_manifest_corrupt"
+
+
+# ---- R73 Op3: manifest 形状鲁棒性 (损坏 JSON 与非 dict 形状都 typed) ----
+
+def test_regime_drift_manifest_non_dict_shape_typed(tmp_path: Path) -> None:
+    """合法 JSON 但非 dict (如 list) → court_manifest_corrupt, 不允许 AttributeError。"""
+    factory, triage = _court_factory_registry(tmp_path)
+    _write_registry(triage, [_triage_row("f", "deferred", 56, aligned_rows=100)])
+    court = _court_path(tmp_path, 100)
+    manifest = tmp_path / "manifest_v1.json"
+    manifest.write_text(json.dumps(["not", "a", "dict"]), encoding="utf-8")
+    with pytest.raises(BenchStatusError) as exc:
+        bench_status(factory_registry=factory, triage_registry=triage,
+                     court_path=court, court_manifest=manifest)
+    assert exc.value.code == "court_manifest_corrupt"
