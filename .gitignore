@@ -31,6 +31,7 @@ data/snapshots
 data/price_cache
 data/fund_flow_cache
 data/industry_index_cache
+data/lhb_cache/
 
 # Python
 __pycache__/
