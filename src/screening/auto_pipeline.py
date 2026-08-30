@@ -1064,8 +1064,30 @@ def _daily_readiness_publication_payload(publication: object) -> dict[str, Any]:
         "failed_count": sum(
             item.evidence_status != "verified" for item in readiness_values
         ),
+        # R78 Op3: 构成与 failed_count 同源 (票级 evidence_status), 键 = 该票全部
+        # capability block_reasons 的排序元组串 — 0828 实证形态
+        # 'setup_disabled_by_default,st_stock'=65 / ',suspended'=3, 合计恰=failed。
+        # 消费层 (auto_briefing) 优先用它, 使「构成合计 == 失败数」按构造成立,
+        # 不再依赖 refresh outcome 口径 (那里只记停牌, ST 失败无名)。
+        "failure_composition": _readiness_failure_composition(readiness_values),
         "block_reasons": [],
     }
+
+
+def _readiness_failure_composition(readiness_values: tuple[Any, ...]) -> dict[str, int]:
+    """失败构成 (与 failed_count 同源): 每个非 verified 票按其 block_reasons 计一。"""
+    composition: dict[str, int] = {}
+    for item in readiness_values:
+        if item.evidence_status == "verified":
+            continue
+        reasons: set[str] = set()
+        for capability in item.capabilities.values():
+            for reason in getattr(capability, "block_reasons", None) or ():
+                if reason:
+                    reasons.add(str(reason))
+        key = ",".join(sorted(reasons)) or "(无原因)"
+        composition[key] = composition.get(key, 0) + 1
+    return composition
 
 
 def _publish_failure_attempt(

@@ -306,10 +306,22 @@ def _health_facts(report_payload: Mapping[str, Any] | None) -> dict:
 
     universe = _count("universe_count")
     failed = _count("failed_count")
-    composition = refresh.get("failure_composition") or {}
-    composition = {
-        str(k): int(v) for k, v in composition.items() if isinstance(v, int) and v > 0
-    }
+
+    def _sanitize_composition(raw: Any) -> dict[str, int]:
+        return {
+            str(k): int(v) for k, v in (raw or {}).items()
+            if isinstance(v, int) and v > 0
+        }
+
+    # R78 Op3: 优先 readiness 构成 (与 failed_count 同源 → 合计按构造相等,
+    # 65 ST + 3 停牌 全部有名); 缺省时回落 refresh outcome 口径并保留 F2 标注。
+    readiness_composition = _sanitize_composition(
+        readiness.get("failure_composition")
+    )
+    if readiness_composition:
+        composition = readiness_composition
+    else:
+        composition = _sanitize_composition(refresh.get("failure_composition"))
     raw_reasons = tuple(
         str(reason) for reason in readiness.get("block_reasons", ()) if reason
     )

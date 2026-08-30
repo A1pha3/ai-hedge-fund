@@ -679,3 +679,31 @@ def test_cli_table_legacy_fallback_without_briefing(capsys) -> None:
     out = capsys.readouterr().out
     assert "[Auto Screening] 一键全流程" in out
     assert "▲异常" not in out
+
+
+# ---------------------------------------------------------------------------
+# R78 Op3: 构成单源化 — readiness 构成与 failed_count 同源, 合计按构造闭合
+# ---------------------------------------------------------------------------
+
+def test_readiness_composition_closes_failure_total(tmp_path: Path) -> None:
+    """0828 实证形态: 65 ST + 3 停牌 = 失败 68, 构成同源闭合且 ST 有名。"""
+    readiness = _readiness(universe=1840, scannable=1772, failed=68)
+    readiness["failure_composition"] = {
+        "setup_disabled_by_default,st_stock": 65,
+        "setup_disabled_by_default,suspended": 3,
+    }
+    card = render_briefing_card(_build(tmp_path, readiness=readiness, composition={"停牌": 3}))
+    assert "失败 68/全域 1840" in card
+    breakdown_line = next(ln for ln in card.splitlines() if "构成" in ln)
+    assert "setup_disabled_by_default,st_stock 65" in breakdown_line
+    assert "setup_disabled_by_default,suspended 3" in breakdown_line
+    # 同源构成 → 合计==failed → F2 前缀退化
+    assert "刷新口径" not in breakdown_line
+
+
+def test_refresh_composition_fallback_keeps_f2_label(tmp_path: Path) -> None:
+    """readiness 构成缺省 → 回落 refresh outcome 口径, F2 标注保留 (回归)。"""
+    readiness = _readiness(universe=1840, scannable=1772, failed=68)
+    card = render_briefing_card(_build(tmp_path, readiness=readiness, composition={"停牌": 3}))
+    breakdown_line = next(ln for ln in card.splitlines() if "构成" in ln)
+    assert "构成(刷新口径 合计3)" in breakdown_line
