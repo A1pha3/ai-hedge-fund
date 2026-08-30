@@ -27,20 +27,26 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 
-from fetch_lhb_daily import LhbFetchError, expected_session
+import pandas as pd
+
+from fetch_lhb_daily import LhbFetchError, expected_session, load_calendar_sessions
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# (名称, 相对 repo-root 路径, 语义) — session: 逐会话文件名精确; bulk: 目录 mtime 日期
+# (名称, 相对 repo-root 路径, 语义) — session: 逐会话文件名精确; bulk: 目录 mtime 日期;
+# court: 事件表内 max signal_date (R72; 容差见 COURT_LAG_TOLERANCE)
 DATASETS = [
     ("bars", "data/research/btst_court/raw/daily", "session"),
     ("lhb", "data/lhb_cache", "session"),
+    ("court", "data/research/btst_court/event_tables/event_table_v1.csv.gz", "court"),
     ("price_cache", "data/price_cache", "bulk"),
     ("fund_flow_cache", "data/fund_flow_cache", "bulk"),
     ("industry_index", "data/industry_index_cache", "bulk"),
 ]
 
 SESSION_FILE_PREFIXES = {"bars": "daily_", "lhb": ""}
+# court 语义: 构建一般可达 T-1; 连续落后 >3 会话才响 (单晚失败次夜自愈不噪音)
+COURT_LAG_TOLERANCE = 3
 
 
 def _latest_session_file(directory: Path, prefix: str) -> str | None:
@@ -56,6 +62,20 @@ def _latest_session_file(directory: Path, prefix: str) -> str | None:
         if len(token) == 8 and token.isdigit():
             sessions.append(token)
     return max(sessions) if sessions else None
+
+
+def _latest_court_signal(path: Path) -> str | None:
+    """court 语义: 事件表内 max signal_date (gz 读取)。缺失/不可读 None。"""
+    if not path.is_file():
+        return None
+    try:
+        frame = pd.read_csv(path, usecols=["signal_date"])
+    except (OSError, ValueError):  # 文件缺失/损坏等数据面错误 → None (陈旧)
+        return None
+    if frame.empty:
+        return None
+    dates = frame["signal_date"].astype(str)
+    return dates.max() if len(dates) else None
 
 
 def _latest_bulk_mtime_date(directory: Path) -> str | None:
@@ -77,20 +97,27 @@ def check_freshness(
 ) -> dict:
     """返回 {datasets: [...], expected_session}。日历问题抛 LhbFetchError。"""
     expected = expected_session(calendar_path, today)
+    # court 容差锚: 期望会话回移 COURT_LAG_TOLERANCE 个会话 (单晚失败次夜自愈)
+    sessions = load_calendar_sessions(calendar_path)
+    exp_idx = sessions.index(expected)
+    court_floor = sessions[max(0, exp_idx - COURT_LAG_TOLERANCE)]
     rows = []
     for name, relpath, semantics in DATASETS:
         path = repo_root / relpath
         if name in SESSION_FILE_PREFIXES:
             latest = _latest_session_file(path, SESSION_FILE_PREFIXES[name])
+        elif semantics == "court":
+            latest = _latest_court_signal(path)
         else:
             latest = _latest_bulk_mtime_date(path)
+        floor = court_floor if semantics == "court" else expected
         rows.append({
             "dataset": name,
             "path": str(path),
             "semantics": semantics,
             "latest": latest,
             "expected": expected,
-            "stale": latest is None or latest < expected,
+            "stale": latest is None or latest < floor,
         })
     return {"today": today, "expected_session": expected, "datasets": rows}
 

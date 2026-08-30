@@ -149,6 +149,10 @@ def _build_world(repo: Path, *, with_lhb: bool) -> Path:
     if with_lhb:
         (repo / "data/lhb_cache").mkdir(parents=True)
         (repo / "data/lhb_cache/20260105.csv").write_text("trade_date,ts_code\n")
+    court_dir = repo / "data/research/btst_court/event_tables"
+    court_dir.mkdir(parents=True)
+    pd.DataFrame({"signal_date": ["20260105"]}).to_csv(
+        court_dir / "event_table_v1.csv.gz", index=False, compression="gzip")
     for bulk in ("price_cache", "fund_flow_cache", "industry_index_cache"):
         d = repo / "data" / bulk
         d.mkdir(parents=True)
@@ -157,6 +161,10 @@ def _build_world(repo: Path, *, with_lhb: bool) -> Path:
         # mtime 锚到 20260105 当日 (bulk 语义)
         stamp = time.mktime(time.strptime("20260105 19:00:00", "%Y%m%d %H:%M:%S"))
         os.utime(f, (stamp, stamp))
+    court_dir = repo / "data/research/btst_court/event_tables"
+    court_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"signal_date": ["20260105"]}).to_csv(
+        court_dir / "event_table_v1.csv.gz", index=False, compression="gzip")
     # 日历须覆盖 today 之后 (否则 expected_session 判 calendar_stale — 真实日历
     # 前向覆盖数月, 周末 today > 上一会话是常态而非过期)
     return _write_calendar(repo, CAL + ["20260107"])
@@ -168,7 +176,7 @@ def test_freshness_all_fresh_rc_zero(tmp_path: Path) -> None:
     # T-1 语义: 0106 的期望会话 = 20260105 (今日之前的最近已完成)
     assert report["expected_session"] == "20260105"
     assert all(not r["stale"] for r in report["datasets"])
-    assert len(report["datasets"]) == 5
+    assert len(report["datasets"]) == 6
 
 
 def test_freshness_missing_lhb_is_loud(tmp_path: Path) -> None:
@@ -225,6 +233,7 @@ def _run_refresh(fake_repo: Path, *extra_env: dict) -> subprocess.CompletedProce
         "V3R_BARS_FETCH": str(fake_repo / "bars_fetch_dummy"),
         "V3R_LHB_FETCH": str(fake_repo / "lhb_fetch_dummy"),
         "V3R_FRESHNESS": str(fake_repo / "freshness_dummy"),
+        "V3R_COURT_BUILD": str(fake_repo / "court_build_dummy"),
         "V3R_HISTORY": str(fake_repo / "logs" / "cron" / "research_refresh_history.jsonl"),
         "V3R_TODAY": "20260105",
     })
@@ -252,13 +261,15 @@ def test_refresh_all_stages_ok_in_order(refresh_repo: Path) -> None:
     proc = _run_refresh(refresh_repo)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     records = _history(refresh_repo)
-    assert [r["stage"] for r in records] == ["bars", "lhb", "freshness"]
+    # R72: court 重建插入为第 3 阶段 (bars→lhb→court_build→freshness)
+    assert [r["stage"] for r in records] == ["bars", "lhb", "court_build", "freshness"]
     assert all(r["rc"] == 0 for r in records)
     invocations = (refresh_repo / "stub_invocations.jsonl").read_text().splitlines()
-    assert len(invocations) == 3
+    assert len(invocations) == 4
     assert invocations[1].startswith("lhb_fetch_dummy ") or "/lhb_fetch_dummy " in invocations[1]
     assert invocations[1].endswith("--today 20260105")
-    assert "freshness_dummy" in invocations[2]
+    assert "court_build_dummy" in invocations[2]
+    assert "freshness_dummy" in invocations[3]
 
 
 def test_refresh_stage_failure_recorded_without_aborting(refresh_repo: Path) -> None:
@@ -272,7 +283,8 @@ def test_refresh_stage_failure_recorded_without_aborting(refresh_repo: Path) -> 
     lhb = next(r for r in records if r["stage"] == "lhb")
     assert lhb["rc"] == 3
     assert lhb["detail"] == "lhb_api_failed"
-    assert [r["stage"] for r in records] == ["bars", "lhb", "freshness"]
+    # R72: court_build 与 freshness 在 lhb 失败后照常执行
+    assert [r["stage"] for r in records] == ["bars", "lhb", "court_build", "freshness"]
 
 
 def test_refresh_preflight_failure_exits_97_zero_stages(refresh_repo: Path) -> None:

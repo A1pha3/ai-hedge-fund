@@ -7,7 +7,9 @@
 #                  晚间研究时段)
 #   2. lhb       — 龙虎榜续传 (scripts/fetch_lhb_daily.py; 修复旧 except:pass 静默
 #                  死亡 — 2026-07-07 起停更 53 天)
-#   3. freshness — 新鲜度门 (scripts/research_freshness.py 只读仪表; 五数据集
+#   3. court     — court 事件表重建 (scripts/btst_court_build.py, 纯本地 raw,
+#                  指纹幂等; R72: 无自动化则 bench 重评触发器永不到期)
+#   4. freshness — 新鲜度门 (scripts/research_freshness.py 只读仪表; 六数据集
 #                  latest vs 权威日历期望会话, rc=陈旧数据集数)
 #
 # price_cache/fund_flow_cache/industry_index 由 18:01 v2 管道保鲜, 本驱动器不重复
@@ -28,6 +30,7 @@ PY="${V3R_PY:-$REPO/.venv/bin/python}"
 BARS_FETCH="${V3R_BARS_FETCH:-scripts/btst_court_fetch.py}"
 LHB_FETCH="${V3R_LHB_FETCH:-scripts/fetch_lhb_daily.py}"
 FRESHNESS="${V3R_FRESHNESS:-scripts/research_freshness.py}"
+COURT_BUILD="${V3R_COURT_BUILD:-scripts/btst_court_build.py}"
 HISTORY="${V3R_HISTORY:-$REPO/logs/cron/research_refresh_history.jsonl}"
 TODAY="${V3R_TODAY:-$(date +%Y%m%d)}"
 
@@ -86,7 +89,21 @@ else
     FAILS=$((FAILS + 1))
 fi
 
-# ---- 阶段 3: 新鲜度门 (只读仪表; rc=陈旧数据集数) ----
+# ---- 阶段 3: court 事件表重建 (纯本地 raw; 指纹幂等) ----
+echo "[$(date '+%F %T')] [research-refresh] === 阶段 court: 事件表重建 ==="
+OUT=$("$PY" "$COURT_BUILD" 2>&1)
+rc=$?
+printf '%s\n' "$OUT" | tail -3
+if [ "$rc" -eq 0 ]; then
+    record "court_build" 0 "ok"
+else
+    CODE=$(typed_code "$OUT")
+    echo "[$(date '+%F %T')] [research-refresh] court 重建失败 rc=$rc (研究面停留旧表; 次夜重试)"
+    record "court_build" "$rc" "${CODE:-court_build_failed}"
+    FAILS=$((FAILS + 1))
+fi
+
+# ---- 阶段 4: 新鲜度门 (只读仪表; rc=陈旧数据集数) ----
 echo "[$(date '+%F %T')] [research-refresh] === 阶段 freshness: 新鲜度门 ==="
 OUT=$("$PY" "$FRESHNESS" --today "$TODAY" 2>&1)
 rc=$?
