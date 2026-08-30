@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -240,3 +242,104 @@ def test_counterfactual_discloses_cost_basis_and_exit_leg() -> None:
     assert "口径" in text
     assert "0.65%" in text
     assert "T+10 开盘退出" in text
+
+
+# ---- R79 Op2: 在途会话聚集披露 (只读聚合, 单会话聚集 = 容量挤出与同日退出的结构源) ----
+
+
+def _active_trade(entry_date: str, state: str, weight: float, ticker: str) -> dict:
+    return {
+        "ticker": ticker,
+        "state": state,
+        "entry_date": entry_date,
+        "planned_weight": weight,
+    }
+
+
+def test_active_cohort_concentration_groups_by_entry_date() -> None:
+    from scripts.review_v2_forward_evidence import active_cohort_concentration
+
+    trades = [
+        _active_trade("2026-08-18", "exit_pending", 0.067, "002353"),
+        _active_trade("2026-08-18", "exit_pending", 0.079, "002156"),
+        _active_trade("2026-08-21", "open", 0.0595, "300009"),
+    ]
+    cohorts = active_cohort_concentration(trades)
+    assert len(cohorts) == 2
+    top = cohorts[0]
+    assert top["entry_date"] == "2026-08-18"
+    assert top["n"] == 2
+    assert top["gross_weight"] == pytest.approx(0.146)
+    assert set(top["tickers"]) == {"002353", "002156"}
+
+
+def test_active_cohort_excludes_terminal_states() -> None:
+    """closed/skipped/planned 不入聚集 — 只披露在途容量占用。"""
+    from scripts.review_v2_forward_evidence import active_cohort_concentration
+
+    trades = [
+        _active_trade("2026-08-17", "closed", 0.051, "301419"),
+        _active_trade("2026-08-17", "skipped", 0.079, "600xxx"),
+        _active_trade("2026-08-18", "planned", 0.079, "002396"),
+        _active_trade("2026-08-18", "exit_pending", 0.079, "002156"),
+    ]
+    cohorts = active_cohort_concentration(trades)
+    assert len(cohorts) == 1
+    assert cohorts[0]["entry_date"] == "2026-08-18"
+    assert cohorts[0]["tickers"] == ["002156"]
+
+
+def test_active_cohort_sorted_by_weight_desc() -> None:
+    from scripts.review_v2_forward_evidence import active_cohort_concentration
+
+    trades = [
+        _active_trade("2026-08-21", "open", 0.0595, "300009"),
+        _active_trade("2026-08-18", "exit_pending", 0.475, "002353"),
+        _active_trade("2026-08-18", "open", 0.079, "002156"),
+    ]
+    cohorts = active_cohort_concentration(trades)
+    assert [c["entry_date"] for c in cohorts] == ["2026-08-18", "2026-08-21"]
+
+
+def test_active_cohort_none_weight_defensive_zero() -> None:
+    from scripts.review_v2_forward_evidence import active_cohort_concentration
+
+    trades = [_active_trade("2026-08-18", "open", None, "002156")]
+    cohorts = active_cohort_concentration(trades)
+    assert cohorts[0]["gross_weight"] == 0.0
+    assert cohorts[0]["n"] == 1
+
+
+def test_active_cohort_empty_when_all_terminal() -> None:
+    from scripts.review_v2_forward_evidence import active_cohort_concentration
+
+    assert active_cohort_concentration([]) == []
+    assert active_cohort_concentration(
+        [_active_trade("2026-08-17", "closed", 0.05, "301419")]
+    ) == []
+
+
+def test_report_renders_cohort_section_when_active() -> None:
+    active = [
+        _active_trade("2026-08-18", "exit_pending", 0.475, "002353"),
+        _active_trade("2026-08-18", "exit_pending", 0.079, "002156"),
+        _active_trade("2026-08-21", "open", 0.0595, "300009"),
+    ]
+    text = build_report([], [], {}, _health(), since="2026-08-14", active_trades=active)
+    assert "在途会话聚集" in text
+    assert "2026-08-18" in text and "2 笔" in text
+    assert "结构" in text  # 披露行: 聚集 = 容量挤出/同日退出的结构源
+
+
+def test_report_omits_cohort_section_when_empty() -> None:
+    text = build_report([], [], {}, _health(), since="2026-08-14")
+    assert "在途会话聚集" not in text
+
+
+def test_report_old_positional_calls_unchanged() -> None:
+    """既有调用面 (位置参数 + since) 不因 active_trades 关键字参数破坏。"""
+    panel = [
+        {"ticker": "600001", "signal_date": "20260815", "block_reason": "", "realized": True, "return_t10": 8.0},
+    ]
+    text = build_report([], panel, {}, _health(), since="2026-08-14")
+    assert "通过组" in text

@@ -130,6 +130,44 @@ def load_ledger_health(ledger_path: Path) -> dict:
     }
 
 
+def load_active_trades(ledger_path: Path) -> list[sqlite3.Row]:
+    """只读取在途持仓 (open/exit_pending); 台账零写入."""
+    uri = f"file:{ledger_path}?mode=ro"
+    with sqlite3.connect(uri, uri=True) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT ticker, state, entry_date, planned_weight FROM trades "
+            "WHERE state IN ('open','exit_pending') ORDER BY entry_date, ticker"
+        ).fetchall()
+    return rows
+
+
+def active_cohort_concentration(trades: list) -> list[dict]:
+    """在途持仓按 entry_date 聚合为会话 cohort (纯函数, 只披露不判定)。
+
+    单会话聚集是两个决策级事实的共同结构源: (a) 组合容量占用 — 聚集批次
+    在场时把后续信号挤出 PORTFOLIO_CAP (实证 0827: 14 只 eligible 全被挤出,
+    台账零计划); (b) 回撤与同日退出的集中 — 同批入场者共享同一退出日。
+    输入行 duck-type 访问 ticker/state/entry_date/planned_weight; 只聚合
+    open/exit_pending (loader 已过滤, 双重防御); planned_weight None 防御
+    为 0.0 贡献。按 gross_weight 降序。
+    """
+    grouped: dict[str, dict] = {}
+    for trade in trades:
+        if str(trade["state"]) not in ("open", "exit_pending"):
+            continue
+        entry_date = str(trade["entry_date"])
+        cohort = grouped.setdefault(
+            entry_date, {"entry_date": entry_date, "n": 0, "gross_weight": 0.0, "tickers": []}
+        )
+        cohort["n"] += 1
+        weight = trade["planned_weight"]
+        if isinstance(weight, (int, float)) and not isinstance(weight, bool):
+            cohort["gross_weight"] += float(weight)
+        cohort["tickers"].append(str(trade["ticker"]))
+    return sorted(grouped.values(), key=lambda c: (-c["gross_weight"], c["entry_date"]))
+
+
 def load_panel_rows(panel_path: Path, since: str) -> list[dict]:
     if not panel_path.exists():
         return []
@@ -229,6 +267,7 @@ def build_report(
     ledger_health: dict,
     *,
     since: str,
+    active_trades: list = (),
 ) -> str:
     lines: list[str] = []
     lines.append(f"━━━ v2 台账新档前向证据复查（{since} 起）━━━")
@@ -324,6 +363,19 @@ def build_report(
     counts = ledger_health.get("state_counts") or {}
     if counts:
         lines.append("  交易状态分布：" + " · ".join(f"{state} {n}" for state, n in sorted(counts.items())))
+    cohorts = active_cohort_concentration(list(active_trades or ()))
+    if cohorts:
+        lines.append("  在途会话聚集（open+exit_pending 按入场日）:")
+        for cohort in cohorts:
+            tickers = " ".join(cohort["tickers"])
+            lines.append(
+                f"    {cohort['entry_date']} · {cohort['n']} 笔 · "
+                f"合计计划权重 {cohort['gross_weight']:.1%}（{tickers}）"
+            )
+        lines.append(
+            "  → 单会话聚集 = 容量挤出与同日退出的共同结构源"
+            "（聚集批次在场时把后续信号挤出组合帽; 只披露不判定）"
+        )
     lines.append("")
     lines.append("复查判据：n≥30 且前向聚类 CI90 上界低于先验期望才立案复查 edge 衰减（R77 语义，"
                  "点估计 vs 先验 CI 仅披露）；被挡组期望显著为负 = 闸在赚钱；"
@@ -350,6 +402,7 @@ def main() -> int:
         load_auto_topn_by_date(Path(args.reports_dir)),
         load_ledger_health(ledger_path),
         since=args.since,
+        active_trades=load_active_trades(ledger_path),
     )
     print(report)
     return 0
