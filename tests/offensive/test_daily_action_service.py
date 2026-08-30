@@ -595,3 +595,49 @@ def test_investability_profit_aware_env_semantics(monkeypatch):
     assert _investability_profit_aware() is False
     monkeypatch.setenv("INVESTABILITY_PROFIT_AWARE", "0")
     assert _investability_profit_aware() is False
+
+
+# ---- R73 Op2: regime 修订披露 + fail-open 变响 ----
+
+def test_append_regime_history_revision_is_loud(tmp_path, caplog):
+    """同日重跑不同标签 → WARNING 含 old→new, 文件更新 (最后写者赢语义不变)。"""
+    import json
+    import logging
+
+    from src.screening.auto_pipeline import _append_regime_history
+
+    _append_regime_history("20260717", {"market_state": {"regime_gate_level": "normal"}}, tmp_path)
+    with caplog.at_level(logging.WARNING, logger="src.screening.auto_pipeline"):
+        _append_regime_history("20260717", {"market_state": {"regime_gate_level": "crisis"}}, tmp_path)
+    path = tmp_path / "regime_history.json"
+    assert json.loads(path.read_text())["20260717"] == "crisis"
+    assert any("标签修订" in r.message and "20260717" in r.message
+               and "normal" in r.message and "crisis" in r.message
+               for r in caplog.records)
+
+
+def test_append_regime_history_idempotent_no_noise(tmp_path, caplog):
+    """同日同标签重跑 → 无修订日志无写盘 (既有幂等语义, 不制造噪音)。"""
+    import logging
+
+    from src.screening.auto_pipeline import _append_regime_history
+
+    _append_regime_history("20260717", {"market_state": {"regime_gate_level": "normal"}}, tmp_path)
+    path = tmp_path / "regime_history.json"
+    mtime = path.stat().st_mtime_ns
+    with caplog.at_level(logging.WARNING, logger="src.screening.auto_pipeline"):
+        _append_regime_history("20260717", {"market_state": {"regime_gate_level": "normal"}}, tmp_path)
+    assert path.stat().st_mtime_ns == mtime
+    assert not any("标签修订" in r.message for r in caplog.records)
+
+
+def test_regime_from_history_missing_date_is_loud_fail_open(caplog):
+    """缺失日期 → 'normal' + WARNING 响亮 (display/legacy 路径; 语义不变)。"""
+    import logging
+
+    from src.screening.offensive.daily_action import _regime_from_history
+
+    with caplog.at_level(logging.WARNING, logger="src.screening.offensive.daily_action"):
+        label = _regime_from_history("19990101")  # 无记录日期
+    assert label == "normal"
+    assert any("19990101" in r.message and "normal" in r.message for r in caplog.records)

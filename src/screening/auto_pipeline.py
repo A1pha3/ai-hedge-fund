@@ -67,8 +67,16 @@ def _append_regime_history(trade_date: str, payload: dict, reports_dir: Path) ->
                     history = {str(k): str(v) for k, v in raw.items()}
             except (json.JSONDecodeError, OSError) as exc:
                 logger.warning("[Auto] regime_history 读取失败, 从空重建: %s", exc)
-        if history.get(trade_date) == regime:
+        prior = history.get(trade_date)
+        if prior == regime:
             return
+        if prior is not None:
+            # R73: 同日重跑且 detect 结果不同 (数据修订) — 最后写者赢语义不变,
+            # 但修订必须响亮而非静默翻转 (下游 court 构建/gate 口径随之而变).
+            logger.warning(
+                "[Auto] regime_history 标签修订: %s %s→%s (最后写者赢, court 重建与 gate 消费随之变化)",
+                trade_date, prior, regime,
+            )
         history[trade_date] = regime
         atomic_write_json(path, history)
     except Exception as exc:  # noqa: BLE001 - best-effort, 不得拖垮 --auto

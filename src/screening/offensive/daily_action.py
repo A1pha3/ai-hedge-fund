@@ -290,10 +290,27 @@ def _load_regime_history() -> dict[str, str]:
 
 
 def _regime_from_history(trade_date: str) -> str:
-    """从 regime_history.json 查 regime 标签; 缺失/无记录 → 'normal'."""
+    """从 regime_history.json 查 regime 标签; 缺失/无记录 → 'normal' (响亮).
+
+    语义分层 (R73): 生产 v2 路径的入场 gate 用 manifest 钉住的
+    ``snapshot.regime`` (regime_row 经指纹绑定, 缺失即 BLOCKED — fail-closed,
+    绝不到达本函数); 本函数只服务 display/legacy/research 消费面。这些路径
+    缺失标签时按 'normal' 放行是 fail-open, 必须响亮披露而非静默 (P2-1:
+    宽吞会假装没看到缺口)。
+    """
     if not trade_date:
+        logger.warning("daily_action: regime 查询日期为空, 按 normal 放行 (display/legacy 路径)")
         return "normal"
-    return _load_regime_history().get(trade_date, "normal")
+    history = _load_regime_history()
+    label = history.get(trade_date)
+    if label is None:
+        logger.warning(
+            "daily_action: regime_history 缺 %s 标签, 按 normal 放行 "
+            "(display/legacy 路径; v2 生产 gate 用 manifest 钉住的 regime_row 不受影响)",
+            trade_date,
+        )
+        return "normal"
+    return label
 
 
 def _resolve_trade_date_and_regime(*, wall_clock_guard: bool = True) -> tuple[str, str]:
