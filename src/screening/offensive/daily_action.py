@@ -774,6 +774,10 @@ class ScanFunnel:
     verify_blocked: int = 0
     excluded_permanent: int = 0
     data_rejected: int = 0
+    # prefilter→hits 之间的 per-condition 分桶 (R80 Op2): 检测器 miss_stage 标签
+    # → 票数 (如 c2_flow_below_mean=66). None = 旧构造点退化旧格式; 未标注 miss
+    # 落 'unattributed' 桶. 零命中日自解释的地基 — 0828 取证曾只能手工复现.
+    detect_miss_stages: dict[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -1787,6 +1791,15 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
                 f"不可计划 {len(actionable_blocked)} 只{capacity_suffix}"
             )
         lines.append(funnel_head)
+        # per-condition 分桶 (R80 Op2): 只列非零桶, "涨幅≥9.5% → 命中" 之间不再
+        # 是黑箱 — 普跌分发日 C2 全挡、行业弱势日 C3 全挡自解释 (0828 取证曾只能
+        # 手工复现检测路径).
+        buckets = getattr(run.funnel, "detect_miss_stages", None) or {}
+        if buckets:
+            parts = " · ".join(
+                f"{stage} {n}" for stage, n in sorted(buckets.items()) if n
+            )
+            lines.append(f"  未命中分桶：{parts}")
         lines.append("")
 
     # ---- 排除名单可见性 (2026-08-23 Item 5): 配置不是隐形政策 ----
@@ -2357,6 +2370,7 @@ def scan_from_verified_snapshot(
     evaluated_count = 0
     prefilter_passed = 0
     hit_count = 0
+    detect_miss_stages: dict[str, int] = {}
     # 闭合扩展 (2026-08-23): 宇宙→扫描的差额分解 — 每个静默跳过通道都要有名字,
     # 票不允许在无痕通道里消失 (2026-08-20 事件: 22:47 的 300009).
     universe_count = len(snapshot.manifest.universe_tickers)
@@ -2447,6 +2461,8 @@ def scan_from_verified_snapshot(
             }
             result = setup_obj.detect(ticker, trade_date, detect_ctx)
             if not result.hit:
+                stage = str(getattr(result, "miss_stage", "") or "") or "unattributed"
+                detect_miss_stages[stage] = detect_miss_stages.get(stage, 0) + 1
                 continue
             hit_count += 1
             if bool(getattr(result, "degraded", False)):
@@ -2546,6 +2562,7 @@ def scan_from_verified_snapshot(
             verify_blocked=verify_blocked_count,
             excluded_permanent=excluded_permanent_count,
             data_rejected=data_rejected_count,
+            detect_miss_stages=dict(detect_miss_stages),
         ),
         regime=regime,
     )

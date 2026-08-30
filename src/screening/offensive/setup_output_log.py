@@ -328,6 +328,88 @@ def load_capacity_skips(
     return rows
 
 
+def log_scan_funnel(
+    signal_date: date,
+    funnel: Any,
+    *,
+    out_dir: Path | str = _DEFAULT_DIR,
+) -> Path:
+    """把扫描漏斗 (ScanFunnel 聚合标量) 落为当日兄弟工件 ``YYYYMMDD.funnel.json``。
+
+    漏斗数字此前只存在于当次渲染文本, snapshot 过期后**不可重推导** (重跑
+    --daily-action 需要当日 verified snapshot, 次日即被覆盖) — 零命中/低命中日
+    的检测面取证只能手工复现检测路径 (2026-08-30 R78 Op1 即如此)。本工件把
+    『为什么当日没有信号』从信息真空变成可审计证据, per-condition 分桶
+    (``detect_miss_stages``) 让普跌分发日 C2 全挡这类结构自解释。
+
+    语义分流 (与主日志不同, 与 capacity 工件同族): 漏斗是**诊断面证据**, 丢失
+    不孤儿任何计划 — 写失败由调用方 fail-open (WARNING); 主日志则是计划的存在
+    性证据, 写失败必须阻断 (2026-08-23 Item 3 纪律)。单日单文件, 重跑覆盖 =
+    幂等 (聚合标量, 晚运行即真相 — 与检测行的「合并保行」不同, 聚合数没有
+    保行问题)。
+    """
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    _require_secure_directory(out)
+    compact = signal_date.strftime("%Y%m%d")
+
+    def _stages() -> dict[str, int]:
+        raw = getattr(funnel, "detect_miss_stages", None) or {}
+        return {str(k): int(v) for k, v in raw.items() if v}
+
+    payload = json.dumps(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "signal_date": compact,
+            "universe": getattr(funnel, "universe", None),
+            "verify_blocked": int(getattr(funnel, "verify_blocked", 0) or 0),
+            "excluded_permanent": int(getattr(funnel, "excluded_permanent", 0) or 0),
+            "data_rejected": int(getattr(funnel, "data_rejected", 0) or 0),
+            "scannable": int(getattr(funnel, "scannable", 0) or 0),
+            "prefilter_passed": int(getattr(funnel, "prefilter_passed", 0) or 0),
+            "hits": int(getattr(funnel, "hits", 0) or 0),
+            "detect_miss_stages": _stages(),
+        },
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+    ) + "\n"
+    target = out / f"{compact}.funnel.json"
+    fd, tmp = tempfile.mkstemp(dir=str(out), prefix=f".{compact}_funnel_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, target)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return target
+
+
+def load_scan_funnel(
+    signal_date: date,
+    *,
+    out_dir: Path | str = _DEFAULT_DIR,
+) -> dict | None:
+    """只读回读当日漏斗工件; 缺失/损坏 → None (advisory 消费面, 宁缺毋抛)。"""
+    compact = signal_date.strftime("%Y%m%d")
+    target = Path(out_dir) / f"{compact}.funnel.json"
+    if not target.exists():
+        return None
+    try:
+        raw = read_regular_bytes(target, max_bytes=_MAX_LOG_FILE_BYTES)
+        row = json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        logger.warning("漏斗工件损坏, 按缺失处理: %s", target, exc_info=True)
+        return None
+    return row if isinstance(row, dict) else None
+
+
 def audit_signal_log_coverage(
     sessions: Iterable[str],
     *,

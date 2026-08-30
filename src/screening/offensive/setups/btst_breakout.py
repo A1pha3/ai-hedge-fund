@@ -391,14 +391,14 @@ class BtstBreakoutSetup(Setup):
     def detect(self, ticker: str, trade_date: str, context: dict[str, Any]) -> DetectionResult:
         prices: pd.DataFrame | None = context.get("prices")
         if prices is None or len(prices) == 0:
-            return self._miss(ticker, trade_date)
+            return self._miss(ticker, trade_date, "c0_prices_missing")
 
         prices = prices.copy()
         prices = prices.reset_index(drop=True)  # Bug fix: 保证 index=0..n-1, 防 iloc 混用
         prices["date_str"] = pd.to_datetime(prices["date"]).dt.strftime("%Y%m%d")
         trigger_rows = prices[prices["date_str"] == trade_date]
         if len(trigger_rows) == 0:
-            return self._miss(ticker, trade_date)
+            return self._miss(ticker, trade_date, "c0_trigger_row_missing")
         trigger_idx = trigger_rows.index[0]
         trigger_row = prices.iloc[trigger_idx]
 
@@ -418,12 +418,12 @@ class BtstBreakoutSetup(Setup):
         except (TypeError, ValueError):
             pct_change = float("nan")
         if math.isnan(pct_change) or pct_change < limit_up_pct:
-            return self._miss(ticker, trade_date)
+            return self._miss(ticker, trade_date, "c1_limit_up_pct")
         # 上界护栏: pct 超过交易所真实板帽 (如 +10.5%/+20.5%/+30.5%) 的交易日是
         # 无涨跌幅限制日 (长期停牌复牌/新股上市初期), 不是涨停 — 案例 000792
         # 2021-08-10 停牌 15 个月复牌 +306%, pre_runup≈0 会被当成"超跌后首板"误放.
         if pct_change > limit_up_cap + 0.5:
-            return self._miss(ticker, trade_date)
+            return self._miss(ticker, trade_date, "c1_cap_guard")
 
         # 条件 2: 主力净流入 > 20 日均值.
         # 注意: 涨停日主力净流出是常态 (~59% 的涨停日 main_net_inflow<0, 封板时大单
@@ -434,7 +434,7 @@ class BtstBreakoutSetup(Setup):
         # Bug fix (2026-07-12): NaN guard — fund_flow_store 已修复 `or 0.0` 对 NaN 无效,
         # 但防御性检查 today_flow 的 NaN (上游数据源可能未修复或第三方传入异常数据).
         if today_flow is None or math.isnan(today_flow):
-            return self._miss(ticker, trade_date)
+            return self._miss(ticker, trade_date, "c2_flow_missing")
         historical = [r.main_net_inflow for r in records if r.date < trade_date and not math.isnan(r.main_net_inflow)]
         # 资金流历史不足 20d 时: 有 ≥5 天就算短窗口均值 (标 degraded), <5 天跳过
         degraded = False
@@ -443,7 +443,7 @@ class BtstBreakoutSetup(Setup):
             lookback = historical[-_MAIN_FLOW_LOOKBACK_DAYS:]
             hist_mean = sum(lookback) / len(lookback)
             if today_flow <= hist_mean:
-                return self._miss(ticker, trade_date)
+                return self._miss(ticker, trade_date, "c2_flow_below_mean")
             if len(historical) < _MAIN_FLOW_LOOKBACK_DAYS:
                 degraded = True
                 degradation_reason = f"条件2 短窗口: 仅{len(historical)}天 (设计{_MAIN_FLOW_LOOKBACK_DAYS}d)"
@@ -464,13 +464,13 @@ class BtstBreakoutSetup(Setup):
         industry_pct: float | None = None
         industry_pct_raw = context.get("industry_day_pct")
         if industry_pct_raw is None:
-            return self._miss(ticker, trade_date)  # 行业数据缺失: 实证支持砍 (见上)
+            return self._miss(ticker, trade_date, "c3_industry_missing")  # 行业数据缺失: 实证支持砍 (见上)
         try:
             industry_pct = float(industry_pct_raw)
         except (TypeError, ValueError):
             industry_pct = float("nan")
         if industry_pct != industry_pct or industry_pct < _INDUSTRY_PCT_MIN:  # NaN guard
-            return self._miss(ticker, trade_date)
+            return self._miss(ticker, trade_date, "c3_industry_weak")
 
         # 条件 4: 涨停前窗口累计涨幅 ≤ 8% (防追高, close[T-1]/close[T-5]).
         # 收益用 pct_change 链式复合 (price_returns.chained_return_pct): 原始价比值
@@ -479,10 +479,10 @@ class BtstBreakoutSetup(Setup):
         ref_idx = trigger_idx - _PRE_RUNUP_LOOKBACK_DAYS
         pre_trigger_idx = trigger_idx - 1
         if ref_idx < 0 or pre_trigger_idx < 0:
-            return self._miss(ticker, trade_date)  # 数据不足, 保守 miss
+            return self._miss(ticker, trade_date, "c4_data_short")  # 数据不足, 保守 miss
         pre_runup_pct = chained_return_pct(prices, ref_idx, pre_trigger_idx)
         if pre_runup_pct is None or pre_runup_pct > _PRE_RUNUP_MAX_PCT:
-            return self._miss(ticker, trade_date)
+            return self._miss(ticker, trade_date, "c4_runup_exceeded")
 
         # 止损: 基于盘整区底部 (物理结构自适应).
         # 文档 §3.3: "初始止损设在 LL 下方一点" — 止损锚定压缩区间底部, 不是固定 -8%.
@@ -603,11 +603,12 @@ class BtstBreakoutSetup(Setup):
         )
 
     @staticmethod
-    def _miss(ticker: str, trade_date: str) -> DetectionResult:
+    def _miss(ticker: str, trade_date: str, stage: str = "") -> DetectionResult:
         return DetectionResult(
             hit=False,
             ticker=ticker,
             trade_date=trade_date,
             trigger_strength=0.0,
             invalidation_condition="",
+            miss_stage=stage,
         )

@@ -418,3 +418,87 @@ def test_capacity_skips_symlink_dir_rejected(tmp_path):
     except SetupOutputLogError:
         return
     raise AssertionError("symlinked log dir must be rejected before write")
+
+
+# ---------------------------------------------------------------------------
+# R80 Op2: 扫描漏斗持久工件 (YYYYMMDD.funnel.json) — 零命中日自解释的地基
+# ---------------------------------------------------------------------------
+
+class _Funnel:
+    """duck-type ScanFunnel (聚合标量)。"""
+
+    def __init__(self, **kw):
+        self.universe = kw.get("universe")
+        self.verify_blocked = kw.get("verify_blocked", 0)
+        self.excluded_permanent = kw.get("excluded_permanent", 0)
+        self.data_rejected = kw.get("data_rejected", 0)
+        self.scannable = kw.get("scannable", 0)
+        self.prefilter_passed = kw.get("prefilter_passed", 0)
+        self.hits = kw.get("hits", 0)
+        self.detect_miss_stages = kw.get("detect_miss_stages")
+
+
+def test_scan_funnel_roundtrip_and_idempotent_overwrite(tmp_path):
+    from src.screening.offensive.setup_output_log import (
+        load_scan_funnel,
+        log_scan_funnel,
+    )
+
+    funnel = _Funnel(
+        universe=1840, verify_blocked=65, excluded_permanent=7, data_rejected=3,
+        scannable=85, prefilter_passed=85, hits=0,
+        detect_miss_stages={"c2_flow_below_mean": 66, "c3_industry_weak": 16, "c1_limit_up_pct": 3},
+    )
+    target = log_scan_funnel(date(2026, 8, 28), funnel, out_dir=tmp_path)
+    assert target.name == "20260828.funnel.json"
+    row = load_scan_funnel(date(2026, 8, 28), out_dir=tmp_path)
+    assert row["hits"] == 0 and row["prefilter_passed"] == 85
+    assert row["detect_miss_stages"] == {
+        "c2_flow_below_mean": 66, "c3_industry_weak": 16, "c1_limit_up_pct": 3,
+    }
+    # 重跑覆盖 = 幂等 (聚合标量, 晚运行即真相)
+    log_scan_funnel(date(2026, 8, 28), funnel, out_dir=tmp_path)
+    again = load_scan_funnel(date(2026, 8, 28), out_dir=tmp_path)
+    assert again == row
+
+
+def test_scan_funnel_zero_buckets_dropped_and_missing_artifact_none(tmp_path):
+    from src.screening.offensive.setup_output_log import (
+        load_scan_funnel,
+        log_scan_funnel,
+    )
+
+    log_scan_funnel(
+        date(2026, 8, 28),
+        _Funnel(universe=10, scannable=5, prefilter_passed=2, hits=2, detect_miss_stages={"c1_limit_up_pct": 0}),
+        out_dir=tmp_path,
+    )
+    row = load_scan_funnel(date(2026, 8, 28), out_dir=tmp_path)
+    assert row["detect_miss_stages"] == {}  # 非零桶才落 — 0 值桶是噪声
+    assert load_scan_funnel(date(2026, 9, 1), out_dir=tmp_path) is None  # 缺失 → None
+
+
+def test_scan_funnel_corrupt_artifact_reads_as_none(tmp_path):
+    from src.screening.offensive.setup_output_log import load_scan_funnel
+
+    (tmp_path / "20260828.funnel.json").write_text("not-json{{", encoding="utf-8")
+    assert load_scan_funnel(date(2026, 8, 28), out_dir=tmp_path) is None
+
+
+def test_scan_funnel_symlink_dir_rejected(tmp_path):
+    """目录链守卫复用: symlink 目录 fail-closed (与主日志/容量工件同纪律)。"""
+    import os
+    from src.screening.offensive.setup_output_log import (
+        SetupOutputLogError,
+        log_scan_funnel,
+    )
+
+    real = tmp_path / "real"
+    real.mkdir()
+    linked = tmp_path / "linked_logs"
+    os.symlink(real, linked)
+    try:
+        log_scan_funnel(date(2026, 8, 28), _Funnel(scannable=1), out_dir=linked)
+    except SetupOutputLogError:
+        return
+    raise AssertionError("symlinked log dir must be rejected before write")

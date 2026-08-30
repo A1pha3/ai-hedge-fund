@@ -1289,6 +1289,22 @@ def _resolve_daily_action(
                 "daily-action capacity skip log failed (advisory, 不阻断)",
                 exc_info=True,
             )
+        # 扫描漏斗持久证据 (R80; 与容量工件同族): 漏斗数字此前只活在当次渲染,
+        # snapshot 过期后不可重推导 — 零命中日 (0828: 85 prefilter→0 命中) 的
+        # 检测面取证只能手工复现。语义分流: 漏斗是诊断面证据, 写失败 fail-open
+        # (WARNING) 不阻断计划创建 — 与主日志的存在性证据 fail-closed (Item 3)
+        # 不同; 工件缺失由 load_scan_funnel 显式 None 呈现, 不静默假装没有。
+        try:
+            from src.screening.offensive.setup_output_log import log_scan_funnel
+
+            funnel = getattr(scan, "funnel", None)
+            if funnel is not None:
+                log_scan_funnel(signal_date, funnel)
+        except Exception:
+            logger.warning(
+                "daily-action scan funnel log failed (advisory, 不阻断)",
+                exc_info=True,
+            )
         # 信号覆盖断层哨点 (2026-08-17 BUG-1; 2026-08-18 审查项 2 接入 v2 路径):
         # 此前只挂在 legacy generate_daily_action — 生产 --daily-action 走本函数
         # (scan_from_verified_snapshot + DailyActionService), 哨点从不执行, 华正

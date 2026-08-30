@@ -26,6 +26,11 @@ class DetectionResult:
     # 例: OversoldBounce 的 volume 条件在 price_cache 无 volume 列时跳过.
     degraded: bool = False
     degradation_reason: str = ""
+    # miss 阶段标注 (R80 Op2): hit=False 时未命中的条件 (如 "c2_flow_below_mean"),
+    # 让漏斗把 prefilter→hits 之间沉默的大多数按条件分桶 — 此前 miss 原因不可见,
+    # 零命中日 (0828) 的检测面取证只能手工复现检测路径. 未标注 (其他 setup/旧
+    # 调用面) 为空串, 消费侧落 'unattributed' 桶 (诚实不假装知道).
+    miss_stage: str = ""
 
 
 class Setup(ABC):
