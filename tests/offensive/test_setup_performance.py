@@ -197,3 +197,29 @@ def test_summarize_flags_low_confidence_regimes(tmp_path):
     assert risk_off.n == 3
     assert risk_off.winrate == 1.0
     assert risk_off.low_confidence is True, "risk_off n=3 must be flagged low_confidence"
+
+
+# ---- R74 Op2: journal 陈旧性事实 (last_exit_date) ----
+
+def test_summarize_reports_last_exit_date(tmp_path):
+    """报告携带 journal 最新 EXIT 日期; 空日期行不参与; 空 journal → None。"""
+    from src.screening.offensive.setup_performance import summarize_setup_performance
+
+    journal = tmp_path / "journal.jsonl"
+    _write_journal(
+        journal,
+        [
+            {"date": "20260101", "ticker": "000001", "setup": "btst_breakout",
+             "action": "EXIT", "reasoning": "realized=+5.00%"},
+            {"date": "20260315", "ticker": "000002", "setup": "btst_breakout",
+             "action": "EXIT", "reasoning": "realized=-2.00%"},
+            {"date": "20260316", "ticker": "000003", "setup": "btst_breakout",
+             "action": "EXIT", "reasoning": "no marker"},  # 无 realized 也计入日期
+        ],
+    )
+    report = summarize_setup_performance(journal)
+    assert report.last_exit_date == "20260316"  # 无 realized 标记的 EXIT 也计入日期
+
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("", encoding="utf-8")
+    assert summarize_setup_performance(empty).last_exit_date is None

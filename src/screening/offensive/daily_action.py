@@ -172,6 +172,26 @@ def _load_backtest_setup_performance() -> Any | None:
         return None
 
 
+# 回测证据纪元半衰 (R74 F1): journal 平仓记录早于该天数即为不同市场纪元 —
+# 数字可以照实展示, 但纪元错位必须与数字同行响亮披露, 不许操作员自行发现.
+_BACKTEST_STALE_DAYS = 180
+
+
+def _backtest_staleness_suffix(report: Any | None) -> str:
+    """journal as-of + 陈旧标记 — 证据的时间纪元与数字同行披露 (R74)."""
+    last = getattr(report, "last_exit_date", None)
+    if not last:
+        return ""
+    try:
+        last_day = datetime.strptime(str(last), "%Y%m%d").date()
+    except ValueError:
+        return ""
+    age_days = (date.today() - last_day).days
+    if age_days > _BACKTEST_STALE_DAYS:
+        return f" (截至{last_day.isoformat()} ⚠陈旧)"
+    return f" (截至{last_day.isoformat()})"
+
+
 def _format_backtest_stats(stats: Any | None) -> str:
     if stats is None or getattr(stats, "n", 0) <= 0:
         return ""
@@ -188,12 +208,13 @@ def _setup_policy_lines(disabled_setups: set[str] | None = None, *, explain: boo
     disabled = _env_setup_disable_list() if disabled_setups is None else set(disabled_setups)
     report = _load_backtest_setup_performance()
     by_setup = getattr(report, "by_setup", {}) if report is not None else {}
+    staleness = _backtest_staleness_suffix(report)
 
     active_parts: list[str] = []
     paused_parts: list[str] = []
     for name, _cls, _horizon in _VERIFIED_SETUPS:
         stats = by_setup.get(name)
-        part = f"{_setup_display_name(name)}{_format_backtest_stats(stats)}"
+        part = f"{_setup_display_name(name)}{_format_backtest_stats(stats)}{staleness}"
         if name in disabled:
             if name == "oversold_bounce":
                 # 暂停理由 = 统计不显著 + 尾部更厚 (不是 crisis 分层; n=21 太小不可靠).

@@ -2701,3 +2701,49 @@ def test_held_ticker_excluded_from_candidates(tmp_path, monkeypatch):
     # trigger_strength 也应展示 (改动3: 排序依据可见)
     assert "强度 0.90" in candidate_section, f"候选行应展示 trigger_strength, 实际:\n{candidate_section}"
     assert "先验(驱动Kelly)" in candidate_section, f"候选行应标注'先验(驱动Kelly)'区分口径, 实际:\n{candidate_section}"
+
+
+# ---- R74 Op2: 渲染层 as-of 披露 + 陈旧响亮标记 ----
+
+def _staleness_report(last_exit_date):
+    from src.screening.offensive.setup_performance import SetupPerformanceReport
+    return SetupPerformanceReport(total_exits=1, by_setup={}, skipped_exits=0,
+                                  last_exit_date=last_exit_date)
+
+
+def test_backtest_staleness_suffix_states():
+    """陈旧 (>180 天) → 含 ⚠陈旧; 新鲜 → 仅 as-of; None → 空串。"""
+    from datetime import date, timedelta
+
+    from src.screening.offensive.daily_action import (
+        _BACKTEST_STALE_DAYS,
+        _backtest_staleness_suffix,
+    )
+
+    old_day = date.today() - timedelta(days=_BACKTEST_STALE_DAYS + 1)
+    old = _backtest_staleness_suffix(
+        _staleness_report(old_day.strftime("%Y%m%d")))
+    assert "⚠陈旧" in old and old_day.isoformat() in old
+
+    fresh_day = date.today() - timedelta(days=3)
+    fresh = _backtest_staleness_suffix(
+        _staleness_report(fresh_day.strftime("%Y%m%d")))
+    assert "陈旧" not in fresh and fresh_day.isoformat() in fresh
+
+    assert _backtest_staleness_suffix(_staleness_report(None)) == ""
+    assert _backtest_staleness_suffix(None) == ""
+
+
+def test_setup_policy_lines_disclose_staleness(monkeypatch, tmp_path):
+    """政策行走 _load_backtest_setup_performance → 陈旧 journal 渲染 ⚠陈旧+as-of。"""
+    from datetime import date, timedelta
+
+    import src.screening.offensive.daily_action as da
+
+    old_day = date.today() - timedelta(days=400)
+    report = _staleness_report(old_day.strftime("%Y%m%d"))
+    monkeypatch.setattr(da, "_load_backtest_setup_performance", lambda: report)
+    lines = da._setup_policy_lines(disabled_setups=set())
+    assert lines, "至少一条 setup 政策行"
+    assert all("⚠陈旧" in line for line in lines)
+    assert all(old_day.isoformat() in line for line in lines)
