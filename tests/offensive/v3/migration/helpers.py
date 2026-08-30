@@ -17,6 +17,7 @@ from typing import Any
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from src.screening.offensive.execution_adjuster import ExecutionCosts
 from src.screening.offensive.ledger_repository import LedgerRepository
 from src.screening.offensive.trade_lifecycle import ExecutionMode, FillSource
 from src.screening.offensive.v3.contracts import (
@@ -217,7 +218,7 @@ def build_populated_ledger(
 
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / "ledger.sqlite3"
-    repo = LedgerRepository(path, ledger_id="test", initial_cash=100_000)
+    repo = LedgerRepository(path, ledger_id="test", initial_cash=100_000, execution_costs=ExecutionCosts(version="test"))
     repo.initialize()
 
     planned = repo.create_plan(

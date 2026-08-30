@@ -12,6 +12,7 @@ import sqlite3
 
 import pytest
 
+from src.screening.offensive.execution_adjuster import ExecutionCosts
 from src.screening.offensive.v3.migration.adoption import (
     ADOPTION_BLOCKED,
     AdoptionError,
@@ -51,7 +52,7 @@ def test_adoption_proof_hash_binds_source_root(tmp_path: Path) -> None:
 
     from src.screening.offensive.ledger_repository import LedgerRepository
 
-    repo = LedgerRepository(second, ledger_id="test", initial_cash=100_000)
+    repo = LedgerRepository(second, ledger_id="test", initial_cash=100_000, execution_costs=ExecutionCosts(version="test"))
     repo.record_position_mark("trade-open", __import__("datetime").date(2026, 7, 18), 10.7)
     del repo
     _checkpoint(second)

@@ -19,7 +19,7 @@ from src.screening.offensive.execution_adjuster import ExecutionCosts
 
 def test_repository_context_manager_initializes_and_returns_repository(tmp_path):
     path = tmp_path / "context.sqlite3"
-    with LedgerRepository(path, "context", 100_000) as repository:
+    with LedgerRepository(path, "context", 100_000, execution_costs=ExecutionCosts(version="test")) as repository:
         assert repository.path == path
         assert path.exists()
 
@@ -189,7 +189,7 @@ def test_initialize_rejects_incompatible_existing_metadata(
     tmp_path: Path, schema_version: int, initial_cash: float, message: str
 ) -> None:
     path = tmp_path / "ledger.sqlite3"
-    repo = LedgerRepository(path, ledger_id="test", initial_cash=100_000)
+    repo = LedgerRepository(path, ledger_id="test", initial_cash=100_000, execution_costs=ExecutionCosts(version="test"))
     repo.initialize()
     with sqlite3.connect(path) as conn:
         conn.execute(
@@ -283,8 +283,8 @@ def test_exit_defer_close_updates_state_events_and_cash(tmp_path: Path) -> None:
 
 def test_valuation_upsert_is_ledger_isolated(tmp_path: Path) -> None:
     path = tmp_path / "ledger.sqlite3"
-    first = LedgerRepository(path, ledger_id="first", initial_cash=100_000)
-    second = LedgerRepository(path, ledger_id="second", initial_cash=200_000)
+    first = LedgerRepository(path, ledger_id="first", initial_cash=100_000, execution_costs=ExecutionCosts(version="test"))
+    second = LedgerRepository(path, ledger_id="second", initial_cash=200_000, execution_costs=ExecutionCosts(version="test"))
     first.initialize()
     second.initialize()
     first.record_valuation(
@@ -352,8 +352,8 @@ def test_latest_valuation_is_ledger_scoped_and_peak_is_monotonic_input(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "ledger.sqlite3"
-    first = LedgerRepository(path, "first", 100_000)
-    second = LedgerRepository(path, "second", 200_000)
+    first = LedgerRepository(path, "first", 100_000, execution_costs=ExecutionCosts(version="test"))
+    second = LedgerRepository(path, "second", 200_000, execution_costs=ExecutionCosts(version="test"))
     first.initialize()
     second.initialize()
     first.record_valuation(date(2026, 7, 13), 90_000, 10_000, 1.0, 1.0, 0.0, [])
@@ -384,8 +384,8 @@ def test_create_plan_if_absent_reports_creation_without_duplicate_event(
 
 def test_position_mark_round_trip_is_latest_and_ledger_scoped(tmp_path: Path) -> None:
     path = tmp_path / "ledger.sqlite3"
-    first = LedgerRepository(path, "first", 100_000)
-    second = LedgerRepository(path, "second", 100_000)
+    first = LedgerRepository(path, "first", 100_000, execution_costs=ExecutionCosts(version="test"))
+    second = LedgerRepository(path, "second", 100_000, execution_costs=ExecutionCosts(version="test"))
     first.initialize()
     second.initialize()
     first_trade = _plan(first)
@@ -532,7 +532,7 @@ def test_public_fill_plan_cannot_bypass_cash_and_target_weight_caps(
 
 def test_v1_ticker_mark_migration_preserves_unique_active_owner(tmp_path: Path) -> None:
     path = tmp_path / "v1.sqlite3"
-    repo = LedgerRepository(path, "test", 100_000)
+    repo = LedgerRepository(path, "test", 100_000, execution_costs=ExecutionCosts(version="test"))
     repo.initialize()
     trade = _plan(repo)
     with sqlite3.connect(path) as conn:
@@ -549,7 +549,7 @@ def test_v1_ticker_mark_migration_preserves_unique_active_owner(tmp_path: Path) 
 
 def test_v1_migration_backfills_and_enforces_nonnull_provenance(tmp_path: Path) -> None:
     path = tmp_path / "v1-provenance.sqlite3"
-    repo = LedgerRepository(path, "test", 100_000)
+    repo = LedgerRepository(path, "test", 100_000, execution_costs=ExecutionCosts(version="test"))
     repo.initialize()
     trade = _plan(repo)
     with sqlite3.connect(path) as conn:
@@ -565,7 +565,7 @@ def test_v1_migration_backfills_and_enforces_nonnull_provenance(tmp_path: Path) 
 
 def test_ambiguous_v1_ticker_mark_migration_rolls_back_intact(tmp_path: Path) -> None:
     path = tmp_path / "ambiguous.sqlite3"
-    repo = LedgerRepository(path, "test", 100_000)
+    repo = LedgerRepository(path, "test", 100_000, execution_costs=ExecutionCosts(version="test"))
     repo.initialize()
     _plan(repo)
     repo.create_plan("000001", "btst", "v1", date(2026, 7, 11), date(2026, 7, 13), 0.1, 2)
@@ -691,3 +691,15 @@ def test_future_priority_and_reservations_do_not_block_due_session(tmp_path: Pat
 
     assert reason == "entry_filled"
     assert opened.state is TradeState.OPEN
+
+
+# ---- R75: 隐式全零成本构造 fail-closed ----
+
+def test_implicit_zero_cost_construction_rejected(tmp_path):
+    """无显式 execution_costs → ValueError 指路显式构造 (v2 全零事故的根因关闭)。"""
+    import pytest
+
+    with pytest.raises(ValueError) as exc:
+        LedgerRepository(tmp_path / "l.sqlite3", "ctx", 100_000)
+    assert "execution_costs" in str(exc.value)
+    assert "explicitly" in str(exc.value)

@@ -863,7 +863,7 @@ def test_actual_cli_is_idempotent_and_preserves_recursive_legacy_artifacts(
         if path.is_file()
     }
     assert after == snapshot  # journal/state files preserved (idempotency)
-    repo = LedgerRepository(ledger, "daily-action-v2", 100_000)
+    repo = LedgerRepository(ledger, "daily-action-v2", 100_000, execution_costs=ExecutionCosts(version="test"))
     plans = repo.planned_trades()
     # In the new architecture, the verified-snapshot scanner produces candidates
     # from actual price data (not mocked scan). The test's 1-row price CSV
@@ -896,7 +896,7 @@ def test_actual_cli_missing_calendar_renders_block_and_creates_no_plan(
     output = capsys.readouterr().out
     # Empty calendar blocks new plans. The exact block reason text may vary
     # between readiness/calendar paths, but the key invariant is: no plans.
-    assert LedgerRepository(ledger, "daily-action-v2", 100_000).planned_trades() == []
+    assert LedgerRepository(ledger, "daily-action-v2", 100_000, execution_costs=ExecutionCosts(version="test")).planned_trades() == []
 
 
 def test_actual_cli_two_session_calendar_blocks_btst_horizon(
@@ -924,7 +924,7 @@ def test_actual_cli_two_session_calendar_blocks_btst_horizon(
     )
     output = capsys.readouterr().out
     # Two-session calendar can't hold a T+10 BTST position. No plans created.
-    assert LedgerRepository(ledger, "daily-action-v2", 100_000).planned_trades() == []
+    assert LedgerRepository(ledger, "daily-action-v2", 100_000, execution_costs=ExecutionCosts(version="test")).planned_trades() == []
 
 # ---------------------------------------------------------------------------
 # Task 9 readiness v2 production path integration

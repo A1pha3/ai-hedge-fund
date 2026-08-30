@@ -18,6 +18,7 @@ from pathlib import Path
 import sqlite3
 from typing import Any, Callable
 
+from src.screening.offensive.execution_adjuster import ExecutionCosts
 from src.screening.offensive.ledger_repository import LedgerRepository
 from src.screening.offensive.v3.contracts import CanonicalModel
 
@@ -193,10 +194,13 @@ class CompatibilityWriter:
 
     def _project_broker_fill(self, payload: dict[str, Any]) -> None:
         trade_id = str(payload["trade_id"])
+        # 成本由 v2 事件 payload 显式携带 (close_trade 显式参数), repo 级值在此
+        # 路径不被消费 — 显式给零并声明版本, 只为满足 fail-closed 构造 (R75).
         repo = LedgerRepository(
             self._ledger_path,
             self._ledger_id,
             self._initial_cash,
+            execution_costs=ExecutionCosts(version="v2-migration-compat"),
         )
         exit_date = date.fromisoformat(str(payload["exit_date"]))
         trade = repo.get_trade(trade_id)

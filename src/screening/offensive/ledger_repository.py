@@ -144,12 +144,19 @@ class LedgerRepository:
     ) -> None:
         from src.screening.offensive.execution_adjuster import ExecutionCosts
 
+        if execution_costs is None:
+            # fail-closed (R75): 隐式全零成本曾造成实盘 P&L 系统性优于证据
+            # ~0.6pp/笔的事故 (dispatcher v2.1 注释), 默认值本身就是那次事故的
+            # 根因 — 构造必须显式声明成本口径, 绝不静默给零。
+            raise ValueError(
+                "execution_costs is required: implicit zero-cost ledgers "
+                "silently overstate P&L (daily-action-v2 incident); pass "
+                "ExecutionCosts explicitly (zero only with intent)"
+            )
         self.path = Path(path)
         self.ledger_id = ledger_id
         self.initial_cash = initial_cash
-        self.execution_costs = execution_costs or ExecutionCosts(
-            version="daily-action-v2"
-        )
+        self.execution_costs = execution_costs
 
     def __enter__(self) -> LedgerRepository:
         self.initialize()

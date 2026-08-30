@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from src.screening.offensive.execution_adjuster import ExecutionCosts
 from src.screening.offensive.v3.migration.conservation import (
     CONSERVATION_MISMATCH,
     ConservationError,
@@ -121,7 +122,7 @@ def test_same_migration_id_with_different_root_conflicts(tmp_path: Path) -> None
     other_path, _ = build_populated_ledger(other_dir)
     from src.screening.offensive.ledger_repository import LedgerRepository
 
-    repo = LedgerRepository(other_path, ledger_id="test", initial_cash=100_000)
+    repo = LedgerRepository(other_path, ledger_id="test", initial_cash=100_000, execution_costs=ExecutionCosts(version="test"))
     repo.record_position_mark("trade-open", __import__("datetime").date(2026, 7, 18), 10.9)
     del repo
     from tests.offensive.v3.migration.helpers import _checkpoint, _delete_wal_sidecars

@@ -27,6 +27,7 @@ import sqlite3
 
 import pytest
 
+from src.screening.offensive.execution_adjuster import ExecutionCosts
 from src.screening.offensive.ledger_repository import LedgerRepository
 from src.screening.offensive.trade_lifecycle import ExecutionMode, FillSource
 from src.screening.offensive.v3.migration.inventory import (
@@ -220,7 +221,7 @@ def test_section_roots_change_independently(tmp_path: Path) -> None:
 
     from src.screening.offensive.ledger_repository import LedgerRepository
 
-    second_repo = LedgerRepository(second, ledger_id="test", initial_cash=100_000)
+    second_repo = LedgerRepository(second, ledger_id="test", initial_cash=100_000, execution_costs=ExecutionCosts(version="test"))
     second_repo.record_position_mark(
         "trade-open", date(2026, 7, 18), 10.6
     )
@@ -326,7 +327,7 @@ def test_orphan_order_row_becomes_unattributed_risk(tmp_path: Path) -> None:
 
 def test_empty_initialized_ledger_captures_cleanly(tmp_path: Path) -> None:
     path = tmp_path / "ledger.sqlite3"
-    repo = LedgerRepository(path, ledger_id="test", initial_cash=100_000)
+    repo = LedgerRepository(path, ledger_id="test", initial_cash=100_000, execution_costs=ExecutionCosts(version="test"))
     repo.initialize()
     del repo  # 释放写连接, 使 checkpoint 可以拿到写锁
     import contextlib
