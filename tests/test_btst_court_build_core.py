@@ -278,8 +278,10 @@ class TestTriggerDecompositionRefresh:
         import btst_court_build as bcb
         seen = []
         monkeypatch.setattr(bcb, "refresh_trigger_decomposition", lambda out: seen.append(out))
-        bcb._finalize_build(self._args(skip=False), Path("/tmp/table.csv.gz"))
-        assert seen == [Path("/tmp/table.csv.gz")]
+        # R88 守卫: 自动刷新只对生产 table-dir — 用生产 TABLE_DIR 路径测默认分支
+        production = bcb.TABLE_DIR / "event_table_v1.csv.gz"
+        bcb._finalize_build(self._args(skip=False), production)
+        assert seen == [production]
 
     def test_finalize_build_flag_skips(self, monkeypatch):
         import btst_court_build as bcb
@@ -292,3 +294,92 @@ class TestTriggerDecompositionRefresh:
         import btst_court_build as bcb
         assert bcb._parse_args([]).no_decomposition_refresh is False
         assert bcb._parse_args(["--no-decomposition-refresh"]).no_decomposition_refresh is True
+
+
+# ---------- R88 Op2: 早期窗口 build 泛化 (隔离目录 + 钩子守卫 + 窗口过滤) ----------
+
+class TestEarlyWindowBuildGeneralization:
+    """早期窗口 (2022-24) 表必须输出隔离目录且绝不触发生产判定刷新;
+    cross_check 对零重叠窗口诚实降级 no_overlap。"""
+
+    def test_loaders_read_custom_raw_dir(self, tmp_path):
+        import pandas as pd
+        from btst_court_build import load_limit_up_index, load_panel
+        raw = tmp_path / "raw_early"
+        (raw / "daily").mkdir(parents=True)
+        (raw / "limit_up").mkdir(parents=True)
+        pd.DataFrame({
+            "ts_code": ["600000.SH"], "trade_date": ["20220104"],
+            "open": [10.0], "high": [11.0], "low": [9.5], "close": [10.5],
+            "pre_close": [10.0], "pct_chg": [5.0], "vol": [100.0], "amount": [1000.0],
+        }).to_csv(raw / "daily" / "daily_20220104.csv", index=False)
+        pd.DataFrame({"ts_code": ["600000.SH"], "name": ["浦发银行"]}).to_csv(
+            raw / "limit_up" / "lu_20220104.csv", index=False)
+        panel = load_panel(raw)
+        assert list(panel["trade_date"]) == ["20220104"]
+        assert "20220104" in load_limit_up_index(raw)
+
+    def test_finalize_build_guard_blocks_non_production_table_dir(self, monkeypatch, capsys):
+        """非生产 table-dir 不触发判定刷新 — 研究宇宙绝不触生产触发器账本。"""
+        import argparse
+        import btst_court_build as bcb
+        seen = []
+        monkeypatch.setattr(bcb, "refresh_trigger_decomposition", lambda out: seen.append(out))
+        args = argparse.Namespace(no_decomposition_refresh=False)
+        bcb._finalize_build(args, Path("/tmp/early/event_table_v1.csv.gz"))
+        assert seen == []
+        assert "跳过触发器判定刷新" in capsys.readouterr().out
+        # 生产目录照常触发
+        bcb._finalize_build(args, bcb.TABLE_DIR / "event_table_v1.csv.gz")
+        assert len(seen) == 1
+
+    def test_cross_check_no_overlap_degrades_honestly(self, tmp_path, monkeypatch):
+        """早期表 (2022-24) vs 生产 panel (2025+): 零重叠 → no_overlap,
+        不把全部记录误报 not_in_replay。"""
+        import json
+        import pandas as pd
+        import btst_court_build as bcb
+        # cwd 相对路径注入 (既有 cross_check 测试同款 chdir 模式)
+        monkeypatch.chdir(tmp_path)
+        Path("setup_output_panel.jsonl").write_text(json.dumps({
+            "ticker": "600000", "signal_date": "2026-08-20",
+            "trigger_strength": 0.7, "logged_at": "2026-08-20T18:00:00",
+        }) + "\n", encoding="utf-8")
+        Path("data").mkdir(exist_ok=True)
+        (Path("data") / "reports").mkdir(exist_ok=True)
+        (Path("data") / "reports" / "setup_output_panel.jsonl").write_text(
+            json.dumps({
+                "ticker": "600000", "signal_date": "20260820",
+                "trigger_strength": 0.7, "logged_at": "2026-08-20T18:00:00",
+            }) + "\n", encoding="utf-8")
+        table = pd.DataFrame({"symbol": ["600000"], "signal_date": ["20220601"],
+                              "trigger_strength": [0.7]})
+        out = bcb._cross_check_vs_panel(table)
+        assert out["status"] == "no_overlap"
+        assert out["absent"] == 0 and out["new_gen_records"] == 1
+
+    def test_cross_check_in_window_behavior_unchanged(self, tmp_path, monkeypatch):
+        """窗内行为与旧实现逐值一致: matched/mismatched/absent 语义不变。"""
+        import json
+        import pandas as pd
+        import btst_court_build as bcb
+        monkeypatch.chdir(tmp_path)
+        target = Path("data/reports/setup_output_panel.jsonl")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("\n".join(json.dumps(r) for r in [
+            {"ticker": "600000", "signal_date": "2026-08-20",
+             "trigger_strength": 0.7, "logged_at": "2026-08-20T18:00:00"},
+            {"ticker": "000001", "signal_date": "2026-08-20",
+             "trigger_strength": 0.9, "logged_at": "2026-08-21T18:00:00"},
+        ]) + "\n", encoding="utf-8")
+        table = pd.DataFrame({
+            "symbol": ["600000"], "signal_date": ["20260820"], "trigger_strength": [0.7]})
+        out = bcb._cross_check_vs_panel(table)
+        assert out["matched"] == 1 and out["absent"] == 1
+
+    def test_cli_flags_default_and_custom(self):
+        import btst_court_build as bcb
+        args = bcb._parse_args([])
+        assert args.raw_dir is None and args.table_dir is None and args.start is None
+        args2 = bcb._parse_args(["--raw-dir", "/r", "--table-dir", "/t", "--start", "20220104"])
+        assert (args2.raw_dir, args2.table_dir, args2.start) == ("/r", "/t", "20220104")
