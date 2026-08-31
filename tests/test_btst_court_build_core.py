@@ -398,3 +398,45 @@ def test_manifest_window_start_records_actual_start():
     src = inspect.getsource(bcb.main)
     assert '"window": {"start": window_start' in src
     assert '"window": {"start": WINDOW_A_START' not in src
+
+
+# ---------- R89 Op2: limit_up 原料覆盖 fail-closed 门 ----------
+
+class TestLimitUpRawCoverageGate:
+    """窗口前扩 (--start 20250102) 前置收口: 缺 limit_up 原料的会话必须
+    fail-closed 中止而非静默零审计 (auth=None → 权威宇宙对账跳过 —
+    面板完备性防线失效, 9.5% prefilter 漏 5%-涨停 ST 票)。"""
+
+    def test_missing_limit_up_days_reports_gaps_and_tolerates_empty_days(self, tmp_path):
+        from btst_court_build import missing_limit_up_days
+        raw = tmp_path / "raw"
+        (raw / "limit_up").mkdir(parents=True)
+        pd.DataFrame({"ts_code": ["600000.SH"], "name": ["浦发银行"]}).to_csv(
+            raw / "limit_up" / "lu_20250102.csv", index=False)
+        # 空涨停日 = 仅表头 CSV — 合法存在, 不算缺
+        pd.DataFrame(columns=["ts_code", "name"]).to_csv(
+            raw / "limit_up" / "lu_20250103.csv", index=False)
+        sessions = ["20250102", "20250103", "20250106"]
+        assert missing_limit_up_days(sessions, raw) == ["20250106"]
+        assert missing_limit_up_days(["20250102", "20250103"], raw) == []
+
+    def test_missing_limit_up_days_no_dir_all_missing(self, tmp_path):
+        from btst_court_build import missing_limit_up_days
+        raw = tmp_path / "raw_empty"
+        raw.mkdir()
+        assert missing_limit_up_days(["20250102", "20250103"], raw) == [
+            "20250102", "20250103"]
+
+    def test_main_wires_gate_before_replay_and_empty_days_accounting(self):
+        """接线钉死 (main 内联, 源码级断言 — 同 R89 Op1 先例):
+        门在重放循环 [3/6] 之前 fail fast; 消息带续传命令;
+        universe_audit 增 empty_days 且缺文件后 auth=None 不可达。"""
+        import inspect
+        import btst_court_build as bcb
+        src = inspect.getsource(bcb.main)
+        gate_idx = src.index("missing_limit_up_days(sessions")
+        assert gate_idx < src.index("[3/6] 逐日重放")  # fail fast, 不白跑重放
+        assert "limit_up 原料缺" in src
+        assert "--limit-list-start" in src  # 消息给可操作续传路径
+        assert '"empty_days": 0' in src
+        assert 'universe_audit["empty_days"] += 1' in src
