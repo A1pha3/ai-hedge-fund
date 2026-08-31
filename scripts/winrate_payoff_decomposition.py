@@ -377,6 +377,7 @@ def court_binding(court_table: Path, rows: int) -> dict[str, object]:
     manifest 缺失/损坏 → 身份字段 None (不假装知道), 行数来自本次实读表。
     """
     built_at = None
+    window_start = None
     window_end = None
     fingerprint = None
     try:
@@ -393,12 +394,15 @@ def court_binding(court_table: Path, rows: int) -> dict[str, object]:
         if isinstance(window, dict):
             value = window.get("end")
             window_end = value if isinstance(value, str) else None
+            value = window.get("start")
+            window_start = value if isinstance(value, str) else None
         fingerprints = manifest.get("formula_fingerprint")
         if isinstance(fingerprints, dict):
             value = fingerprints.get("btst_breakout_sha256")
             fingerprint = value if isinstance(value, str) else None
     return {
         "built_at": built_at,
+        "window_start": window_start,
         "window_end": window_end,
         "rows": int(rows),
         "formula_fingerprint": fingerprint,

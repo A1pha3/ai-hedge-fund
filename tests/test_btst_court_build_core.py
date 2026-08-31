@@ -383,3 +383,18 @@ class TestEarlyWindowBuildGeneralization:
         assert args.raw_dir is None and args.table_dir is None and args.start is None
         args2 = bcb._parse_args(["--raw-dir", "/r", "--table-dir", "/t", "--start", "20220104"])
         assert (args2.raw_dir, args2.table_dir, args2.start) == ("/r", "/t", "20220104")
+
+
+# ---------- R89: manifest window.start 真话 ----------
+
+def test_manifest_window_start_records_actual_start():
+    """--start 20220104 → manifest window.start = 20220104 (非硬编码 WINDOW_A_START)。
+
+    直接构造 manifest 字典的窗口来源函数级验证不可得 (manifest 在 main 内联组装),
+    以源码级断言钉死: 窗口 start 引用 window_start 变量而非 WINDOW_A_START 常量。
+    """
+    import inspect
+    import btst_court_build as bcb
+    src = inspect.getsource(bcb.main)
+    assert '"window": {"start": window_start' in src
+    assert '"window": {"start": WINDOW_A_START' not in src
