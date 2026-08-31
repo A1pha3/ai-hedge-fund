@@ -13,7 +13,10 @@
 6. 停牌: T+1 缺 bar → 不可成交; 退出日缺 bar → 顺延至 T+15 内下一可用开盘,
    超限记 None 并由 views 计数 (不编造价格).
 
-写入: 仅 data/research/btst_court/event_tables/ (event_table_v1 + manifest).
+写入: 仅 data/research/btst_court/event_tables/ (event_table_v1 + manifest);
+build 成功后默认机械刷新胜率/赔率触发器判定 (诊断面, 写 data/reports/
+分解报告 + threshold_trigger_ledger.jsonl, 失败 fail-open 不影响 build;
+--no-decomposition-refresh 退出)。
 """
 
 from __future__ import annotations
@@ -170,7 +173,47 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="公式指纹变化时允许覆盖既有事件表 (同行为重建逃生门; "
         "manifest 记录 formula_change_forced + prior 指纹)",
     )
+    parser.add_argument(
+        "--no-decomposition-refresh",
+        action="store_true",
+        help="build 成功后不自动刷新胜率/赔率触发器判定 (默认刷新, fail-open)",
+    )
     return parser.parse_args(argv)
+
+
+def refresh_trigger_decomposition(table_path: Path) -> None:
+    """build 成功后机械刷新胜率/赔率分解 + 触发器判定 (R84 Op1).
+
+    判定语义 = court 数据每前进一次判一次 (分解工具 main 走数据前进门:
+    manifest/行数与账本最新记录一致则不追加) — 触发器『稳定越零』证据
+    就此与数据增长机械耦合, 不再依赖操作员记得手动跑。
+    诊断面 fail-open: 刷新失败只 WARNING, 绝不回滚/阻断 build。
+    """
+    script = Path(__file__).resolve().parent / "winrate_payoff_decomposition.py"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), "--court-table", str(table_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"[warn] 胜率/赔率判定刷新失败 (诊断面 fail-open): {exc}")
+        return
+    if result.returncode != 0:
+        tail = (result.stderr or result.stdout or "").strip().splitlines()
+        detail = tail[-1][:200] if tail else ""
+        print(f"[warn] 胜率/赔率判定刷新失败 (诊断面 fail-open): rc={result.returncode} {detail}")
+        return
+    lines = (result.stdout or "").strip().splitlines()
+    print(f"[6/6+] 触发器判定已刷新: {lines[-1] if lines else 'ok'}")
+
+
+def _finalize_build(args: argparse.Namespace, out: Path) -> None:
+    """build 收尾接线: 默认机械刷新触发器判定, 显式旗标退出。"""
+    if not getattr(args, "no_decomposition_refresh", False):
+        refresh_trigger_decomposition(out)
 
 
 def overwrite_allowed(prior_fp: str | None, new_fp: str, *, force: bool) -> bool:
@@ -359,6 +402,7 @@ def main() -> None:
     (TABLE_DIR / "manifest_v1.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print("[6/6] manifest 写入完成")
     print(json.dumps({k: manifest[k] for k in ("window", "funnel", "universe_audit", "cross_check_vs_panel", "rows")}, ensure_ascii=False, indent=2))
+    _finalize_build(args, out)
 
 
 def _build_event(groups, by_day, sessions_cal, symbol, ts_code, s, signal_close, result, regime_label, auth_names, ind_name, hist_frame) -> dict:

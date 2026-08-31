@@ -39,6 +39,7 @@ import numpy as np
 import pandas as pd
 
 COURT_TABLE = Path("data/research/btst_court/event_tables/event_table_v1.csv.gz")
+TABLE_DIR = COURT_TABLE.parent  # manifest_v1.json 同目录 — 判定绑定的身份源
 REPORT_DIR = Path("data/reports")
 
 SLIPPAGE_BPS = 30.0
@@ -361,6 +362,26 @@ def attach_threshold_trigger(
     return payload
 
 
+def court_binding(court_table: Path, rows: int) -> dict[str, object]:
+    """court 数据状态身份 (manifest built_at/window_end + 事件表行数)。
+
+    账本每条判定快照绑定该身份: 触发器『稳定越零』的语义是同一谓词在
+    不断前进的数据上持续成立 — 同一份数据反复判定不产生新证据。
+    manifest 缺失/损坏 → 身份字段 None (不假装知道), 行数来自本次实读表。
+    """
+    built_at = None
+    window_end = None
+    try:
+        manifest = json.loads(
+            (Path(court_table).parent / "manifest_v1.json").read_text(encoding="utf-8")
+        )
+        built_at = manifest.get("built_at")
+        window_end = (manifest.get("window") or {}).get("end")
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"built_at": built_at, "window_end": window_end, "rows": int(rows)}
+
+
 def load_trigger_ledger(
     ledger_path: Path = TRIGGER_LEDGER_PATH,
 ) -> list[dict]:
@@ -387,13 +408,21 @@ def record_trigger_status(
     payload: dict[str, object],
     date_str: str,
     ledger_path: Path = TRIGGER_LEDGER_PATH,
+    court_binding: dict[str, object] | None = None,
+    require_advance: bool = False,
 ) -> dict[str, object]:
-    """把本次刷新的触发器判定快照按日期落账本 (R81 Op2)。
+    """把本次刷新的触发器判定快照按日期落账本 (R81 Op2; R84 绑定+前进门)。
 
     同日刷新替换同日记录: court 表不变则判定数值恒等, 替换即幂等收敛;
     court 表变了则同日晚刷新就是最新事实 (append-only 跨日, 原地更新同日)。
     payload 无 threshold_trigger (如全候选单口径, 无判定锚) → 不写。
     诊断面 fail-open: 写失败打印警告, 不阻断报告生成。
+
+    court_binding = court_binding() 的数据状态身份, 随快照落盘。
+    require_advance=True (数据增长耦合路径) 时, 账本最新记录绑定相同 →
+    skip: 同一份数据反复判定不产生新证据, 逐日重跑不会写下『新日期旧
+    数据』记录把连亮计数虚假拉长。旧形态记录无 court 字段 → 门放行
+    (不追溯拒绝, 绑定自此开始积累)。
     """
     trigger = payload.get("threshold_trigger")
     if not isinstance(trigger, dict):
@@ -412,7 +441,23 @@ def record_trigger_status(
         },
         "conjunction_armed": bool(trigger.get("conjunction_armed")),
     }
-    records = [r for r in load_trigger_ledger(ledger_path) if r.get("date") != snapshot["date"]]
+    if court_binding is not None:
+        # 无绑定不写字段 (与 R81 旧形态逐字一致): 不假装知道数据身份
+        snapshot["court"] = dict(court_binding)
+    records = load_trigger_ledger(ledger_path)
+    if (
+        require_advance
+        and court_binding is not None
+        and records
+        and isinstance(records[-1].get("court"), dict)
+        and records[-1]["court"] == court_binding
+    ):
+        return {
+            "recorded": False,
+            "reason": "court_not_advanced",
+            "records": len(records),
+        }
+    records = [r for r in records if r.get("date") != snapshot["date"]]
     records.append(snapshot)
     body = "\n".join(json.dumps(r, ensure_ascii=False, sort_keys=True) for r in records)
     if body:
@@ -628,13 +673,21 @@ def main(argv: list[str] | None = None) -> int:
     ev = pd.read_csv(court_table)
     payload = decompose(ev, universes=tuple(args.universes))
     attach_threshold_trigger(payload)
+    binding = court_binding(court_table, rows=len(ev))
     record_meta = record_trigger_status(
-        payload, date_str, ledger_path=Path(args.trigger_ledger)
+        payload, date_str, ledger_path=Path(args.trigger_ledger),
+        court_binding=binding, require_advance=True,
     )
-    if record_meta.get("recorded"):
+    payload["threshold_record"] = record_meta
+    if record_meta.get("recorded") or record_meta.get("reason") == "court_not_advanced":
         payload["threshold_stability"] = trigger_stability(
             load_trigger_ledger(Path(args.trigger_ledger))
         )
+        if record_meta.get("reason") == "court_not_advanced":
+            print(
+                "court 未前进 (manifest/行数与账本最新记录一致) — 触发器账本不追加"
+                " (同数据重判不产生新证据); 报告照常刷新"
+            )
     payload["court_rows"] = len(ev)
     payload["court_sessions"] = int(ev["signal_date"].nunique())
     report_dir.mkdir(parents=True, exist_ok=True)

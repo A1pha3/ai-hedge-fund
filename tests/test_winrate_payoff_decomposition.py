@@ -607,3 +607,179 @@ class TestTriggerStabilityLedger:
         ])
         assert rc == 0
         assert not ledger.exists()
+
+
+class TestCourtGrowthCoupling:
+    """触发器判定与 court 数据增长机械耦合 (R84 Op1)。
+
+    R81 Op2 账本按刷新日期记录, 但记录不绑定 court 表身份: court 陈旧时
+    逐日判定会写下『新日期旧数据』记录, streak 虚假增长。本族钉死三件事:
+    ① 每条快照绑定 court 身份 (built_at/window_end/rows);
+    ② 数据前进门 (require_advance): 最新记录绑定相同 → skip 不追加;
+    ③ 旧形态无绑定记录放行 (向后兼容, 不追溯拒绝);
+    ④ build 成功后机械刷新 (fail-open)。
+    """
+
+    BINDING_A = {"built_at": "2026-08-30", "window_end": "20260830", "rows": 1746}
+    BINDING_B = {"built_at": "2026-08-31", "window_end": "20260831", "rows": 1782}
+
+    @staticmethod
+    def _trigger():
+        return {
+            "rule": "预注册触发器", "anchor": "production_aligned/t10", "min_n": 30,
+            "condition_1_strong_bucket_ci_above_zero": {
+                "lit": True, "judged": True, "n": 315, "stat": 0.0023},
+            "condition_2_mid_bucket_expectancy_negative": {
+                "lit": False, "judged": True, "n": 303, "stat": 0.0097},
+            "conjunction_armed": False,
+            "verdict": "测试夹具",
+        }
+
+    def test_record_binds_court_identity(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        meta = record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260830",
+            ledger_path=ledger, court_binding=dict(self.BINDING_A),
+        )
+        assert meta["recorded"] is True
+        rec = load_trigger_ledger(ledger)[0]
+        assert rec["court"] == self.BINDING_A
+
+    def test_advance_gate_skips_same_binding_cross_date(self, tmp_path):
+        """同绑定跨日 → skip (同数据重判不产生新证据, streak 不虚假增长)。"""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260830",
+            ledger_path=ledger, court_binding=dict(self.BINDING_A),
+        )
+        meta = record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260831",
+            ledger_path=ledger, court_binding=dict(self.BINDING_A),
+            require_advance=True,
+        )
+        assert meta["recorded"] is False
+        assert meta["reason"] == "court_not_advanced"
+        assert [r["date"] for r in load_trigger_ledger(ledger)] == ["20260830"]
+
+    def test_advance_gate_records_on_binding_advance(self, tmp_path):
+        """绑定前进 (court 重建) 跨日 → 落新记录 (真实数据状态)。"""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260830",
+            ledger_path=ledger, court_binding=dict(self.BINDING_A),
+        )
+        meta = record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260831",
+            ledger_path=ledger, court_binding=dict(self.BINDING_B),
+            require_advance=True,
+        )
+        assert meta["recorded"] is True
+        records = load_trigger_ledger(ledger)
+        assert [r["date"] for r in records] == ["20260830", "20260831"]
+        assert records[1]["court"] == self.BINDING_B
+
+    def test_advance_gate_same_date_advanced_binding_replaces(self, tmp_path):
+        """同日 court 前进 → 替换同日记录 (当日重建后最新事实)。"""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260831",
+            ledger_path=ledger, court_binding=dict(self.BINDING_A),
+        )
+        meta = record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260831",
+            ledger_path=ledger, court_binding=dict(self.BINDING_B),
+            require_advance=True,
+        )
+        assert meta["recorded"] is True
+        records = load_trigger_ledger(ledger)
+        assert len(records) == 1
+        assert records[0]["court"] == self.BINDING_B
+
+    def test_advance_gate_legacy_record_without_binding_passes(self, tmp_path):
+        """旧形态记录无 court 字段 → 门放行 (不追溯拒绝, 绑定自此开始积累)。"""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260830", ledger_path=ledger
+        )
+        assert "court" not in load_trigger_ledger(ledger)[0]
+        meta = record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260831",
+            ledger_path=ledger, court_binding=dict(self.BINDING_B),
+            require_advance=True,
+        )
+        assert meta["recorded"] is True
+
+    def test_gate_off_preserves_legacy_semantics(self, tmp_path):
+        """require_advance 缺省 False → 同绑定跨日仍落记录 (手动路径原语义)。"""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260830",
+            ledger_path=ledger, court_binding=dict(self.BINDING_A),
+        )
+        meta = record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260831",
+            ledger_path=ledger, court_binding=dict(self.BINDING_A),
+        )
+        assert meta["recorded"] is True
+
+    def test_main_records_binding_and_gate(self, tmp_path, monkeypatch):
+        """端到端: main 走前进门 — 同绑定重跑 skip 且披露 reason, 报告照常写出。"""
+        import json
+        import pandas as pd
+        from datetime import date as _date
+        from scripts import winrate_payoff_decomposition as mod
+        rows = []
+        for i in range(40):
+            rows.append({
+                "symbol": f"{600000+i}",
+                "signal_date": f"2026-01-{(i % 20) + 1:02d}",
+                "regime": "normal", "trigger_strength": 0.75 if i % 2 else 0.55,
+                "gross_ret_t10": 0.03 * (1 if i % 2 else -1),
+                "gross_ret_t5": 0.015,
+                "fillable": True, "gate_blocked": False, "degraded": False,
+                "st_name": False, "industry_missing": False,
+                "excluded_ticker": False, "price_ge_3": True,
+            })
+        tables = tmp_path / "event_tables"
+        tables.mkdir()
+        table = tables / "court.csv.gz"
+        pd.DataFrame(rows).to_csv(table, index=False)
+        ledger = tmp_path / "trigger_ledger.jsonl"
+        rep = tmp_path / "rep"
+        argv = ["--court-table", str(table), "--report-dir", str(rep),
+                "--trigger-ledger", str(ledger)]
+
+        stamp = _date.today().strftime("%Y%m%d")
+        json_path = rep / f"winrate_payoff_decomposition_{stamp}.json"
+
+        monkeypatch.setattr(mod, "TABLE_DIR", tables)
+        mod.main(argv)
+        records = mod.load_trigger_ledger(ledger)
+        assert len(records) == 1
+        assert records[0]["court"] == {
+            "built_at": None, "window_end": None, "rows": 40,
+        }
+
+        # 同表同绑定当日重跑 (前进门): 账本不动, 报告刷新, reason 披露进 JSON
+        mod.main(argv)
+        assert len(mod.load_trigger_ledger(ledger)) == 1
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+        assert payload["threshold_record"]["reason"] == "court_not_advanced"

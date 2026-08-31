@@ -221,3 +221,74 @@ def test_regime_drift_status_three_states():
 
     legacy = regime_drift_status({"regime_missing_sessions": []}, {})
     assert legacy == {"checked": False, "drift": False, "changed_sessions": []}
+
+
+# ---------- R84 Op1: build 成功后机械刷新触发器判定 (fail-open) ----------
+
+class TestTriggerDecompositionRefresh:
+    """build → 判定刷新的数据增长耦合。
+
+    判定语义 = court 数据每前进一次判一次; 刷新是诊断面 fail-open:
+    失败只 WARNING 绝不阻断 build; --no-decomposition-refresh 显式退出。
+    """
+
+    def _args(self, skip=False):
+        import argparse
+        return argparse.Namespace(no_decomposition_refresh=skip)
+
+    def _fake_run(self, monkeypatch, *, rc=0, stdout="written: x\n", stderr="", exc=None):
+        import btst_court_build as bcb
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            if exc is not None:
+                raise exc
+            return type("R", (), {"returncode": rc, "stdout": stdout, "stderr": stderr})()
+
+        monkeypatch.setattr(bcb.subprocess, "run", fake_run)
+        return calls
+
+    def test_refresh_invokes_decomposition_with_built_table(self, monkeypatch, capsys):
+        import btst_court_build as bcb
+        calls = self._fake_run(monkeypatch)
+        bcb.refresh_trigger_decomposition(Path("/tmp/fake/event_table_v1.csv.gz"))
+        assert len(calls) == 1
+        argv = calls[0]
+        assert argv[0].endswith("python") or "python" in argv[0]
+        assert argv[1].endswith("winrate_payoff_decomposition.py")
+        assert "--court-table" in argv and "/tmp/fake/event_table_v1.csv.gz" in argv
+        assert "已刷新" in capsys.readouterr().out
+
+    def test_refresh_failure_is_fail_open_warning(self, monkeypatch, capsys):
+        import btst_court_build as bcb
+        self._fake_run(monkeypatch, rc=1, stderr="boom")
+        bcb.refresh_trigger_decomposition(Path("/tmp/fake/event_table_v1.csv.gz"))
+        out = capsys.readouterr().out
+        assert "fail-open" in out and "rc=1" in out and "boom" in out
+
+    def test_refresh_spawn_error_is_fail_open_warning(self, monkeypatch, capsys):
+        import btst_court_build as bcb
+        self._fake_run(monkeypatch, exc=OSError("no interpreter"))
+        bcb.refresh_trigger_decomposition(Path("/tmp/fake/event_table_v1.csv.gz"))
+        out = capsys.readouterr().out
+        assert "fail-open" in out and "no interpreter" in out
+
+    def test_finalize_build_default_refreshes(self, monkeypatch):
+        import btst_court_build as bcb
+        seen = []
+        monkeypatch.setattr(bcb, "refresh_trigger_decomposition", lambda out: seen.append(out))
+        bcb._finalize_build(self._args(skip=False), Path("/tmp/table.csv.gz"))
+        assert seen == [Path("/tmp/table.csv.gz")]
+
+    def test_finalize_build_flag_skips(self, monkeypatch):
+        import btst_court_build as bcb
+        seen = []
+        monkeypatch.setattr(bcb, "refresh_trigger_decomposition", lambda out: seen.append(out))
+        bcb._finalize_build(self._args(skip=True), Path("/tmp/table.csv.gz"))
+        assert seen == []
+
+    def test_flag_parse_default_and_skip(self):
+        import btst_court_build as bcb
+        assert bcb._parse_args([]).no_decomposition_refresh is False
+        assert bcb._parse_args(["--no-decomposition-refresh"]).no_decomposition_refresh is True
