@@ -118,8 +118,11 @@ def candidate_universe(ev: pd.DataFrame) -> pd.DataFrame:
 # 列缺失 = 口径理解错误, fail closed 不静默当作不过滤.
 PRODUCTION_EXCLUDE_COLS = ("degraded", "st_name", "industry_missing", "excluded_ticker")
 PRODUCTION_DISCLOSURE_KEYS = PRODUCTION_EXCLUDE_COLS + ("price_lt_3",)
-# 预注册半年度切片 (court 研究窗口 2025-07 起; 末段右开, 窗口跨 2027 后需重注册)
+# 预注册半年度切片 (court 研究窗口 20250102 起 — R90 Op3 随 owner 授权的
+# 窗口前扩重注册, 2025H1 段覆盖回填权威宇宙审计后的新可见历史; 末段右开,
+# 窗口再移动 (如跨 2027) 后需再次重注册 — time_slices 对越界行 fail-closed)
 TIME_SLICE_BOUNDS = (
+    ("2025H1", "20250102", "20250630"),
     ("2025H2", "20250701", "20251231"),
     ("2026H1", "20260101", "20260630"),
     ("2026H2+", "20260701", "99999999"),
@@ -166,12 +169,16 @@ def exclusion_disclosure(u: pd.DataFrame, n_boot: int = N_BOOT_DEFAULT) -> dict:
 def time_slices(u: pd.DataFrame, n_boot: int = N_BOOT_DEFAULT) -> list[dict]:
     """预注册半年度切片: 全候选 stats + 段内每日 top-1 (生产行为近似).
 
-    空段诚实保留 (n=0/mean=None), 切片完备覆盖不重不漏.
+    空段诚实保留 (n=0/mean=None), 切片完备覆盖不重不漏 — 越界行
+    fail-closed (窗口移动后必须重注册 TIME_SLICE_BOUNDS, 不静默缺段).
     """
     sd = u["signal_date"].astype(str)
     out = []
+    covered = None
     for label, lo, hi in TIME_SLICE_BOUNDS:
-        m = u[(sd >= lo) & (sd <= hi)]
+        in_slice = (sd >= lo) & (sd <= hi)
+        covered = in_slice if covered is None else (covered | in_slice)
+        m = u[in_slice]
         s = stats_block(net_ret(m[HORIZON_COL]), m["signal_date"], n_boot=n_boot) if len(m) else {
             "n": 0, "mean": None, "winrate": None, "ci90_low": None, "ci90_high": None,
         }
@@ -185,6 +192,14 @@ def time_slices(u: pd.DataFrame, n_boot: int = N_BOOT_DEFAULT) -> list[dict]:
                 "winrate": float((rets > 0).mean()),
             }
         out.append({"label": label, "range": f"{lo}..{hi}", **s, "top_1": top1})
+    outside = int((~covered).sum()) if covered is not None else 0
+    if outside:
+        samples = sorted(sd[~covered].unique())[:5]
+        raise ValueError(
+            f"time-slice coverage gap: {outside} rows outside preregistered "
+            f"slices (样例 {samples}) — 窗口移动后必须重注册 TIME_SLICE_BOUNDS, "
+            "不静默缺段 (切片完备覆盖不重不漏的执行面)"
+        )
     return out
 
 
