@@ -42,6 +42,13 @@ def run_daily_action_cli_fixture(*, reports_dir: Path) -> int | None:
     with (
         patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=reports_dir),
         patch("src.screening.offensive.daily_action.resolve_daily_action_signal", return_value=(signal_date, "normal")),
+        # R86: 检测面日志写 (setup_output_log 四写函数) 经懒默认尊重重定向 —
+        # 无此 patch 时 R79-R82 的持久证据写落在 cwd/data/reports, 破坏本
+        # fixture 『一切写入尊重重定向』的完整性契约。
+        patch(
+            "src.screening.offensive.setup_output_log._DEFAULT_DIR",
+            reports_dir / "setup_output_log",
+        ),
         patch("builtins.print"),
     ):
         return dispatcher._resolve_daily_action(

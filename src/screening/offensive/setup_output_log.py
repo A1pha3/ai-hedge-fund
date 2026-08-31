@@ -52,6 +52,20 @@ from src.utils.secure_files import SecureReadError, read_regular_bytes
 
 SCHEMA_VERSION = 1
 _DEFAULT_DIR = Path("data/reports/setup_output_log")
+
+
+def _out_dir_or_default(out_dir: Path | str | None) -> Path:
+    """写路径 out_dir 的懒默认 (R86): None → 调用时解析 _DEFAULT_DIR。
+
+    def 时烘焙默认使模块属性无法被测试/沙箱重定向 — CLI fixture 的
+    『一切写入尊重重定向』契约 (test_cli_test_fixture_never_writes_
+    workspace_reports) 自 R79-R82 起被四个无注入点的写函数打破。懒默认
+    生产取值逐字节不变; 只给写函数用, 只读加载函数保持烘焙默认 (无
+    目录创建面, 不在泄漏哨点范围)。
+    """
+    if out_dir is None:
+        return Path(_DEFAULT_DIR)
+    return Path(out_dir)
 _DEFAULT_CALENDAR = Path("data/reports/trade_calendar.json")
 _MAX_LOG_FILE_BYTES = 16 * 1024 * 1024  # 16 MB — 单日 JSONL 的宽松上界
 
@@ -163,7 +177,7 @@ def log_setup_outputs(
     blocked: Iterable[Any],
     *,
     regime: str = "unknown",
-    out_dir: Path | str = _DEFAULT_DIR,
+    out_dir: Path | str | None = None,
     plan_backed_tickers: Iterable[str] = (),
 ) -> Path:
     """Persist the full scanned setup output for ``signal_date`` (merge-on-rerun).
@@ -175,7 +189,7 @@ def log_setup_outputs(
     warning (the write itself still proceeds so the per-day coverage sentinel
     keeps working). Returns the written per-day file path.
     """
-    out = Path(out_dir)
+    out = _out_dir_or_default(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     _require_secure_directory(out)
     compact = signal_date.strftime("%Y%m%d")
@@ -251,7 +265,7 @@ def log_capacity_skips(
     signal_date: date,
     skips: Iterable[Any],
     *,
-    out_dir: Path | str = _DEFAULT_DIR,
+    out_dir: Path | str | None = None,
 ) -> Path:
     """把计划层容量拦截 (CapacitySkip) 落为当日兄弟工件 ``YYYYMMDD.capacity.jsonl``。
 
@@ -266,7 +280,7 @@ def log_capacity_skips(
     Item 3 纪律)。重跑合并: (ticker, reason) 键晚运行覆盖, 确定性排序; 目录
     链守卫与原子写与主日志同一实现。
     """
-    out = Path(out_dir)
+    out = _out_dir_or_default(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     _require_secure_directory(out)
     compact = signal_date.strftime("%Y%m%d")
@@ -340,7 +354,7 @@ def log_scan_funnel(
     signal_date: date,
     funnel: Any,
     *,
-    out_dir: Path | str = _DEFAULT_DIR,
+    out_dir: Path | str | None = None,
 ) -> Path:
     """把扫描漏斗 (ScanFunnel 聚合标量) 落为当日兄弟工件 ``YYYYMMDD.funnel.json``。
 
@@ -356,7 +370,7 @@ def log_scan_funnel(
     幂等 (聚合标量, 晚运行即真相 — 与检测行的「合并保行」不同, 聚合数没有
     保行问题)。
     """
-    out = Path(out_dir)
+    out = _out_dir_or_default(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     _require_secure_directory(out)
     compact = signal_date.strftime("%Y%m%d")
@@ -441,7 +455,7 @@ def log_scan_run(
     regime: str = "unknown",
     funnel: Any = None,
     snapshot_id: str | None = None,
-    out_dir: Path | str = _DEFAULT_DIR,
+    out_dir: Path | str | None = None,
 ) -> Path:
     """把单次刷新的完整扫描视图 append 到当日 ``YYYYMMDD.scan_runs.jsonl``。
 
@@ -456,7 +470,7 @@ def log_scan_run(
     由调用方 fail-open (WARNING); 文件超过单日上界后跳过追加并告警 (不截断
     既有字节)。
     """
-    out = Path(out_dir)
+    out = _out_dir_or_default(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     _require_secure_directory(out)
     compact = signal_date.strftime("%Y%m%d")

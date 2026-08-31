@@ -805,3 +805,46 @@ def test_log_scan_run_write_failure_terminates_torn_line(tmp_path, monkeypatch):
     runs = load_scan_runs(day, out_dir=tmp_path)
     assert len(runs) == 1, "残行被 loader 跳过, 后续记录必须完整存活"
     assert runs[0]["candidates"][0]["ticker"] == "600497"
+
+
+# ---------- R86: 写函数 out_dir 懒默认 (CLI fixture 重定向契约) ----------
+
+def test_writer_out_dir_late_bound_redirect(monkeypatch, tmp_path):
+    """R86: patch 模块 _DEFAULT_DIR 后, 四写函数不传 out_dir 全部落重定向目录。
+
+    def 时烘焙默认下此 patch 无效 — CLI fixture 的『一切写入尊重重定向』
+    契约 (test_cli_test_fixture_never_writes_workspace_reports) 自 R79-R82
+    被四个无注入点写函数打破, sweep 实证。只读加载函数保持烘焙默认
+    (无目录创建面)。
+    """
+    from datetime import date as _date
+    from types import SimpleNamespace
+
+    from src.screening.offensive import setup_output_log as sol
+
+    sandbox = tmp_path / "redirected"
+    monkeypatch.setattr(sol, "_DEFAULT_DIR", sandbox)
+    day = _date(2026, 8, 31)
+
+    paths = [
+        sol.log_setup_outputs(day, (), (), regime="normal"),
+        sol.log_capacity_skips(day, ()),
+        sol.log_scan_funnel(day, SimpleNamespace()),
+        sol.log_scan_run(day, (), (), regime="normal"),
+    ]
+    for path in paths:
+        assert sandbox in path.parents, path
+    assert not (tmp_path / "data").exists()  # 未触未重定向路径
+
+
+def test_writer_explicit_out_dir_still_wins(monkeypatch, tmp_path):
+    """显式 out_dir 优先于模块默认 — 既有调用面 (dispatcher 显式传/测试 tmp) 语义不变。"""
+    from datetime import date as _date
+
+    from src.screening.offensive import setup_output_log as sol
+
+    monkeypatch.setattr(sol, "_DEFAULT_DIR", tmp_path / "module-default")
+    explicit = tmp_path / "explicit"
+    path = sol.log_scan_run(_date(2026, 8, 31), (), (), regime="normal", out_dir=explicit)
+    assert explicit in path.parents
+    assert not (tmp_path / "module-default").exists()
