@@ -48,7 +48,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from src.utils.secure_files import read_regular_bytes
+from src.utils.secure_files import SecureReadError, read_regular_bytes
 
 SCHEMA_VERSION = 1
 _DEFAULT_DIR = Path("data/reports/setup_output_log")
@@ -496,14 +496,15 @@ def log_scan_run(
         + [_scan_run_candidate(a, plan_eligible=False) for a in blocked],
     }
     payload = json.dumps(row, ensure_ascii=False, allow_nan=False, sort_keys=True) + "\n"
-    # append-only: O_APPEND 单次 write, 既有字节永不改写 (与主日志 mkstemp+
-    # replace 全量重写的合并语义相反 — 这正是本工件存在的理由)。
+    # append-only: O_APPEND 打开, 既有字节永不改写 (与主日志 mkstemp+replace
+    # 全量重写的合并语义相反 — 这正是本工件存在的理由)。全写语义: buffered
+    # writer 对底层 os.write 的部分写自动重试 — 裸单次 os.write 的撕裂残行
+    # 不止丢本行, 还会让下一次 append 拼接在残行上连带损坏两条记录。
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    try:
-        os.write(fd, payload.encode("utf-8"))
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    with os.fdopen(fd, "ab") as fh:
+        fh.write(payload.encode("utf-8"))
+        fh.flush()
+        os.fsync(fh.fileno())
     return target
 
 
@@ -519,7 +520,10 @@ def load_scan_runs(
         return []
     try:
         raw = read_regular_bytes(target, max_bytes=_MAX_LOG_FILE_BYTES)
-    except OSError:
+    except (OSError, SecureReadError):
+        # SecureReadError 非 OSError 派生: writer 的跳过守卫只保证追加前
+        # size < 上界, 尾行仍可把文件推过上界; symlink-TOCTOU 同类 —
+        # advisory 消费面一律类型化降级为按缺失处理, 绝不裸抛。
         logger.warning("逐刷新快照读取失败, 按缺失处理: %s", target, exc_info=True)
         return []
     runs: list[dict] = []

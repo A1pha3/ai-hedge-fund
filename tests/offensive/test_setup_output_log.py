@@ -689,3 +689,56 @@ def test_refresh_flip_summary_empty_runs_zeroed():
         "union_minus_last_refresh": [],
         "per_candidate": [],
     }
+
+
+# ---- R82 Op2: Op1 交付面对抗审查修复 (D1 部分写撕裂 / D2 SecureReadError 裸逃逸) ----
+
+
+def test_log_scan_row_survives_partial_os_write(tmp_path, monkeypatch):
+    """D1: 底层 os.write 部分写时行仍必须完整落盘 — 单次 os.write 的撕裂残行
+    会连带损坏下一次 append (行拼接在残行上), 全写语义是 append-only 的前提。"""
+    import os as _os
+
+    from src.screening.offensive.setup_output_log import (
+        load_scan_runs,
+        log_scan_run,
+    )
+
+    real_write = _os.write
+    state = {"calls": 0}
+
+    def flaky_write(fd, data):
+        state["calls"] += 1
+        # 模拟内核部分写: 奇数次调用只写前一半, 由上层重试补齐剩余
+        if len(data) > 1 and state["calls"] % 2 == 1:
+            return real_write(fd, data[: len(data) // 2])
+        return real_write(fd, data)
+
+    monkeypatch.setattr(_os, "write", flaky_write)
+
+    day = date(2026, 8, 20)
+    log_scan_run(day, [_action("300009", trigger_strength=0.595)], [], regime="normal", out_dir=tmp_path)
+    monkeypatch.undo()
+    runs = load_scan_runs(day, out_dir=tmp_path)
+    assert len(runs) == 1
+    assert runs[0]["candidates"][0]["ticker"] == "300009"
+    assert runs[0]["candidates"][0]["trigger_strength"] == 0.595
+
+
+def test_load_scan_runs_secure_read_error_degrades_to_missing(tmp_path, monkeypatch, caplog):
+    """D2: read_regular_bytes 的 SecureReadError (超界/symlink-TOCTOU) 必须类型化
+    降级为按缺失处理 — advisory 消费面裸抛会让整个 --daily-action 尾部告警链断裂。"""
+    import logging
+
+    import src.screening.offensive.setup_output_log as sol
+
+    day = date(2026, 8, 20)
+    log_scan_run = sol.log_scan_run
+    path = log_scan_run(day, [_action("300009")], [], regime="normal", out_dir=tmp_path)
+    assert path.stat().st_size > 10
+
+    monkeypatch.setattr(sol, "_MAX_LOG_FILE_BYTES", 10)
+    with caplog.at_level(logging.WARNING):
+        runs = sol.load_scan_runs(day, out_dir=tmp_path)
+    assert runs == []
+    assert caplog.records, "降级必须留告警, 不静默假装没有"
