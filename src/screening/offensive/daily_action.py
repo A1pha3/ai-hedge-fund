@@ -1467,6 +1467,58 @@ def complete_daily_action_v2(
     )
 
 
+def _render_trigger_state_line() -> str | None:
+    """预注册强度阈值触发器的操作员状态行 (R85 Op1)。
+
+    R79-R84 建齐判定/账本/机械化积累, 但状态只活在手动脚本报告里 — 与
+    regime 行 (2026-08-18 审查项 4) 同构的可见性缺口。账本读取/连亮计数
+    是 src.screening.offensive.threshold_trigger 单一实现, 本函数只拼装
+    披露文本: 账本缺失/空 → 整行省略 (fail-open, 不假装有判定);
+    本行是披露不是行为改变 — 武装与否不改变任何当日决策路径 (配置不是
+    权限, 阈值评估是 owner 预注册动作)。
+    """
+    from src.screening.offensive import threshold_trigger as _tt
+
+    records = _tt.load_trigger_ledger()
+    if not records:
+        return None
+    latest = records[-1]
+    stab = _tt.trigger_stability(records)
+
+    c1_raw = latest.get("condition_1") or {}
+    c2_raw = latest.get("condition_2") or {}
+    c1_judged = bool(c1_raw.get("judged"))
+    c2_judged = bool(c2_raw.get("judged"))
+    c1 = (
+        f"条件① ≥0.70 桶 CI>0 {'已亮' if c1_raw.get('lit') else '未亮'}"
+        f"（连亮 {stab['condition_1_streak']}）"
+        if c1_judged
+        else "条件① ≥0.70 桶 CI>0 样本不足未判定"
+    )
+    c2 = (
+        f"条件② 0.50-0.60 转负 {'已亮' if c2_raw.get('lit') else '未亮'}"
+        f"（连亮 {stab['condition_2_streak']}）"
+        if c2_judged
+        else "条件② 0.50-0.60 转负 样本不足未判定"
+    )
+    armed = latest.get("conjunction_armed") is True
+    conj = (
+        "合取已武装 → 阈值上调正式评估就绪（owner 预注册动作）"
+        if armed
+        else "合取未武装"
+    )
+    court = latest.get("court")
+    coverage = (
+        f" · court 覆盖至 {court.get('window_end')}"
+        if isinstance(court, dict) and court.get("window_end")
+        else ""
+    )
+    anchor = latest.get("anchor") or "production_aligned/t10"
+    return (
+        f"强度阈值触发器（{anchor} · 账本 {stab['records']} 条）：{c1} · {c2} · {conj}{coverage}"
+    )
+
+
 def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> str:
     """Render the daily operator view — one track regardless of ``verbose``.
 
@@ -1551,6 +1603,12 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
             else "（⚠ 该 regime 阻断新仓，今日不应有新计划）"
         )
         lines.append(f"Regime：{run.regime}{gate_note}")
+        lines.append("")
+    # 触发器状态行 (R85 Op1): 判定面证据的日度可见性 — 账本缺失/空时
+    # 整行省略 (fail-open), 与 regime 行的省略语义一致.
+    trigger_line = _render_trigger_state_line()
+    if trigger_line:
+        lines.append(trigger_line)
         lines.append("")
     if summary is not None:
         lines.append(f"今日摘要：{summary}")
