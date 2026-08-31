@@ -540,11 +540,15 @@ def log_scan_run(
 def load_scan_runs(
     signal_date: date,
     *,
-    out_dir: Path | str = _DEFAULT_DIR,
+    out_dir: Path | str | None = None,
 ) -> list[dict]:
-    """只读回读当日逐刷新快照; 缺失 → []; 损坏行跳过告警 (advisory 消费面)。"""
+    """只读回读当日逐刷新快照; 缺失 → []; 损坏行跳过告警 (advisory 消费面)。
+
+    out_dir 懒默认 (R87): 操作员渲染面 (flip 状态行) 经默认路径消费本函数 —
+    烘焙默认使测试/沙箱无法重定向 (R86 写函数同族); 生产取值不变。
+    """
     compact = signal_date.strftime("%Y%m%d")
-    target = Path(out_dir) / f"{compact}.scan_runs.jsonl"
+    target = _out_dir_or_default(out_dir) / f"{compact}.scan_runs.jsonl"
     if not target.exists():
         return []
     try:

@@ -172,3 +172,82 @@ def test_trigger_state_line_armed_and_unjudged_disclosed(case, tmp_path, monkeyp
     assert "条件① ≥0.70 桶 CI>0 样本不足未判定" in text
     assert "条件② 0.50-0.60 转负 样本不足未判定" in text
     assert "合取已武装 → 阈值上调正式评估就绪（owner 预注册动作）" in text
+
+
+# ---------- R87 Op1: 逐刷新翻转状态行 (admission 噪声的日度可见性) ----------
+
+def _scan_run_file(tmp_path, day, runs):
+    """构造当日 scan_runs 工件 (与 log_scan_run 落盘形态同构)。"""
+    import json
+    out = tmp_path / "sol"
+    out.mkdir(exist_ok=True)
+    target = out / f"{day}.scan_runs.jsonl"
+    payload = []
+    for candidates in runs:
+        payload.append({
+            "record_kind": "scan_run", "schema_version": 1,
+            "signal_date": day, "candidates": candidates,
+        })
+    target.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in payload) + "\n",
+        encoding="utf-8",
+    )
+    return out
+
+
+def _cand(ticker, setup, eligible, strength):
+    return {"ticker": ticker, "setup": setup, "plan_eligible": eligible,
+            "trigger_strength": strength, "degraded": False, "block_reason": ""}
+
+
+def _patch_sol_dir(monkeypatch, path):
+    from src.screening.offensive import setup_output_log as sol
+    monkeypatch.setattr(sol, "_DEFAULT_DIR", path)
+
+
+def test_flip_state_line_renders_flips_and_union_gap(case, tmp_path, monkeypatch):
+    """有翻转日: 状态行披露刷新数/候选数/翻转数与并集−末次差明细 + 诚实边界注记."""
+    out = _scan_run_file(tmp_path, "20260831", [
+        [_cand("300009.SZ", "btst_breakout", True, 0.595),
+         _cand("600000.SH", "btst_breakout", False, 0.42)],
+        [_cand("300009.SZ", "btst_breakout", False, 0.48),
+         _cand("600000.SH", "btst_breakout", False, 0.44)],
+    ])
+    _patch_sol_dir(monkeypatch, out)
+    service, _repository, as_of, _sessions = case
+    as_of = as_of.replace(year=2026, month=8, day=31)
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "逐刷新翻转" in text
+    assert "2 次刷新" in text
+    assert "候选 2" in text
+    assert "资格翻转 1 只" in text
+    assert "并集−末次 1 只" in text
+    assert "300009.SZ btst_breakout" in text
+    assert "噪声代理量" in text  # 诚实边界: 不判定为全部噪声
+
+
+def test_flip_state_line_omitted_when_no_flips(case, tmp_path, monkeypatch):
+    """单刷新/零翻转: 整行省略 (无噪声不出行, fail-open 语义)."""
+    out = _scan_run_file(tmp_path, "20260831", [
+        [_cand("600000.SH", "btst_breakout", False, 0.42)],
+    ])
+    _patch_sol_dir(monkeypatch, out)
+    service, _repository, as_of, _sessions = case
+    as_of = as_of.replace(year=2026, month=8, day=31)
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "逐刷新翻转" not in render_daily_action_v2(view)
+
+
+def test_flip_state_line_omitted_when_file_missing(case, tmp_path, monkeypatch):
+    """当日无 scan_runs 工件: 整行省略无异常."""
+    _patch_sol_dir(monkeypatch, tmp_path / "empty-sol")
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "逐刷新翻转" not in render_daily_action_v2(view)
