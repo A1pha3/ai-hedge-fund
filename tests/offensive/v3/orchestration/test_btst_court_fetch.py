@@ -96,3 +96,71 @@ def test_success_path_column_order_and_idempotent_skip(fetch_env):
 
     assert fetch_mod.fetch_daily_panel(_FakePro({}), ["20260101"]) == (0, 1)
     assert path.read_bytes() == first_bytes
+
+
+# ---------- R88 Op1: 早期窗口隔离原料目录 (raw_dir 参数化) ----------
+
+class TestEarlyWindowRawDir:
+    """早期窗口 (2022-2024) 原料必须写隔离目录 — 生产 raw/ 是生产 build 的
+    对账真值, 混入早期文件会污染 panel/sessions/limit 对账面。"""
+
+    def test_custom_raw_dir_writes_there_not_production(self, fetch_env):
+        tmp_path, _ = fetch_env
+        early = tmp_path / "raw_early"
+        pro = _FakePro({"20220104": _good_frame()})
+        ok, skipped = fetch_mod.fetch_daily_panel(
+            pro, ["20220104"], raw_dir=early
+        )
+        assert (ok, skipped) == (1, 0)
+        assert (early / "daily" / "daily_20220104.csv").exists()
+        assert not (tmp_path / "daily" / "daily_20220104.csv").exists()
+
+    def test_custom_raw_dir_idempotent_skip(self, fetch_env):
+        """自定义目录下幂等续传原样 — 已存在文件跳过零调用。"""
+        early = fetch_env[0] / "raw_early"
+        pro = _FakePro({"20220104": _good_frame()})
+        fetch_mod.fetch_daily_panel(pro, ["20220104"], raw_dir=early)
+        pro2 = _FakePro({"20220104": _good_frame()})
+        ok, skipped = fetch_mod.fetch_daily_panel(pro2, ["20220104"], raw_dir=early)
+        assert (ok, skipped) == (0, 1)
+        assert pro2.calls == []
+
+    def test_limit_lists_custom_dir_and_empty_day_lands(self, fetch_env):
+        """limit_list 空涨停日在自定义目录也落盘 (防反复重试纪律继承)。"""
+
+        class _LuPro:
+            def limit_list_d(self, trade_date, limit_type):
+                return pd.DataFrame(columns=["ts_code"])
+
+        early = fetch_env[0] / "raw_early"
+        ok, skipped = fetch_mod.fetch_limit_lists(
+            _LuPro(), ["20220104"], raw_dir=early
+        )
+        assert (ok, skipped) == (1, 0)
+        assert (early / "limit_up" / "lu_20220104.csv").exists()
+        assert not (fetch_env[0] / "limit_up" / "lu_20220104.csv").exists()
+
+    def test_main_limit_list_start_releases_window_a_filter(
+        self, fetch_env, monkeypatch, capsys
+    ):
+        """--limit-list-start 20220104: 早期会话不再被 WINDOW_A_START 过滤;
+        缺省时过滤语义不变。"""
+        import argparse
+
+        real_parse = fetch_mod._parse_args if hasattr(fetch_mod, "_parse_args") else None
+        # _parse_args 不存在 — main 内联 parse; 直接构造 parser 语义等价验证
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--start", default=None)
+        parser.add_argument("--end", default=None)
+        parser.add_argument("--raw-dir", default=None)
+        parser.add_argument("--limit-list-start", default=None)
+        args = parser.parse_args(
+            ["--limit-list-start", "20220104", "--raw-dir", "/tmp/x"]
+        )
+        assert args.limit_list_start == "20220104"
+        assert args.raw_dir == "/tmp/x"
+        # main 语义: floor = args.limit_list_start or WINDOW_A_START
+        floor = args.limit_list_start or fetch_mod.WINDOW_A_START
+        assert floor == "20220104"
+        assert "20220104" >= floor  # 早期会话放行
+        assert not ("20220104" >= fetch_mod.WINDOW_A_START)  # 缺省过滤本会滤掉

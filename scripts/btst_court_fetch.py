@@ -61,8 +61,10 @@ def _write_atomic_csv(path: Path, df: pd.DataFrame) -> None:
     tmp.replace(path)
 
 
-def fetch_daily_panel(pro, sessions: list[str]) -> tuple[int, int]:
-    raw = RAW_DIR / "daily"
+def fetch_daily_panel(
+    pro, sessions: list[str], *, raw_dir: Path | str | None = None
+) -> tuple[int, int]:
+    raw = Path(raw_dir) / "daily" if raw_dir is not None else RAW_DIR / "daily"
     raw.mkdir(parents=True, exist_ok=True)
     ok = skipped = 0
     for i, d in enumerate(sessions):
@@ -91,8 +93,10 @@ def fetch_daily_panel(pro, sessions: list[str]) -> tuple[int, int]:
     return ok, skipped
 
 
-def fetch_limit_lists(pro, sessions: list[str]) -> tuple[int, int]:
-    raw = RAW_DIR / "limit_up"
+def fetch_limit_lists(
+    pro, sessions: list[str], *, raw_dir: Path | str | None = None
+) -> tuple[int, int]:
+    raw = Path(raw_dir) / "limit_up" if raw_dir is not None else RAW_DIR / "limit_up"
     raw.mkdir(parents=True, exist_ok=True)
     ok = skipped = 0
     for d in sessions:
@@ -115,11 +119,15 @@ def fetch_limit_lists(pro, sessions: list[str]) -> tuple[int, int]:
     return ok, skipped
 
 
-def fetch_sw_membership(pro) -> Path:
-    """申万 L1 成员史 (in/out 日期) — PIT 行业映射. 与 _industry_codes.json 对齐."""
+def fetch_sw_membership(pro, *, raw_dir: Path | str | None = None) -> Path:
+    """申万 L1 成员史 (in/out 日期) — PIT 行业映射. 与 _industry_codes.json 对齐.
+
+    raw_dir (R88): 早期窗口等研究用途的隔离原料目录 — 绝不与生产 raw/ 混写
+    (生产 build 的 panel/limit 对账以生产目录为真值).
+    """
     import json
 
-    raw = RAW_DIR
+    raw = Path(raw_dir) if raw_dir is not None else RAW_DIR
     raw.mkdir(parents=True, exist_ok=True)
     out = raw / "sw_members.csv"
     if out.exists():
@@ -148,6 +156,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--start", default=None, help="面板起始 YYYYMMDD (默认 _btst_court_common.PANEL_START)")
     parser.add_argument("--end", default=None, help="面板结束 YYYYMMDD (默认今天)")
+    parser.add_argument(
+        "--raw-dir", default=None,
+        help="隔离原料目录 (R88 早期窗口: raw_early/) — 不传则生产 raw/; "
+        "早期原料绝不混入生产目录 (生产 build 对账以生产目录为真值)")
+    parser.add_argument(
+        "--limit-list-start", default=None,
+        help="limit_list_d 拉取起始 YYYYMMDD (默认 WINDOW_A_START — 生产成本节约过滤; "
+        "早期窗口传窗口起点放行全部会话)")
     args = parser.parse_args()
 
     from _btst_court_common import PANEL_START
@@ -157,19 +173,21 @@ def main() -> None:
     sessions = load_sessions(start, end)
     print(f"sessions {start}..{end}: {len(sessions)}")
 
+    raw_dir = Path(args.raw_dir) if args.raw_dir else RAW_DIR
     pro = _pro()
-    print("[1/3] 全市场日线快照…")
-    ok_d, skip_d = fetch_daily_panel(pro, sessions)
+    print(f"[1/3] 全市场日线快照 (raw_dir={raw_dir})…")
+    ok_d, skip_d = fetch_daily_panel(pro, sessions, raw_dir=raw_dir)
     print(f"  daily: new={ok_d} skipped={skip_d} total={len(sessions)}")
-    lu_sessions = [s for s in sessions if s >= WINDOW_A_START]
-    print(f"[2/3] 权威涨停名单 ({len(lu_sessions)} 天)…")
-    ok_l, skip_l = fetch_limit_lists(pro, lu_sessions)
+    lu_floor = args.limit_list_start or WINDOW_A_START
+    lu_sessions = [s for s in sessions if s >= lu_floor]
+    print(f"[2/3] 权威涨停名单 ({len(lu_sessions)} 天, floor={lu_floor})…")
+    ok_l, skip_l = fetch_limit_lists(pro, lu_sessions, raw_dir=raw_dir)
     print(f"  limit_list_d: new={ok_l} skipped={skip_l}")
     print("[3/3] 申万 L1 成员史…")
-    fetch_sw_membership(pro)
+    fetch_sw_membership(pro, raw_dir=raw_dir)
 
-    missing_daily = [s for s in sessions if not (RAW_DIR / "daily" / f"daily_{s}.csv").exists()]
-    missing_lu = [s for s in lu_sessions if not (RAW_DIR / "limit_up" / f"lu_{s}.csv").exists()]
+    missing_daily = [s for s in sessions if not (raw_dir / "daily" / f"daily_{s}.csv").exists()]
+    missing_lu = [s for s in lu_sessions if not (raw_dir / "limit_up" / f"lu_{s}.csv").exists()]
     print(f"汇总: daily 缺 {len(missing_daily)} 天 {missing_daily[:8]}…; limit_list 缺 {len(missing_lu)} 天")
     if missing_daily:
         print("  (有缺口可重跑本脚本续传; build 阶段会再断言)")
