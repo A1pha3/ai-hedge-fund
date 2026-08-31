@@ -437,3 +437,173 @@ class TestDeterministicAcrossCalls:
         cluster_boot_ci_low(list(np.random.default_rng(1).normal(0, 0.01, 50)), junk_days)
         after_noise = decompose(ev, universes=("all_candidates",))
         assert clean == after_noise
+
+
+class TestTriggerStabilityLedger:
+    """预注册触发器的『稳定越零』子句机械化 (R81 Op2)。
+
+    R79 Op1 机械化了单次刷新的判定 (lit/armed), 但『稳定越零』是跨刷新性质 —
+    累积记录此前只存在于人工翻日报。账本按刷新日期逐条记录判定快照,
+    同日刷新替换 (court 表不变则数值恒等, 替换即幂等); 连亮计数从最新记录
+    向前数连续 lit, 任何未点亮/未判定记录断链 (保守: 未知不延长连亮)。
+    本工具只计数不判定 — 连亮多少次才算『稳定』(阈值 K) 属 owner 预注册范围。
+    """
+
+    @staticmethod
+    def _trigger(c1_lit=True, c2_lit=False, c1_judged=True, c2_judged=True,
+                 c1_stat=0.0023, c2_stat=0.0097, n=300):
+        return {
+            "rule": "预注册触发器", "anchor": "production_aligned/t10", "min_n": 30,
+            "condition_1_strong_bucket_ci_above_zero": {
+                "lit": c1_lit, "judged": c1_judged, "n": n, "stat": c1_stat},
+            "condition_2_mid_bucket_expectancy_negative": {
+                "lit": c2_lit, "judged": c2_judged, "n": n, "stat": c2_stat},
+            "conjunction_armed": bool(c1_lit and c2_lit),
+            "verdict": "测试夹具",
+        }
+
+    def _payload(self, trigger):
+        return {"threshold_trigger": trigger}
+
+    def test_record_and_streak_accumulates(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, trigger_stability, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        for i, day in enumerate(["20260829", "20260830", "20260831"]):
+            meta = record_trigger_status(
+                self._payload(self._trigger(c1_lit=i >= 1)), day, ledger_path=ledger
+            )
+            assert meta["recorded"] is True
+        records = load_trigger_ledger(ledger)
+        assert [r["date"] for r in records] == ["20260829", "20260830", "20260831"]
+        st = trigger_stability(records)
+        assert st["records"] == 3
+        assert st["condition_1_streak"] == 2  # 0829 未点亮断链
+        assert st["condition_2_streak"] == 0
+        assert st["conjunction_streak"] == 0
+        assert st["condition_1_last_lit"] is True
+
+    def test_same_date_refresh_replaces(self, tmp_path):
+        """同日二次刷新替换同日记录 (court 表不变 → 数值恒等, 幂等收敛)。"""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger, trigger_stability,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status(self._payload(self._trigger()), "20260831", ledger_path=ledger)
+        record_trigger_status(
+            self._payload(self._trigger(c1_stat=0.0099)), "20260831", ledger_path=ledger
+        )
+        records = load_trigger_ledger(ledger)
+        assert len(records) == 1
+        assert records[0]["condition_1"]["stat"] == 0.0099
+        st = trigger_stability(records)
+        assert st["records"] == 1 and st["condition_1_streak"] == 1
+
+    def test_unjudged_breaks_streak(self, tmp_path):
+        """未判定 (n<30) 记录断链 — 保守: 未知不延长连亮。"""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger, trigger_stability,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status(self._payload(self._trigger()), "20260829", ledger_path=ledger)
+        record_trigger_status(
+            self._payload(self._trigger(c1_judged=False, c1_lit=False)),
+            "20260830", ledger_path=ledger,
+        )
+        record_trigger_status(self._payload(self._trigger()), "20260831", ledger_path=ledger)
+        st = trigger_stability(load_trigger_ledger(ledger))
+        assert st["condition_1_streak"] == 1
+
+    def test_record_missing_trigger_noop(self, tmp_path):
+        """payload 无 threshold_trigger (如全候选单口径) → 不写账本。"""
+        from scripts.winrate_payoff_decomposition import record_trigger_status
+        ledger = tmp_path / "ledger.jsonl"
+        meta = record_trigger_status({"universes": {}}, "20260831", ledger_path=ledger)
+        assert meta["recorded"] is False
+        assert not ledger.exists()
+
+    def test_corrupt_line_skipped(self, tmp_path):
+        """损坏行跳过 (诊断面 advisory 语义), 好行照常计数。"""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status(self._payload(self._trigger()), "20260831", ledger_path=ledger)
+        with open(ledger, "a", encoding="utf-8") as fh:
+            fh.write("garbage-not-json\n")
+        records = load_trigger_ledger(ledger)
+        assert [r["date"] for r in records] == ["20260831"]
+
+    def test_render_md_stability_lines(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import (
+            load_trigger_ledger,
+            record_trigger_status,
+            render_md,
+            trigger_stability,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        for day in ("20260830", "20260831"):
+            record_trigger_status(self._payload(self._trigger()), day, ledger_path=ledger)
+        payload = self._payload(self._trigger())
+        payload["horizons"] = {"t10": []}
+        payload["threshold_stability"] = trigger_stability(load_trigger_ledger(ledger))
+        md = render_md(payload, "20260831")
+        assert "稳定计数" in md
+        assert "条件① 连亮 2/2" in md
+        assert "合取连亮 0/2" in md
+        assert "稳定阈值 K 属 owner 预注册" in md
+
+    def test_main_writes_ledger_and_md(self, tmp_path, monkeypatch):
+        """端到端: 生产对齐口径刷新 → 账本落盘 + MD 稳定计数行。"""
+        import pandas as pd
+        from datetime import date as _date
+        from scripts import winrate_payoff_decomposition as mod
+        rows = []
+        for i in range(40):
+            rows.append({
+                "symbol": f"{600000+i}",
+                "signal_date": f"2026-01-{(i % 20) + 1:02d}",
+                "regime": "normal",
+                "trigger_strength": 0.75 if i % 2 else 0.55,
+                "gross_ret_t10": 0.03 * (1 if i % 2 else -1),
+                "gross_ret_t5": 0.015,
+                "fillable": True, "gate_blocked": False, "degraded": False,
+                "st_name": False, "industry_missing": False,
+                "excluded_ticker": False, "price_ge_3": True,
+            })
+        table = tmp_path / "court.csv.gz"
+        pd.DataFrame(rows).to_csv(table, index=False)
+        ledger = tmp_path / "trigger_ledger.jsonl"
+        rc = mod.main([
+            "--court-table", str(table), "--report-dir", str(tmp_path / "rep"),
+            "--trigger-ledger", str(ledger),
+        ])
+        assert rc == 0
+        records = mod.load_trigger_ledger(ledger)
+        assert len(records) == 1
+        assert records[0]["anchor"] == "production_aligned/t10"
+        stamp = _date.today().strftime("%Y%m%d")
+        md = (tmp_path / "rep" / f"winrate_payoff_decomposition_{stamp}.md").read_text(encoding="utf-8")
+        assert "稳定计数" in md
+
+    def test_main_all_candidates_only_skips_ledger(self, tmp_path):
+        """全候选单口径 (无生产对齐锚) → 不写账本 (无判定即无记录)。"""
+        import pandas as pd
+        from scripts import winrate_payoff_decomposition as mod
+        rows = []
+        for i in range(32):
+            rows.append({
+                "symbol": f"{600000+i}", "signal_date": f"2026-01-{(i % 20) + 1:02d}",
+                "regime": "normal", "trigger_strength": 0.55,
+                "gross_ret_t10": 0.02, "gross_ret_t5": 0.01,
+            })
+        table = tmp_path / "court.csv.gz"
+        pd.DataFrame(rows).to_csv(table, index=False)
+        ledger = tmp_path / "trigger_ledger.jsonl"
+        rc = mod.main([
+            "--court-table", str(table), "--report-dir", str(tmp_path / "rep"),
+            "--universes", "all_candidates", "--trigger-ledger", str(ledger),
+        ])
+        assert rc == 0
+        assert not ledger.exists()

@@ -48,6 +48,7 @@ MIN_CELL_N = 30  # 与 panel_health_check / panel_signal_decomposition 一致
 N_BOOT = 10_000
 BOOT_SEED = 20260822  # 每次调用新建 seeded RNG — 可复现与进程历史/行序无关 (R13)
 PRIMARY_HORIZON = 10  # BTST 固定合约
+TRIGGER_LEDGER_PATH = Path("data/reports/threshold_trigger_ledger.jsonl")
 CONTRAST_HORIZONS = (5,)
 # 预注册阈值触发器判定门槛 (AGENTS.md 项1; R10/R77 判定纪律同款)
 THRESHOLD_TRIGGER_MIN_N = MIN_CELL_N
@@ -360,6 +361,137 @@ def attach_threshold_trigger(
     return payload
 
 
+def load_trigger_ledger(
+    ledger_path: Path = TRIGGER_LEDGER_PATH,
+) -> list[dict]:
+    """读触发器账本, 按日期排序; 损坏行 advisory 跳过 (诊断面语义)。"""
+    records: list[dict] = []
+    try:
+        text = Path(ledger_path).read_text(encoding="utf-8")
+    except OSError:
+        return records
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict) and rec.get("date"):
+            records.append(rec)
+    return sorted(records, key=lambda r: str(r["date"]))
+
+
+def record_trigger_status(
+    payload: dict[str, object],
+    date_str: str,
+    ledger_path: Path = TRIGGER_LEDGER_PATH,
+) -> dict[str, object]:
+    """把本次刷新的触发器判定快照按日期落账本 (R81 Op2)。
+
+    同日刷新替换同日记录: court 表不变则判定数值恒等, 替换即幂等收敛;
+    court 表变了则同日晚刷新就是最新事实 (append-only 跨日, 原地更新同日)。
+    payload 无 threshold_trigger (如全候选单口径, 无判定锚) → 不写。
+    诊断面 fail-open: 写失败打印警告, 不阻断报告生成。
+    """
+    trigger = payload.get("threshold_trigger")
+    if not isinstance(trigger, dict):
+        return {"recorded": False, "reason": "no_threshold_trigger"}
+    snapshot = {
+        "date": str(date_str),
+        "anchor": trigger.get("anchor"),
+        "min_n": trigger.get("min_n"),
+        "condition_1": {
+            k: trigger.get("condition_1_strong_bucket_ci_above_zero", {}).get(k)
+            for k in ("lit", "judged", "n", "stat")
+        },
+        "condition_2": {
+            k: trigger.get("condition_2_mid_bucket_expectancy_negative", {}).get(k)
+            for k in ("lit", "judged", "n", "stat")
+        },
+        "conjunction_armed": bool(trigger.get("conjunction_armed")),
+    }
+    records = [r for r in load_trigger_ledger(ledger_path) if r.get("date") != snapshot["date"]]
+    records.append(snapshot)
+    body = "\n".join(json.dumps(r, ensure_ascii=False, sort_keys=True) for r in records)
+    if body:
+        body += "\n"
+    import os
+    import tempfile
+
+    path = Path(ledger_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".trigger_ledger_", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(body)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except OSError as exc:
+        print(f"WARNING: 触发器账本写入失败 (诊断面 fail-open): {exc}")
+        return {"recorded": False, "reason": "write_failed"}
+    return {"recorded": True, "records": len(records)}
+
+
+def trigger_stability(records: list[dict]) -> dict[str, object]:
+    """连亮计数 (R81 Op2): 从最新记录向前数连续 lit; 未点亮/未判定断链
+    (保守: 未知不延长连亮)。本函数只计数 — 连亮多少次才算『稳定』(阈值 K)
+    属 owner 预注册范围, 不在工具内判定。
+    """
+    dates = [str(r.get("date")) for r in records]
+    out: dict[str, object] = {
+        "records": len(records),
+        "first_date": dates[0] if dates else None,
+        "last_date": dates[-1] if dates else None,
+        "condition_1_streak": 0,
+        "condition_1_last_lit": None,
+        "condition_2_streak": 0,
+        "condition_2_last_lit": None,
+        "conjunction_streak": 0,
+        "conjunction_last_armed": None,
+        "max_conjunction_streak": 0,
+    }
+    if not records:
+        return out
+    latest = records[-1]
+    c1, c2 = latest.get("condition_1") or {}, latest.get("condition_2") or {}
+    out["condition_1_last_lit"] = c1.get("lit")
+    out["condition_2_last_lit"] = c2.get("lit")
+    out["conjunction_last_armed"] = latest.get("conjunction_armed")
+    run_c1 = run_c2 = run_and = True
+    max_and = 0
+    for rec in reversed(records):
+        r1 = rec.get("condition_1") or {}
+        r2 = rec.get("condition_2") or {}
+        lit1 = r1.get("lit") is True
+        lit2 = r2.get("lit") is True
+        armed = rec.get("conjunction_armed") is True
+        if run_c1 and lit1:
+            out["condition_1_streak"] = int(out["condition_1_streak"]) + 1
+        else:
+            run_c1 = False
+        if run_c2 and lit2:
+            out["condition_2_streak"] = int(out["condition_2_streak"]) + 1
+        else:
+            run_c2 = False
+        if run_and and armed:
+            out["conjunction_streak"] = int(out["conjunction_streak"]) + 1
+            max_and = max(max_and, int(out["conjunction_streak"]))
+        else:
+            run_and = False
+    out["max_conjunction_streak"] = max_and
+    return out
+
+
 def render_md(payload: dict[str, object], date_str: str) -> str:
     L: list[str] = []
     L.append(f"# court 全候选胜率×赔率分解 ({date_str})")
@@ -417,7 +549,19 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
         L.append(_cond_line("条件① ≥0.70 桶净口径 CI90 下界>0", c1))
         L.append(_cond_line("条件② 0.50-0.60 桶净期望<0", c2))
         L.append(f"- **合取: {'点亮' if trigger.get('conjunction_armed') else '未点亮'}** — {trigger.get('verdict')}")
-        L.append(f"  (锚 {trigger.get('anchor')}; 『稳定越零』由连续多次刷新逐次记录累积)")
+        L.append(f"  (锚 {trigger.get('anchor')})")
+        stab = payload.get("threshold_stability")
+        if isinstance(stab, dict) and stab.get("records"):
+            L.append(
+                f"- 稳定计数 (跨刷新逐次记录, 机械化累积): 条件① 连亮 {stab['condition_1_streak']}"
+                f"/{stab['records']} · 条件② 连亮 {stab['condition_2_streak']}/{stab['records']}"
+                f" · 合取连亮 {stab['conjunction_streak']}/{stab['records']}"
+                f" (历史最多合取连亮 {stab['max_conjunction_streak']}; 记录 {stab['first_date']}"
+                f"→{stab['last_date']}) — 合取连亮持续出现才具备启动正式评估资格;"
+                "稳定阈值 K 属 owner 预注册范围, 本工具只计数不判定"
+            )
+        else:
+            L.append("- 稳定计数: 账本尚无记录 (首刷后逐次累积)")
         L.append("")
     L.append("## 纪律")
     L.append("")
@@ -465,6 +609,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="court 事件表路径 (默认生产 csv.gz; 测试用 fixture)")
     parser.add_argument("--report-dir", default=str(REPORT_DIR),
                         help="报告输出目录 (测试用 tmp)")
+    parser.add_argument("--trigger-ledger", default=str(TRIGGER_LEDGER_PATH),
+                        help="阈值触发器稳定账本路径 (诊断面, 同日替换幂等)")
     parser.add_argument("--universes", nargs="+",
                         default=["all_candidates", "production_aligned"],
                         choices=["all_candidates", "production_aligned"],
@@ -482,6 +628,13 @@ def main(argv: list[str] | None = None) -> int:
     ev = pd.read_csv(court_table)
     payload = decompose(ev, universes=tuple(args.universes))
     attach_threshold_trigger(payload)
+    record_meta = record_trigger_status(
+        payload, date_str, ledger_path=Path(args.trigger_ledger)
+    )
+    if record_meta.get("recorded"):
+        payload["threshold_stability"] = trigger_stability(
+            load_trigger_ledger(Path(args.trigger_ledger))
+        )
     payload["court_rows"] = len(ev)
     payload["court_sessions"] = int(ev["signal_date"].nunique())
     report_dir.mkdir(parents=True, exist_ok=True)
