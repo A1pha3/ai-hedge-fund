@@ -103,9 +103,29 @@ def test_stability_armed_run_accumulates():
         _rec("20260831", c1_lit=True, c2_lit=False, armed=False),
     ]
     st = tt.trigger_stability(records)
-    assert st["conjunction_streak"] == 0  # 最新未武装 → 断链
-    assert st["max_conjunction_streak"] == 0  # 冻结语义: 断链即停止累积
+    assert st["conjunction_streak"] == 0  # 最新未武装 → 断链 (最新锚定语义不变)
+    assert st["max_conjunction_streak"] == 2  # 全历史最大武装段如实 (R85 Op2 修复)
     # 正向: 最新连续武装时两字段同步增长
     st2 = tt.trigger_stability(records[:2])
     assert st2["conjunction_streak"] == 2
     assert st2["max_conjunction_streak"] == 2
+
+
+def test_max_conjunction_true_historical_scan():
+    """全历史最大: 多段武装段取最长; 前段断链不吞历史 (R85 Op2 RED 实锚).
+
+    旧实现 max_and 只在 run_and 存活分支内更新 — [A,A,U] 的历史最大 2 被
+    吞成 0, MD 披露『历史最多合取连亮』失真。
+    """
+    records = [
+        _rec("20260828", c1_lit=True, c2_lit=True, armed=True),
+        _rec("20260829", c1_lit=True, c2_lit=True, armed=True),
+        _rec("20260830", c1_lit=True, c2_lit=False, armed=False),
+        _rec("20260831", c1_lit=True, c2_lit=True, armed=True),
+    ]
+    st = tt.trigger_stability(records)
+    assert st["conjunction_streak"] == 1  # 最新锚定: 只有 0831 连续武装
+    assert st["max_conjunction_streak"] == 2  # 历史最长段 = 0828-0829
+    assert tt.trigger_stability([_rec("20260901", armed=False)] * 3)[
+        "max_conjunction_streak"
+    ] == 0

@@ -52,8 +52,13 @@ def load_trigger_ledger(ledger_path: Path | str | None = None) -> list[dict]:
 
 
 def trigger_stability(records: list[dict]) -> dict[str, object]:
-    """连亮计数 (R81 Op2 引入): 从最新记录向前数连续 lit; 未点亮/未判定
-    断链 (保守: 未知不延长连亮)。只计数不判定 — 『稳定』阈值属 owner。
+    """连亮计数 (R81 Op2 引入; R85 Op2 修 max 语义): 两族字段语义 —
+    ``condition_*_streak`` / ``conjunction_streak`` = **最新锚定**连亮 (从最新
+    记录向前数, 未点亮/未判定断链 — 保守: 未知不延长连亮);
+    ``max_conjunction_streak`` = **全历史**最大连续武装段 (独立正向扫描,
+    断链不吞历史 — R85 Op2 修复: 旧实现把 max 收敛进最新锚定循环, 该值
+    恒等于当前连亮, 与字段名/MD 披露『历史最多』不符)。
+    只计数不判定 — 『稳定』阈值属 owner。
     """
     dates = [str(r.get("date")) for r in records]
     out: dict[str, object] = {
@@ -76,7 +81,6 @@ def trigger_stability(records: list[dict]) -> dict[str, object]:
     out["condition_2_last_lit"] = c2.get("lit")
     out["conjunction_last_armed"] = latest.get("conjunction_armed")
     run_c1 = run_c2 = run_and = True
-    max_and = 0
     for rec in reversed(records):
         r1 = rec.get("condition_1") or {}
         r2 = rec.get("condition_2") or {}
@@ -93,10 +97,18 @@ def trigger_stability(records: list[dict]) -> dict[str, object]:
             run_c2 = False
         if run_and and armed:
             out["conjunction_streak"] = int(out["conjunction_streak"]) + 1
-            max_and = max(max_and, int(out["conjunction_streak"]))
         else:
             run_and = False
-    out["max_conjunction_streak"] = max_and
+    # 全历史最大武装段: 独立正向扫描, 与最新锚定循环解耦
+    historical_max = 0
+    current_run = 0
+    for rec in records:
+        if rec.get("conjunction_armed") is True:
+            current_run += 1
+            historical_max = max(historical_max, current_run)
+        else:
+            current_run = 0
+    out["max_conjunction_streak"] = historical_max
     return out
 
 
