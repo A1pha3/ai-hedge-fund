@@ -776,10 +776,12 @@ class TestCourtGrowthCoupling:
         mod.main(argv)
         records = mod.load_trigger_ledger(ledger)
         assert len(records) == 1
-        assert records[0]["court"] == {
-            "built_at": None, "window_start": None, "window_end": None,
-            "rows": 40, "formula_fingerprint": None,
-        }
+        court = records[0]["court"]
+        assert court["built_at"] is None and court["window_start"] is None
+        assert court["window_end"] is None and court["rows"] == 40
+        assert court["formula_fingerprint"] is None
+        assert court["content_digest"].startswith("sha256:")
+        assert court["universe_audit_complete"] is None  # fixture 无 manifest
 
         # 同表同绑定当日重跑 (前进门): 账本不动, 报告刷新, reason 披露进 JSON
         mod.main(argv)
@@ -814,7 +816,8 @@ class TestAdversarialAuditR84Op1:
         (tables / "manifest_v1.json").write_text("not json at all", encoding="utf-8")
         b = court_binding(table, rows=7)
         assert b == {"built_at": None, "window_start": None, "window_end": None,
-                     "rows": 7, "formula_fingerprint": None}
+                     "rows": 7, "formula_fingerprint": None,
+                     "content_digest": None, "universe_audit_complete": None}
         # manifest 非 dict (JSON 数组)
         (tables / "manifest_v1.json").write_text("[1,2]", encoding="utf-8")
         assert court_binding(table, rows=7)["built_at"] is None
@@ -838,7 +841,8 @@ class TestAdversarialAuditR84Op1:
         b = court_binding(table, rows=99)
         assert b == {"built_at": "2026-08-31", "window_start": None,
                      "window_end": "20260831", "rows": 99,
-                     "formula_fingerprint": fp}
+                     "formula_fingerprint": fp,
+                     "content_digest": None, "universe_audit_complete": None}
 
     def test_gate_skips_regressed_binding_seen_in_history(self, tmp_path):
         """数据状态回退 (A→B→A) — A 已判定过, 门必须 skip (B 单点比对会放行)。"""
@@ -897,7 +901,8 @@ class TestWindowStartIdentity:
         b = court_binding(table, rows=99)
         assert b == {"built_at": "2026-09-01", "window_start": "20250102",
                      "window_end": "20260831", "rows": 99,
-                     "formula_fingerprint": "aa" * 32}
+                     "formula_fingerprint": "aa" * 32,
+                     "content_digest": None, "universe_audit_complete": None}
 
     def test_advance_gate_same_end_rows_different_start_is_new_state(self, tmp_path):
         """同 end/rows/指纹但起点不同 (20250102 vs 20250701) → 门不 skip, 落新记录。"""
@@ -928,3 +933,156 @@ class TestWindowStartIdentity:
             "window": {"start": 55, "end": "20260831"}}), encoding="utf-8")
         b = court_binding(table, rows=1)
         assert b["window_start"] is None and b["window_end"] == "20260831"
+
+
+class TestCourtBindingContentIdentity:
+    """R90 Op2: binding 增内容身份 — 同日内容修正重建必须能推进判定账本。
+
+    2026-09-01 实例: 零审计构建与本会话回填修正构建的 built_at/rows/
+    formula_fingerprint 全同 (同日同行数同公式), 旧 binding 不可区分 →
+    前进门把修正判定误判为 court_not_advanced。
+    """
+
+    def _write_table(self, tmp_path, df, name="court.csv.gz"):
+        table = tmp_path / name
+        df.to_csv(table, index=False, compression="gzip")
+        return table
+
+    def _table_df(self):
+        import pandas as pd
+        return pd.DataFrame({
+            "symbol": ["600000", "600001"],
+            "signal_date": ["20260105", "20260106"],
+            "trigger_strength": [0.7, 0.55],
+            "gross_ret_t10": [0.03, -0.02],
+            "regime": ["normal", "normal"],
+        })
+
+    def _manifest(self, tmp_path, *, empty_days=0, include_empty=True,
+                  days_checked=2, sessions=2):
+        audit = {"days_checked": days_checked}
+        if include_empty:
+            audit["empty_days"] = empty_days
+        (tmp_path / "manifest_v1.json").write_text(json.dumps({
+            "built_at": "2026-09-01",
+            "window": {"start": "20260101", "end": "20260131", "sessions": sessions},
+            "formula_fingerprint": {"btst_breakout_sha256": "f" * 64},
+            "universe_audit": audit,
+        }), encoding="utf-8")
+
+    def test_content_digest_detects_same_shape_content_change(self, tmp_path):
+        """同行数 + 同 manifest 的内容修正 → digest 变, 其余身份字段全同。"""
+        from scripts.winrate_payoff_decomposition import court_binding
+        df = self._table_df()
+        self._manifest(tmp_path)
+        b1 = court_binding(self._write_table(tmp_path, df), rows=len(df))
+        df.loc[0, "gross_ret_t10"] = 0.99  # panel 价格修正类: 行数/manifest 全同
+        b2 = court_binding(self._write_table(tmp_path, df, name="fixed.csv.gz"),
+                           rows=len(df))
+        for k in ("built_at", "window_start", "window_end", "rows", "formula_fingerprint"):
+            assert b1[k] == b2[k]  # 旧 binding 对此两表不可区分 (缺陷形态)
+        assert b1["content_digest"] != b2["content_digest"]
+
+    def test_content_digest_stable_across_rewrite(self, tmp_path):
+        """同内容重写 (新 mtime/新 gzip 头) → digest 恒同 (幂等跳过语义保持)。"""
+        import time
+        from scripts.winrate_payoff_decomposition import court_binding
+        df = self._table_df()
+        self._manifest(tmp_path)
+        b1 = court_binding(self._write_table(tmp_path, df), rows=len(df))
+        time.sleep(1.1)  # gzip mtime 秒级分辨率 — 字节不同的同内容重写
+        b2 = court_binding(self._write_table(tmp_path, df, name="rewrite.csv.gz"),
+                           rows=len(df))
+        assert b2["content_digest"] == b1["content_digest"]
+
+    def test_advance_gate_admits_same_day_content_fix(self, tmp_path):
+        """同日内容修正重建: binding 其余字段全同也必须落账 (缺陷修复面)。"""
+        from scripts.winrate_payoff_decomposition import (
+            court_binding, load_trigger_ledger, record_trigger_status,
+        )
+        df = self._table_df()
+        self._manifest(tmp_path)
+        trigger = {"anchor": "production_aligned/t10", "min_n": 30}
+        b_stale = court_binding(self._write_table(tmp_path, df), rows=len(df))
+        df.loc[0, "gross_ret_t10"] = 0.99
+        b_fixed = court_binding(
+            self._write_table(tmp_path, df, name="fixed.csv.gz"), rows=len(df))
+        assert b_stale["content_digest"] != b_fixed["content_digest"]
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status({"threshold_trigger": trigger}, "20260901",
+                              ledger_path=ledger, court_binding=b_stale,
+                              require_advance=True)
+        meta = record_trigger_status({"threshold_trigger": trigger}, "20260901",
+                                     ledger_path=ledger, court_binding=b_fixed,
+                                     require_advance=True)
+        assert meta["recorded"] is True  # 旧字段全同也曾被吞 (20260901 实例)
+        records = load_trigger_ledger(ledger)
+        assert len(records) == 1  # 同日替换
+        assert records[0]["court"]["content_digest"] == b_fixed["content_digest"]
+
+    def test_advance_gate_still_idempotent_for_identical_table(self, tmp_path):
+        """同一份数据重放 → court_not_advanced 幂等跳过 (语义保持)。"""
+        from scripts.winrate_payoff_decomposition import (
+            court_binding, record_trigger_status,
+        )
+        df = self._table_df()
+        self._manifest(tmp_path)
+        binding = court_binding(self._write_table(tmp_path, df), rows=len(df))
+        trigger = {"anchor": "production_aligned/t10", "min_n": 30}
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status({"threshold_trigger": trigger}, "20260901",
+                              ledger_path=ledger, court_binding=binding,
+                              require_advance=True)
+        meta = record_trigger_status({"threshold_trigger": trigger}, "20260901",
+                                     ledger_path=ledger, court_binding=binding,
+                                     require_advance=True)
+        assert meta == {"recorded": False, "reason": "court_not_advanced",
+                        "records": 1}
+
+    def test_universe_audit_complete_three_states(self, tmp_path):
+        """True (闭合) / False (键全在但不闭合) / None (legacy 无 empty_days
+        或 manifest 损坏 — 旧形态无该计数, 不得推断)。"""
+        from scripts.winrate_payoff_decomposition import court_binding
+        df = self._table_df()
+        # True: 计数闭合
+        self._manifest(tmp_path, empty_days=0, days_checked=2, sessions=2)
+        b = court_binding(self._write_table(tmp_path, df), rows=len(df))
+        assert b["universe_audit_complete"] is True
+        # False: 键全在但不闭合
+        self._manifest(tmp_path, empty_days=0, days_checked=1, sessions=2)
+        b = court_binding(self._write_table(tmp_path, df, name="t2.csv.gz"),
+                          rows=len(df))
+        assert b["universe_audit_complete"] is False
+        # None: legacy manifest 无 empty_days 键
+        self._manifest(tmp_path, days_checked=1, sessions=2, include_empty=False)
+        b = court_binding(self._write_table(tmp_path, df, name="t3.csv.gz"),
+                          rows=len(df))
+        assert b["universe_audit_complete"] is None
+        # None: manifest 损坏
+        (tmp_path / "m2").mkdir()
+        (tmp_path / "m2" / "manifest_v1.json").write_text("{broken", encoding="utf-8")
+        b = court_binding(self._write_table(tmp_path, df, name="m2/t4.csv.gz"),
+                          rows=len(df))
+        assert b["universe_audit_complete"] is None
+        assert b["content_digest"] is not None  # 表可读 → 摘要在场
+
+    def test_legacy_binding_records_never_block_advance(self, tmp_path):
+        """旧形态账本记录 (court 无新字段) ≠ 新 binding → 不阻断追加 (多记不漏记)。"""
+        from scripts.winrate_payoff_decomposition import (
+            court_binding, record_trigger_status,
+        )
+        df = self._table_df()
+        self._manifest(tmp_path)
+        binding = court_binding(self._write_table(tmp_path, df), rows=len(df))
+        legacy = {k: v for k, v in binding.items()
+                  if k not in ("content_digest", "universe_audit_complete")}
+        trigger = {"anchor": "production_aligned/t10", "min_n": 30}
+        ledger = tmp_path / "ledger.jsonl"
+        # 旧形态记录以 legacy 形态写入 (R84 时代无新字段)
+        record_trigger_status({"threshold_trigger": trigger}, "20260831",
+                              ledger_path=ledger,
+                              court_binding=legacy, require_advance=True)
+        meta = record_trigger_status({"threshold_trigger": trigger}, "20260901",
+                                     ledger_path=ledger, court_binding=binding,
+                                     require_advance=True)
+        assert meta["recorded"] is True

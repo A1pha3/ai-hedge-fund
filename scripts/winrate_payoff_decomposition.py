@@ -32,6 +32,7 @@ R84 起绑定 court 身份并走数据前进门)。
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 from datetime import date
@@ -370,16 +371,28 @@ def attach_threshold_trigger(
 
 
 def court_binding(court_table: Path, rows: int) -> dict[str, object]:
-    """court 数据状态身份 (manifest built_at/window_end + 事件表行数)。
+    """court 数据状态身份 (manifest 身份字段 + 事件表行数 + 内容摘要)。
 
     账本每条判定快照绑定该身份: 触发器『稳定越零』的语义是同一谓词在
     不断前进的数据上持续成立 — 同一份数据反复判定不产生新证据。
     manifest 缺失/损坏 → 身份字段 None (不假装知道), 行数来自本次实读表。
+
+    content_digest (R90 Op2): 事件表 canonical CSV 序列化的 sha256。
+    built_at 只有日期粒度 — 同日内容修正重建 (如零审计表回填权威宇宙后
+    重建, 2026-09-01 实例) 的旧身份字段全同, 前进门会把修正判定误判为
+    court_not_advanced; 摘要让『同一份数据』在字节级可判定, 内容变则
+    摘要变。csv.gz 重写嵌新 mtime, 直接哈希落盘字节会把同内容重建误判
+    为前进 — 摘要绑定内容而非文件字节。
+    universe_audit_complete: manifest 宇宙审计覆盖闭合
+    (days_checked + empty_days == window.sessions) → True; 键全在但不
+    闭合 → False; 键缺失/畸形/manifest 损坏 → None (旧形态无 empty_days
+    计数, 不假装知道也不推断)。
     """
     built_at = None
     window_start = None
     window_end = None
     fingerprint = None
+    window: object = None
     try:
         manifest = json.loads(
             (Path(court_table).parent / "manifest_v1.json").read_text(encoding="utf-8")
@@ -400,12 +413,36 @@ def court_binding(court_table: Path, rows: int) -> dict[str, object]:
         if isinstance(fingerprints, dict):
             value = fingerprints.get("btst_breakout_sha256")
             fingerprint = value if isinstance(value, str) else None
+    try:
+        table_df = pd.read_csv(court_table)
+        content_digest = "sha256:" + hashlib.sha256(
+            table_df.to_csv(index=False, lineterminator="\n").encode("utf-8")
+        ).hexdigest()
+    except Exception:  # noqa: BLE001 - 表不可读 → None (不假装知道, 与 manifest 损坏同语义)
+        content_digest = None
+    universe_audit_complete = None
+    audit = manifest.get("universe_audit") if isinstance(manifest, dict) else None
+    if isinstance(audit, dict) and isinstance(window, dict):
+        days_checked = audit.get("days_checked")
+        empty_days = audit.get("empty_days")
+        sessions = window.get("sessions")
+        if (
+            isinstance(days_checked, int)
+            and not isinstance(days_checked, bool)
+            and isinstance(empty_days, int)
+            and not isinstance(empty_days, bool)
+            and isinstance(sessions, int)
+            and not isinstance(sessions, bool)
+        ):
+            universe_audit_complete = days_checked + empty_days == sessions
     return {
         "built_at": built_at,
         "window_start": window_start,
         "window_end": window_end,
         "rows": int(rows),
         "formula_fingerprint": fingerprint,
+        "content_digest": content_digest,
+        "universe_audit_complete": universe_audit_complete,
     }
 
 
