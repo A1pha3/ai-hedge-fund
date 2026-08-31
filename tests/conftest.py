@@ -68,3 +68,21 @@ def _isolate_threshold_trigger_ledger(monkeypatch: pytest.MonkeyPatch, tmp_path)
     from src.screening.offensive import threshold_trigger
 
     monkeypatch.setattr(threshold_trigger, "LEDGER_PATH", tmp_path / "no-trigger-ledger.jsonl")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_setup_output_log_default_dir(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    """Pin setup_output_log._DEFAULT_DIR for every test (R87 Op1).
+
+    The operator render reads the day's scan_runs through the module default
+    (a relative ``data/reports/setup_output_log``), so render-level tests would
+    read the real workspace artifact on machines that have one and none on a
+    fresh clone — machine-dependent output, same family as the trigger-ledger
+    isolation above. Tests that patch the default themselves apply after this
+    autouse fixture and win.
+    """
+    from src.screening.offensive import setup_output_log
+
+    monkeypatch.setattr(
+        setup_output_log, "_DEFAULT_DIR", tmp_path / "setup_output_log"
+    )

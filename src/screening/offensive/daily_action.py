@@ -1519,6 +1519,52 @@ def _render_trigger_state_line() -> str | None:
     )
 
 
+def _render_flip_state_line(as_of) -> str | None:
+    """当日逐刷新翻转状态行 (R87 Op1) — admission 噪声的日度可见性。
+
+    R82 落地 scan_runs 逐刷新快照与 refresh_flip_summary 纯函数, 但翻转统计
+    零生产消费面。admission 实际语义是跨刷新并集 (主日志 merge 保 eligible
+    行 + 计划幂等存活), court 先验按单快照测量 — 这个口径差 (2026-08-20
+    300009 0.595↔<0.50 事件型) 是 owner 评估强度阈值时的第一手噪声测量。
+    渲染时点在 log_scan_run 之后, 统计天然含本次刷新。
+
+    诚实边界: 并集−末次差是 admission 噪声的**代理量** (早刷新纳入但末刷新
+    缺席 ≠ 全部为噪声, 如合法的晚间数据改善), 判读属 owner 评估门。
+    fail-open: 工件缺失/零翻转/异常 → 整行省略, 绝不断渲染。
+    """
+    try:
+        from src.screening.offensive.setup_output_log import (
+            load_scan_runs,
+            refresh_flip_summary,
+        )
+
+        runs = load_scan_runs(as_of)
+    except Exception:
+        return None
+    if not runs:
+        return None
+    summary = refresh_flip_summary(runs)
+    flipped = int(summary.get("flipped_candidates") or 0)
+    union_gap = list(summary.get("union_minus_last_refresh") or [])
+    if flipped == 0 and not union_gap:
+        return None
+    parts = [f"今日 {summary.get('runs')} 次刷新 · 候选 {summary.get('candidates_seen')}"]
+    if flipped:
+        parts.append(f"资格翻转 {flipped} 只（近阈值波动）")
+    if union_gap:
+        shown = "、".join(
+            f"{entry.get('ticker')} {entry.get('setup')}" for entry in union_gap[:5]
+        )
+        more = f" 等 {len(union_gap)} 只" if len(union_gap) > 5 else ""
+        parts.append(
+            f"并集−末次 {len(union_gap)} 只（{shown}{more}，早刷新纳入、末刷新不再支持）"
+        )
+    return (
+        f"逐刷新翻转：{' · '.join(parts)}"
+        "（并集−末次差是 admission 噪声代理量，含合法晚间数据改善，判读属 owner 评估）"
+    )
+
+
 def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> str:
     """Render the daily operator view — one track regardless of ``verbose``.
 
@@ -1609,6 +1655,11 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     trigger_line = _render_trigger_state_line()
     if trigger_line:
         lines.append(trigger_line)
+        lines.append("")
+    # 翻转状态行 (R87 Op1): 当日逐刷新口径差的披露 — 零翻转/无工件省略.
+    flip_line = _render_flip_state_line(as_of)
+    if flip_line:
+        lines.append(flip_line)
         lines.append("")
     if summary is not None:
         lines.append(f"今日摘要：{summary}")
