@@ -501,10 +501,25 @@ def log_scan_run(
     # writer 对底层 os.write 的部分写自动重试 — 裸单次 os.write 的撕裂残行
     # 不止丢本行, 还会让下一次 append 拼接在残行上连带损坏两条记录。
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    with os.fdopen(fd, "ab") as fh:
-        fh.write(payload.encode("utf-8"))
-        fh.flush()
-        os.fsync(fh.fileno())
+    try:
+        with os.fdopen(fd, "ab") as fh:
+            fh.write(payload.encode("utf-8"))
+            fh.flush()
+            os.fsync(fh.fileno())
+    except Exception:
+        # 写中途异常 (ENOSPC 等半行后抛) 留无换行残行: best-effort 补写换行
+        # 终止它, 把损坏上界收敛到本条记录 (loader 跳过非法行) — 后续 append
+        # 不再被连带损坏。补写失败不掩盖原异常; 断电类硬中断仍可留残行,
+        # loader 逐行跳过, 不假装完整。
+        try:
+            repair_fd = os.open(target, os.O_WRONLY | os.O_APPEND)
+            try:
+                os.write(repair_fd, b"\n")
+            finally:
+                os.close(repair_fd)
+        except OSError:
+            logger.warning("逐刷新快照残行终止补写失败: %s", target, exc_info=True)
+        raise
     return target
 
 

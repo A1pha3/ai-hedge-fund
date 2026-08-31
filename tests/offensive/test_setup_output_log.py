@@ -742,3 +742,66 @@ def test_load_scan_runs_secure_read_error_degrades_to_missing(tmp_path, monkeypa
         runs = sol.load_scan_runs(day, out_dir=tmp_path)
     assert runs == []
     assert caplog.records, "降级必须留告警, 不静默假装没有"
+
+
+def test_log_scan_run_write_failure_terminates_torn_line(tmp_path, monkeypatch):
+    """写中途异常 (半行后抛, 区别于可重试的部分写): 残行必须被换行终止, 使
+    下一次 append 的记录仍可独立解析 — 失败的写不得降低后续记录的可解析性
+    (残行+后续行拼接成一条非法物理行会连带损失两条记录)。
+
+    注入层是 os.fdopen (返回半写后抛异常的代理 writer) — C 层 FileIO 直连
+    syscall, Python 级 os.write 补丁拦截不到 fdopen 路径。"""
+    import os as _os
+
+    from src.screening.offensive.setup_output_log import (
+        load_scan_runs,
+        log_scan_run,
+    )
+
+    real_fdopen = _os.fdopen
+
+    class _HalfThenRaise:
+        def __init__(self, fh):
+            self._fh = fh
+            self._raised = False
+
+        def write(self, data):
+            if not self._raised:
+                self._raised = True
+                self._fh.write(data[: len(data) // 2])
+                raise OSError(28, "simulated ENOSPC mid-write")
+            return self._fh.write(data)
+
+        def flush(self):
+            return self._fh.flush()
+
+        def fileno(self):
+            return self._fh.fileno()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return self._fh.__exit__(*exc)
+
+    def failing_fdopen(fd, mode):
+        return _HalfThenRaise(real_fdopen(fd, mode))
+
+    monkeypatch.setattr(_os, "fdopen", failing_fdopen)
+    day = date(2026, 8, 20)
+    try:
+        log_scan_run(day, [_action("300009", trigger_strength=0.595)], [], regime="normal", out_dir=tmp_path)
+    except OSError:
+        pass
+    else:
+        raise AssertionError("注入的写异常应向上传播 (fail-open 由调用方 WARNING)")
+    finally:
+        monkeypatch.undo()
+
+    raw = (tmp_path / "20260820.scan_runs.jsonl").read_bytes()
+    assert raw.endswith(b"\n"), "残行必须被换行终止"
+
+    log_scan_run(day, [_action("600497", trigger_strength=0.71)], [], regime="normal", out_dir=tmp_path)
+    runs = load_scan_runs(day, out_dir=tmp_path)
+    assert len(runs) == 1, "残行被 loader 跳过, 后续记录必须完整存活"
+    assert runs[0]["candidates"][0]["ticker"] == "600497"
