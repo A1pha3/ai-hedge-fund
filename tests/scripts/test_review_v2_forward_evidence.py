@@ -413,3 +413,56 @@ def test_legacy_rows_without_capacity_fields_keep_old_grouping() -> None:
     assert "被挡组" in text
     assert "regime 闸拦截子集" in text
     assert "n=1" in text
+
+
+# ---------------------------------------------------------------------------
+# R81 Op1: 容量拦重建标注的消费面 — 来源拆分披露 + 未分类不并入通过组
+# ---------------------------------------------------------------------------
+
+def _r81_panel_row(**overrides) -> dict:
+    base = dict(
+        ticker="000001",
+        signal_date="20260817",
+        block_reason="",
+        capacity_blocked=False,
+        capacity_block_source="",
+        not_planned_unclassified=False,
+        realized=True,
+        return_t10=5.0,
+        plan_eligible=True,
+    )
+    base.update(overrides)
+    return base
+
+
+def test_build_report_discloses_reconstructed_capacity_split() -> None:
+    rows = [
+        _r81_panel_row(ticker="000001", capacity_blocked=True, capacity_block_source="live"),
+        _r81_panel_row(ticker="000002", capacity_blocked=True,
+                   capacity_block_source="reconstructed", return_t10=-3.0),
+        _r81_panel_row(ticker="000003", return_t10=1.0),
+    ]
+    text = build_report([], rows, {}, {"latest_valuation": None, "state_counts": {}}, since="2026-08-14")
+    assert "live 工件 n=1 · 集合差重建 n=1" in text
+    assert "eligible−台账计划 的派生证据" in text
+    # 重建行归容量拦组 (容量拦 n=2), 不再污染通过组
+    assert "容量拦组（组合帽/行业/单票拦截，若放行会买这些）:" in text
+
+
+def test_build_report_excludes_unclassified_from_passed() -> None:
+    rows = [
+        _r81_panel_row(ticker="000001", not_planned_unclassified=True),
+        _r81_panel_row(ticker="000002", return_t10=1.0),
+    ]
+    text = build_report([], rows, {}, {"latest_valuation": None, "state_counts": {}}, since="2026-08-14")
+    assert "未获计划·未分类" in text and "n=1" in text
+    section = text.split("通过组（实际放行动量票 — 容量拦不混入）:")[1].split("\n")
+    assert "n=1" in section[1]  # 通过组只含 000002
+
+
+def test_build_report_no_reconstruction_lines_when_absent() -> None:
+    """无重建/未分类行时不加披露行 (旧输出形态不变)。"""
+    rows = [_r81_panel_row(ticker="000003", return_t10=1.0)]
+    text = build_report([], rows, {}, {"latest_valuation": None, "state_counts": {}}, since="2026-08-14")
+    assert "集合差重建" not in text
+    assert "未获计划·未分类" not in text

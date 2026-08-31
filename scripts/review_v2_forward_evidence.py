@@ -295,7 +295,11 @@ def build_report(
     # ---- 2. 被挡候选对照组 (反事实) ----
     # R80 Op1 三分: 容量拦 (capacity_blocked, 计划层 portfolio_cap/行业/单票)
     # 优先于 gate 拦 — 容量拦是更下游的事实, 两组互斥, 通过组不再混入从未
-    # 成交的票 (此前被容量拦票以空 block_reason 落入通过组, 污染反事实对照)。
+    # 成交的票。R81 Op1 补全历史面: 0814-0828 的容量拦发生在 live 工件存在
+    # 之前, join 侧以集合差 (eligible − 台账计划) 重建标注
+    # (capacity_block_source="reconstructed") — 未获计划集合是精确事实;
+    # 回撤窗口/估值缺失的未获计划不冒充容量拦 (not_planned_unclassified),
+    # 也不混入通过组, 单独披露。
     def _realized_t10(row: dict) -> bool:
         return bool(row.get("realized")) and row.get("return_t10") is not None
 
@@ -306,12 +310,17 @@ def build_report(
         row for row in panel_rows
         if row.get("block_reason") and not row.get("capacity_blocked") and _realized_t10(row)
     ]
+    unclassified_rows = [
+        row for row in panel_rows
+        if row.get("not_planned_unclassified") and _realized_t10(row)
+    ]
     taken = [
         row for row in panel_rows
-        if not row.get("block_reason") and not row.get("capacity_blocked") and _realized_t10(row)
+        if (not row.get("block_reason") and not row.get("capacity_blocked")
+            and not row.get("not_planned_unclassified") and _realized_t10(row))
     ]
     lines.append("二、被挡候选对照组（panel, T+10 事后收益）")
-    if not blocked and not taken and not capacity_blocked:
+    if not blocked and not taken and not capacity_blocked and not unclassified_rows:
         lines.append("  （panel 在复查窗口内无已实现样本）")
     else:
         # R77 Op2: panel return_t10 是 gross (T+1 开盘→T+10 收盘), 与先验/第一节
@@ -332,8 +341,25 @@ def build_report(
         lines.extend(_fmt_slice(_slice_stats(_net(blocked)), indent="    "))
         lines.append("  容量拦组（组合帽/行业/单票拦截，若放行会买这些）:")
         lines.extend(_fmt_slice(_slice_stats(_net(capacity_blocked)), indent="    "))
+        capacity_live_n = sum(
+            1 for r in capacity_blocked if r.get("capacity_block_source") == "live"
+        )
+        capacity_recon_n = sum(
+            1 for r in capacity_blocked
+            if r.get("capacity_block_source") == "reconstructed"
+        )
+        if capacity_recon_n:
+            lines.append(
+                f"    （其中 live 工件 n={capacity_live_n} · 集合差重建 n={capacity_recon_n}"
+                " — 重建 = eligible−台账计划 的派生证据, 覆盖 live 工件缺席日 0814-0828）"
+            )
         lines.append("  通过组（实际放行动量票 — 容量拦不混入）:")
         lines.extend(_fmt_slice(_slice_stats(_net(taken)), indent="    "))
+        if unclassified_rows:
+            lines.append(
+                "  未获计划·未分类（回撤窗口/估值缺失 — 不并入任何对照组）:"
+                f" n={len(unclassified_rows)}"
+            )
         regime_blocked = [r for r in blocked if "regime" in str(r["block_reason"])]
         if regime_blocked:
             lines.append("  其中 regime 闸拦截子集（危机/避险日反事实）:")
