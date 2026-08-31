@@ -619,3 +619,49 @@ def test_attach_freshness_check_stale_data_prints_warning(monkeypatch, capsys):
     main_mod._attach_freshness_check("20260708", payload)
     captured = capsys.readouterr()
     assert "资金流向" in captured.out
+
+
+def test_main_panel_backfill_wiring_forwards_ledger_path(tmp_path, monkeypatch):
+    """R81 Op3 对抗审查接线回归: backfill_panel 的 ledger_path 必须由 data_dir
+    派生 (与 price_cache_dir 同源) — 缺省相对路径在 data_dir 非默认部署时静默
+    读不到台账, 重建标注无声降级为零 (2026-08-20 静默消失同族)。"""
+    from src import main as main_mod
+
+    result = _fake_refresh_result()
+    payload: dict = {"date": "20260708", "recommendations": []}
+    captured: dict[str, object] = {}
+
+    monkeypatch.delenv("DAILY_ACTION_CACHE_REFRESH", raising=False)
+    monkeypatch.setattr(
+        main_mod,
+        "_publish_daily_action_readiness_for_auto",
+        lambda refresh_result, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "src.screening.offensive.daily_action.refresh_authoritative_trade_calendar",
+        lambda **_kwargs: None,
+    )
+
+    def _capture_backfill(**kwargs):
+        captured.update(kwargs)
+        return [], {"records": 0, "realized": 0, "capacity_live": 0, "capacity_reconstructed": 0}
+
+    monkeypatch.setattr(
+        "scripts.join_setup_outputs_with_returns.backfill_panel", _capture_backfill
+    )
+    monkeypatch.setattr(
+        "scripts.panel_health_check.panel_health_oneline", lambda *_args: "insufficient"
+    )
+
+    data_root = tmp_path / "custom_data"
+    data_root.mkdir()
+    main_mod._refresh_daily_action_caches_for_auto(
+        "20260708",
+        payload,
+        refresh_fn=lambda _trade_date, **kwargs: result,
+        reports_dir=tmp_path,
+        data_dir=data_root,
+    )
+    assert captured["ledger_path"] == data_root / "paper_trading_v2" / "ledger.sqlite3"
+    assert captured["price_cache_dir"] == data_root / "price_cache"
+    assert captured["log_dir"] == tmp_path / "setup_output_log"

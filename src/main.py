@@ -1365,11 +1365,15 @@ def _refresh_daily_action_caches_for_auto(
             log_dir=report_root / "setup_output_log",
             panel=report_root / "setup_output_panel.jsonl",
             price_cache_dir=Path(data_dir) / "price_cache",
+            ledger_path=Path(data_dir) / "paper_trading_v2" / "ledger.sqlite3",
         )
         logger.info(
-            "[Auto] setup-output panel: %d records, %d realized",
+            "[Auto] setup-output panel: %d records, %d realized"
+            " (capacity live %d · reconstructed %d)",
             panel_stats["records"],
             panel_stats["realized"],
+            panel_stats.get("capacity_live", 0),
+            panel_stats.get("capacity_reconstructed", 0),
         )
     except Exception as exc:  # pragma: no cover - panel backfill must not fail --auto
         logger.warning("[Auto] setup-output panel backfill failed: %s", exc)
