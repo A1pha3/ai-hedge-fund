@@ -20,6 +20,14 @@ dossier script test) reads the reduced frame and dies on
 that several analyzers rely on across the run, and clearing it forces real
 re-fetches that fail in a no-credential environment.  The persistent disk
 cache is isolated separately by tests/offensive/conftest.py.
+
+The threshold-trigger ledger (``data/reports/threshold_trigger_ledger.jsonl``)
+is likewise neutralized: ``render_daily_action_v2`` reads it through a relative
+path, so on a machine that has run the judge the trigger state line appears in
+every rendered view while a fresh clone renders without it — machine-dependent
+test output (R86 Op1; same hermeticity family as the offensive conftest
+fixtures). Tests that exercise the line itself monkeypatch the path after this
+autouse fixture and are unaffected.
 """
 
 from __future__ import annotations
@@ -46,3 +54,17 @@ def _reset_network_layer_singletons() -> None:
         helpers._endpoint_failure_counts.clear()
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _isolate_threshold_trigger_ledger(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    """Pin the trigger ledger to a nonexistent tmp path for every test.
+
+    Without this, render-level tests show the trigger state line only on
+    machines where the real ledger exists — the same test green here and flaky
+    on a fresh clone. Explicit per-test monkeypatches apply after autouse
+    fixtures and win.
+    """
+    from src.screening.offensive import threshold_trigger
+
+    monkeypatch.setattr(threshold_trigger, "LEDGER_PATH", tmp_path / "no-trigger-ledger.jsonl")
