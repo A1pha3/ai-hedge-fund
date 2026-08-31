@@ -95,6 +95,21 @@ def load_limit_up_index(raw_dir: Path | str | None = None) -> dict[str, pd.DataF
     return out
 
 
+def missing_limit_up_days(
+    sessions: list[str], raw_dir: Path | str | None = None
+) -> list[str]:
+    """有效窗口内缺权威涨停原料 lu_YYYYMMDD.csv 的会话 (升序, R89 Op2).
+
+    缺文件 = 原料缺口 (fetch_limit_lists API 失败不落盘); 空涨停日经 loader
+    归一化为空 DataFrame, 合法存在不算缺。与 regime 缺标签同族: 静默跳过会让
+    面板完备性防线 (>5% gap 中止) 对缺口日失效, 且 9.5% prefilter 系统性漏
+    5%-涨停 ST 票 — 显式中止而非静默零审计。盘上存在性判定与 loader 同目录
+    同命名 (limit_up/lu_YYYYMMDD.csv), loader 解析失败仍由 read_csv fail-closed。
+    """
+    base = Path(raw_dir) if raw_dir is not None else RAW_DIR
+    return sorted(s for s in sessions if not (base / "limit_up" / f"lu_{s}.csv").exists())
+
+
 def load_sw_industry(raw_dir: Path | str | None = None) -> "pd.Series":
     """→ DataFrame(symbol, l1_name, in, out) 行列表 (PIT 成员区间).
 
@@ -305,13 +320,30 @@ def main() -> None:
     sessions = [s for s in sessions_cal if s in panel_dates]
     print(f"  Window A sessions={len(sessions)} ({sessions[0]}..{sessions[-1]})")
 
+    # R89 Op2: 缺 limit_up 原料 fail-closed (重放循环前中止, 不白跑) —
+    # 静默零审计会让 universe 完备性语义对缺口会话空洞化。
+    missing_lu = missing_limit_up_days(sessions, raw_dir)
+    if missing_lu:
+        raise SystemExit(
+            f"limit_up 原料缺 {len(missing_lu)} 天 ({missing_lu[:5]}…) — "
+            "权威涨停宇宙不可审计, 中止; "
+            f"先跑 scripts/btst_court_fetch.py --start {sessions[0]} "
+            f"--limit-list-start {sessions[0]} 续传"
+        )
+
     flow_store = FundFlowStore(cache_dir="data/fund_flow_cache/")
     ff_cache: dict[str, list] = {}
     setup = BtstBreakoutSetup()
 
     events: list[dict] = []
     funnel = {"sessions": 0, "prefilter": 0, "history_short": 0, "hits": 0, "misses": 0}
-    universe_audit = {"days_checked": 0, "auth_total": 0, "panel_missing": 0, "below_prefilter": 0}
+    universe_audit = {
+        "days_checked": 0,
+        "empty_days": 0,
+        "auth_total": 0,
+        "panel_missing": 0,
+        "below_prefilter": 0,
+    }
 
     print("[3/6] 逐日重放 detect (现行公式)…")
     for si, s in enumerate(sessions):
@@ -327,14 +359,18 @@ def main() -> None:
             auth_names = dict(zip(auth["ts_code"], auth["name"].astype(str)))
             auth_sse = auth[~auth["ts_code"].map(is_beijing_exchange_ts_code)]
             need = set(auth_sse["ts_code"])
+            universe_audit["days_checked"] += 1
             if need:
                 gap = need - set(day["ts_code"])
                 if len(gap) / len(need) > 0.05:
                     raise SystemExit(f"universe gap {len(gap)}/{len(need)} on {s} 超 5% — 面板不完备, 中止")
-                universe_audit["days_checked"] += 1
                 universe_audit["auth_total"] += len(need)
                 universe_audit["panel_missing"] += len(gap)
                 universe_audit["below_prefilter"] += len(need - set(cand["ts_code"]))
+        else:
+            # 缺文件已被上方门阻断 — 此处必为合法空涨停日 (会计闭合:
+            # days_checked + empty_days == len(sessions))
+            universe_audit["empty_days"] += 1
 
         for row in cand.itertuples():
             ts_code, symbol = row.ts_code, str(row.ts_code).split(".")[0]
