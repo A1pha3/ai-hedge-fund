@@ -73,8 +73,9 @@ def _file_sha256(path: str) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def load_panel() -> pd.DataFrame:
-    frames = [pd.read_csv(p, dtype={"trade_date": str}) for p in sorted((RAW_DIR / "daily").glob("daily_*.csv"))]
+def load_panel(raw_dir: Path | str | None = None) -> pd.DataFrame:
+    base = Path(raw_dir) if raw_dir is not None else RAW_DIR
+    frames = [pd.read_csv(p, dtype={"trade_date": str}) for p in sorted((base / "daily").glob("daily_*.csv"))]
     if not frames:
         raise SystemExit("panel empty — 先跑 scripts/btst_court_fetch.py")
     df = pd.concat(frames, ignore_index=True)
@@ -84,18 +85,23 @@ def load_panel() -> pd.DataFrame:
     return df
 
 
-def load_limit_up_index() -> dict[str, pd.DataFrame]:
+def load_limit_up_index(raw_dir: Path | str | None = None) -> dict[str, pd.DataFrame]:
+    base = Path(raw_dir) if raw_dir is not None else RAW_DIR
     out: dict[str, pd.DataFrame] = {}
-    for p in sorted((RAW_DIR / "limit_up").glob("lu_*.csv")):
+    for p in sorted((base / "limit_up").glob("lu_*.csv")):
         d = p.stem.split("_")[1]
         df = pd.read_csv(p, dtype=str)
         out[d] = df if not df.empty else pd.DataFrame(columns=["ts_code", "name"])
     return out
 
 
-def load_sw_industry() -> "pd.Series":
-    """→ DataFrame(symbol, l1_name, in, out) 行列表 (PIT 成员区间)."""
-    sw = pd.read_csv(RAW_DIR / "sw_members.csv", dtype=str)
+def load_sw_industry(raw_dir: Path | str | None = None) -> "pd.Series":
+    """→ DataFrame(symbol, l1_name, in, out) 行列表 (PIT 成员区间).
+
+    raw_dir (R88): 早期窗口等研究用途的隔离原料目录; 缺省生产 raw/.
+    """
+    base = Path(raw_dir) if raw_dir is not None else RAW_DIR
+    sw = pd.read_csv(base / "sw_members.csv", dtype=str)
     codes_map = json.loads(Path("data/industry_index_cache/_industry_codes.json").read_text(encoding="utf-8"))
     norm = {str(k).split(".")[0]: v for k, v in codes_map.items()}
     sw["l1_name"] = sw["l1_code"].map(lambda c: norm.get(str(c or "").split(".")[0], ""))
@@ -178,6 +184,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="build 成功后不自动刷新胜率/赔率触发器判定 (默认刷新, fail-open)",
     )
+    parser.add_argument("--raw-dir", default=None,
+                        help="隔离原料目录 (R88 早期窗口: raw_early/; 缺省生产 raw/)")
+    parser.add_argument("--table-dir", default=None,
+                        help="隔离输出目录 (R88 早期窗口: event_tables_early/; "
+                             "缺省生产 event_tables/ — 非生产目录不触发判定刷新)")
+    parser.add_argument("--start", default=None,
+                        help="窗口起始 YYYYMMDD (缺省 WINDOW_A_START; 早期窗口 20220104)")
     return parser.parse_args(argv)
 
 
@@ -211,9 +224,22 @@ def refresh_trigger_decomposition(table_path: Path) -> None:
 
 
 def _finalize_build(args: argparse.Namespace, out: Path) -> None:
-    """build 收尾接线: 默认机械刷新触发器判定, 显式旗标退出。"""
-    if not getattr(args, "no_decomposition_refresh", False):
-        refresh_trigger_decomposition(out)
+    """build 收尾接线: 默认机械刷新触发器判定, 显式旗标退出。
+
+    表目录守卫 (R88): 判定刷新只服务生产触发器账本 — 非生产 table-dir
+    (早期窗口等研究宇宙, 如幸存者偏差子集) 绝不触发, 防研究证据混入
+    生产判定面。
+    """
+    if getattr(args, "no_decomposition_refresh", False):
+        return
+    if out.parent.resolve() != TABLE_DIR.resolve():
+        print(
+            f"[6/6+] 非生产表目录 ({out.parent}) — 跳过触发器判定刷新 "
+            "(研究宇宙不触生产触发器账本; 早期窗口分解经 --court-table/"
+            "--trigger-ledger 显式隔离运行)"
+        )
+        return
+    refresh_trigger_decomposition(out)
 
 
 def overwrite_allowed(prior_fp: str | None, new_fp: str, *, force: bool) -> bool:
@@ -240,8 +266,11 @@ def _manifest_forced_overwrite_fields(prior_fp: str | None, new_fp: str) -> dict
 def main() -> None:
     args = _parse_args()
     end = args.end or date.today().strftime("%Y%m%d")
+    raw_dir = Path(args.raw_dir) if args.raw_dir else RAW_DIR
+    table_dir = Path(args.table_dir) if args.table_dir else TABLE_DIR
+    window_start = args.start or WINDOW_A_START
 
-    sessions_cal = load_sessions(WINDOW_A_START, end)
+    sessions_cal = load_sessions(window_start, end)
     regime = load_regime_history()
     # regime_history 已知空窗 (AGENTS.md: 停在 20260707, 2026-07-18 起才有生产写入者):
     # 缺标签日 fail-closed 剔除信号日并披露 — 绝不静默退化 normal (07-14 大亏日正在空窗内).
@@ -257,10 +286,10 @@ def main() -> None:
         if len(regime_missing) / max(1, len(regime_missing) + len(sessions_cal)) > 0.10:
             raise SystemExit(f"regime 缺口 >10% ({len(regime_missing)} 天) — court 无意义, 中止")
 
-    print("[1/6] 加载面板…")
-    panel = load_panel()
-    limit_up = load_limit_up_index()
-    sw = load_sw_industry()
+    print(f"[1/6] 加载面板 (raw_dir={raw_dir})…")
+    panel = load_panel(raw_dir)
+    limit_up = load_limit_up_index(raw_dir)
+    sw = load_sw_industry(raw_dir)
     sw_rows: dict[str, list] = {}
     for r in sw.itertuples(index=False):  # "in" 是关键字, pandas 会改字段名 → 用位置索引
         sw_rows.setdefault(r[0], []).append((r[1], r[2], r[3]))
@@ -353,11 +382,11 @@ def main() -> None:
     if not events:
         raise SystemExit("零事件 — 检查面板/资金流覆盖")
     table = pd.DataFrame(events)
-    TABLE_DIR.mkdir(parents=True, exist_ok=True)
+    table_dir.mkdir(parents=True, exist_ok=True)
     # 防覆盖护栏 (对抗性审查 2026-08-15): 必须在写入前判定 — 公式指纹变化时拒绝
     # 覆盖既有 v1 (行为变化必须开新版本文件); 同指纹重建 (bug 修复) 允许并记 rebuild_count.
     new_fp = _file_sha256("src/screening/offensive/setups/btst_breakout.py")
-    prior_manifest = TABLE_DIR / "manifest_v1.json"
+    prior_manifest = table_dir / "manifest_v1.json"
     rebuild_count = 0
     prior_fp: str | None = None
     if prior_manifest.exists():
@@ -369,11 +398,11 @@ def main() -> None:
                 "行为变化须写新版本文件, 不覆盖; 如确要覆盖用 --rebuild-force"
             )
         rebuild_count = int(prior.get("rebuild_count", 0)) + 1
-    out = TABLE_DIR / "event_table_v1.parquet"
+    out = table_dir / "event_table_v1.parquet"
     try:
         table.to_parquet(out, index=False)
     except Exception:  # noqa: BLE001 - 无 pyarrow 退 csv.gz
-        out = TABLE_DIR / "event_table_v1.csv.gz"
+        out = table_dir / "event_table_v1.csv.gz"
         table.to_csv(out, index=False, compression="gzip")
 
     print("[5/6] 公式钉住交叉验证 (vs panel 新代)…")
@@ -399,7 +428,7 @@ def main() -> None:
         "rows": len(table),
         "artifact": out.name,
     }
-    (TABLE_DIR / "manifest_v1.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    (table_dir / "manifest_v1.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print("[6/6] manifest 写入完成")
     print(json.dumps({k: manifest[k] for k in ("window", "funnel", "universe_audit", "cross_check_vs_panel", "rows")}, ensure_ascii=False, indent=2))
     _finalize_build(args, out)
@@ -497,10 +526,24 @@ def _cross_check_vs_panel(table: pd.DataFrame) -> dict:
         return {"status": "panel_missing"}
     recs = [json.loads(l) for l in panel_path.read_text(encoding="utf-8").splitlines() if l.strip()]
     new_gen = [r for r in recs if str(r.get("logged_at", ""))[:10] >= "2026-08-09"]
+    # R88 零重叠降级: 早期窗口表 (2022-24) 与生产 panel (2025+) 无任何重叠
+    # 记录时, 全部记录会被误报 not_in_replay — 诚实降级 no_overlap。
+    # 有重叠时 (生产常态) 分类行为与旧实现逐值一致 — 生产 panel 领先 raw
+    # fetch 数日的更新记录仍按旧语义计 absent (表滞后 ≠ 重放分歧, 但该口径
+    # 是冻结诊断语义, 本层不改判)。
+    if len(table) and new_gen:
+        t_min, t_max = str(table["signal_date"].min()), str(table["signal_date"].max())
+        overlaps = any(
+            t_min <= str(r.get("signal_date"))[:10].replace("-", "") <= t_max
+            for r in new_gen
+        )
+        if not overlaps:
+            return {"status": "no_overlap", "new_gen_records": len(new_gen),
+                    "matched": 0, "mismatched": 0, "absent": 0, "details": []}
     matched = mismatched = absent = 0
     details = []
     for r in new_gen:
-        key = (str(r.get("ticker")), str(r.get("signal_date"))[:8].replace("-", ""))
+        key = (str(r.get("ticker")), str(r.get("signal_date"))[:10].replace("-", ""))
         m = table[(table["symbol"] == key[0]) & (table["signal_date"] == key[1])]
         if m.empty:
             absent += 1
