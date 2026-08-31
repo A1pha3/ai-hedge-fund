@@ -68,6 +68,8 @@ STRENGTH_BUCKETS: tuple[tuple[float, str], ...] = (
     (0.60, "0.60-0.70"),
     (0.70, "≥0.70"),
 )
+# 全桶序 (含 <0.50 与 unknown) — 分组/切片视图共用的单一序, 防两侧漂移
+ALL_STRENGTH_BUCKETS: tuple[str, ...] = ("<0.50", "0.50-0.60", "0.60-0.70", "≥0.70", "unknown")
 
 
 def production_aligned(ev) -> "pd.DataFrame":
@@ -210,7 +212,7 @@ def _group_rows(
     out: list[tuple[str, pd.DataFrame]] = [("ALL", valid)]
     for regime in sorted(valid["regime"].dropna().unique()):
         out.append((f"regime={regime}", valid[valid["regime"] == regime]))
-    for bucket in ("<0.50", "0.50-0.60", "0.60-0.70", "≥0.70", "unknown"):
+    for bucket in ALL_STRENGTH_BUCKETS:
         sub = valid[valid["strength_bucket"] == bucket]
         if len(sub):
             out.append((f"strength={bucket}", sub))
@@ -219,6 +221,44 @@ def _group_rows(
             sub = valid[(valid["regime"] == regime) & (valid["strength_bucket"] == bucket)]
             if len(sub):
                 out.append((f"{regime}×{bucket}", sub))
+    return out
+
+
+def slice_bucket_stability(u: "pd.DataFrame") -> list[dict[str, object]]:
+    """预注册半年度切片 × 强度桶稳定性 (t10 主口径)。
+
+    动机 (R91 Op1): 触发器判定对窗口敏感 — 窗口前扩 (含 2025H1) 使条件①
+    从 lit (CI90 +0.23%) 翻转为未点亮 (−0.46%) — 全窗口单点统计无法区分
+    『结构性 edge』与『单段驱动』; 本视图把触发器锚定分组 (强度桶) 逐
+    预注册切片展开。每格 win_loss_stats (净口径): 小样本格 CI 诚实 None
+    (n<MIN_CELL_N 内建门槛), 空格 n=0 全 None, 强度缺失行诚实落 unknown 桶。
+
+    切片划分/越界 fail-closed 守卫复用 review_btst_prior_court.slice_partitions
+    单一实现 (防口径漂移); 净收益为 None 的行不入格 (镜像 _group_rows 纪律)。
+    """
+    import sys as _sys
+    _scripts = str(Path(__file__).resolve().parent)
+    if _scripts not in _sys.path:
+        _sys.path.insert(0, _scripts)
+    from review_btst_prior_court import slice_partitions
+
+    work = u.copy()
+    work["net_ret_t10"] = net_returns(work["gross_ret_t10"].tolist())
+    work["strength_bucket"] = work["trigger_strength"].map(strength_bucket)
+    work = work[work["net_ret_t10"].notna()]
+    out: list[dict[str, object]] = []
+    for label, lo, hi, m in slice_partitions(work):
+        cells: list[dict[str, object]] = []
+        for bucket in ALL_STRENGTH_BUCKETS:
+            cell = m[m["strength_bucket"] == bucket]
+            cells.append({
+                "bucket": bucket,
+                **win_loss_stats(
+                    cell["net_ret_t10"].tolist(),
+                    cell["signal_date"].astype(str).tolist(),
+                ),
+            })
+        out.append({"slice": label, "range": f"{lo}..{hi}", "buckets": cells})
     return out
 
 
@@ -267,6 +307,7 @@ def decompose(
                 else:
                     entry["attribution_vs_all"] = None
             uni["horizons"][f"t{horizon}"] = rows
+        uni["slice_bucket_stability"] = slice_bucket_stability(frame)
         payload["universes"][universe_name] = uni
         if universe_name == "all_candidates":
             payload["horizons"] = uni["horizons"]
@@ -554,6 +595,7 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
         _render_horizons(uni["horizons"], L)
     aligned = (payload.get("universes") or {}).get("production_aligned")
     if aligned:
+        _render_slice_bucket_stability(aligned, L)
         t10_all = aligned["horizons"].get("t10", [])
         all_row = next((r for r in t10_all if r["group"] == "ALL"), None)
         if all_row and all_row.get("expectancy") is not None:
@@ -615,6 +657,34 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
     L.append(f"  (固定 bootstrap 种子; court 表 {COURT_TABLE})。")
     L.append("")
     return "\n".join(L)
+
+
+def _render_slice_bucket_stability(uni: dict, L: list[str]) -> None:
+    """生产对齐锚定口径的『切片×强度桶稳定性』表 (R91 Op1)。
+
+    触发器条件①锚定全窗口 ≥0.70 桶 — 本表提供其跨切片稳定性证据
+    (结构性 vs 单段驱动); 小样本格 CI 缺失 = 只披露不判定 (R10)。
+    """
+    blocks = uni.get("slice_bucket_stability")
+    if not isinstance(blocks, list) or not blocks:
+        return
+    L.append("### 切片×强度桶稳定性 (净口径, t10 — 触发器锚定分组的跨段视图)")
+    L.append("")
+    L.append("| 段 | 桶 | n | E | win | CI90 下界 |")
+    L.append("|---|---|---|---|---|---|")
+    for block in blocks:
+        for cell in block["buckets"]:
+            n = cell["n"]
+            e_txt = _fmt(cell["expectancy"]) if n else "—"
+            w_txt = f"{cell['winrate']:.1%}" if n and isinstance(cell["winrate"], (int, float)) else "—"
+            ci = cell["cluster_ci_low_90"]
+            ci_txt = _fmt(ci) if isinstance(ci, (int, float)) else "—"
+            L.append(f"| {block['slice']} | {cell['bucket']} | {n} | {e_txt} | {w_txt} | {ci_txt} |")
+    L.append("")
+    L.append("触发器条件①锚定的是全窗口 ≥0.70 桶; 本表提供其跨切片稳定性证据")
+    L.append("(结构性 edge vs 单段驱动) — 判读属 owner 评估门, 小样本格")
+    L.append(f"(n<{MIN_CELL_N}) CI 缺失 = 只披露不判定。")
+    L.append("")
 
 
 def _render_horizons(horizons: dict, L: list[str]) -> None:

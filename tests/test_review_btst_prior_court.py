@@ -356,3 +356,44 @@ def test_time_slices_2025h1_empty_segment_is_honest():
     ts = rpc.time_slices(u, n_boot=10)
     seg = {t["label"]: t for t in ts}
     assert seg["2025H1"]["n"] == 0 and seg["2025H1"]["mean"] is None
+
+
+def test_slice_partitions_single_implementation():
+    """R91 Op1: 切片划分提为单一实现 — time_slices 与分解工具的
+    slice_bucket_stability 共同消费, 划分语义 (标签序/边界/完备覆盖) 一份。"""
+    rows = []
+    for sd, rets in (
+        ("20250310", (0.05, -0.02)),   # 2025H1
+        ("20250801", (0.10, -0.02)),   # 2025H2
+        ("20260302", (0.02, -0.05)),   # 2026H1
+        ("20260706", (0.06, 0.01)),    # 2026H2+
+    ):
+        for r in rets:
+            rows.append(_prod_row(sd, r))
+    ev = _ev_prod(rows)
+    u = rpc.production_universe(rpc.candidate_universe(ev))
+    parts = rpc.slice_partitions(u)
+    assert [(label, lo, hi) for label, lo, hi, _ in parts] == [
+        ("2025H1", "20250102", "20250630"),
+        ("2025H2", "20250701", "20251231"),
+        ("2026H1", "20260101", "20260630"),
+        ("2026H2+", "20260701", "99999999"),
+    ]
+    # 不重不漏: 子帧并集恰为全表
+    assert sum(len(m) for _, _, _, m in parts) == len(u)
+    # 与 time_slices 消费同一划分: 每段 n 一致
+    ts = {t["label"]: t for t in rpc.time_slices(u, n_boot=10)}
+    for label, _, _, m in parts:
+        assert ts[label]["n"] == len(m)
+
+
+def test_slice_partitions_iso_dates_normalized():
+    """日期序列化容错: ISO 短横 (2026-01-02) 与紧凑 (20260102) 同落 2026H1 —
+    覆盖守卫不依赖日期序列化格式 (fixture 双格式防回归)。"""
+    ev = _ev_prod([
+        _prod_row("20260102", 0.02),   # 紧凑
+        _prod_row("2026-03-05", 0.03),  # ISO 短横
+    ])
+    u = rpc.production_universe(rpc.candidate_universe(ev))
+    parts = {label: m for label, _, _, m in rpc.slice_partitions(u)}
+    assert len(parts["2026H1"]) == 2

@@ -1086,3 +1086,137 @@ class TestCourtBindingContentIdentity:
                                      ledger_path=ledger, court_binding=binding,
                                      require_advance=True)
         assert meta["recorded"] is True
+
+
+class TestSliceBucketStability:
+    """切片×强度桶稳定性 (R91 Op1): 触发器窗口敏感性的跨段证据视图。
+
+    动机: 窗口前扩使条件① 从 lit (CI90 +0.23%) 翻转为未点亮 (−0.46%) —
+    全窗口单点统计无法区分『结构性 edge』与『单段驱动』; 本视图把触发器
+    锚定分组 (强度桶) 逐预注册切片展开。
+    """
+
+    def _frame(self):
+        """数值非对称 fixture (R13 教训): 逐格期望各不相同, 断言防漂移。
+
+        净收益 = gross − 0.0065 → fixture gross 反向加回, 断言直用净额。
+        """
+        import pandas as pd
+        rows = []
+        # 2026H1 ≥0.70: n=3, E=+0.04 (0.10/−0.02/+0.04)
+        for sd, s, r in [("20260310", 0.90, 0.10), ("20260311", 0.80, -0.02), ("20260312", 0.75, 0.04)]:
+            rows.append({"signal_date": sd, "trigger_strength": s,
+                         "gross_ret_t10": r + 0.0065})
+        # 2026H1 <0.50: n=2, E=−0.02 (−0.05/+0.01)
+        for sd, s, r in [("20260313", 0.30, -0.05), ("20260313", 0.40, 0.01)]:
+            rows.append({"signal_date": sd, "trigger_strength": s, "gross_ret_t10": r + 0.0065})
+        # 2025H2 ≥0.70: n=2, E=+0.025 (≠ 2026H1 的 +0.04 — 跨段非对称)
+        for sd, s, r in [("20250914", 0.95, 0.02), ("20250915", 0.85, 0.03)]:
+            rows.append({"signal_date": sd, "trigger_strength": s, "gross_ret_t10": r + 0.0065})
+        # 2025H2 0.60-0.70: n=1, E=−0.04
+        rows.append({"signal_date": "20250916", "trigger_strength": 0.65, "gross_ret_t10": -0.04 + 0.0065})
+        # 2026H1 unknown (强度缺失): n=1 — 诚实披露 unknown 桶
+        rows.append({"signal_date": "20260316", "trigger_strength": None, "gross_ret_t10": 0.01 + 0.0065})
+        return pd.DataFrame(rows).astype({"signal_date": str})
+
+    def test_cells_asymmetric_expectancies(self):
+        from scripts.winrate_payoff_decomposition import slice_bucket_stability
+        blocks = {b["slice"]: b for b in slice_bucket_stability(self._frame())}
+        h1 = {c["bucket"]: c for c in blocks["2026H1"]["buckets"]}
+        h2 = {c["bucket"]: c for c in blocks["2025H2"]["buckets"]}
+        assert h1["≥0.70"]["n"] == 3
+        assert h1["≥0.70"]["expectancy"] == pytest.approx((0.10 - 0.02 + 0.04) / 3, abs=1e-12)
+        assert h1["<0.50"]["n"] == 2
+        assert h1["<0.50"]["expectancy"] == pytest.approx((-0.05 + 0.01) / 2, abs=1e-12)
+        assert h2["≥0.70"]["n"] == 2
+        assert h2["≥0.70"]["expectancy"] == pytest.approx((0.02 + 0.03) / 2, abs=1e-12)
+        assert h2["0.60-0.70"]["n"] == 1
+        # 跨段非对称: 同桶不同段期望不同 (防 fixture 对称漂移假阴性)
+        assert h1["≥0.70"]["expectancy"] != h2["≥0.70"]["expectancy"]
+
+    def test_empty_and_unknown_cells_honest(self):
+        from scripts.winrate_payoff_decomposition import slice_bucket_stability
+        blocks = {b["slice"]: b for b in slice_bucket_stability(self._frame())}
+        h1 = {c["bucket"]: c for c in blocks["2026H1"]["buckets"]}
+        h2 = {c["bucket"]: c for c in blocks["2025H2"]["buckets"]}
+        # 空格: 2026H1 的 0.60-0.70 无行 → n=0 全 None
+        assert h1["0.60-0.70"]["n"] == 0
+        assert h1["0.60-0.70"]["expectancy"] is None
+        assert h1["0.60-0.70"]["cluster_ci_low_90"] is None
+        # 强度缺失行 → unknown 桶诚实入格
+        assert h1["unknown"]["n"] == 1
+        # 2026H2+ / 2025H1 整段空 → 每桶 n=0
+        plus = {c["bucket"]: c for c in blocks["2026H2+"]["buckets"]}
+        assert plus["≥0.70"]["n"] == 0 and plus["≥0.70"]["winrate"] is None
+
+    def test_small_cell_ci_honest_none(self):
+        """小样本格 CI 缺失 (win_loss_stats 内建 n<MIN_CELL_N 门槛)。"""
+        from scripts.winrate_payoff_decomposition import MIN_CELL_N
+        from scripts.winrate_payoff_decomposition import slice_bucket_stability
+        assert MIN_CELL_N > 3
+        blocks = {b["slice"]: b for b in slice_bucket_stability(self._frame())}
+        h1 = {c["bucket"]: c for c in blocks["2026H1"]["buckets"]}
+        assert h1["≥0.70"]["n"] < MIN_CELL_N
+        assert h1["≥0.70"]["cluster_ci_low_90"] is None
+
+    def test_ci_cell_deterministic_across_calls(self):
+        """n≥MIN_CELL_N 格给 CI; 同输入两次调用逐字节一致 (R13 纪律)。"""
+        import pandas as pd
+        from scripts.winrate_payoff_decomposition import MIN_CELL_N
+        from scripts.winrate_payoff_decomposition import slice_bucket_stability
+        n = MIN_CELL_N + 2
+        rows = [{"signal_date": f"202603{10 + (i % 5):02d}", "trigger_strength": 0.9,
+                 "gross_ret_t10": (0.01 * (1 if i % 2 else -1)) + 0.0065}
+                for i in range(n)]
+        frame = pd.DataFrame(rows).astype({"signal_date": str})
+        a = slice_bucket_stability(frame)
+        b = slice_bucket_stability(frame)
+        assert json.dumps(a) == json.dumps(b)
+        h1 = next(blk for blk in a if blk["slice"] == "2026H1")
+        cell = next(c for c in h1["buckets"] if c["bucket"] == "≥0.70")
+        assert cell["n"] == n
+        assert isinstance(cell["cluster_ci_low_90"], float)
+
+    def test_outside_rows_fail_closed(self):
+        """越界行 (未覆盖窗口) → fail-closed, 复用单一覆盖守卫不静默缺段。"""
+        import pandas as pd
+        from scripts.winrate_payoff_decomposition import slice_bucket_stability
+        frame = pd.DataFrame([
+            {"signal_date": "20241231", "trigger_strength": 0.9, "gross_ret_t10": 0.01},
+            {"signal_date": "20260310", "trigger_strength": 0.9, "gross_ret_t10": 0.01},
+        ]).astype({"signal_date": str})
+        with pytest.raises(ValueError, match="coverage gap"):
+            slice_bucket_stability(frame)
+
+    def test_decompose_mounts_slice_stability_and_md(self, tmp_path):
+        """decompose 两宇宙挂载同构块; MD 报告含生产对齐锚定表。"""
+        import pandas as pd
+        from scripts.winrate_payoff_decomposition import decompose, render_md
+        rows = []
+        for i in range(12):
+            rows.append({
+                "symbol": f"{600000+i}",
+                "signal_date": f"2026-01-{(i % 5) + 1:02d}",
+                "regime": "normal",
+                "trigger_strength": 0.55 + (i % 3) * 0.1,
+                "gross_ret_t10": 0.05 * (1 if i % 2 else -1),
+                "gross_ret_t5": 0.02,
+                "fillable": True,
+                "gate_blocked": False,
+                "degraded": False,
+                "st_name": False,
+                "industry_missing": False,
+                "excluded_ticker": False,
+                "price_ge_3": True,
+            })
+        ev = pd.DataFrame(rows)
+        payload = decompose(ev, universes=("all_candidates", "production_aligned"))
+        for uni_name in ("all_candidates", "production_aligned"):
+            blocks = payload["universes"][uni_name]["slice_bucket_stability"]
+            assert [b["slice"] for b in blocks] == ["2025H1", "2025H2", "2026H1", "2026H2+"]
+            # ISO 短横日期归一后全部落 2026H1
+            h1 = next(b for b in blocks if b["slice"] == "2026H1")
+            assert sum(c["n"] for c in h1["buckets"]) == 12
+        md = render_md(payload, "20260901")
+        assert "切片×强度桶稳定性" in md
+        assert "2025H1" in md and "≥0.70" in md

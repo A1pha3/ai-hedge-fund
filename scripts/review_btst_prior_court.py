@@ -166,19 +166,44 @@ def exclusion_disclosure(u: pd.DataFrame, n_boot: int = N_BOOT_DEFAULT) -> dict:
     }
 
 
-def time_slices(u: pd.DataFrame, n_boot: int = N_BOOT_DEFAULT) -> list[dict]:
-    """预注册半年度切片: 全候选 stats + 段内每日 top-1 (生产行为近似).
+def slice_partitions(u: pd.DataFrame) -> list[tuple[str, str, str, pd.DataFrame]]:
+    """预注册半年度切片划分的单一实现: ``[(label, lo, hi, 子帧)]``.
 
-    空段诚实保留 (n=0/mean=None), 切片完备覆盖不重不漏 — 越界行
-    fail-closed (窗口移动后必须重注册 TIME_SLICE_BOUNDS, 不静默缺段).
+    消费方: 本模块 ``time_slices`` (整宇宙切片统计) 与
+    ``winrate_payoff_decomposition.slice_bucket_stability`` (切片×强度桶) —
+    划分口径 (标签/边界/完备覆盖守卫) 一份, 防两侧漂移.
+
+    日期序列化容错: 比较 ``signal_date`` 前剥掉 ISO 短横 (``2026-01-02`` →
+    ``20260102``), 生产表为紧凑格式, 行为不变; 覆盖守卫不依赖序列化格式.
+    空段诚实保留 (n=0 子帧), 越界行 fail-closed (窗口移动后必须重注册
+    TIME_SLICE_BOUNDS, 不静默缺段).
     """
-    sd = u["signal_date"].astype(str)
-    out = []
+    sd = u["signal_date"].astype(str).str.slice(0, 10).str.replace("-", "", regex=False)
+    parts: list[tuple[str, str, str, pd.DataFrame]] = []
     covered = None
     for label, lo, hi in TIME_SLICE_BOUNDS:
         in_slice = (sd >= lo) & (sd <= hi)
         covered = in_slice if covered is None else (covered | in_slice)
-        m = u[in_slice]
+        parts.append((label, lo, hi, u[in_slice]))
+    outside = int((~covered).sum()) if covered is not None else 0
+    if outside:
+        samples = sorted(sd[~covered].unique())[:5]
+        raise ValueError(
+            f"time-slice coverage gap: {outside} rows outside preregistered "
+            f"slices (样例 {samples}) — 窗口移动后必须重注册 TIME_SLICE_BOUNDS, "
+            "不静默缺段 (切片完备覆盖不重不漏的执行面)"
+        )
+    return parts
+
+
+def time_slices(u: pd.DataFrame, n_boot: int = N_BOOT_DEFAULT) -> list[dict]:
+    """预注册半年度切片: 全候选 stats + 段内每日 top-1 (生产行为近似).
+
+    空段诚实保留 (n=0/mean=None); 划分与越界 fail-closed 守卫在
+    ``slice_partitions`` (单一实现, 切片完备覆盖不重不漏的执行面).
+    """
+    out = []
+    for label, lo, hi, m in slice_partitions(u):
         s = stats_block(net_ret(m[HORIZON_COL]), m["signal_date"], n_boot=n_boot) if len(m) else {
             "n": 0, "mean": None, "winrate": None, "ci90_low": None, "ci90_high": None,
         }
@@ -192,14 +217,6 @@ def time_slices(u: pd.DataFrame, n_boot: int = N_BOOT_DEFAULT) -> list[dict]:
                 "winrate": float((rets > 0).mean()),
             }
         out.append({"label": label, "range": f"{lo}..{hi}", **s, "top_1": top1})
-    outside = int((~covered).sum()) if covered is not None else 0
-    if outside:
-        samples = sorted(sd[~covered].unique())[:5]
-        raise ValueError(
-            f"time-slice coverage gap: {outside} rows outside preregistered "
-            f"slices (样例 {samples}) — 窗口移动后必须重注册 TIME_SLICE_BOUNDS, "
-            "不静默缺段 (切片完备覆盖不重不漏的执行面)"
-        )
     return out
 
 
