@@ -620,10 +620,10 @@ class TestCourtGrowthCoupling:
     ④ build 成功后机械刷新 (fail-open)。
     """
 
-    BINDING_A = {"built_at": "2026-08-30", "window_end": "20260830", "rows": 1746,
-                 "formula_fingerprint": "aa" * 32}
-    BINDING_B = {"built_at": "2026-08-31", "window_end": "20260831", "rows": 1782,
-                 "formula_fingerprint": "bb" * 32}
+    BINDING_A = {"built_at": "2026-08-30", "window_start": "20250701",
+                 "window_end": "20260830", "rows": 1746, "formula_fingerprint": "aa" * 32}
+    BINDING_B = {"built_at": "2026-08-31", "window_start": "20250701",
+                 "window_end": "20260831", "rows": 1782, "formula_fingerprint": "bb" * 32}
 
     @staticmethod
     def _trigger():
@@ -777,8 +777,8 @@ class TestCourtGrowthCoupling:
         records = mod.load_trigger_ledger(ledger)
         assert len(records) == 1
         assert records[0]["court"] == {
-            "built_at": None, "window_end": None, "rows": 40,
-            "formula_fingerprint": None,
+            "built_at": None, "window_start": None, "window_end": None,
+            "rows": 40, "formula_fingerprint": None,
         }
 
         # 同表同绑定当日重跑 (前进门): 账本不动, 报告刷新, reason 披露进 JSON
@@ -813,8 +813,8 @@ class TestAdversarialAuditR84Op1:
         # 整文件垃圾
         (tables / "manifest_v1.json").write_text("not json at all", encoding="utf-8")
         b = court_binding(table, rows=7)
-        assert b == {"built_at": None, "window_end": None, "rows": 7,
-                     "formula_fingerprint": None}
+        assert b == {"built_at": None, "window_start": None, "window_end": None,
+                     "rows": 7, "formula_fingerprint": None}
         # manifest 非 dict (JSON 数组)
         (tables / "manifest_v1.json").write_text("[1,2]", encoding="utf-8")
         assert court_binding(table, rows=7)["built_at"] is None
@@ -836,8 +836,9 @@ class TestAdversarialAuditR84Op1:
             "formula_fingerprint": {"btst_breakout_sha256": fp},
         }), encoding="utf-8")
         b = court_binding(table, rows=99)
-        assert b == {"built_at": "2026-08-31", "window_end": "20260831",
-                     "rows": 99, "formula_fingerprint": fp}
+        assert b == {"built_at": "2026-08-31", "window_start": None,
+                     "window_end": "20260831", "rows": 99,
+                     "formula_fingerprint": fp}
 
     def test_gate_skips_regressed_binding_seen_in_history(self, tmp_path):
         """数据状态回退 (A→B→A) — A 已判定过, 门必须 skip (B 单点比对会放行)。"""
@@ -876,3 +877,54 @@ class TestAdversarialAuditR84Op1:
             ledger_path=ledger, court_binding=dict(c3), require_advance=True)
         assert meta["recorded"] is True
         assert [r["date"] for r in load_trigger_ledger(ledger)] == ["20260829", "20260901"]
+
+
+class TestWindowStartIdentity:
+    """R89: 窗口起点是数据状态身份 — binding 含 window_start, 同 end/rows/
+    指纹但异起点是不同数据状态 (R84-Op2C 强身份教训; 生产窗口前扩的前置)。"""
+
+    def test_binding_includes_window_start(self, tmp_path):
+        import pandas as pd
+        from scripts.winrate_payoff_decomposition import court_binding
+        tables = tmp_path / "event_tables"
+        tables.mkdir()
+        table = tables / "court.csv.gz"
+        table.write_bytes(b"x")
+        (tables / "manifest_v1.json").write_text(json.dumps({
+            "built_at": "2026-09-01", "window": {"start": "20250102", "end": "20260831"},
+            "formula_fingerprint": {"btst_breakout_sha256": "aa" * 32},
+        }), encoding="utf-8")
+        b = court_binding(table, rows=99)
+        assert b == {"built_at": "2026-09-01", "window_start": "20250102",
+                     "window_end": "20260831", "rows": 99,
+                     "formula_fingerprint": "aa" * 32}
+
+    def test_advance_gate_same_end_rows_different_start_is_new_state(self, tmp_path):
+        """同 end/rows/指纹但起点不同 (20250102 vs 20250701) → 门不 skip, 落新记录。"""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        trigger = TestCourtGrowthCoupling._trigger()
+        binding_a = {"built_at": "2026-09-01", "window_start": "20250701",
+                     "window_end": "20260831", "rows": 100, "formula_fingerprint": "aa" * 32}
+        binding_b = dict(binding_a, window_start="20250102", rows=100)
+        record_trigger_status({"threshold_trigger": trigger}, "20260831",
+                              ledger_path=ledger, court_binding=binding_a)
+        meta = record_trigger_status({"threshold_trigger": trigger}, "20260901",
+                                     ledger_path=ledger, court_binding=binding_b,
+                                     require_advance=True)
+        assert meta["recorded"] is True
+        records = load_trigger_ledger(ledger)
+        assert {r["court"]["window_start"] for r in records} == {"20250701", "20250102"}
+
+    def test_binding_malformed_window_start_degrades_to_none(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import court_binding
+        tables = tmp_path / "event_tables"
+        tables.mkdir()
+        table = tables / "court.csv.gz"
+        table.write_bytes(b"x")
+        (tables / "manifest_v1.json").write_text(json.dumps({
+            "window": {"start": 55, "end": "20260831"}}), encoding="utf-8")
+        b = court_binding(table, rows=1)
+        assert b["window_start"] is None and b["window_end"] == "20260831"

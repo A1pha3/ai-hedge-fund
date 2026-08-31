@@ -416,7 +416,9 @@ def main() -> None:
             "btst_breakout_sha256": _file_sha256("src/screening/offensive/setups/btst_breakout.py"),
             "exit_policy_sha256": _file_sha256("src/screening/offensive/exit_policy.py"),
         },
-        "window": {"start": WINDOW_A_START, "end": end, "sessions": len(sessions)},
+        # R89: start 记录实际窗口起点 — R88 --start 后硬编码 WINDOW_A_START 会让
+        # 非 2025-07 起点的表谎报窗口 (早期 manifest 曾记 start>end 的荒谬形态).
+        "window": {"start": window_start, "end": end, "sessions": len(sessions)},
         "regime_missing_sessions": regime_missing,
         "regime_window": regime_window,
         "regime_input_fingerprint": regime_input_fingerprint,
