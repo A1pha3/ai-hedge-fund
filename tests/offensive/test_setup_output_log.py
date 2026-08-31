@@ -502,3 +502,190 @@ def test_scan_funnel_symlink_dir_rejected(tmp_path):
     except SetupOutputLogError:
         return
     raise AssertionError("symlinked log dir must be rejected before write")
+
+
+# ---- R82 Op1: 逐刷新扫描快照 (跨刷新翻转可测量 + 刷新分歧可重建) ----
+
+
+def test_log_scan_run_appends_per_refresh(tmp_path):
+    """append-only: 重跑追加新行, 既有字节是结果文件的严格前缀 (合并语义的对面)."""
+    from src.screening.offensive.setup_output_log import (
+        load_scan_runs,
+        log_scan_run,
+    )
+
+    day = date(2026, 8, 20)
+    path = log_scan_run(
+        day, [_action("300009", trigger_strength=0.595)], [], regime="normal", out_dir=tmp_path
+    )
+    first_bytes = path.read_bytes()
+    path = log_scan_run(
+        day,
+        [],
+        [
+            _action(
+                "300009",
+                action="SKIP",
+                kelly_pct=0.0,
+                entry_price=0.0,
+                trigger_strength=0.42,
+                block_reason="strength_below_threshold",
+            )
+        ],
+        regime="normal",
+        out_dir=tmp_path,
+    )
+    later_bytes = path.read_bytes()
+    assert later_bytes.startswith(first_bytes), "append-only: 既有行永不被改写"
+
+    runs = load_scan_runs(day, out_dir=tmp_path)
+    assert len(runs) == 2
+    assert runs[0]["record_kind"] == "scan_run"
+    assert runs[0]["candidates"][0]["plan_eligible"] is True
+    assert runs[0]["candidates"][0]["trigger_strength"] == 0.595
+    assert runs[1]["candidates"][0]["plan_eligible"] is False
+    assert runs[1]["candidates"][0]["trigger_strength"] == 0.42
+    assert runs[1]["candidates"][0]["block_reason"] == "strength_below_threshold"
+
+
+def test_log_scan_run_records_funnel_and_snapshot(tmp_path):
+    from src.screening.offensive.daily_action import ScanFunnel
+    from src.screening.offensive.setup_output_log import log_scan_run
+
+    funnel = ScanFunnel(
+        scannable=85,
+        prefilter_passed=85,
+        hits=0,
+        universe=1733,
+        detect_miss_stages={"c2_flow_below_mean": 66, "c3_industry_weak": 16},
+    )
+    path = log_scan_run(
+        date(2026, 8, 28),
+        [],
+        [],
+        regime="normal",
+        funnel=funnel,
+        snapshot_id="snap-1",
+        out_dir=tmp_path,
+    )
+    row = json.loads(path.read_text().splitlines()[0])
+    assert row["funnel"]["hits"] == 0
+    assert row["funnel"]["universe"] == 1733
+    assert row["funnel"]["detect_miss_stages"] == {
+        "c2_flow_below_mean": 66,
+        "c3_industry_weak": 16,
+    }
+    assert row["snapshot_id"] == "snap-1"
+    assert row["regime"] == "normal"
+    assert row["signal_date"] == "20260828"
+
+
+def test_load_scan_runs_missing_file_returns_empty(tmp_path):
+    from src.screening.offensive.setup_output_log import load_scan_runs
+
+    assert load_scan_runs(date(2026, 1, 1), out_dir=tmp_path) == []
+
+
+def test_load_scan_runs_skips_corrupt_lines(tmp_path, caplog):
+    """损坏行跳过告警 (advisory 消费面, 宁缺毋抛), 合法行照常回读."""
+    import logging
+
+    from src.screening.offensive.setup_output_log import (
+        load_scan_runs,
+        log_scan_run,
+    )
+
+    day = date(2026, 8, 20)
+    log_scan_run(day, [_action("300009")], [], regime="normal", out_dir=tmp_path)
+    path = tmp_path / "20260820.scan_runs.jsonl"
+    path.write_text("{corrupt json\n" + path.read_text(), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        runs = load_scan_runs(day, out_dir=tmp_path)
+    assert len(runs) == 1
+    assert any("scan_run" in r.message or "损坏" in r.message for r in caplog.records)
+
+
+def test_log_scan_run_symlink_dir_rejected(tmp_path):
+    """目录加固与主日志同源: 链上 symlink 组件 fail-closed (写入前拒绝)."""
+    import os
+
+    from src.screening.offensive.setup_output_log import (
+        SetupOutputLogError,
+        log_scan_run,
+    )
+
+    real = tmp_path / "real_logs"
+    real.mkdir()
+    linked = tmp_path / "linked_logs"
+    os.symlink(real, linked)
+
+    try:
+        log_scan_run(date(2026, 8, 20), [], [], regime="normal", out_dir=linked)
+    except SetupOutputLogError:
+        return
+    raise AssertionError("symlinked log dir must be rejected before write")
+
+
+def test_refresh_flip_summary_detects_cross_refresh_flip():
+    """300009 事件型翻转: run1 eligible 0.595 → run2 blocked 0.42, 可测量."""
+    from src.screening.offensive.setup_output_log import refresh_flip_summary
+
+    runs = [
+        {
+            "candidates": [
+                {"ticker": "300009", "setup": "btst_breakout", "plan_eligible": True,
+                 "trigger_strength": 0.595},
+                {"ticker": "600497", "setup": "btst_breakout", "plan_eligible": True,
+                 "trigger_strength": 0.71},
+            ]
+        },
+        {
+            "candidates": [
+                {"ticker": "300009", "setup": "btst_breakout", "plan_eligible": False,
+                 "trigger_strength": 0.42},
+                {"ticker": "600497", "setup": "btst_breakout", "plan_eligible": True,
+                 "trigger_strength": 0.69},
+            ]
+        },
+    ]
+    summary = refresh_flip_summary(runs)
+    assert summary["runs"] == 2
+    assert summary["candidates_seen"] == 2
+    assert summary["flipped_candidates"] == 1
+    entry = next(e for e in summary["per_candidate"] if e["ticker"] == "300009")
+    assert entry["flipped"] is True
+    assert entry["eligible_runs"] == 1
+    assert entry["runs_seen"] == 2
+    assert entry["strength_min"] == 0.42
+    assert entry["strength_max"] == 0.595
+    # 并集 admission − 末刷新支持 = 300009 (早刷新纳入、末刷新不再支持的噪声进入量)
+    assert summary["union_minus_last_refresh"] == [{"ticker": "300009", "setup": "btst_breakout"}]
+
+
+def test_refresh_flip_summary_single_run_has_no_flips():
+    from src.screening.offensive.setup_output_log import refresh_flip_summary
+
+    runs = [
+        {"candidates": [
+            {"ticker": "600497", "setup": "btst_breakout", "plan_eligible": True,
+             "trigger_strength": 0.62},
+        ]}
+    ]
+    summary = refresh_flip_summary(runs)
+    assert summary["runs"] == 1
+    assert summary["flipped_candidates"] == 0
+    assert summary["union_minus_last_refresh"] == []
+
+
+def test_refresh_flip_summary_empty_runs_zeroed():
+    from src.screening.offensive.setup_output_log import refresh_flip_summary
+
+    summary = refresh_flip_summary([])
+    assert summary == {
+        "runs": 0,
+        "candidates_seen": 0,
+        "flipped_candidates": 0,
+        "union_minus_last_refresh": [],
+        "per_candidate": [],
+    }

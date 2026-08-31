@@ -323,3 +323,22 @@ def test_join_records_unclassified_flag():
     row = joined[0]
     assert row["capacity_blocked"] is False
     assert row["not_planned_unclassified"] is True
+
+
+def test_load_logged_records_excludes_scan_run_sibling_files(tmp_path: Path):
+    """``YYYYMMDD.scan_runs.jsonl`` 逐刷新诊断快照 (R82) 不进检测日志 join —
+    与 .capacity.jsonl 同族排除 (R80 Op1 污染家族回归)。"""
+    from scripts.join_setup_outputs_with_returns import load_logged_records
+
+    log_dir = tmp_path / "setup_output_log"
+    log_dir.mkdir()
+    (log_dir / "20260101.jsonl").write_text(
+        '{"ticker": "000001", "signal_date": "20260101", "plan_eligible": true}\n',
+        encoding="utf-8",
+    )
+    (log_dir / "20260101.scan_runs.jsonl").write_text(
+        '{"record_kind": "scan_run", "candidates": []}\n',
+        encoding="utf-8",
+    )
+    records = load_logged_records(log_dir)
+    assert [r["ticker"] for r in records] == ["000001"]

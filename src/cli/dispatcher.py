@@ -1305,6 +1305,31 @@ def _resolve_daily_action(
                 "daily-action scan funnel log failed (advisory, 不阻断)",
                 exc_info=True,
             )
+        # 逐刷新扫描快照 (R82; 与漏斗/容量同区): 主日志合并语义折叠逐刷新视图
+        # — 跨刷新翻转 (2026-08-20 300009 0.595↔<0.50 型) 不可回溯, admission
+        # 的跨刷新并集语义与 court 单快照先验的分歧无测量面。append-only 每运
+        # 行一行 (含就绪失败日的空扫描 — "这次刷新跑过且什么都没看到"本身就是
+        # 曾被掩埋的取证事实); 诊断面证据 fail-open (WARNING) 不阻断计划创建。
+        try:
+            from src.screening.offensive.setup_output_log import log_scan_run
+
+            log_scan_run(
+                signal_date,
+                scan.candidates,
+                tuple(
+                    b
+                    for b in scan.blocked_candidates
+                    if getattr(b, "reason", "") != "candidate_not_plan_eligible"
+                ),
+                regime=getattr(scan, "regime", None) or "unknown",
+                funnel=getattr(scan, "funnel", None),
+                snapshot_id=getattr(scan, "snapshot_id", None),
+            )
+        except Exception:
+            logger.warning(
+                "daily-action scan run log failed (advisory, 不阻断)",
+                exc_info=True,
+            )
         # 信号覆盖断层哨点 (2026-08-17 BUG-1; 2026-08-18 审查项 2 接入 v2 路径):
         # 此前只挂在 legacy generate_daily_action — 生产 --daily-action 走本函数
         # (scan_from_verified_snapshot + DailyActionService), 哨点从不执行, 华正

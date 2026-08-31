@@ -26,6 +26,14 @@ Design:
   - append-only across days; forward returns are joined later from price_cache;
   - write failures propagate to the caller: the dispatcher blocks new-plan
     creation for that run rather than creating plans without their evidence row.
+
+Siblings (same directory, diagnostic-face evidence, fail-open on write):
+  - ``YYYYMMDD.capacity.jsonl`` — plan-layer capacity blocks (R79);
+  - ``YYYYMMDD.funnel.json`` — scan funnel aggregates, overwrite-idempotent (R80);
+  - ``YYYYMMDD.scan_runs.jsonl`` — append-only per-refresh scan snapshots
+    (R82): the merge above intentionally collapses per-refresh views, so the
+    cross-refresh flip measurement and any refresh-divergence forensics read
+    from this artifact instead (see ``log_scan_run``/``refresh_flip_summary``).
 """
 
 from __future__ import annotations
@@ -408,6 +416,187 @@ def load_scan_funnel(
         logger.warning("漏斗工件损坏, 按缺失处理: %s", target, exc_info=True)
         return None
     return row if isinstance(row, dict) else None
+
+
+# ---- R82 Op1: 逐刷新扫描快照 (跨刷新翻转可测量 + 刷新分歧可重建) ----
+
+
+def _scan_run_candidate(action: Any, *, plan_eligible: bool) -> dict:
+    """单候选的刷新级最小诊断面 — 翻转测量只关心身份/资格/强度/原因."""
+    return {
+        "ticker": str(getattr(action, "ticker", "")),
+        "setup": str(getattr(action, "setup", "")),
+        "plan_eligible": bool(plan_eligible),
+        "degraded": bool(getattr(action, "degraded", False)),
+        "trigger_strength": _finite(getattr(action, "trigger_strength", 0.0)),
+        "block_reason": str(getattr(action, "block_reason", "") or ""),
+    }
+
+
+def log_scan_run(
+    signal_date: date,
+    candidates: Iterable[Any],
+    blocked: Iterable[Any],
+    *,
+    regime: str = "unknown",
+    funnel: Any = None,
+    snapshot_id: str | None = None,
+    out_dir: Path | str = _DEFAULT_DIR,
+) -> Path:
+    """把单次刷新的完整扫描视图 append 到当日 ``YYYYMMDD.scan_runs.jsonl``。
+
+    主日志 ``log_setup_outputs`` 的合并语义 (eligible 优先/同资格晚运行覆盖)
+    会折叠逐刷新视图: 18:09 的 strength 0.595 在 22:47 重跑后被覆盖, 跨刷新
+    翻转 (2026-08-20 300009 事件型) 不可回溯; 而 admission 的实际语义是跨刷新
+    并集, 与 court 单快照先验的分歧因此无测量面。本工件 append-only 每运行一
+    行, 既有字节永不改写 — 胜率的噪声分量 (翻转率/近阈值强度分布) 首次可测,
+    任何刷新分歧可事后重建。
+
+    语义分流 (与漏斗/容量同族): **诊断面证据**, 丢失不孤儿任何计划 — 写失败
+    由调用方 fail-open (WARNING); 文件超过单日上界后跳过追加并告警 (不截断
+    既有字节)。
+    """
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    _require_secure_directory(out)
+    compact = signal_date.strftime("%Y%m%d")
+    target = out / f"{compact}.scan_runs.jsonl"
+    if target.exists() and target.stat().st_size >= _MAX_LOG_FILE_BYTES:
+        logger.warning(
+            "逐刷新快照超单日上界, 跳过追加 (既有字节不变): %s", target
+        )
+        return target
+
+    funnel_payload = None
+    if funnel is not None:
+        stages_raw = getattr(funnel, "detect_miss_stages", None) or {}
+        funnel_payload = {
+            "universe": getattr(funnel, "universe", None),
+            "verify_blocked": int(getattr(funnel, "verify_blocked", 0) or 0),
+            "excluded_permanent": int(getattr(funnel, "excluded_permanent", 0) or 0),
+            "data_rejected": int(getattr(funnel, "data_rejected", 0) or 0),
+            "scannable": int(getattr(funnel, "scannable", 0) or 0),
+            "prefilter_passed": int(getattr(funnel, "prefilter_passed", 0) or 0),
+            "hits": int(getattr(funnel, "hits", 0) or 0),
+            "detect_miss_stages": {
+                str(k): int(v) for k, v in stages_raw.items() if v
+            },
+        }
+    row = {
+        "schema_version": SCHEMA_VERSION,
+        "record_kind": "scan_run",
+        "signal_date": compact,
+        "logged_at": datetime.now(timezone.utc).isoformat(),
+        "snapshot_id": snapshot_id,
+        "regime": str(regime),
+        "funnel": funnel_payload,
+        "candidates": [
+            _scan_run_candidate(a, plan_eligible=True) for a in candidates
+        ]
+        + [_scan_run_candidate(a, plan_eligible=False) for a in blocked],
+    }
+    payload = json.dumps(row, ensure_ascii=False, allow_nan=False, sort_keys=True) + "\n"
+    # append-only: O_APPEND 单次 write, 既有字节永不改写 (与主日志 mkstemp+
+    # replace 全量重写的合并语义相反 — 这正是本工件存在的理由)。
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        os.write(fd, payload.encode("utf-8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return target
+
+
+def load_scan_runs(
+    signal_date: date,
+    *,
+    out_dir: Path | str = _DEFAULT_DIR,
+) -> list[dict]:
+    """只读回读当日逐刷新快照; 缺失 → []; 损坏行跳过告警 (advisory 消费面)。"""
+    compact = signal_date.strftime("%Y%m%d")
+    target = Path(out_dir) / f"{compact}.scan_runs.jsonl"
+    if not target.exists():
+        return []
+    try:
+        raw = read_regular_bytes(target, max_bytes=_MAX_LOG_FILE_BYTES)
+    except OSError:
+        logger.warning("逐刷新快照读取失败, 按缺失处理: %s", target, exc_info=True)
+        return []
+    runs: list[dict] = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            logger.warning("逐刷新快照损坏行跳过: %s", target)
+            continue
+        if isinstance(row, dict):
+            runs.append(row)
+    return runs
+
+
+def refresh_flip_summary(runs: Iterable[dict]) -> dict:
+    """跨刷新资格翻转统计 — 胜率噪声分量的第一手测量。
+
+    admission 实际语义是跨刷新并集 (主日志 merge 保 eligible 行 + 计划幂等
+    存活), court 先验却按单快照测量; ``union_minus_last_refresh`` 量化"早刷
+    新纳入、末刷新不再支持"的噪声进入量, ``flipped_candidates`` 给出近阈值翻
+    转规模 (2026-08-20 300009 事件型)。纯函数, 只消费 ``load_scan_runs`` 输
+    出, 不读盘不写盘。
+    """
+    by_key: dict[tuple[str, str], list[dict]] = {}
+    ordered = list(runs)
+    for run in ordered:
+        for cand in run.get("candidates") or []:
+            if not isinstance(cand, dict):
+                continue
+            key = (str(cand.get("ticker", "")), str(cand.get("setup", "")))
+            by_key.setdefault(key, []).append(cand)
+
+    per_candidate: list[dict] = []
+    for key, observations in sorted(by_key.items()):
+        eligibilities = [bool(o.get("plan_eligible")) for o in observations]
+        strengths = [
+            float(o["trigger_strength"])
+            for o in observations
+            if isinstance(o.get("trigger_strength"), (int, float))
+        ]
+        per_candidate.append(
+            {
+                "ticker": key[0],
+                "setup": key[1],
+                "runs_seen": len(observations),
+                "eligible_runs": sum(eligibilities),
+                "flipped": len(set(eligibilities)) > 1,
+                "strength_min": min(strengths) if strengths else None,
+                "strength_max": max(strengths) if strengths else None,
+            }
+        )
+
+    union_eligible = {
+        key
+        for key, observations in by_key.items()
+        if any(bool(o.get("plan_eligible")) for o in observations)
+    }
+    last_eligible: set[tuple[str, str]] = set()
+    if ordered:
+        for cand in ordered[-1].get("candidates") or []:
+            if isinstance(cand, dict) and bool(cand.get("plan_eligible")):
+                last_eligible.add(
+                    (str(cand.get("ticker", "")), str(cand.get("setup", "")))
+                )
+    return {
+        "runs": len(ordered),
+        "candidates_seen": len(by_key),
+        "flipped_candidates": sum(1 for entry in per_candidate if entry["flipped"]),
+        "union_minus_last_refresh": [
+            {"ticker": key[0], "setup": key[1]}
+            for key in sorted(union_eligible - last_eligible)
+        ],
+        "per_candidate": per_candidate,
+    }
 
 
 def audit_signal_log_coverage(

@@ -66,9 +66,11 @@ RECONSTRUCTED_REASON = "reconstructed_not_planned"
 
 
 def _is_detection_log(path: str) -> bool:
-    """只收检测日志; R79 的 ``YYYYMMDD.capacity.jsonl`` 兄弟工件是计划层拦截
-    证据 (行 schema 完全不同), 混入 join 会以缺字段行污染 panel。"""
-    return not Path(path).name.endswith(".capacity.jsonl")
+    """只收检测日志; 计划层/诊断层兄弟工件的行 schema 完全不同, 混入 join 会
+    以缺字段行污染 panel — ``*.capacity.jsonl`` (R79 计划层拦截证据) 与
+    ``*.scan_runs.jsonl`` (R82 逐刷新诊断快照) 一律排除。"""
+    name = Path(path).name
+    return not (name.endswith(".capacity.jsonl") or name.endswith(".scan_runs.jsonl"))
 
 
 def load_logged_records(log_dir: Path = LOG_DIR) -> list[dict]:
