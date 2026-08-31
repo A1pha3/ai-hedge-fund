@@ -99,3 +99,76 @@ def test_funnel_miss_stage_absent_on_legacy_construction(case):
         funnel=ScanFunnel(scannable=10, prefilter_passed=3, hits=1),
     )
     assert "未命中分桶" not in render_daily_action_v2(view)
+
+
+# ---------- R85 Op1: 强度阈值触发器状态行 (判定面日度可见性) ----------
+
+def _trigger_ledger(tmp_path, records):
+    import json
+    path = tmp_path / "trigger_ledger.jsonl"
+    path.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _trigger_rec(day, c1_lit, c2_lit, c1_judged=True, c2_judged=True, armed=False,
+                 window_end="20260830"):
+    return {
+        "date": day, "anchor": "production_aligned/t10", "min_n": 30,
+        "condition_1": {"lit": c1_lit, "judged": c1_judged, "n": 315, "stat": 0.0023},
+        "condition_2": {"lit": c2_lit, "judged": c2_judged, "n": 303, "stat": 0.0097},
+        "conjunction_armed": armed,
+        "court": {"built_at": "2026-08-30", "window_end": window_end, "rows": 1866},
+    }
+
+
+def _patch_ledger(monkeypatch, path):
+    from src.screening.offensive import threshold_trigger as tt
+    monkeypatch.setattr(tt, "LEDGER_PATH", path)
+
+
+def test_trigger_state_line_renders_conditions_and_streaks(case, tmp_path, monkeypatch):
+    """有账本 → 状态行披露条件判定/连亮/合取与 court 覆盖 (hermetic tmp 账本)."""
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260829", c1_lit=True, c2_lit=False),
+        _trigger_rec("20260830", c1_lit=True, c2_lit=False),
+    ]))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "强度阈值触发器" in text
+    assert "条件① ≥0.70 桶 CI>0 已亮（连亮 2）" in text
+    assert "条件② 0.50-0.60 转负 未亮（连亮 0）" in text
+    assert "合取未武装" in text
+    assert "court 覆盖至 20260830" in text
+    assert "账本 2 条" in text
+
+
+def test_trigger_state_line_omitted_when_ledger_missing(case, tmp_path, monkeypatch):
+    """账本缺失 → 整行省略 (fail-open), 无异常 (hermetic: 不受主区真实账本影响)."""
+    _patch_ledger(monkeypatch, tmp_path / "nope.jsonl")
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "强度阈值触发器" not in render_daily_action_v2(view)
+
+
+def test_trigger_state_line_armed_and_unjudged_disclosed(case, tmp_path, monkeypatch):
+    """武装态显示 owner 评估就绪提示; 未判定条件显示样本不足 — 不假装知道."""
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260831", c1_lit=True, c2_lit=True, c1_judged=False,
+                     c2_judged=False, armed=True),
+    ]))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "条件① ≥0.70 桶 CI>0 样本不足未判定" in text
+    assert "条件② 0.50-0.60 转负 样本不足未判定" in text
+    assert "合取已武装 → 阈值上调正式评估就绪（owner 预注册动作）" in text

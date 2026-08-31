@@ -40,6 +40,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.screening.offensive.threshold_trigger import (  # noqa: E402
+    load_trigger_ledger,
+    trigger_stability,
+)
+
 COURT_TABLE = Path("data/research/btst_court/event_tables/event_table_v1.csv.gz")
 TABLE_DIR = COURT_TABLE.parent  # manifest_v1.json 同目录 — 判定绑定的身份源
 REPORT_DIR = Path("data/reports")
@@ -400,26 +405,10 @@ def court_binding(court_table: Path, rows: int) -> dict[str, object]:
     }
 
 
-def load_trigger_ledger(
-    ledger_path: Path = TRIGGER_LEDGER_PATH,
-) -> list[dict]:
-    """读触发器账本, 按日期排序; 损坏行 advisory 跳过 (诊断面语义)。"""
-    records: list[dict] = []
-    try:
-        text = Path(ledger_path).read_text(encoding="utf-8")
-    except OSError:
-        return records
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(rec, dict) and rec.get("date"):
-            records.append(rec)
-    return sorted(records, key=lambda r: str(r["date"]))
+# load_trigger_ledger / trigger_stability 自 R85 Op1 起单一实现位于
+# src.screening.offensive.threshold_trigger (模块头部导入) — 本模块 re-export
+# 保持既有消费面 (tests/ 内 from scripts.winrate_payoff_decomposition import)
+# 不变; 记录读取面只有一份, 操作员视图与落账面永远同语义。
 
 
 def record_trigger_status(
@@ -503,55 +492,6 @@ def record_trigger_status(
         return {"recorded": False, "reason": "write_failed"}
     return {"recorded": True, "records": len(records)}
 
-
-def trigger_stability(records: list[dict]) -> dict[str, object]:
-    """连亮计数 (R81 Op2): 从最新记录向前数连续 lit; 未点亮/未判定断链
-    (保守: 未知不延长连亮)。本函数只计数 — 连亮多少次才算『稳定』(阈值 K)
-    属 owner 预注册范围, 不在工具内判定。
-    """
-    dates = [str(r.get("date")) for r in records]
-    out: dict[str, object] = {
-        "records": len(records),
-        "first_date": dates[0] if dates else None,
-        "last_date": dates[-1] if dates else None,
-        "condition_1_streak": 0,
-        "condition_1_last_lit": None,
-        "condition_2_streak": 0,
-        "condition_2_last_lit": None,
-        "conjunction_streak": 0,
-        "conjunction_last_armed": None,
-        "max_conjunction_streak": 0,
-    }
-    if not records:
-        return out
-    latest = records[-1]
-    c1, c2 = latest.get("condition_1") or {}, latest.get("condition_2") or {}
-    out["condition_1_last_lit"] = c1.get("lit")
-    out["condition_2_last_lit"] = c2.get("lit")
-    out["conjunction_last_armed"] = latest.get("conjunction_armed")
-    run_c1 = run_c2 = run_and = True
-    max_and = 0
-    for rec in reversed(records):
-        r1 = rec.get("condition_1") or {}
-        r2 = rec.get("condition_2") or {}
-        lit1 = r1.get("lit") is True
-        lit2 = r2.get("lit") is True
-        armed = rec.get("conjunction_armed") is True
-        if run_c1 and lit1:
-            out["condition_1_streak"] = int(out["condition_1_streak"]) + 1
-        else:
-            run_c1 = False
-        if run_c2 and lit2:
-            out["condition_2_streak"] = int(out["condition_2_streak"]) + 1
-        else:
-            run_c2 = False
-        if run_and and armed:
-            out["conjunction_streak"] = int(out["conjunction_streak"]) + 1
-            max_and = max(max_and, int(out["conjunction_streak"]))
-        else:
-            run_and = False
-    out["max_conjunction_streak"] = max_and
-    return out
 
 
 def render_md(payload: dict[str, object], date_str: str) -> str:
