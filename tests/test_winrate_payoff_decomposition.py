@@ -620,8 +620,10 @@ class TestCourtGrowthCoupling:
     ④ build 成功后机械刷新 (fail-open)。
     """
 
-    BINDING_A = {"built_at": "2026-08-30", "window_end": "20260830", "rows": 1746}
-    BINDING_B = {"built_at": "2026-08-31", "window_end": "20260831", "rows": 1782}
+    BINDING_A = {"built_at": "2026-08-30", "window_end": "20260830", "rows": 1746,
+                 "formula_fingerprint": "aa" * 32}
+    BINDING_B = {"built_at": "2026-08-31", "window_end": "20260831", "rows": 1782,
+                 "formula_fingerprint": "bb" * 32}
 
     @staticmethod
     def _trigger():
@@ -776,6 +778,7 @@ class TestCourtGrowthCoupling:
         assert len(records) == 1
         assert records[0]["court"] == {
             "built_at": None, "window_end": None, "rows": 40,
+            "formula_fingerprint": None,
         }
 
         # 同表同绑定当日重跑 (前进门): 账本不动, 报告刷新, reason 披露进 JSON
@@ -783,3 +786,93 @@ class TestCourtGrowthCoupling:
         assert len(mod.load_trigger_ledger(ledger)) == 1
         payload = json.loads(json_path.read_text(encoding="utf-8"))
         assert payload["threshold_record"]["reason"] == "court_not_advanced"
+
+
+class TestAdversarialAuditR84Op1:
+    """Op1 交付面对抗审查三缺陷收口 (R84 Op2)。
+
+    A 畸形 manifest 裸 AttributeError — court_binding 自述『缺失/损坏不假装
+      知道』却只捕 OSError/JSONDecodeError; window 非 dict / manifest 非 dict /
+      built_at 非字符串时 .get 裸逃逸。
+    B 前进门单点 (最新记录) 比对 — 数据状态回退 A→B→A (备份恢复旧 court)
+      放行同状态重复判定; 判定是 (数据状态, 规则) 的确定性纯函数, 任一
+      已见过的绑定都不产生新证据, 门必须对比全历史。
+    C 绑定缺公式指纹 — 同日公式变更重建且行数不变时绑定恒等 → 门静默
+      skip 吞掉新判定; manifest formula_fingerprint 是现成强判别。
+    """
+
+    def _trigger(self):
+        return TestCourtGrowthCoupling._trigger()
+
+    def test_binding_malformed_manifest_degrades_to_none(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import court_binding
+        tables = tmp_path / "event_tables"
+        tables.mkdir()
+        table = tables / "court.csv.gz"
+        table.write_bytes(b"x")
+        # 整文件垃圾
+        (tables / "manifest_v1.json").write_text("not json at all", encoding="utf-8")
+        b = court_binding(table, rows=7)
+        assert b == {"built_at": None, "window_end": None, "rows": 7,
+                     "formula_fingerprint": None}
+        # manifest 非 dict (JSON 数组)
+        (tables / "manifest_v1.json").write_text("[1,2]", encoding="utf-8")
+        assert court_binding(table, rows=7)["built_at"] is None
+        # window 非 dict + built_at 非字符串
+        (tables / "manifest_v1.json").write_text(
+            json.dumps({"built_at": 5, "window": ["bad"]}), encoding="utf-8")
+        b = court_binding(table, rows=7)
+        assert b["built_at"] is None and b["window_end"] is None
+
+    def test_binding_includes_formula_fingerprint(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import court_binding
+        tables = tmp_path / "event_tables"
+        tables.mkdir()
+        table = tables / "court.csv.gz"
+        table.write_bytes(b"x")
+        fp = "aa" * 32
+        (tables / "manifest_v1.json").write_text(json.dumps({
+            "built_at": "2026-08-31", "window": {"end": "20260831"},
+            "formula_fingerprint": {"btst_breakout_sha256": fp},
+        }), encoding="utf-8")
+        b = court_binding(table, rows=99)
+        assert b == {"built_at": "2026-08-31", "window_end": "20260831",
+                     "rows": 99, "formula_fingerprint": fp}
+
+    def test_gate_skips_regressed_binding_seen_in_history(self, tmp_path):
+        """数据状态回退 (A→B→A) — A 已判定过, 门必须 skip (B 单点比对会放行)。"""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        c1 = TestCourtGrowthCoupling.BINDING_A
+        c2 = TestCourtGrowthCoupling.BINDING_B
+        record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260829",
+            ledger_path=ledger, court_binding=dict(c1))
+        record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260830",
+            ledger_path=ledger, court_binding=dict(c2), require_advance=True)
+        meta = record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260831",
+            ledger_path=ledger, court_binding=dict(c1), require_advance=True)
+        assert meta["recorded"] is False
+        assert meta["reason"] == "court_not_advanced"
+        assert [r["date"] for r in load_trigger_ledger(ledger)] == ["20260829", "20260830"]
+
+    def test_gate_allows_unseen_binding_after_history(self, tmp_path):
+        """全历史比对不误伤真正前进的新状态 (C→D 前进照常落记录)。"""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        c1 = TestCourtGrowthCoupling.BINDING_A
+        c3 = {"built_at": "2026-09-01", "window_end": "20260901", "rows": 1900}
+        record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260829",
+            ledger_path=ledger, court_binding=dict(c1))
+        meta = record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260901",
+            ledger_path=ledger, court_binding=dict(c3), require_advance=True)
+        assert meta["recorded"] is True
+        assert [r["date"] for r in load_trigger_ledger(ledger)] == ["20260829", "20260901"]

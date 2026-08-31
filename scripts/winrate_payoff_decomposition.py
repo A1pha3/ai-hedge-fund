@@ -24,7 +24,9 @@
 - 本工具是诊断, 不是参数变更提案 — 任何阈值/先验/仓位调整 = 策略
   行为变化 = 新证据世代 (owner 决策)。
 
-写入: data/reports/winrate_payoff_decomposition_YYYYMMDD.{md,json}。
+写入: data/reports/winrate_payoff_decomposition_YYYYMMDD.{md,json} +
+data/reports/threshold_trigger_ledger.jsonl (R81 起逐刷新判定快照,
+R84 起绑定 court 身份并走数据前进门)。
 """
 
 from __future__ import annotations
@@ -371,15 +373,31 @@ def court_binding(court_table: Path, rows: int) -> dict[str, object]:
     """
     built_at = None
     window_end = None
+    fingerprint = None
     try:
         manifest = json.loads(
             (Path(court_table).parent / "manifest_v1.json").read_text(encoding="utf-8")
         )
-        built_at = manifest.get("built_at")
-        window_end = (manifest.get("window") or {}).get("end")
-    except (OSError, json.JSONDecodeError):
-        pass
-    return {"built_at": built_at, "window_end": window_end, "rows": int(rows)}
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        manifest = None
+    if isinstance(manifest, dict):
+        # 畸形键值逐字段退化 None (R84 Op2-A): 身份来源损坏不假装知道, 也不崩溃
+        value = manifest.get("built_at")
+        built_at = value if isinstance(value, str) else None
+        window = manifest.get("window")
+        if isinstance(window, dict):
+            value = window.get("end")
+            window_end = value if isinstance(value, str) else None
+        fingerprints = manifest.get("formula_fingerprint")
+        if isinstance(fingerprints, dict):
+            value = fingerprints.get("btst_breakout_sha256")
+            fingerprint = value if isinstance(value, str) else None
+    return {
+        "built_at": built_at,
+        "window_end": window_end,
+        "rows": int(rows),
+        "formula_fingerprint": fingerprint,
+    }
 
 
 def load_trigger_ledger(
@@ -419,10 +437,13 @@ def record_trigger_status(
     诊断面 fail-open: 写失败打印警告, 不阻断报告生成。
 
     court_binding = court_binding() 的数据状态身份, 随快照落盘。
-    require_advance=True (数据增长耦合路径) 时, 账本最新记录绑定相同 →
-    skip: 同一份数据反复判定不产生新证据, 逐日重跑不会写下『新日期旧
-    数据』记录把连亮计数虚假拉长。旧形态记录无 court 字段 → 门放行
-    (不追溯拒绝, 绑定自此开始积累)。
+    require_advance=True (数据增长耦合路径) 时, 绑定与账本**任一**历史
+    记录相同 → skip (R84 Op2-B): 判定是 (数据状态, 规则) 的确定性纯函数,
+    同一份数据反复判定不产生新证据 — 单点 (最新) 比对会被数据状态回退
+    (备份恢复旧 court, A→B→A) 绕过。旧形态记录无 court 字段 → 门放行
+    (不追溯拒绝, 绑定自 R84 起开始积累)。
+    已知边界 (成文): 触发规则/锚/min_n 语义变化 = 新证据世代, 须启用新
+    账本文件, 不在本门判别范围 (记录内 anchor/min_n 仅供审计比对)。
     """
     trigger = payload.get("threshold_trigger")
     if not isinstance(trigger, dict):
@@ -445,18 +466,14 @@ def record_trigger_status(
         # 无绑定不写字段 (与 R81 旧形态逐字一致): 不假装知道数据身份
         snapshot["court"] = dict(court_binding)
     records = load_trigger_ledger(ledger_path)
-    if (
-        require_advance
-        and court_binding is not None
-        and records
-        and isinstance(records[-1].get("court"), dict)
-        and records[-1]["court"] == court_binding
-    ):
-        return {
-            "recorded": False,
-            "reason": "court_not_advanced",
-            "records": len(records),
-        }
+    if require_advance and court_binding is not None:
+        for previous in records:
+            if isinstance(previous.get("court"), dict) and previous["court"] == court_binding:
+                return {
+                    "recorded": False,
+                    "reason": "court_not_advanced",
+                    "records": len(records),
+                }
     records = [r for r in records if r.get("date") != snapshot["date"]]
     records.append(snapshot)
     body = "\n".join(json.dumps(r, ensure_ascii=False, sort_keys=True) for r in records)
