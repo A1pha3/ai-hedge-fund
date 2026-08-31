@@ -268,9 +268,10 @@ def test_time_slices_partition_and_top1():
     u = rpc.production_universe(rpc.candidate_universe(ev))
     ts = rpc.time_slices(u, n_boot=100)
     labels = [t["label"] for t in ts]
-    assert labels == ["2025H2", "2026H1", "2026H2+"]
+    # R90 Op3: 窗口前扩重注册 — 切片表含 2025H1 段
+    assert labels == ["2025H1", "2025H2", "2026H1", "2026H2+"]
     assert sum(t["n"] for t in ts) == len(u)  # 切片完备覆盖不重不漏
-    h25 = ts[0]
+    h25 = {t["label"]: t for t in ts}["2025H2"]  # 按 label 取 (2025H1 前插后 ts[0] 不再是本段)
     assert h25["n"] == 4
     # top_1: 每天最高强度 → 2025H2 取 0.9(+0.10) 与 0.8(+0.04), 净后均值
     exp_top1 = ((0.10 - 0.0065) + (0.04 - 0.0065)) / 2
@@ -312,3 +313,46 @@ def test_render_md_contains_new_sections():
     assert "排除行披露" in md
     assert "时间切片" in md
     assert "2026H1" in md
+
+
+def test_time_slices_cover_extended_window_2025h1():
+    """R90 Op3: 窗口前扩 (20250102) 后预注册切片表补 2025H1 段 —
+    新审计段进时间切片视图, partition 覆盖前扩行。"""
+    rows = []
+    for sd, rets in (
+        ("20250310", (0.05, -0.02)),   # 2025H1 (前扩新增段)
+        ("20250801", (0.10, -0.02)),   # 2025H2
+        ("20260302", (0.02, -0.05)),   # 2026H1
+    ):
+        for r in rets:
+            rows.append(_prod_row(sd, r))
+    ev = _ev_prod(rows)
+    u = rpc.production_universe(rpc.candidate_universe(ev))
+    ts = rpc.time_slices(u, n_boot=100)
+    labels = [t["label"] for t in ts]
+    assert labels == ["2025H1", "2025H2", "2026H1", "2026H2+"]
+    assert sum(t["n"] for t in ts) == len(u)  # 不重不漏含前扩行
+    h1 = ts[0]
+    assert h1["n"] == 2
+    assert abs(h1["mean"] - ((0.05 - 0.0065) + (-0.02 - 0.0065)) / 2) < 1e-12
+
+
+def test_time_slices_outside_rows_fail_closed():
+    """越界行 (切片表未覆盖的窗口移动) → fail-closed, 不静默缺段。"""
+    import pytest
+    ev = _ev_prod([
+        _prod_row("20241231", 0.02),   # 早于全部预注册切片
+        _prod_row("20260302", 0.02),
+    ])
+    u = rpc.production_universe(rpc.candidate_universe(ev))
+    with pytest.raises(ValueError, match="1"):
+        rpc.time_slices(u, n_boot=10)
+
+
+def test_time_slices_2025h1_empty_segment_is_honest():
+    """新段空段诚实披露 (n=0/mean=None)。"""
+    ev = _ev_prod([_prod_row("20260302", 0.02)])
+    u = rpc.production_universe(rpc.candidate_universe(ev))
+    ts = rpc.time_slices(u, n_boot=10)
+    seg = {t["label"]: t for t in ts}
+    assert seg["2025H1"]["n"] == 0 and seg["2025H1"]["mean"] is None
