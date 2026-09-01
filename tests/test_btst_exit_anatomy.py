@@ -66,29 +66,34 @@ def _flat_path(entry=10.0, sessions=10, drift=0.0):
 
 
 class TestSessionsForWindow:
-    def test_slice_is_signal_exclusive_exit_inclusive(self):
-        sessions = sessions_for_window(CAL[0], CAL[10], CAL)
+    def test_slice_is_signal_exclusive_offset_inclusive(self):
+        """offset 语义与 build 层逐一对应: fwd[offset-1] = T+offset 会话。"""
+        sessions = sessions_for_window(CAL[0], 10, CAL)
         assert sessions[0] == CAL[1]
         assert sessions[-1] == CAL[10]
         assert len(sessions) == 10
 
     def test_exit_beyond_forward_window_truncated(self):
-        sessions = sessions_for_window(CAL[0], "99999999", CAL)
+        sessions = sessions_for_window(CAL[0], 99, CAL)
         assert len(sessions) == 15  # FORWARD_SESSIONS
+
+    def test_offset_semantics_matches_build_bars_j_plus_1(self):
+        """build 的 bars[j] → offset=j+1: offset=3 ⇒ 切片恰含 T+1..T+3。"""
+        sessions = sessions_for_window(CAL[0], 3, CAL)
+        assert [s for s in sessions] == [CAL[1], CAL[2], CAL[3]]
 
 
 class TestRealizablePath:
     def test_t1_entry_day_excluded_ashare_t1_rule(self):
         bars = _flat_path(sessions=12)  # 覆盖 T+1=CAL[1]..CAL[12]
-        path = realizable_path(bars, CAL[10])
+        path = realizable_path(bars)
         assert path[0]["session"] == CAL[2]  # T+2 起
-        assert path[-1]["session"] == CAL[10]
         assert all(bar["session"] != CAL[1] for bar in path)  # T+1 不在路径
 
-    def test_path_ends_at_exit_session_not_beyond(self):
+    def test_path_runs_to_window_end(self):
         bars = _flat_path(sessions=12)
-        path = realizable_path(bars, CAL[10])
-        assert len(path) == 9  # T+2..T+10
+        path = realizable_path(bars)
+        assert len(path) == 11  # T+2..T+12
 
 
 class TestCorpAction:
@@ -119,7 +124,7 @@ class TestPathAnatomy:
     def test_mfe_ignores_t1_intraday_high(self):
         bars = _flat_path(sessions=10)
         bars[0]["high"] = 99.0  # T+1 日内高点 — 买入当日不可卖
-        path = realizable_path(bars, CAL[9])
+        path = realizable_path(bars)
         anatomy = path_anatomy(entry=10.0, path=path)
         assert anatomy["mfe"] == pytest.approx(0.0)  # 其余日持平
 
@@ -189,12 +194,12 @@ class TestStopCounterfactual:
 
 
 class TestAnatomyEvent:
-    def _event(self, signal_close=10.0, gap=0.0):
+    def _event(self, signal_close=10.0, gap=0.0, exit_offset=10):
         return pd.Series(
             {
                 "ts_code": "000001.SZ",
                 "signal_date": CAL[0],
-                "exit_session_t10": CAL[10],
+                "exit_session_t10": exit_offset,  # 偏移量 (build 层语义)
                 "signal_close": signal_close,
                 "gap_t1_open": gap,
             }
@@ -219,17 +224,22 @@ class TestAnatomyEvent:
             for session in {b["session"] for b in bars}
         }
 
-    def test_entry_crosscheck_mismatch_skipped(self):
+    def test_entry_crosscheck_mismatch_excluded_distinctly(self):
         bars = _flat_path(sessions=11)
         bars[0]["open"] = 10.5  # 与 signal_close×(1+gap) 不一致
         out = anatomy_event(self._event(), self._by_day(bars), CAL)
-        assert out is None
+        assert out == {"excluded_entry_mismatch": True, "signal_date": CAL[0]}
 
-    def test_t1_bar_missing_skipped(self):
+    def test_t1_bar_missing_excluded_distinctly(self):
         bars = _flat_path(sessions=11)
-        bars[0] = _bar(CAL[0], None, None, None, None)
+        bars[0] = _bar(bars[0]["session"], None, None, None, None)
         out = anatomy_event(self._event(), self._by_day(bars), CAL)
-        assert out is None
+        assert out == {"excluded_t1_bar_missing": True, "signal_date": CAL[0]}
+
+    def test_exit_unfilled_nan_offset_excluded_distinctly(self):
+        bars = _flat_path(sessions=11)
+        out = anatomy_event(self._event(exit_offset=float("nan")), self._by_day(bars), CAL)
+        assert out == {"excluded_exit_unfilled": True, "signal_date": CAL[0]}
 
     def test_corp_action_excluded_with_count(self):
         bars = _flat_path(sessions=11)
@@ -256,6 +266,9 @@ class TestAggregate:
             None,
             {"excluded_corp_action": ["x"], "signal_date": "d"},
             {"excluded_exit_bar_missing": True, "signal_date": "d"},
+            {"excluded_exit_unfilled": True, "signal_date": "d"},
+            {"excluded_t1_bar_missing": True, "signal_date": "d"},
+            {"excluded_entry_mismatch": True, "signal_date": "d"},
             {
                 "mfe": 0.1,
                 "mae": -0.1,
@@ -278,11 +291,13 @@ class TestAggregate:
             },
         ]
         agg = aggregate_anatomy(rows)
-        assert agg["n_events"] == 4
-        assert agg["n_entry_crosscheck_failed"] == 1
+        assert agg["n_events"] == 7
+        assert agg["n_entry_mismatch"] == 1
+        assert agg["n_t1_bar_missing"] == 1
+        assert agg["n_exit_unfilled"] == 1
         assert agg["n_corp_action_excluded"] == 1
         assert agg["n_exit_bar_missing"] == 1
-        assert agg["n_included"] == 1
+        assert agg["n_included"] == 1  # None 行不计入任何排除类, 也不计入 included
         assert agg["time_to_peak_buckets"]["T+2"] == 1
 
     def test_empty_rows_safe(self):
@@ -357,7 +372,7 @@ class TestUniverseEndToEnd:
                     "trigger_strength": 0.7,
                     "signal_close": 10.0,
                     "gap_t1_open": 0.01,  # T+1 open 10.1 = 10×(1+0.01)
-                    "exit_session_t10": sessions[10],
+                    "exit_session_t10": 10,  # 偏移量: signal 后第 10 个会话
                     "gross_ret_t10": 0.05,
                     "fillable": True,
                     "gate_blocked": False,
