@@ -71,6 +71,21 @@ STRENGTH_BUCKETS: tuple[tuple[float, str], ...] = (
 # 全桶序 (含 <0.50 与 unknown) — 分组/切片视图共用的单一序, 防两侧漂移
 ALL_STRENGTH_BUCKETS: tuple[str, ...] = ("<0.50", "0.50-0.60", "0.60-0.70", "≥0.70", "unknown")
 
+# 执行面 gap 解剖 (R92 Op1): T+1 开盘缺口分桶 — 左闭右开, 与 strength_bucket
+# 同侧。边界预注册于 2026-09-01 (探索性, in-sample: 阈值选自同一次观测数据,
+# 任何政策使用 = owner 决策 + 新数据前向验证), 只披露不判定。
+GAP_BUCKETS: tuple[tuple[float, str], ...] = (
+    (-0.05, "<-5%"),
+    (0.0, "-5~0"),
+    (0.02, "0~2%"),
+    (0.05, "2~5%"),
+    (0.10, "5~10%"),
+)
+GAP_TOP_BUCKET = ">10%"  # ≥ 0.10 (末界右闭到无穷)
+ALL_GAP_BUCKETS: tuple[str, ...] = tuple(lbl for _, lbl in GAP_BUCKETS) + (GAP_TOP_BUCKET,)
+# 桶内条件判别的「高开」阈值 — 5~10% 桶下界; 同为探索性 in-sample (R92 Op1)
+GAP_HIGH_THRESHOLD = 0.05
+
 
 def production_aligned(ev) -> "pd.DataFrame":
     """生产对齐宇宙 — 复用 review_btst_prior_court 单一实现 (防口径漂移)。
@@ -119,6 +134,17 @@ def strength_bucket(strength: float | None) -> str:
     if strength < 0.70:
         return "0.60-0.70"
     return "≥0.70"
+
+
+def gap_bucket(gap: float | None) -> str:
+    """T+1 开盘缺口分桶 — 左闭右开, 缺失诚实 unknown (不假装知道)。"""
+    if gap is None or (isinstance(gap, float) and math.isnan(gap)):
+        return "unknown"
+    g = float(gap)
+    for bound, label in GAP_BUCKETS:
+        if g < bound:
+            return label
+    return GAP_TOP_BUCKET
 
 
 def win_loss_stats(
@@ -262,6 +288,111 @@ def slice_bucket_stability(u: "pd.DataFrame") -> list[dict[str, object]]:
     return out
 
 
+def gap_anatomy(u: "pd.DataFrame") -> dict[str, object]:
+    """执行面 gap 解剖 (R92 Op1): T+1 开盘缺口的四视图判定块 (t10 主口径)。
+
+    动机 (宿主 Observe 期探索, 20260901 生产对齐宇宙): gap 与净 T+10 收益
+    强单调负相关 (spearman −0.103, 为 trigger_strength 的 1.7 倍),
+    close-anchored 收益同样单调衰减 = 高开是真实信息劣化而非纯机械入场价
+    效应; 每个强度桶内 gap>5% 子集均显著更差; ≥0.70 桶跨切片 E 漂移与
+    gap-high 占比共变 — R91 slice-bucket 面发现的『不稳定』的机制解释面。
+
+    四视图 (production_aligned 锚定口径; all_candidates 同构可得):
+    1. 分桶表: 固定绝对分桶 (预注册 2026-09-01, 探索性 in-sample), 逐格
+       win_loss_stats (净口径 + 聚类 CI) 并列 close-anchored 毛 E —
+       入场锚是执行口径, close-anchor 非执行口径仅信息含量, 两者并列
+       分离机械入场价效应与信息劣化;
+    2. gap 缺失行: 单列只披露不计判定 (不假装知道);
+    3. 桶内条件判别: 每强度桶 gap>GAP_HIGH_THRESHOLD vs ≤ — gap 是否在
+       trigger_strength 之外有增量判别; 缺失 gap 在所属强度桶内计数;
+    4. 跨切片占比共变: 每 slice 全宇宙与 ≥0.70 锚桶的 gap-high 占比与
+       净 E — 机制披露而非因果证明。
+
+    纪律: 阈值 in-sample 来源明示; 小样本格 CI 诚实 None (n<MIN_CELL_N
+    内建门槛); 切片划分/覆盖守卫复用 slice_partitions 单一实现;
+    列缺失 fail-closed SystemExit (镜像 production_aligned 纪律)。
+    """
+    required = ["gap_t1_open", "ret_close_anchor_t10", "gross_ret_t10"]
+    missing = [c for c in required if c not in u.columns]
+    if missing:
+        raise SystemExit(f"court 事件表缺少 gap 解剖列: {sorted(missing)}")
+    import sys as _sys
+    _scripts = str(Path(__file__).resolve().parent)
+    if _scripts not in _sys.path:
+        _sys.path.insert(0, _scripts)
+    from review_btst_prior_court import slice_partitions
+
+    work = u.copy()
+    work["net_ret_t10"] = net_returns(work["gross_ret_t10"].tolist())
+    work = work[work["net_ret_t10"].notna()].copy()
+    work["gap_bucket"] = work["gap_t1_open"].map(gap_bucket)
+    work["strength_bucket"] = work["trigger_strength"].map(strength_bucket)
+
+    def _stats(cell: pd.DataFrame) -> dict[str, object]:
+        return win_loss_stats(
+            cell["net_ret_t10"].tolist(),
+            cell["signal_date"].astype(str).tolist(),
+        )
+
+    def _close_anchor(cell: pd.DataFrame) -> dict[str, object]:
+        ca = cell["ret_close_anchor_t10"].dropna()
+        return {
+            "close_anchor_gross_e": float(ca.mean()) if len(ca) else None,
+            "close_anchor_n": int(len(ca)),
+        }
+
+    buckets: list[dict[str, object]] = []
+    for label in ALL_GAP_BUCKETS:
+        cell = work[work["gap_bucket"] == label]
+        buckets.append({"bucket": label, **_stats(cell), **_close_anchor(cell)})
+    gap_missing = {"n": int((work["gap_bucket"] == "unknown").sum())}
+
+    within: list[dict[str, object]] = []
+    for s_label in ALL_STRENGTH_BUCKETS:
+        if s_label == "unknown":
+            continue
+        s_cell = work[work["strength_bucket"] == s_label]
+        # NaN 与两侧比较均为 False → 缺失 gap 自然排除出 hi/lo
+        hi = s_cell[s_cell["gap_t1_open"] > GAP_HIGH_THRESHOLD]
+        lo = s_cell[s_cell["gap_t1_open"] <= GAP_HIGH_THRESHOLD]
+        within.append({
+            "strength_bucket": s_label,
+            "gap_high": _stats(hi),
+            "gap_low": _stats(lo),
+            "gap_missing": int((s_cell["gap_bucket"] == "unknown").sum()),
+        })
+
+    co_movement: list[dict[str, object]] = []
+
+    def _slice_cell(cell: pd.DataFrame, cell_full: pd.DataFrame) -> dict[str, object]:
+        high = cell[cell["gap_t1_open"] > GAP_HIGH_THRESHOLD]
+        n = int(len(cell))
+        return {
+            "n": n,
+            "share_high": (float(len(high)) / n) if n else None,
+            "e_net": float(cell["net_ret_t10"].mean()) if n else None,
+            "winrate": float((cell["net_ret_t10"] > 0).mean()) if n else None,
+            "gap_missing": int((cell_full["gap_bucket"] == "unknown").sum()),
+        }
+
+    for label, _lo, _hi, m in slice_partitions(work):
+        present = m[m["gap_bucket"] != "unknown"]
+        strong_present = present[present["strength_bucket"] == "≥0.70"]
+        strong_all = m[m["strength_bucket"] == "≥0.70"]
+        co_movement.append({
+            "slice": label,
+            "all": _slice_cell(present, m),
+            "strong": _slice_cell(strong_present, strong_all),
+        })
+    return {
+        "gap_high_threshold": GAP_HIGH_THRESHOLD,
+        "buckets": buckets,
+        "gap_missing": gap_missing,
+        "within_strength": within,
+        "slice_co_movement": co_movement,
+    }
+
+
 def decompose(
     df: pd.DataFrame,
     universes: tuple[str, ...] = ("all_candidates", "production_aligned"),
@@ -308,6 +439,18 @@ def decompose(
                     entry["attribution_vs_all"] = None
             uni["horizons"][f"t{horizon}"] = rows
         uni["slice_bucket_stability"] = slice_bucket_stability(frame)
+        required_gap_cols = ("gap_t1_open", "ret_close_anchor_t10", "gross_ret_t10")
+        if all(c in frame.columns for c in required_gap_cols):
+            uni["gap_anatomy"] = gap_anatomy(frame)
+        else:
+            # 列缺失不静默: 诚实披露不可用 (最小列集 fixture / 旧表形态);
+            # gap_anatomy 本体仍严格 fail-closed, 生产表恒有列恒计算。
+            uni["gap_anatomy"] = {
+                "available": False,
+                "missing_columns": [
+                    c for c in required_gap_cols if c not in frame.columns
+                ],
+            }
         payload["universes"][universe_name] = uni
         if universe_name == "all_candidates":
             payload["horizons"] = uni["horizons"]
@@ -596,6 +739,7 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
     aligned = (payload.get("universes") or {}).get("production_aligned")
     if aligned:
         _render_slice_bucket_stability(aligned, L)
+        _render_gap_anatomy(aligned, L)
         t10_all = aligned["horizons"].get("t10", [])
         all_row = next((r for r in t10_all if r["group"] == "ALL"), None)
         if all_row and all_row.get("expectancy") is not None:
@@ -684,6 +828,81 @@ def _render_slice_bucket_stability(uni: dict, L: list[str]) -> None:
     L.append("触发器条件①锚定的是全窗口 ≥0.70 桶; 本表提供其跨切片稳定性证据")
     L.append("(结构性 edge vs 单段驱动) — 判读属 owner 评估门, 小样本格")
     L.append(f"(n<{MIN_CELL_N}) CI 缺失 = 只披露不判定。")
+    L.append("")
+
+
+def _render_gap_anatomy(uni: dict, L: list[str]) -> None:
+    """生产对齐锚定口径的『执行面 gap 解剖』块 (R92 Op1)。
+
+    T+1 开盘缺口与净收益强单调负相关; close-anchor 并列列分离机械入场价
+    效应与信息劣化。探索性 in-sample 阈值, 只披露不判定 — 任何政策使用
+    (如高开规避) = 策略行为变化 = owner 决策 + 新数据前向验证。
+    """
+    gap = uni.get("gap_anatomy")
+    if not isinstance(gap, dict) or gap.get("available") is False or not gap.get("buckets"):
+        return
+    L.append("### 执行面 gap 解剖 (净口径 + close-anchor 分离, t10)")
+    L.append("")
+    L.append("| T+1 开盘缺口 | n | 胜率 | E(净,入场锚) | CI90 下界 | close-anchor 毛 E | close-anchor n |")
+    L.append("|---|---|---|---|---|---|---|")
+    for cell in gap["buckets"]:
+        n = cell["n"]
+        w_txt = f"{cell['winrate']:.1%}" if n and isinstance(cell["winrate"], (int, float)) else "—"
+        e_txt = _fmt(cell["expectancy"]) if n else "—"
+        ci = cell["cluster_ci_low_90"]
+        ci_txt = _fmt(ci) if isinstance(ci, (int, float)) else "—"
+        cae = cell.get("close_anchor_gross_e")
+        cae_txt = _fmt(cae) if isinstance(cae, (int, float)) else "—"
+        L.append(
+            f"| {cell['bucket']} | {n} | {w_txt} | {e_txt} | {ci_txt} | {cae_txt}"
+            f" | {cell.get('close_anchor_n', 0)} |"
+        )
+    gm = gap.get("gap_missing") or {}
+    if gm.get("n"):
+        L.append(f"| gap 缺失 | {gm['n']} | — | — | — | — | — |")
+    L.append("")
+    L.append(
+        f"入场锚 E 是执行口径 (T+1 开盘买); close-anchor 毛期望"
+        f" (信号日收盘锚, 非执行口径仅信息含量) 与之并列 — 两列之差暴露"
+        f"机械入场价效应, close-anchor 自身的跨桶衰减才是信息劣化。"
+    )
+    L.append("")
+    within = gap.get("within_strength") or []
+    if within:
+        L.append(f"#### 桶内条件判别 (gap > {gap['gap_high_threshold']:.0%} vs ≤, 探索性 in-sample 阈值)")
+        L.append("")
+        L.append("| 强度桶 | 高开 n | 高开 E | 低开 n | 低开 E | gap 缺失 |")
+        L.append("|---|---|---|---|---|---|")
+        for w in within:
+            hi, lo = w["gap_high"], w["gap_low"]
+            L.append(
+                f"| {w['strength_bucket']} | {hi['n']} | {_fmt(hi['expectancy']) if hi['n'] else '—'}"
+                f" | {lo['n']} | {_fmt(lo['expectancy']) if lo['n'] else '—'}"
+                f" | {w['gap_missing']} |"
+            )
+        L.append("")
+    co = gap.get("slice_co_movement") or []
+    if co:
+        L.append("#### 跨切片 gap-high 占比与净 E 共变 (全宇宙 | ≥0.70 锚桶)")
+        L.append("")
+        L.append("| 段 | 全 n | 全占比>5% | 全 E | 锚桶 n | 锚桶占比 | 锚桶 E | gap 缺失 |")
+        L.append("|---|---|---|---|---|---|---|---|")
+        for s in co:
+            a, st = s["all"], s["strong"]
+            def _share(v):
+                return f"{v:.1%}" if isinstance(v, (int, float)) else "—"
+            L.append(
+                f"| {s['slice']} | {a['n']} | {_share(a['share_high'])} | {_fmt(a['e_net']) if a['n'] else '—'}"
+                f" | {st['n']} | {_share(st['share_high'])} | {_fmt(st['e_net']) if st['n'] else '—'}"
+                f" | {a['gap_missing']} |"
+            )
+        L.append("")
+    L.append(
+        "纪律: 分桶阈值/高开阈值均为 2026-09-01 预注册的探索性 in-sample"
+        " 划分 (选自同一次观测数据) — 本表只披露不判定; 任何高开规避/执行"
+        f"调整 = 策略行为变化 = owner 决策 + 新数据前向验证; n<{MIN_CELL_N}"
+        " 格 CI 缺失只披露。"
+    )
     L.append("")
 
 

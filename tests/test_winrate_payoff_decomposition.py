@@ -1220,3 +1220,228 @@ class TestSliceBucketStability:
         md = render_md(payload, "20260901")
         assert "切片×强度桶稳定性" in md
         assert "2025H1" in md and "≥0.70" in md
+
+
+class TestGapBucket:
+    """T+1 开盘缺口分桶 (R92 Op1): 左闭右开, 恰落边界钉死。"""
+
+    def test_bucket_boundaries(self):
+        from scripts.winrate_payoff_decomposition import gap_bucket
+        assert gap_bucket(-0.06) == "<-5%"
+        assert gap_bucket(-0.05) == "-5~0"   # 恰落边界: 左闭
+        assert gap_bucket(-0.001) == "-5~0"
+        assert gap_bucket(0.0) == "0~2%"     # 恰落边界: 平开归 0~2%
+        assert gap_bucket(0.019) == "0~2%"
+        assert gap_bucket(0.02) == "2~5%"
+        assert gap_bucket(0.049) == "2~5%"
+        assert gap_bucket(0.05) == "5~10%"   # 恰落边界 = GAP_HIGH_THRESHOLD 下界
+        assert gap_bucket(0.099) == "5~10%"
+        assert gap_bucket(0.10) == ">10%"    # 恰落边界
+        assert gap_bucket(0.20) == ">10%"
+
+    def test_missing_gap_honest_unknown(self):
+        from scripts.winrate_payoff_decomposition import gap_bucket
+        assert gap_bucket(None) == "unknown"
+        assert gap_bucket(float("nan")) == "unknown"
+
+
+class TestGapAnatomy:
+    """执行面 gap 解剖 (R92 Op1): 分桶 + close-anchor 分离 + 桶内条件 + 切片共变。
+
+    fixture 数值非对称 (R13 教训): 每格期望各不相同, close-anchor 与
+    entry-net 方向相反制造可检测的分离面。
+    """
+
+    def _frame(self):
+        import pandas as pd
+        rows = []
+        # gap=0.01 (0~2%): n=3, entry-net E=+0.04 (0.10/−0.02/+0.04), close-anchor = net + 0.03
+        for sd, s, r, ca in [("20260310", 0.90, 0.10, 0.13), ("20260311", 0.80, -0.02, 0.01),
+                             ("20260312", 0.75, 0.04, 0.07)]:
+            rows.append({"signal_date": sd, "trigger_strength": s, "gap_t1_open": 0.01,
+                         "gross_ret_t10": r + 0.0065, "ret_close_anchor_t10": ca})
+        # gap=0.07 (5~10%): n=2, entry-net E=−0.045 (−0.05/−0.04), close-anchor = net + 0.02
+        for sd, s, r, ca in [("20260313", 0.60, -0.05, -0.03), ("20260314", 0.55, -0.04, -0.02)]:
+            rows.append({"signal_date": sd, "trigger_strength": s, "gap_t1_open": 0.07,
+                         "gross_ret_t10": r + 0.0065, "ret_close_anchor_t10": ca})
+        # gap=0.07 但强度缺失 → 桶内条件面 unknown 排除 + 分桶面入 5~10%
+        rows.append({"signal_date": "20260315", "trigger_strength": None, "gap_t1_open": 0.07,
+                     "gross_ret_t10": 0.01 + 0.0065, "ret_close_anchor_t10": 0.04})
+        # gap 缺失 (net 有值) → gap_missing 只披露
+        rows.append({"signal_date": "20260316", "trigger_strength": 0.80, "gap_t1_open": None,
+                     "gross_ret_t10": 0.02 + 0.0065, "ret_close_anchor_t10": 0.05})
+        # net 缺失 (未成熟) → 不入任何格
+        rows.append({"signal_date": "20260317", "trigger_strength": 0.80, "gap_t1_open": 0.03,
+                     "gross_ret_t10": None, "ret_close_anchor_t10": 0.06})
+        # 2025H2 gap=−0.01 (−5~0): 跨段非对称
+        rows.append({"signal_date": "20250914", "trigger_strength": 0.90, "gap_t1_open": -0.01,
+                     "gross_ret_t10": 0.03 + 0.0065, "ret_close_anchor_t10": 0.06})
+        return pd.DataFrame(rows).astype({"signal_date": str})
+
+    def test_bucket_cells_asymmetric(self):
+        from scripts.winrate_payoff_decomposition import gap_anatomy
+        out = gap_anatomy(self._frame())
+        cells = {c["bucket"]: c for c in out["buckets"]}
+        assert [c["bucket"] for c in out["buckets"]] == [
+            "<-5%", "-5~0", "0~2%", "2~5%", "5~10%", ">10%"]
+        assert cells["0~2%"]["n"] == 3
+        assert cells["0~2%"]["expectancy"] == pytest.approx((0.10 - 0.02 + 0.04) / 3, abs=1e-12)
+        assert cells["5~10%"]["n"] == 3
+        assert cells["5~10%"]["expectancy"] == pytest.approx((-0.05 - 0.04 + 0.01) / 3, abs=1e-12)
+        assert cells["-5~0"]["n"] == 1
+        assert cells["-5~0"]["expectancy"] == pytest.approx(0.03, abs=1e-12)
+        # 空格诚实 n=0 全 None
+        for empty in ("<-5%", "2~5%", ">10%"):
+            assert cells[empty]["n"] == 0
+            assert cells[empty]["expectancy"] is None
+            assert cells[empty]["cluster_ci_low_90"] is None
+        # 分桶面不含 net 缺失行与 gap 缺失行
+        assert sum(c["n"] for c in out["buckets"]) == 7
+
+    def test_close_anchor_separation(self):
+        """close-anchored 毛期望并列披露 — 与 entry-net 方向可分离 (非对称)。"""
+        from scripts.winrate_payoff_decomposition import gap_anatomy
+        out = gap_anatomy(self._frame())
+        cells = {c["bucket"]: c for c in out["buckets"]}
+        # 0~2%: close-anchor = net + 0.03 → +0.07
+        assert cells["0~2%"]["close_anchor_gross_e"] == pytest.approx((0.13 + 0.01 + 0.07) / 3, abs=1e-12)
+        assert cells["0~2%"]["close_anchor_n"] == 3
+        # 5~10%: close-anchor = net + 0.02 → −0.025
+        assert cells["5~10%"]["close_anchor_gross_e"] == pytest.approx((-0.03 - 0.02 + 0.04) / 3, abs=1e-12)
+        # entry-net 与 close-anchor 逐格不同 (非对称防漂移)
+        assert cells["0~2%"]["expectancy"] != cells["0~2%"]["close_anchor_gross_e"]
+        # close-anchor 缺失行 → n 诚实下降
+        assert cells["-5~0"]["close_anchor_n"] == 1
+
+    def test_gap_missing_disclosed_not_judged(self):
+        from scripts.winrate_payoff_decomposition import gap_anatomy
+        out = gap_anatomy(self._frame())
+        assert out["gap_missing"]["n"] == 1
+
+    def test_within_strength_conditional(self):
+        from scripts.winrate_payoff_decomposition import gap_anatomy
+        out = gap_anatomy(self._frame())
+        within = {w["strength_bucket"]: w for w in out["within_strength"]}
+        assert [w["strength_bucket"] for w in out["within_strength"]] == [
+            "<0.50", "0.50-0.60", "0.60-0.70", "≥0.70"]
+        hi = within["0.60-0.70"]["gap_high"]
+        lo = within["0.60-0.70"]["gap_low"]
+        assert hi["n"] == 1 and hi["expectancy"] == pytest.approx(-0.05, abs=1e-12)
+        assert lo["n"] == 0 and lo["expectancy"] is None
+        assert within["0.50-0.60"]["gap_high"]["n"] == 1
+        assert within["0.50-0.60"]["gap_high"]["expectancy"] == pytest.approx(-0.04, abs=1e-12)
+        # <0.50 整桶空 → 两侧诚实 n=0 全 None
+        assert within["<0.50"]["gap_high"]["n"] == 0
+        assert within["<0.50"]["gap_low"]["expectancy"] is None
+        # unknown 强度行不入条件面; 缺失 gap 在所属强度桶内单列计数
+        assert within["0.60-0.70"]["gap_missing"] == 0
+        s7 = within["≥0.70"]
+        assert s7["gap_high"]["n"] == 0 and s7["gap_high"]["expectancy"] is None
+        # within 视图是全窗口的 (切片维度由 R91 slice-bucket 面承担): 含 2025H2 那行
+        assert s7["gap_low"]["n"] == 4
+        assert s7["gap_low"]["expectancy"] == pytest.approx(
+            (0.10 - 0.02 + 0.04 + 0.03) / 4, abs=1e-12)
+        assert s7["gap_missing"] == 1
+
+    def test_slice_co_movement(self):
+        from scripts.winrate_payoff_decomposition import gap_anatomy
+        out = gap_anatomy(self._frame())
+        slices = {s["slice"]: s for s in out["slice_co_movement"]}
+        h1 = slices["2026H1"]["all"]
+        assert h1["n"] == 6
+        assert h1["share_high"] == pytest.approx(3 / 6, abs=1e-12)
+        assert h1["e_net"] == pytest.approx((0.10 - 0.02 + 0.04 - 0.05 - 0.04 + 0.01) / 6, abs=1e-12)
+        assert h1["gap_missing"] == 1
+        h2 = slices["2025H2"]["all"]
+        assert h2["n"] == 1 and h2["share_high"] == 0.0
+        # ≥0.70 锚桶 2026H1: gap-present 3 行全 low → share=0.0 (缺 gap 行单列)
+        s7 = slices["2026H1"]["strong"]
+        assert s7["n"] == 3 and s7["share_high"] == 0.0
+        assert s7["gap_missing"] == 1
+
+    def test_outside_rows_fail_closed(self):
+        """越界行复用 slice_partitions 覆盖守卫 (fail-closed, 不静默缺段)。"""
+        import pandas as pd
+        from scripts.winrate_payoff_decomposition import gap_anatomy
+        frame = pd.DataFrame([
+            {"signal_date": "20241231", "trigger_strength": 0.9, "gap_t1_open": 0.01,
+             "gross_ret_t10": 0.01, "ret_close_anchor_t10": 0.02},
+            {"signal_date": "20260310", "trigger_strength": 0.9, "gap_t1_open": 0.01,
+             "gross_ret_t10": 0.01, "ret_close_anchor_t10": 0.02},
+        ]).astype({"signal_date": str})
+        with pytest.raises(ValueError, match="coverage gap"):
+            gap_anatomy(frame)
+
+    def test_missing_columns_fail_closed(self):
+        import pandas as pd
+        from scripts.winrate_payoff_decomposition import gap_anatomy
+        base = {"signal_date": ["20260310"], "trigger_strength": [0.9],
+                "gross_ret_t10": [0.01]}
+        with pytest.raises(SystemExit, match="gap_t1_open"):
+            gap_anatomy(pd.DataFrame({**base, "ret_close_anchor_t10": [0.02]}))
+        with pytest.raises(SystemExit, match="ret_close_anchor_t10"):
+            gap_anatomy(pd.DataFrame({**base, "gap_t1_open": [0.01]}))
+
+    def test_deterministic_across_calls(self):
+        """n≥MIN_CELL_N 格带 CI; 同输入两次调用逐字节一致 (R13 纪律)。"""
+        import pandas as pd
+        from scripts.winrate_payoff_decomposition import gap_anatomy
+        rows = [{"signal_date": f"202603{10 + (i % 5):02d}", "trigger_strength": 0.9,
+                 "gap_t1_open": 0.01 * (i % 2),  # 全部落 0~2% 桶 → 该格 CI 活跃
+                 "gross_ret_t10": (0.01 * (1 if i % 2 else -1)) + 0.0065,
+                 "ret_close_anchor_t10": 0.005 * (i % 3)}
+                for i in range(MIN_CELL_N + 4)]
+        frame = pd.DataFrame(rows).astype({"signal_date": str})
+        a = gap_anatomy(frame)
+        b = gap_anatomy(frame)
+        assert json.dumps(a) == json.dumps(b)
+        cell = next(c for c in a["buckets"] if c["bucket"] == "0~2%")
+        assert cell["n"] >= MIN_CELL_N
+        assert isinstance(cell["cluster_ci_low_90"], float)
+
+
+class TestGapAnatomyMountedAndRendered:
+    """decompose 两宇宙挂载同构 gap_anatomy 块; MD 报告渲染锚定表 + 纪律标注。"""
+
+    def _ev(self):
+        import pandas as pd
+        rows = []
+        for i in range(12):
+            rows.append({
+                "symbol": f"{600000+i}",
+                "signal_date": f"2026-01-{(i % 5) + 1:02d}",
+                "regime": "normal",
+                "trigger_strength": 0.55 + (i % 3) * 0.1,
+                "gap_t1_open": 0.01 * (i % 4),
+                "gross_ret_t10": 0.05 * (1 if i % 2 else -1),
+                "gross_ret_t5": 0.02,
+                "ret_close_anchor_t10": 0.03 * (1 if i % 3 else -1),
+                "fillable": True,
+                "gate_blocked": False,
+                "degraded": False,
+                "st_name": False,
+                "industry_missing": False,
+                "excluded_ticker": False,
+                "price_ge_3": True,
+            })
+        return pd.DataFrame(rows)
+
+    def test_mounted_on_both_universes(self):
+        from scripts.winrate_payoff_decomposition import decompose
+        payload = decompose(self._ev(), universes=("all_candidates", "production_aligned"))
+        for uni_name in ("all_candidates", "production_aligned"):
+            gap = payload["universes"][uni_name]["gap_anatomy"]
+            assert gap["gap_high_threshold"] == 0.05
+            assert [c["bucket"] for c in gap["buckets"]] == [
+                "<-5%", "-5~0", "0~2%", "2~5%", "5~10%", ">10%"]
+            assert sum(c["n"] for c in gap["buckets"]) == 12
+
+    def test_md_renders_gap_section(self):
+        from scripts.winrate_payoff_decomposition import decompose, render_md
+        payload = decompose(self._ev(), universes=("all_candidates", "production_aligned"))
+        md = render_md(payload, "20260901")
+        assert "执行面 gap 解剖" in md
+        assert "close-anchor" in md          # 机械/信息分离面标注
+        assert "探索性" in md                 # in-sample 阈值纪律标注
+        assert "只披露不判定" in md or "只披露" in md
+        assert "5~10%" in md and ">10%" in md
