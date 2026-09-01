@@ -614,16 +614,18 @@ class TestCourtGrowthCoupling:
 
     R81 Op2 账本按刷新日期记录, 但记录不绑定 court 表身份: court 陈旧时
     逐日判定会写下『新日期旧数据』记录, streak 虚假增长。本族钉死三件事:
-    ① 每条快照绑定 court 身份 (built_at/window_end/rows);
-    ② 数据前进门 (require_advance): 最新记录绑定相同 → skip 不追加;
+    ① 每条快照绑定 court 身份 (window/rows/指纹/内容摘要);
+    ② 数据前进门 (require_advance): 任一历史记录绑定相同 → skip 不追加;
     ③ 旧形态无绑定记录放行 (向后兼容, 不追溯拒绝);
     ④ build 成功后机械刷新 (fail-open)。
     """
 
-    BINDING_A = {"built_at": "2026-08-30", "window_start": "20250701",
-                 "window_end": "20260830", "rows": 1746, "formula_fingerprint": "aa" * 32}
-    BINDING_B = {"built_at": "2026-08-31", "window_start": "20250701",
-                 "window_end": "20260831", "rows": 1782, "formula_fingerprint": "bb" * 32}
+    BINDING_A = {"window_start": "20250701", "window_end": "20260830",
+                 "rows": 1746, "formula_fingerprint": "aa" * 32,
+                 "content_digest": "sha256:" + "a1" * 32, "universe_audit_complete": True}
+    BINDING_B = {"window_start": "20250701", "window_end": "20260831",
+                 "rows": 1782, "formula_fingerprint": "bb" * 32,
+                 "content_digest": "sha256:" + "b2" * 32, "universe_audit_complete": True}
 
     @staticmethod
     def _trigger():
@@ -777,7 +779,7 @@ class TestCourtGrowthCoupling:
         records = mod.load_trigger_ledger(ledger)
         assert len(records) == 1
         court = records[0]["court"]
-        assert court["built_at"] is None and court["window_start"] is None
+        assert court["window_start"] is None
         assert court["window_end"] is None and court["rows"] == 40
         assert court["formula_fingerprint"] is None
         assert court["content_digest"].startswith("sha256:")
@@ -815,17 +817,17 @@ class TestAdversarialAuditR84Op1:
         # 整文件垃圾
         (tables / "manifest_v1.json").write_text("not json at all", encoding="utf-8")
         b = court_binding(table, rows=7)
-        assert b == {"built_at": None, "window_start": None, "window_end": None,
+        assert b == {"window_start": None, "window_end": None,
                      "rows": 7, "formula_fingerprint": None,
                      "content_digest": None, "universe_audit_complete": None}
         # manifest 非 dict (JSON 数组)
         (tables / "manifest_v1.json").write_text("[1,2]", encoding="utf-8")
-        assert court_binding(table, rows=7)["built_at"] is None
-        # window 非 dict + built_at 非字符串
+        assert "built_at" not in court_binding(table, rows=7)
+        # window 非 dict (built_at 已不进身份, 畸形与否无关)
         (tables / "manifest_v1.json").write_text(
             json.dumps({"built_at": 5, "window": ["bad"]}), encoding="utf-8")
         b = court_binding(table, rows=7)
-        assert b["built_at"] is None and b["window_end"] is None
+        assert "built_at" not in b and b["window_end"] is None
 
     def test_binding_includes_formula_fingerprint(self, tmp_path):
         from scripts.winrate_payoff_decomposition import court_binding
@@ -839,7 +841,7 @@ class TestAdversarialAuditR84Op1:
             "formula_fingerprint": {"btst_breakout_sha256": fp},
         }), encoding="utf-8")
         b = court_binding(table, rows=99)
-        assert b == {"built_at": "2026-08-31", "window_start": None,
+        assert b == {"window_start": None,
                      "window_end": "20260831", "rows": 99,
                      "formula_fingerprint": fp,
                      "content_digest": None, "universe_audit_complete": None}
@@ -872,7 +874,7 @@ class TestAdversarialAuditR84Op1:
         )
         ledger = tmp_path / "ledger.jsonl"
         c1 = TestCourtGrowthCoupling.BINDING_A
-        c3 = {"built_at": "2026-09-01", "window_end": "20260901", "rows": 1900}
+        c3 = {"window_end": "20260901", "rows": 1900}
         record_trigger_status(
             {"threshold_trigger": self._trigger()}, "20260829",
             ledger_path=ledger, court_binding=dict(c1))
@@ -899,7 +901,7 @@ class TestWindowStartIdentity:
             "formula_fingerprint": {"btst_breakout_sha256": "aa" * 32},
         }), encoding="utf-8")
         b = court_binding(table, rows=99)
-        assert b == {"built_at": "2026-09-01", "window_start": "20250102",
+        assert b == {"window_start": "20250102",
                      "window_end": "20260831", "rows": 99,
                      "formula_fingerprint": "aa" * 32,
                      "content_digest": None, "universe_audit_complete": None}
@@ -911,7 +913,7 @@ class TestWindowStartIdentity:
         )
         ledger = tmp_path / "ledger.jsonl"
         trigger = TestCourtGrowthCoupling._trigger()
-        binding_a = {"built_at": "2026-09-01", "window_start": "20250701",
+        binding_a = {"window_start": "20250701",
                      "window_end": "20260831", "rows": 100, "formula_fingerprint": "aa" * 32}
         binding_b = dict(binding_a, window_start="20250102", rows=100)
         record_trigger_status({"threshold_trigger": trigger}, "20260831",
@@ -979,7 +981,7 @@ class TestCourtBindingContentIdentity:
         df.loc[0, "gross_ret_t10"] = 0.99  # panel 价格修正类: 行数/manifest 全同
         b2 = court_binding(self._write_table(tmp_path, df, name="fixed.csv.gz"),
                            rows=len(df))
-        for k in ("built_at", "window_start", "window_end", "rows", "formula_fingerprint"):
+        for k in ("window_start", "window_end", "rows", "formula_fingerprint"):
             assert b1[k] == b2[k]  # 旧 binding 对此两表不可区分 (缺陷形态)
         assert b1["content_digest"] != b2["content_digest"]
 
@@ -1561,3 +1563,54 @@ class TestGapSplitHalf:
         md = render_md(payload, "20260901")
         assert "split-half" in md
         assert "verdict" in md or "判定" in md
+
+
+class TestBuildTimestampNotIdentity:
+    """R93 Op1: built_at 是构建事件时间戳, 不是数据状态身份。
+
+    夜度保鲜自动化 (court_nightly_refresh, 同数据跨日重建是常态) 下,
+    built_at 在身份中会让前进门每天把『同数据重建』误判为前进, 写下
+    『新日期旧数据』假判定记录 — R84 封锁过的病被自动化重新点燃。
+    content_digest (R90 Op2) 已字节级判定数据身份, 构建时刻不再进身份
+    (built_at 保留在 manifest 供表龄审计, 不进账本快照身份)。
+    """
+
+    _MANIFEST = {
+        "built_at": "PLACEHOLDER",
+        "window": {"start": "20250102", "end": "20260901", "sessions": 396},
+        "formula_fingerprint": {"btst_breakout_sha256": "f" * 64},
+        "universe_audit": {"days_checked": 396, "empty_days": 0},
+    }
+
+    def test_binding_ignores_manifest_build_timestamp(self, tmp_path):
+        import pandas as pd
+        from scripts.winrate_payoff_decomposition import court_binding
+        table = tmp_path / "court.csv.gz"
+        pd.DataFrame({"a": [1, 2]}).to_csv(table, index=False, compression="gzip")
+        bindings = []
+        for built_at in ("2026-09-01", "2026-09-02"):
+            manifest = dict(self._MANIFEST, built_at=built_at)
+            (tmp_path / "manifest_v1.json").write_text(
+                json.dumps(manifest), encoding="utf-8")
+            bindings.append(court_binding(table, rows=2))
+        assert bindings[0] == bindings[1]  # 仅构建时刻不同 → 身份恒等
+
+    def test_gate_skips_identical_data_rebuilt_next_day(self, tmp_path):
+        """夜度不变式端到端: 同数据跨日重建 (binding 恒等) → skip 不写假记录。"""
+        from scripts.winrate_payoff_decomposition import (
+            load_trigger_ledger, record_trigger_status,
+        )
+        b_day = {"window_start": "20250102", "window_end": "20260901",
+                 "rows": 1900, "formula_fingerprint": "ff",
+                 "content_digest": "sha256:" + "c0" * 32,
+                 "universe_audit_complete": True}
+        ledger = tmp_path / "ledger.jsonl"
+        trigger = TestCourtGrowthCoupling._trigger()
+        record_trigger_status({"threshold_trigger": trigger}, "20260901",
+                              ledger_path=ledger, court_binding=dict(b_day))
+        meta = record_trigger_status({"threshold_trigger": trigger}, "20260902",
+                                     ledger_path=ledger, court_binding=dict(b_day),
+                                     require_advance=True)
+        assert meta["recorded"] is False
+        assert meta["reason"] == "court_not_advanced"
+        assert [r["date"] for r in load_trigger_ledger(ledger)] == ["20260901"]
