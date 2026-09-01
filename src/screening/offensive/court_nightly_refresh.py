@@ -34,10 +34,10 @@ from typing import Callable
 # build 换目录而编排器不知 → 从旧 manifest 派生旧窗口重建错表。
 COURT_TABLE_DIR_REL = "data/research/btst_court/event_tables"
 
-FetchBuildRunner = Callable[[list[str], Path, int], tuple[int, str]]
+FetchBuildRunner = Callable[[list[str], Path, int], tuple[int, str, str]]
 
 
-def _default_runner(args: list[str], cwd: Path, timeout_s: int) -> tuple[int, str]:
+def _default_runner(args: list[str], cwd: Path, timeout_s: int) -> tuple[int, str, str]:
     """venv 内同解释器执行 scripts 子命令 (继承 env: launcher 已注入 .env)。"""
     proc = subprocess.run(
         [sys.executable, *args],
@@ -46,7 +46,7 @@ def _default_runner(args: list[str], cwd: Path, timeout_s: int) -> tuple[int, st
         cwd=str(cwd),
         timeout=timeout_s,
     )
-    return proc.returncode, (proc.stdout or "")
+    return proc.returncode, (proc.stdout or ""), (proc.stderr or "")
 
 
 def _manifest_window_start(table_dir: Path) -> str | None:
@@ -64,16 +64,27 @@ def _manifest_window_start(table_dir: Path) -> str | None:
     return start if isinstance(start, str) and start else None
 
 
+def _tail(text: str, limit: int = 400) -> str:
+    text = (text or "").strip()
+    return text[-limit:] if len(text) > limit else text
+
+
 def _run_step(
     runner: FetchBuildRunner, args: list[str], cwd: Path, timeout_s: int
 ) -> tuple[int | None, str | None]:
-    """执行一步; 失败收敛为 (None, error) — 超时/OSError 都不外抛。"""
+    """执行一步; 失败收敛为 (rc|None, error) — 任何异常都不外抛 (R93 Op2:
+    夜度无人值守步骤的失败必须可从 status 归因, stderr 尾部并入 error)。"""
     try:
-        rc, out = runner(args, cwd, timeout_s)
+        rc, out, err = runner(args, cwd, timeout_s)
     except subprocess.TimeoutExpired as exc:
         return None, f"timeout after {timeout_s}s: {exc}"
+    except subprocess.SubprocessError as exc:  # 非超时变体 — fail-open 全族
+        return None, f"subprocess failure: {exc}"
     except OSError as exc:
         return None, f"spawn failed: {exc}"
+    if rc != 0:
+        detail = _tail(err) or _tail(out)
+        return rc, f"exit rc={rc}" + (f": {detail}" if detail else "")
     return rc, None
 
 

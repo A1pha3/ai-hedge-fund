@@ -41,11 +41,14 @@ def _write_manifest(root: Path, manifest: object) -> None:
 
 
 class _RecordingRunner:
-    """fake _runner: 记录 (args, cwd, timeout), 按脚本名返回预设 rc。"""
+    """fake _runner: 记录 (args, cwd, timeout), 按脚本名返回预设 (rc, out, err)。"""
 
-    def __init__(self, rc_by_script: dict[str, int] | None = None, exc: Exception | None = None):
+    def __init__(self, rc_by_script: dict[str, int] | None = None,
+                 exc: Exception | None = None,
+                 err_by_script: dict[str, str] | None = None):
         self.calls: list[tuple[list[str], Path, int]] = []
         self.rc_by_script = rc_by_script or {}
+        self.err_by_script = err_by_script or {}
         self.exc = exc
 
     def __call__(self, args: list[str], cwd: Path, timeout_s: int):
@@ -53,7 +56,7 @@ class _RecordingRunner:
         if self.exc is not None:
             raise self.exc
         script = args[0]
-        return self.rc_by_script.get(script, 0), "out"
+        return self.rc_by_script.get(script, 0), "out", self.err_by_script.get(script, "")
 
 
 class TestCourtNightlyRefreshOrchestration:
@@ -139,3 +142,51 @@ class TestConstantsDriftGuard:
         assert bcb.TABLE_DIR == Path(COURT_TABLE_DIR_REL) or bcb.TABLE_DIR.resolve() == Path(
             COURT_TABLE_DIR_REL
         ).resolve()
+
+
+class TestFailureDiagnosability:
+    """Op1 交付面对抗审查 (R93 Op2): 夜度保鲜是无人值守步骤 — 失败可诊断性
+    必须在交付时成立, 而非失败夜现场补。
+
+    ① stderr 丢弃: _default_runner 只取 stdout, proc.stderr 捕获后丢弃 —
+    夜跑失败时 status.error 只有 'spawn failed'/'timeout' 笼统串, tushare
+    API 报错/缺 token 等真因只存在于被丢弃的 stderr;
+    ② rc≠0 无诊断: 非零退出 (脚本自身 SystemExit/traceback rc=1) 连笼统
+    error 都没有, status.fetch = {"rc": 1, "error": None};
+    ③ SubprocessError 只捕 TimeoutExpired 子类 — 非超时变体外抛, 违反
+    模块『绝不抛』fail-open 自述契约。
+    """
+
+    def test_rc_failure_error_includes_stderr_tail(self, tmp_path):
+        _write_manifest(tmp_path, {"window": {"start": "20250102"}})
+        runner = _RecordingRunner(
+            rc_by_script={"scripts/btst_court_fetch.py": 1},
+            err_by_script={"scripts/btst_court_fetch.py":
+                           "Traceback ... tushare API Error: token invalid"},
+        )
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        assert "token invalid" in status["fetch"]["error"]
+        assert status["fetch"]["rc"] == 1
+
+    def test_error_tail_truncated(self, tmp_path):
+        _write_manifest(tmp_path, {"window": {"start": "20250102"}})
+        runner = _RecordingRunner(
+            rc_by_script={"scripts/btst_court_fetch.py": 1},
+            err_by_script={"scripts/btst_court_fetch.py": "x" * 10000},
+        )
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        assert len(status["fetch"]["error"]) < 500
+
+    def test_success_steps_have_none_error(self, tmp_path):
+        _write_manifest(tmp_path, {"window": {"start": "20250102"}})
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=_RecordingRunner())
+        assert status["fetch"]["error"] is None
+        assert status["build"]["error"] is None
+
+    def test_non_timeout_subprocess_error_is_fail_open(self, tmp_path):
+        _write_manifest(tmp_path, {"window": {"start": "20250102"}})
+        runner = _RecordingRunner(exc=subprocess.SubprocessError("call failed"))
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        assert "call failed" in str(status["fetch"]["error"])
+        assert "skipped" in status["build"]
+        assert status["ok"] is False
