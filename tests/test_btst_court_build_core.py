@@ -440,3 +440,42 @@ class TestLimitUpRawCoverageGate:
         assert "--limit-list-start" in src  # 消息给可操作续传路径
         assert '"empty_days": 0' in src
         assert 'universe_audit["empty_days"] += 1' in src
+
+
+# ---------- R93 Op3: 损坏 limit_up 原料 fail-closed 类型化 ----------
+
+def test_load_limit_up_index_corrupt_file_fails_closed_with_guidance(tmp_path):
+    """0 字节/垃圾字节 lu_ 文件 → 类型化 SystemExit 含文件名 + 修复路径。
+
+    fetch 对空涨停日也落仅表头 CSV — 0 字节/垃圾只能是外部损坏或预置;
+    静默当空日会把假『当日无涨停』写进 universe 审计; 裸 traceback 则让
+    修复路径不可发现 (fetch 幂等跳过已存在文件, 必须先删损坏文件)。
+    """
+    import pytest
+    from btst_court_build import load_limit_up_index
+    raw = tmp_path / "raw"
+    (raw / "limit_up").mkdir(parents=True)
+    corrupt = raw / "limit_up" / "lu_20250102.csv"
+    corrupt.write_bytes(b"")
+    with pytest.raises(SystemExit) as ei:
+        load_limit_up_index(raw)
+    assert "lu_20250102.csv" in str(ei.value)
+    assert "btst_court_fetch" in str(ei.value)
+    # 不可解析同族 (ParserError — 未闭合引号; 注: 恰好解析为空 df 的垃圾
+    # 如 nul 前缀不在本门内, 会归一化为空涨停日, 残余如实登记 R93 收口记录)
+    corrupt.write_bytes(b'ts_code,name\n"600000,pufa\n')
+    with pytest.raises(SystemExit) as ei:
+        load_limit_up_index(raw)
+    assert "lu_20250102.csv" in str(ei.value)
+
+def test_load_limit_up_index_empty_day_header_only_still_ok(tmp_path):
+    """合法空涨停日 (仅表头) 行为不变: 空 DataFrame 归一化, 不触发损坏门。"""
+    import pandas as pd
+    from btst_court_build import load_limit_up_index
+    raw = tmp_path / "raw"
+    (raw / "limit_up").mkdir(parents=True)
+    pd.DataFrame(columns=["ts_code", "name"]).to_csv(
+        raw / "limit_up" / "lu_20250103.csv", index=False)
+    idx = load_limit_up_index(raw)
+    assert "20250103" in idx
+    assert idx["20250103"].empty
