@@ -64,7 +64,8 @@ ENTRY_CROSSCHECK_TOL = 1e-6
 # 解剖日历下界 = 早期窗口起点 (生产+早期双宇宙统一)
 ANATOMY_CAL_START = "20220101"
 
-EARLY_RAW_DIR = RESEARCH_DIR / "raw_early"
+RAW_DAILY_DIR = RAW_DIR / "daily"
+EARLY_DAILY_DIR = RESEARCH_DIR / "raw_early" / "daily"
 EVENT_TABLE = RESEARCH_DIR / "event_tables" / "event_table_v1.csv.gz"
 EVENT_TABLE_EARLY = RESEARCH_DIR / "event_tables_early" / "event_table_v1.csv.gz"
 
@@ -103,7 +104,7 @@ def _fail_closed(message: str) -> "ExitAnatomyError":
 def load_event_table(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise _fail_closed(f"事件表缺失: {path}")
-    ev = pd.read_csv(path, dtype={"signal_date": str, "exit_session_t10": str})
+    ev = pd.read_csv(path, dtype={"signal_date": str})
     missing = [c for c in _REQUIRED_EVENT_COLS if c not in ev.columns]
     if missing:
         raise _fail_closed(f"事件表缺少必需列: {sorted(missing)}")
@@ -124,12 +125,16 @@ def load_daily_bars(raw_dir: Path, sessions: list[str]) -> dict[str, pd.DataFram
     return by_day
 
 
-def sessions_for_window(signal_session: str, exit_session: str, cal: list[str]) -> list[str]:
-    """(signal, exit] 会话切片; exit 不在日历/超出前向窗口时按日历截断。"""
+def sessions_for_window(
+    signal_session: str, exit_offset: int, cal: list[str]
+) -> list[str]:
+    """(signal, T+offset] 会话切片。
+
+    offset 语义与 build 层单一事实源逐一对应 (btst_court_build.fixed_open):
+    bars[j] 的 offset = j+1, 即 signal 后第 offset 个会话; exit = fwd[offset-1]。
+    """
     fwd = [d for d in cal if d > signal_session][:FORWARD_SESSIONS]
-    if exit_session in fwd:
-        return fwd[: fwd.index(exit_session) + 1]
-    return fwd
+    return fwd[:exit_offset]
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +151,12 @@ def extract_path_bars(
 
     bars[0] = T+1 (入场日); 其余为 T+2..exit。
     """
+    def _num(value: Any) -> float | None:
+        """present-but-null (NaN/None) 按缺失处理, 与缺行同语义。"""
+        if value is None or (isinstance(value, float) and value != value):
+            return None
+        return float(value)
+
     bars: list[dict[str, Any]] = []
     for s in sessions:
         day = by_day.get(s)
@@ -157,11 +168,11 @@ def extract_path_bars(
         bars.append(
             {
                 "session": s,
-                "open": None if row is None else float(row["open"]),
-                "high": None if row is None else float(row["high"]),
-                "low": None if row is None else float(row["low"]),
-                "close": None if row is None else float(row["close"]),
-                "pre_close": None if row is None else float(row["pre_close"]),
+                "open": None if row is None else _num(row["open"]),
+                "high": None if row is None else _num(row["high"]),
+                "low": None if row is None else _num(row["low"]),
+                "close": None if row is None else _num(row["close"]),
+                "pre_close": None if row is None else _num(row["pre_close"]),
             }
         )
     return bars
@@ -185,14 +196,12 @@ def detect_corp_action(bars: list[dict[str, Any]]) -> list[str]:
     return flagged
 
 
-def realizable_path(bars: list[dict[str, Any]], exit_session: str) -> list[dict[str, Any]]:
-    """可实现退出路径: T+2 起至 exit_session (A 股 T+1 规则, 先于数据钉死)。"""
-    out: list[dict[str, Any]] = []
-    for bar in bars[1:]:  # bars[0] = T+1 (入场日, 不可卖)
-        out.append(bar)
-        if bar["session"] == exit_session:
-            break
-    return out
+def realizable_path(bars: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """可实现退出路径: T+2 起至窗口末 (A 股 T+1 规则, 先于数据钉死)。
+
+    bars 以 exit 会话结尾 (由 sessions_for_window 的 offset 语义保证)。
+    """
+    return list(bars[1:])
 
 
 def path_anatomy(entry: float, path: list[dict[str, Any]]) -> dict[str, Any]:
@@ -265,30 +274,37 @@ def anatomy_event(
     cal: list[str],
     stop_grid: tuple[float, ...] = STOP_GRID_PCT,
 ) -> dict[str, Any] | None:
-    """单事件路径解剖; entry 交叉验证失败或 T+1 缺 bar 返回 None (调用方计数)。
+    """单事件路径解剖; 排除面各自独立标记 (聚合层分类计数, 互斥可加):
 
-    corp-action 事件返回 {"excluded_corp_action": [...]} 标记 (聚合层计数)。
+    - {"excluded_exit_unfilled": True}      exit_session_t10 为空 (窗口内未成交);
+    - {"excluded_t1_bar_missing": True}     T+1 开盘缺 bar;
+    - {"excluded_entry_mismatch": True}     entry 与事件表交叉验证不一致;
+    - {"excluded_corp_action": [...]}       持仓窗内除权除息 (路径失真);
+    - {"excluded_exit_bar_missing": True}   offset 指向的 bar 开盘缺失 (防御纵深)。
     """
     signal_session = str(event["signal_date"])
-    exit_session = str(event["exit_session_t10"])
-    sessions = sessions_for_window(signal_session, exit_session, cal)
+    exit_offset = event["exit_session_t10"]
+    if exit_offset is None or (isinstance(exit_offset, float) and exit_offset != exit_offset):
+        return {"excluded_exit_unfilled": True, "signal_date": signal_session}
+    exit_offset = int(exit_offset)
+    sessions = sessions_for_window(signal_session, exit_offset, cal)
     bars = extract_path_bars(by_day, sessions, str(event["ts_code"]))
     if not bars or bars[0]["open"] is None:
-        return None
+        return {"excluded_t1_bar_missing": True, "signal_date": signal_session}
     entry = bars[0]["open"]
     expected_entry = float(event["signal_close"]) * (1 + float(event["gap_t1_open"]))
     if abs(entry / expected_entry - 1) > ENTRY_CROSSCHECK_TOL:
-        return None
+        return {"excluded_entry_mismatch": True, "signal_date": signal_session}
 
     corp = detect_corp_action(bars)
     if corp:
         return {"excluded_corp_action": corp, "signal_date": signal_session}
 
-    path = realizable_path(bars, exit_session)
+    path = realizable_path(bars)
     exit_bar = path[-1] if path else None
-    if not path or exit_bar["session"] != exit_session or exit_bar["open"] is None:
-        # exit_session_t10 是 build 层前向顺延后的实际卖出会话, 其开盘必在
-        # (signal, exit] 切片内; 缺失 = 数据不可信, 显式排除。
+    if not path or exit_bar["open"] is None:
+        # offset 来自 build 层 fixed_open (只返回开盘存在的 bar); 缺失 = 数据
+        # 不可信, 防御纵深显式排除。
         return {"excluded_exit_bar_missing": True, "signal_date": signal_session}
 
     anatomy = path_anatomy(entry, path)
@@ -332,12 +348,22 @@ def aggregate_anatomy(rows: list[dict[str, Any] | None]) -> dict[str, Any]:
         r
         for r in rows
         if r is not None
-        and not r.get("excluded_corp_action")
-        and not r.get("excluded_exit_bar_missing")
+        and not any(
+            r.get(k)
+            for k in (
+                "excluded_corp_action",
+                "excluded_exit_bar_missing",
+                "excluded_exit_unfilled",
+                "excluded_t1_bar_missing",
+                "excluded_entry_mismatch",
+            )
+        )
     ]
     out: dict[str, Any] = {
         "n_events": len(rows),
-        "n_entry_crosscheck_failed": sum(1 for r in rows if r is None),
+        "n_t1_bar_missing": sum(1 for r in rows if r and r.get("excluded_t1_bar_missing")),
+        "n_entry_mismatch": sum(1 for r in rows if r and r.get("excluded_entry_mismatch")),
+        "n_exit_unfilled": sum(1 for r in rows if r and r.get("excluded_exit_unfilled")),
         "n_corp_action_excluded": sum(1 for r in rows if r and r.get("excluded_corp_action")),
         "n_exit_bar_missing": sum(1 for r in rows if r and r.get("excluded_exit_bar_missing")),
         "n_included": len(included),
@@ -412,11 +438,18 @@ def analyze_universe(
 ) -> dict[str, Any]:
     """单宇宙端到端: 逐事件解剖 (单遍) → 全体/生产对齐/regime 分组聚合。"""
     work = ev[ev["fillable"] == True].copy()  # noqa: E712
+    def _offset(e: pd.Series) -> int | None:
+        v = e["exit_session_t10"]
+        if v is None or (isinstance(v, float) and v != v):
+            return None
+        return int(v)
+
     sessions_union = sorted(
         {
             s
             for _, e in work.iterrows()
-            for s in sessions_for_window(str(e["signal_date"]), str(e["exit_session_t10"]), cal)
+            if _offset(e) is not None
+            for s in sessions_for_window(str(e["signal_date"]), _offset(e), cal)
         }
     )
     by_day = load_daily_bars(raw_dir, sessions_union)
@@ -471,8 +504,10 @@ def render_md(payload: dict[str, Any]) -> str:
             lines.append(
                 f"n_events={agg['n_events']} included={agg['n_included']} "
                 f"corp_action_excluded={agg['n_corp_action_excluded']} "
-                f"exit_bar_missing={agg['n_exit_bar_missing']} "
-                f"entry_crosscheck_failed={agg['n_entry_crosscheck_failed']}"
+                f"exit_unfilled={agg['n_exit_unfilled']} "
+                f"t1_bar_missing={agg['n_t1_bar_missing']} "
+                f"entry_mismatch={agg['n_entry_mismatch']} "
+                f"exit_bar_missing={agg['n_exit_bar_missing']}"
             )
             if agg["n_included"] == 0:
                 lines.append("")
@@ -535,8 +570,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="BTST 退出路径解剖 (纯诊断)")
     parser.add_argument("--event-table", type=Path, default=EVENT_TABLE)
     parser.add_argument("--event-table-early", type=Path, default=EVENT_TABLE_EARLY)
-    parser.add_argument("--raw-dir", type=Path, default=RAW_DIR)
-    parser.add_argument("--raw-dir-early", type=Path, default=EARLY_RAW_DIR)
+    parser.add_argument("--raw-dir", type=Path, default=RAW_DAILY_DIR)
+    parser.add_argument("--raw-dir-early", type=Path, default=EARLY_DAILY_DIR)
     parser.add_argument("--output-json", type=Path, default=None)
     parser.add_argument("--output-md", type=Path, default=None)
     args = parser.parse_args()
