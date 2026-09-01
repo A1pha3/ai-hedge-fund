@@ -390,6 +390,96 @@ def gap_anatomy(u: "pd.DataFrame") -> dict[str, object]:
         "gap_missing": gap_missing,
         "within_strength": within,
         "slice_co_movement": co_movement,
+        "split_half": _gap_split_half(work),
+    }
+
+
+def _gap_split_half(work: pd.DataFrame) -> dict[str, object]:
+    """gap 判别的 split-half 时间稳定性 (R92 Op2; R15 合取判据纪律镜像)。
+
+    R15 教训: in-sample 判别力 ≠ 可条件化 — 强度桶级 Kelly 排序 Spearman
+    稳定但符号跨半翻转, 判定为过拟合不足。gap 罚分 (E_low − E_high) 同样
+    必须过『方向跨半一致』的门才算具备进一步评估资格。
+
+    机制: gap-present 行按中位唯一信号日切分 (确定性, 切分日披露); 每强度
+    桶每半区独立算罚分 (入场锚净口径; close-anchor 毛口径并列次级披露);
+    半区可判定 = 两侧均非空且半区桶内合计 n ≥ MIN_CELL_N; consistent =
+    两半区罚分同号; 可判定桶全一致才 verdict 具备资格。verdict 只判定
+    资格不授权 — 政策使用 = owner 决策 + 预注册 (宪法 #2)。
+    """
+    present = work[work["gap_bucket"] != "unknown"]
+    sessions = sorted(present["signal_date"].astype(str).unique())
+    mid = sessions[len(sessions) // 2]
+    halves = {
+        "first": present[present["signal_date"].astype(str) < mid],
+        "second": present[present["signal_date"].astype(str) >= mid],
+    }
+
+    def _penalty(cell: pd.DataFrame, value_col: str) -> tuple[object, int, int]:
+        hi = cell[cell["gap_t1_open"] > GAP_HIGH_THRESHOLD][value_col].dropna()
+        lo = cell[cell["gap_t1_open"] <= GAP_HIGH_THRESHOLD][value_col].dropna()
+        if hi.empty or lo.empty:
+            return None, int(len(hi)), int(len(lo))
+        return float(lo.mean() - hi.mean()), int(len(hi)), int(len(lo))
+
+    buckets: list[dict[str, object]] = []
+    judgable_count = 0
+    consistent_count = 0
+    ca_consistent: list[bool] = []
+    for s_label in ALL_STRENGTH_BUCKETS:
+        if s_label == "unknown":
+            continue
+        entry: dict[str, object] = {"strength_bucket": s_label}
+        penalties: list[float] = []
+        n_totals: list[int] = []
+        for name in ("first", "second"):
+            cell = halves[name][halves[name]["strength_bucket"] == s_label]
+            pen, n_hi, n_lo = _penalty(cell, "net_ret_t10")
+            entry[f"penalty_{name}"] = pen
+            entry[f"n_{name}_high"] = n_hi
+            entry[f"n_{name}_low"] = n_lo
+            ca_pen, ca_hi, ca_lo = _penalty(cell, "ret_close_anchor_t10")
+            entry[f"ca_penalty_{name}"] = ca_pen
+            entry[f"n_{name}_high_ca"] = ca_hi
+            entry[f"n_{name}_low_ca"] = ca_lo
+            if pen is not None:
+                penalties.append(pen)
+            n_totals.append(n_hi + n_lo)
+        judgable = (
+            len(penalties) == 2
+            and all(n >= MIN_CELL_N for n in n_totals)
+        )
+        consistent = (
+            (penalties[0] > 0) == (penalties[1] > 0) if judgable else None
+        )
+        if judgable:
+            judgable_count += 1
+            if consistent:
+                consistent_count += 1
+            ca_pens = [entry["ca_penalty_first"], entry["ca_penalty_second"]]
+            if all(isinstance(p, float) for p in ca_pens):
+                ca_consistent.append((ca_pens[0] > 0) == (ca_pens[1] > 0))
+        entry["judgable"] = judgable
+        entry["direction_consistent"] = consistent
+        buckets.append(entry)
+    if judgable_count == 0:
+        verdict = "样本不足 — 无半区两侧 n≥门槛的可判定桶, 不支持稳定性判定"
+    elif consistent_count == judgable_count:
+        verdict = (
+            "gap 判别跨半方向一致 — 具备进一步评估资格 (仍非授权;"
+            " 政策使用 = owner 决策 + 预注册)"
+        )
+    else:
+        verdict = "方向跨半不一致 — gap 条件化证据不足 (过拟合风险, R15 同款判据)"
+    return {
+        "split_date": str(mid),
+        "buckets": buckets,
+        "judgable_count": judgable_count,
+        "consistent_count": consistent_count,
+        "close_anchor_penalty_stable": (
+            all(ca_consistent) if ca_consistent else None
+        ),
+        "verdict_hint": verdict,
     }
 
 
@@ -904,6 +994,36 @@ def _render_gap_anatomy(uni: dict, L: list[str]) -> None:
         " 格 CI 缺失只披露。"
     )
     L.append("")
+    sh = gap.get("split_half")
+    if isinstance(sh, dict) and sh.get("buckets"):
+        L.append(f"#### gap 判别 split-half 稳定性 (切分日 {sh['split_date']})")
+        L.append("")
+        L.append("| 强度桶 | 前半罚分 | 前半 n(高/低) | 后半罚分 | 后半 n(高/低) | 可判定 | 跨半一致 |")
+        L.append("|---|---|---|---|---|---|---|")
+        for b in sh["buckets"]:
+            def _p(v):
+                return _fmt(v) if isinstance(v, (int, float)) else "—"
+            state = (
+                "一致" if b["direction_consistent"] is True
+                else "翻转" if b["direction_consistent"] is False
+                else "—"
+            )
+            L.append(
+                f"| {b['strength_bucket']} | {_p(b['penalty_first'])}"
+                f" | {b['n_first_high']}/{b['n_first_low']}"
+                f" | {_p(b['penalty_second'])}"
+                f" | {b['n_second_high']}/{b['n_second_low']}"
+                f" | {'是' if b['judgable'] else 'n<门槛'} | {state} |"
+            )
+        L.append("")
+        L.append(f"- **判定 (R15 合取判据镜像, 只判定资格不授权)**: {sh['verdict_hint']}")
+        ca_stable = sh.get("close_anchor_penalty_stable")
+        if ca_stable is not None:
+            L.append(
+                f"- close-anchor 罚分 (信息含量口径, 次级披露) 跨半一致: "
+                f"{'是' if ca_stable else '否'}"
+            )
+        L.append("")
 
 
 def _render_horizons(horizons: dict, L: list[str]) -> None:

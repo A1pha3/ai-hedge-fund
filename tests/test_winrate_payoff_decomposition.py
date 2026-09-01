@@ -1445,3 +1445,119 @@ class TestGapAnatomyMountedAndRendered:
         assert "探索性" in md                 # in-sample 阈值纪律标注
         assert "只披露不判定" in md or "只披露" in md
         assert "5~10%" in md and ">10%" in md
+
+
+class TestGapSplitHalf:
+    """gap 判别 split-half 稳定性 (R92 Op2): R15 合取判据纪律镜像。
+
+    R15 教训: in-sample 判别力 ≠ 可条件化 (强度桶 Kelly 排序稳定但符号
+    跨半翻转) — gap 罚分同样必须过『方向跨半一致』的门。
+    """
+
+    def _rows(self, penalties, n_low=15, n_high=3, start_day=1):
+        """构造跨半罚分 fixture: penalties = (first_hi_mean, second_hi_mean)。
+
+        lo 侧均值恒 +0.01; hi 侧均值由参数给定 — penalty = 0.01 − hi_mean。
+        n_low/n_high 控制半区桶内合计 n (15+3=18 < 30 可造小样本形态;
+        传大值造可判定形态)。
+        """
+        import pandas as pd
+        rows = []
+        for half_idx, hi_mean in enumerate(penalties):
+            for i in range(n_high):
+                rows.append({
+                    "signal_date": f"2026-0{1 + half_idx * 3}-{start_day + i:02d}",
+                    "trigger_strength": 0.9,
+                    "gap_t1_open": 0.07,
+                    "gross_ret_t10": hi_mean + 0.0065,
+                    "ret_close_anchor_t10": hi_mean + 0.02,
+                })
+            for i in range(n_low):
+                rows.append({
+                    "signal_date": f"2026-0{1 + half_idx * 3}-{start_day + i:02d}",
+                    "trigger_strength": 0.9,
+                    "gap_t1_open": 0.01,
+                    "gross_ret_t10": 0.01 + 0.0065,
+                    "ret_close_anchor_t10": 0.01 + 0.03,
+                })
+        return pd.DataFrame(rows).astype({"signal_date": str})
+
+    def _split(self, frame):
+        from scripts.winrate_payoff_decomposition import gap_anatomy
+        return gap_anatomy(frame)["split_half"]
+
+    def test_consistent_direction_earns_eligibility(self):
+        # 两半 hi 均差于 lo (+0.01) → 罚分均正 → 一致 → 资格
+        sh = self._split(self._rows(penalties=(-0.03, -0.02), n_low=28))
+        b = next(x for x in sh["buckets"] if x["strength_bucket"] == "≥0.70")
+        assert b["judgable"] is True
+        assert b["direction_consistent"] is True
+        assert b["penalty_first"] == pytest.approx(0.01 - (-0.03), abs=1e-12)
+        assert b["penalty_second"] == pytest.approx(0.01 - (-0.02), abs=1e-12)
+        assert sh["judgable_count"] == 1 and sh["consistent_count"] == 1
+        assert "具备进一步评估资格" in sh["verdict_hint"]
+        assert "仍非授权" in sh["verdict_hint"]
+
+    def test_direction_flip_denies_eligibility(self):
+        # 第一半 hi 差 (罚分正), 第二半 hi 反超 lo (罚分负) → 翻转 → 不足
+        sh = self._split(self._rows(penalties=(-0.03, 0.05), n_low=28))
+        b = next(x for x in sh["buckets"] if x["strength_bucket"] == "≥0.70")
+        assert b["judgable"] is True
+        assert b["direction_consistent"] is False
+        assert b["penalty_second"] == pytest.approx(0.01 - 0.05, abs=1e-12)
+        assert sh["consistent_count"] == 0
+        assert "过拟合风险" in sh["verdict_hint"]
+
+    def test_small_halves_not_judgable(self):
+        # 半区桶内合计 n=3+3=6 < MIN_CELL_N → 不可判定 → 样本不足 verdict
+        # (n_low=16 + n_high=3 = 19 仍 < 30 — 可判定形态需要 n_low>=28)
+        sh = self._split(self._rows(penalties=(-0.03, -0.02), n_low=3, n_high=3))
+        b = sh["buckets"][0]
+        assert b["judgable"] is False
+        assert b["direction_consistent"] is None
+        assert sh["judgable_count"] == 0
+        assert "样本不足" in sh["verdict_hint"]
+
+    def test_split_date_deterministic_and_reported(self):
+        frame = self._rows(penalties=(-0.03, -0.02), n_low=16)
+        a = self._split(frame)
+        b = self._split(frame)
+        assert json.dumps(a) == json.dumps(b)
+        # 切分日 = 中位唯一信号日 (披露面)
+        sessions = sorted(frame["signal_date"].unique())
+        assert a["split_date"] == sessions[len(sessions) // 2]
+
+    def test_close_anchor_secondary_disclosure(self):
+        sh = self._split(self._rows(penalties=(-0.03, -0.02), n_low=28))
+        b = next(x for x in sh["buckets"] if x["strength_bucket"] == "≥0.70")
+        # ca: hi = hi_mean + 0.02, lo = 0.04 → ca 罚分 = 0.04 − (hi_mean+0.02)
+        assert b["ca_penalty_first"] == pytest.approx(0.04 - (-0.03 + 0.02), abs=1e-12)
+        assert b["ca_penalty_second"] == pytest.approx(0.04 - (-0.02 + 0.02), abs=1e-12)
+
+    def test_mounted_in_gap_anatomy_and_rendered(self):
+        import pandas as pd
+        from scripts.winrate_payoff_decomposition import decompose, render_md
+        rows = []
+        for i in range(80):
+            first = i < 40
+            half_hi = -0.03 if first else -0.02
+            hi = i % 8 == 0
+            rows.append({
+                "symbol": f"{600000+i}",
+                "signal_date": f"2026-0{1 if first else 4}-{(i % 40) % 28 + 1:02d}",
+                "regime": "normal",
+                "trigger_strength": 0.9,
+                "gap_t1_open": 0.07 if hi else 0.01,
+                "gross_ret_t10": (half_hi if hi else 0.01) + 0.0065,
+                "gross_ret_t5": 0.02,
+                "ret_close_anchor_t10": 0.03,
+                "fillable": True, "gate_blocked": False, "degraded": False,
+                "st_name": False, "industry_missing": False,
+                "excluded_ticker": False, "price_ge_3": True,
+            })
+        payload = decompose(pd.DataFrame(rows), universes=("production_aligned",))
+        sh = payload["universes"]["production_aligned"]["gap_anatomy"]["split_half"]
+        assert sh["judgable_count"] >= 1
+        md = render_md(payload, "20260901")
+        assert "split-half" in md
+        assert "verdict" in md or "判定" in md
