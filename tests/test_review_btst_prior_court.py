@@ -269,7 +269,8 @@ def test_time_slices_partition_and_top1():
     ts = rpc.time_slices(u, n_boot=100)
     labels = [t["label"] for t in ts]
     # R90 Op3: 窗口前扩重注册 — 切片表含 2025H1 段
-    assert labels == ["2025H1", "2025H2", "2026H1", "2026H2+"]
+    assert labels == ["2022H1", "2022H2", "2023H1", "2023H2", "2024H1", "2024H2",
+                      "2025H1", "2025H2", "2026H1", "2026H2+"]
     assert sum(t["n"] for t in ts) == len(u)  # 切片完备覆盖不重不漏
     h25 = {t["label"]: t for t in ts}["2025H2"]  # 按 label 取 (2025H1 前插后 ts[0] 不再是本段)
     assert h25["n"] == 4
@@ -330,9 +331,10 @@ def test_time_slices_cover_extended_window_2025h1():
     u = rpc.production_universe(rpc.candidate_universe(ev))
     ts = rpc.time_slices(u, n_boot=100)
     labels = [t["label"] for t in ts]
-    assert labels == ["2025H1", "2025H2", "2026H1", "2026H2+"]
+    assert labels == ["2022H1", "2022H2", "2023H1", "2023H2", "2024H1", "2024H2",
+                      "2025H1", "2025H2", "2026H1", "2026H2+"]
     assert sum(t["n"] for t in ts) == len(u)  # 不重不漏含前扩行
-    h1 = ts[0]
+    h1 = next(t_ for t_ in ts if t_["label"] == "2025H1")  # R94 后早期段在前, 按标签取
     assert h1["n"] == 2
     assert abs(h1["mean"] - ((0.05 - 0.0065) + (-0.02 - 0.0065)) / 2) < 1e-12
 
@@ -341,7 +343,7 @@ def test_time_slices_outside_rows_fail_closed():
     """越界行 (切片表未覆盖的窗口移动) → fail-closed, 不静默缺段。"""
     import pytest
     ev = _ev_prod([
-        _prod_row("20241231", 0.02),   # 早于全部预注册切片
+        _prod_row("20211220", 0.02),   # 早于全部预注册切片 (R94 后 2024 已注册)
         _prod_row("20260302", 0.02),
     ])
     u = rpc.production_universe(rpc.candidate_universe(ev))
@@ -374,6 +376,12 @@ def test_slice_partitions_single_implementation():
     u = rpc.production_universe(rpc.candidate_universe(ev))
     parts = rpc.slice_partitions(u)
     assert [(label, lo, hi) for label, lo, hi, _ in parts] == [
+        ("2022H1", "20220104", "20220630"),
+        ("2022H2", "20220701", "20221231"),
+        ("2023H1", "20230101", "20230630"),
+        ("2023H2", "20230701", "20231231"),
+        ("2024H1", "20240101", "20240630"),
+        ("2024H2", "20240701", "20241231"),
         ("2025H1", "20250102", "20250630"),
         ("2025H2", "20250701", "20251231"),
         ("2026H1", "20260101", "20260630"),
@@ -397,3 +405,34 @@ def test_slice_partitions_iso_dates_normalized():
     u = rpc.production_universe(rpc.candidate_universe(ev))
     parts = {label: m for label, _, _, m in rpc.slice_partitions(u)}
     assert len(parts["2026H1"]) == 2
+
+
+# ---------- R94: 早期窗口 (2022-24) 预注册切片 ----------
+
+def test_early_window_dates_covered():
+    """2022-24 日期帧全覆盖落入对应段 (RED: 注册前抛 coverage gap)。"""
+    import pandas as pd
+    from review_btst_prior_court import slice_partitions
+    frame = pd.DataFrame({
+        "signal_date": ["20220215", "20220801", "20230301", "20230901", "20240401", "20241115"],
+        "gross_ret_t10": [0.01] * 6,
+    })
+    parts = slice_partitions(frame)
+    nonempty = [(label, len(sub)) for label, _lo, _hi, sub in parts if len(sub)]
+    assert nonempty == [("2022H1", 1), ("2022H2", 1), ("2023H1", 1),
+                        ("2023H2", 1), ("2024H1", 1), ("2024H2", 1)]
+
+
+def test_production_dates_early_slices_empty_and_guard_intact():
+    """生产日期帧: 早期段 n=0 空段诚实保留; 未注册日期 (2021) 仍 fail-closed。"""
+    import pandas as pd
+    import pytest
+    from review_btst_prior_court import slice_partitions
+    frame = pd.DataFrame({"signal_date": ["20250801", "20260301"], "gross_ret_t10": [0.01, 0.02]})
+    parts = slice_partitions(frame)
+    early = [(label, len(sub)) for label, _lo, _hi, sub in parts if label.startswith("2022") or label.startswith("2023") or label.startswith("2024H1") or label.startswith("2024H2")]
+    assert early == [("2022H1", 0), ("2022H2", 0), ("2023H1", 0),
+                     ("2023H2", 0), ("2024H1", 0), ("2024H2", 0)]
+    outside = pd.DataFrame({"signal_date": ["20211220"], "gross_ret_t10": [0.01]})
+    with pytest.raises(ValueError, match="coverage gap"):
+        slice_partitions(outside)
