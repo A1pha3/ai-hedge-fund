@@ -51,7 +51,10 @@ from scripts.btst_exit_anatomy import (  # noqa: E402
     load_event_table,
     sessions_for_window,
 )
-from scripts._btst_court_common import FORWARD_SESSIONS  # noqa: E402
+from scripts._btst_court_common import (  # noqa: E402
+    FORWARD_SESSIONS,
+    load_sessions,
+)
 from scripts.winrate_payoff_decomposition import (  # noqa: E402
     MIN_CELL_N,
     ROUNDTRIP_COST,
@@ -168,15 +171,17 @@ def analyze_universe(
     )
     by_day = load_daily_bars(raw_dir, sessions_union)
     per_event: list[dict[int, float]] = []
+    per_event_pos: list[int] = []  # 事件在 work 中的原始位置 (aligned 对齐用)
     days_by_event: list[dict[int, str]] = []
     exclusions: dict[str, int] = {}
-    for _, event in work.iterrows():
+    for work_pos, (_, event) in enumerate(work.iterrows()):
         out = event_horizon_gross(event, by_day, cal)
-        if all(isinstance(key, str) for key in out):
-            key = next(iter(out))
+        if not out or all(isinstance(key, str) for key in out):
+            key = next(iter(out)) if out else "excluded_no_exit_bars"
             exclusions[key] = exclusions.get(key, 0) + 1
             continue
         per_event.append(out)  # type: ignore[arg-type]
+        per_event_pos.append(work_pos)
         days_by_event.append({k: str(event["signal_date"]) for k in out})
 
     def _agg(indices: list[int]) -> dict[str, Any]:
@@ -190,11 +195,13 @@ def analyze_universe(
         }
         return payload
 
-    all_idx = list(range(len(per_event)))
-    payload: dict[str, Any] = {"all_candidates": _agg(all_idx)}
+    payload: dict[str, Any] = {"all_candidates": _agg(list(range(len(per_event))))}
     mask = aligned_mask(work)
     if mask is not None:
-        aligned_idx = [i for i, keep in zip(all_idx, mask) if keep]
+        # mask 按 work 全集对齐; per_event 只含入选事件, 用原始位置取对应 keep
+        aligned_idx = [
+            i for i, pos in enumerate(per_event_pos) if mask[pos]
+        ]
         payload["production_aligned"] = _agg(aligned_idx)
     else:
         payload["production_aligned"] = {

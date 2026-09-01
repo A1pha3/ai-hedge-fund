@@ -297,3 +297,146 @@ class TestEndToEnd:
         assert "| k | n | unexited |" in text
         assert "| t2 | 2 | 0 |" in text
         assert "skipped" in text
+
+
+class TestAdversarialReview:
+    """R95 Op7 对抗性审查返工的三处回归钉死。"""
+
+    def test_aligned_subset_stays_aligned_with_exclusions_present(self):
+        """排除事件夹在中间时, production_aligned 仍选对事件 (A13 错位 PoC)。
+
+        构造: 3 事件, 第 2 个 t10 哨点失配 (被排除), 第 1/3 个生产对齐干净。
+        修复前: mask 与 per_event 错位 → aligned 错取第 1/2 个。
+        """
+        import tempfile
+        from pathlib import Path
+
+        from scripts.btst_horizon_curve import analyze_universe
+
+        sessions = CAL[:16]
+        rows = []
+        frames = {s: [] for s in sessions}
+        prev = {}
+        # 事件 A (干净, 对齐), B (哨点失配 → 排除), C (干净, 非 prod: st_name)
+        specs = [
+            ("000001.SZ", False, None),
+            ("000002.SZ", False, 0.99),  # gross_t10 错位 → 哨点排除
+            ("000003.SZ", True, None),   # st_name → 非生产对齐
+        ]
+        for ts, st_flag, wrong_gross in specs:
+            gross = 0.05 if wrong_gross is None else wrong_gross
+            rows.append(
+                {
+                    "ts_code": ts,
+                    "signal_date": sessions[0],
+                    "regime": "normal",
+                    "trigger_strength": 0.7,
+                    "signal_close": 10.0,
+                    "gap_t1_open": 0.0,
+                    "exit_session_t10": 10,
+                    "gross_ret_t10": gross,
+                    "fillable": True,
+                    "gate_blocked": False,
+                    "price_ge_3": True,
+                    "degraded": False,
+                    "st_name": st_flag,
+                    "industry_missing": False,
+                    "excluded_ticker": False,
+                }
+            )
+        for i, s in enumerate(sessions):
+            for ts, _, _ in specs:
+                px = 10.0  # 平价路径: t10 毛 = 0, 与 A/C 表值一致
+                frames[s].append(
+                    {
+                        "ts_code": ts,
+                        "open": px,
+                        "high": px * 1.01,
+                        "low": px * 0.99,
+                        "close": px,
+                        "pre_close": prev.get(ts, px),
+                    }
+                )
+                prev[ts] = px
+        raw_dir = Path(tempfile.mkdtemp()) / "raw"
+        raw_dir.mkdir(parents=True)
+        for s in sessions:
+            pd.DataFrame(frames[s]).to_csv(raw_dir / f"daily_{s}.csv", index=False)
+        # 平价路径: t10 毛 = 0; 事件 A/C 报 0.05 → 哨点也会拦! 改 A/C 报 0
+        for r in rows:
+            if r["gross_ret_t10"] == 0.05:
+                r["gross_ret_t10"] = 0.0
+        # 事件 B 保留 0.99 (失配 → 排除)
+        ev = pd.DataFrame(rows)
+        payload = analyze_universe(ev, raw_dir, CAL)
+        aligned = payload["production_aligned"]
+        # aligned 只含事件 A (事件 C 被 st_name 排除, B 被哨点排除)
+        assert aligned["n_events"] == 1
+        curve_t15 = next(r for r in aligned["curve"] if r["k"] == 15)
+        assert curve_t15["n"] == 1
+
+    def test_empty_grid_excluded_without_crash(self):
+        """T+2.. 全停牌 → 空 grid 显式排除类, 不抛 StopIteration (A2)。"""
+        pattern = [1.0] + [None] * 14
+        bars = _bars(pattern=pattern)
+        out = event_horizon_gross(_event(gross_t10=0.0), _by_day(bars), CAL)
+        # t10 无 bar → 哨点不触发 (PRIMARY_K not in out), 返回空 grid
+        assert out == {}
+
+    def test_main_smoke_with_injected_calendar(self, tmp_path, monkeypatch):
+        """main 层冒烟 (A14): CLI 层不再零覆盖。"""
+        import scripts.btst_horizon_curve as mod
+
+        sessions = CAL[:16]
+        ev = pd.DataFrame(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "signal_date": sessions[0],
+                    "regime": "normal",
+                    "trigger_strength": 0.7,
+                    "signal_close": 10.0,
+                    "gap_t1_open": 0.0,
+                    "exit_session_t10": 10,
+                    "gross_ret_t10": 0.0,
+                    "fillable": True,
+                    "gate_blocked": False,
+                }
+            ]
+        )
+        table = tmp_path / "event_table_v1.csv.gz"
+        ev.to_csv(table, index=False)
+        raw_dir = tmp_path / "raw"
+        raw_dir.mkdir()
+        frames = {s: [] for s in sessions}
+        for i, s in enumerate(sessions):
+            px = 10.0
+            frames[s].append(
+                {
+                    "ts_code": "000001.SZ",
+                    "open": px,
+                    "high": px,
+                    "low": px,
+                    "close": px,
+                    "pre_close": px,
+                }
+            )
+            pd.DataFrame(frames[s]).to_csv(raw_dir / f"daily_{s}.csv", index=False)
+        out_json = tmp_path / "out.json"
+        monkeypatch.setattr(
+            mod, "load_sessions", lambda start, end: list(CAL)
+        )
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "btst_horizon_curve.py",
+                "--event-table", str(table),
+                "--event-table-early", str(table),
+                "--raw-dir", str(raw_dir),
+                "--raw-dir-early", str(raw_dir),
+                "--output-json", str(out_json),
+            ],
+        )
+        assert mod.main() == 0
+        payload = json.loads(out_json.read_text())
+        assert payload["production"]["all_candidates"]["curve"][0]["n"] == 1
