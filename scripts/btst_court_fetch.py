@@ -190,7 +190,11 @@ def main() -> None:
     missing_lu = [s for s in lu_sessions if not (raw_dir / "limit_up" / f"lu_{s}.csv").exists()]
     print(f"汇总: daily 缺 {len(missing_daily)} 天 {missing_daily[:8]}…; limit_list 缺 {len(missing_lu)} 天")
     if missing_daily:
-        print("  (有缺口可重跑本脚本续传; build 阶段会再断言)")
+        # fail-loud (R95 Op8): 缺日 = 面板不完整, rc=1 让 nightly 历史如实记录
+        # (research_refresh_history 按阶段 rc 记账); fetch 幂等, 重跑续传补缺。
+        # limit_list 缺日维持 report-only: floor 过滤语义 + build 宇宙对账兜底。
+        print("  (面板不完整 — exit 1; 可重跑本脚本续传; build 阶段会再断言)")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
