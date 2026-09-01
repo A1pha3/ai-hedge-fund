@@ -1184,7 +1184,7 @@ class TestSliceBucketStability:
         import pandas as pd
         from scripts.winrate_payoff_decomposition import slice_bucket_stability
         frame = pd.DataFrame([
-            {"signal_date": "20241231", "trigger_strength": 0.9, "gross_ret_t10": 0.01},
+            {"signal_date": "20211231", "trigger_strength": 0.9, "gross_ret_t10": 0.01},
             {"signal_date": "20260310", "trigger_strength": 0.9, "gross_ret_t10": 0.01},
         ]).astype({"signal_date": str})
         with pytest.raises(ValueError, match="coverage gap"):
@@ -1215,7 +1215,10 @@ class TestSliceBucketStability:
         payload = decompose(ev, universes=("all_candidates", "production_aligned"))
         for uni_name in ("all_candidates", "production_aligned"):
             blocks = payload["universes"][uni_name]["slice_bucket_stability"]
-            assert [b["slice"] for b in blocks] == ["2025H1", "2025H2", "2026H1", "2026H2+"]
+            assert [b["slice"] for b in blocks] == [
+                "2022H1", "2022H2", "2023H1", "2023H2", "2024H1", "2024H2",
+                "2025H1", "2025H2", "2026H1", "2026H2+",
+            ]
             # ISO 短横日期归一后全部落 2026H1
             h1 = next(b for b in blocks if b["slice"] == "2026H1")
             assert sum(c["n"] for c in h1["buckets"]) == 12
@@ -1366,7 +1369,7 @@ class TestGapAnatomy:
         import pandas as pd
         from scripts.winrate_payoff_decomposition import gap_anatomy
         frame = pd.DataFrame([
-            {"signal_date": "20241231", "trigger_strength": 0.9, "gap_t1_open": 0.01,
+            {"signal_date": "20211231", "trigger_strength": 0.9, "gap_t1_open": 0.01,
              "gross_ret_t10": 0.01, "ret_close_anchor_t10": 0.02},
             {"signal_date": "20260310", "trigger_strength": 0.9, "gap_t1_open": 0.01,
              "gross_ret_t10": 0.01, "ret_close_anchor_t10": 0.02},
