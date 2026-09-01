@@ -90,7 +90,16 @@ def load_limit_up_index(raw_dir: Path | str | None = None) -> dict[str, pd.DataF
     out: dict[str, pd.DataFrame] = {}
     for p in sorted((base / "limit_up").glob("lu_*.csv")):
         d = p.stem.split("_")[1]
-        df = pd.read_csv(p, dtype=str)
+        try:
+            df = pd.read_csv(p, dtype=str)
+        except (pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+            # R93 Op3: 空涨停日 fetch 也落仅表头 CSV — 0 字节/垃圾字节只能是
+            # 外部损坏或预置; 静默当空日会把假『当日无涨停』写进 universe
+            # 审计。修复必须先删损坏文件再续传 (fetch 幂等跳过已存在文件)。
+            raise SystemExit(
+                f"limit_up 原料损坏 (空文件/不可解析): {p} — 删除该文件后重跑 "
+                "scripts/btst_court_fetch.py 续传"
+            ) from exc
         out[d] = df if not df.empty else pd.DataFrame(columns=["ts_code", "name"])
     return out
 
