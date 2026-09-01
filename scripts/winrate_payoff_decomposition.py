@@ -638,17 +638,20 @@ def court_binding(court_table: Path, rows: int) -> dict[str, object]:
     manifest 缺失/损坏 → 身份字段 None (不假装知道), 行数来自本次实读表。
 
     content_digest (R90 Op2): 事件表 canonical CSV 序列化的 sha256。
-    built_at 只有日期粒度 — 同日内容修正重建 (如零审计表回填权威宇宙后
-    重建, 2026-09-01 实例) 的旧身份字段全同, 前进门会把修正判定误判为
-    court_not_advanced; 摘要让『同一份数据』在字节级可判定, 内容变则
-    摘要变。csv.gz 重写嵌新 mtime, 直接哈希落盘字节会把同内容重建误判
-    为前进 — 摘要绑定内容而非文件字节。
+    同日内容修正重建 (如零审计表回填权威宇宙后重建, 2026-09-01 实例) 的
+    旧行数/指纹字段全同, 前进门会把修正判定误判为 court_not_advanced;
+    摘要让『同一份数据』在字节级可判定, 内容变则摘要变。csv.gz 重写嵌新
+    mtime, 直接哈希落盘字节会把同内容重建误判为前进 — 摘要绑定内容而非
+    文件字节。
+    built_at 不进身份 (R93 Op1): 构建时刻是构建事件, 不是数据状态 —
+    夜度保鲜自动化 (court_nightly_refresh) 下同数据跨日重建是常态,
+    built_at 在身份中会让前进门每天写『新日期旧数据』假判定记录。
+    保留在 manifest 供表龄审计 (review_btst_prior_court/btst_court_views)。
     universe_audit_complete: manifest 宇宙审计覆盖闭合
     (days_checked + empty_days == window.sessions) → True; 键全在但不
     闭合 → False; 键缺失/畸形/manifest 损坏 → None (旧形态无 empty_days
     计数, 不假装知道也不推断)。
     """
-    built_at = None
     window_start = None
     window_end = None
     fingerprint = None
@@ -661,8 +664,6 @@ def court_binding(court_table: Path, rows: int) -> dict[str, object]:
         manifest = None
     if isinstance(manifest, dict):
         # 畸形键值逐字段退化 None (R84 Op2-A): 身份来源损坏不假装知道, 也不崩溃
-        value = manifest.get("built_at")
-        built_at = value if isinstance(value, str) else None
         window = manifest.get("window")
         if isinstance(window, dict):
             value = window.get("end")
@@ -696,7 +697,6 @@ def court_binding(court_table: Path, rows: int) -> dict[str, object]:
         ):
             universe_audit_complete = days_checked + empty_days == sessions
     return {
-        "built_at": built_at,
         "window_start": window_start,
         "window_end": window_end,
         "rows": int(rows),
