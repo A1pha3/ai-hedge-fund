@@ -1467,6 +1467,43 @@ def complete_daily_action_v2(
     )
 
 
+def _render_gap_reference_line(
+    reports_dir: str | Path | None = None,
+) -> str | None:
+    """执行面缺口参考行 (R92 Op3): gap 判别证据到操作员执行视图的通路。
+
+    R92 Op1/Op2 在诊断报告里机制化了 T+1 开盘缺口的判别证据 (高开 >5%
+    子集期望显著为负; 罚分跨半稳定性 R15 判据镜像), 但报告与操作员执行
+    视图之间没有通路 — 而缺口在 9:25 竞价即可观测, 恰是证据发挥作用的
+    时点。聚合读取走 src.screening.offensive.gap_disclosure 单一实现;
+    证据缺失/损坏 → 整行省略 (fail-open, 镜像 R85 触发器状态行)。
+    本行是披露不是行为改变 — 不改变任何计划创建/评分/仓位/退出决策。
+    """
+    from src.screening.offensive.gap_disclosure import gap_execution_reference
+
+    reference = gap_execution_reference(
+        reports_dir if reports_dir is not None else Path("data/reports")
+    )
+    if reference is None:
+        return None
+    if reference["split_stable"] is True:
+        split_note = "罚分跨半方向稳定"
+    elif reference["split_stable"] is False:
+        split_note = "罚分跨半不一致（R15 判据: 条件化证据不足）"
+    else:
+        split_note = "跨半稳定性未判定"
+    total = (
+        f"，生产对齐 n={reference['total_n']}" if reference["total_n"] else ""
+    )
+    return (
+        f"执行面缺口参考（court 证据截至 {reference['evidence_date']}{total}）："
+        f"T+1 开盘高开>5% 子集历史期望 {reference['e_hi']:+.2%}"
+        f"（n={reference['n_hi']}） vs ≤5% {reference['e_lo']:+.2%}"
+        f"（n={reference['n_lo']}）· {split_note} — 竞价后高开>5% 时可对照"
+        f"该历史子集期望；仅披露参考，不改变计划与执行决策"
+    )
+
+
 def _render_trigger_state_line() -> str | None:
     """预注册强度阈值触发器的操作员状态行 (R85 Op1)。
 
@@ -1660,6 +1697,12 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     flip_line = _render_flip_state_line(as_of)
     if flip_line:
         lines.append(flip_line)
+        lines.append("")
+    # 执行面缺口参考行 (R92 Op3): gap 判别证据的日度可见性 — 证据缺失时
+    # 整行省略 (fail-open), 与触发器/翻转行的省略语义一致.
+    gap_line = _render_gap_reference_line()
+    if gap_line:
+        lines.append(gap_line)
         lines.append("")
     if summary is not None:
         lines.append(f"今日摘要：{summary}")

@@ -71,20 +71,17 @@ STRENGTH_BUCKETS: tuple[tuple[float, str], ...] = (
 # 全桶序 (含 <0.50 与 unknown) — 分组/切片视图共用的单一序, 防两侧漂移
 ALL_STRENGTH_BUCKETS: tuple[str, ...] = ("<0.50", "0.50-0.60", "0.60-0.70", "≥0.70", "unknown")
 
-# 执行面 gap 解剖 (R92 Op1): T+1 开盘缺口分桶 — 左闭右开, 与 strength_bucket
-# 同侧。边界预注册于 2026-09-01 (探索性, in-sample: 阈值选自同一次观测数据,
-# 任何政策使用 = owner 决策 + 新数据前向验证), 只披露不判定。
-GAP_BUCKETS: tuple[tuple[float, str], ...] = (
-    (-0.05, "<-5%"),
-    (0.0, "-5~0"),
-    (0.02, "0~2%"),
-    (0.05, "2~5%"),
-    (0.10, "5~10%"),
+# 执行面 gap 解剖 (R92 Op1): T+1 开盘缺口分桶 — 单一定义家在
+# src.screening.offensive.gap_disclosure (R92 Op3 迁居; 本模块 re-export
+# 保持既有消费面不变)。边界预注册于 2026-09-01 (探索性, in-sample: 阈值
+# 选自同一次观测数据, 任何政策使用 = owner 决策 + 新数据前向验证)。
+from src.screening.offensive.gap_disclosure import (  # noqa: E402
+    ALL_GAP_BUCKETS,
+    GAP_BUCKETS,
+    GAP_HIGH_THRESHOLD,
+    GAP_TOP_BUCKET,
+    gap_bucket,
 )
-GAP_TOP_BUCKET = ">10%"  # ≥ 0.10 (末界右闭到无穷)
-ALL_GAP_BUCKETS: tuple[str, ...] = tuple(lbl for _, lbl in GAP_BUCKETS) + (GAP_TOP_BUCKET,)
-# 桶内条件判别的「高开」阈值 — 5~10% 桶下界; 同为探索性 in-sample (R92 Op1)
-GAP_HIGH_THRESHOLD = 0.05
 
 
 def production_aligned(ev) -> "pd.DataFrame":
@@ -134,17 +131,6 @@ def strength_bucket(strength: float | None) -> str:
     if strength < 0.70:
         return "0.60-0.70"
     return "≥0.70"
-
-
-def gap_bucket(gap: float | None) -> str:
-    """T+1 开盘缺口分桶 — 左闭右开, 缺失诚实 unknown (不假装知道)。"""
-    if gap is None or (isinstance(gap, float) and math.isnan(gap)):
-        return "unknown"
-    g = float(gap)
-    for bound, label in GAP_BUCKETS:
-        if g < bound:
-            return label
-    return GAP_TOP_BUCKET
 
 
 def win_loss_stats(
