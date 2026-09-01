@@ -55,15 +55,40 @@ def _cache_covers_end_date(path: Path, end_date: str) -> tuple[bool, int]:
     return latest >= end_date, len(existing)
 
 
+_LEGACY_CSV_COLUMNS = (
+    "ts_code", "trade_date", "close", "open", "high", "low",
+    "pre_close", "change", "pct_chg", "vol", "amount",
+)
+
+
+def _normalize_sw_daily_frame(raw: pd.DataFrame | None) -> pd.DataFrame:
+    """sw_daily 原始帧 → 旧 CSV 契约列 (index_daily 时代: ts_code..pct_chg..amount).
+
+    sw_daily 不发布 pre_close 且官方 pct_change 只发布 2 位小数;
+    pre_close 由 close-change 回推, pct_chg 由 change/pre_close 重算并
+    保留 4 位小数, 与旧列语义/精度一致 (历史重叠日偏差 ≤0.005pp).
+    """
+    if raw is None or len(raw) == 0:
+        return pd.DataFrame()
+    frame = raw.dropna(subset=["trade_date", "close", "change"]).copy()
+    frame["pre_close"] = (frame["close"] - frame["change"]).round(4)
+    frame = frame[frame["pre_close"] > 0]
+    frame["pct_chg"] = (frame["change"] / frame["pre_close"] * 100).round(4)
+    return frame[list(_LEGACY_CSV_COLUMNS)]
+
+
 def _fetch_industry_daily(index_code: str, end_date: str | None = None) -> pd.DataFrame:
-    """拉单个行业指数的全量日线 (含 pct_chg)."""
+    """拉单个行业指数的全量日线 (含 pct_chg).
+
+    数据源 sw_daily (申万官方行情): 2026-09-01 起 index_daily 对 801xxx.SI
+    返回空 (含历史日期, 该接口对 SW 指数停服; 交易所指数如 000300.SH 不受
+    影响), sw_daily 当日与全量均正常。
+    """
     from src.tools.tushare_api import _get_pro
 
     pro = _get_pro()
-    df = pro.index_daily(ts_code=index_code, start_date=_START_DATE, end_date=_resolve_end_date(end_date))
-    if df is None or len(df) == 0:
-        return pd.DataFrame()
-    return df
+    raw = pro.sw_daily(ts_code=index_code, start_date=_START_DATE, end_date=_resolve_end_date(end_date))
+    return _normalize_sw_daily_frame(raw)
 
 
 def backfill(
