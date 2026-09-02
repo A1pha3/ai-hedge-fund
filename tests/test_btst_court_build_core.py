@@ -479,3 +479,31 @@ def test_load_limit_up_index_empty_day_header_only_still_ok(tmp_path):
     idx = load_limit_up_index(raw)
     assert "20250103" in idx
     assert idx["20250103"].empty
+
+
+# ---- R96 Op4: 缺面板日 fail-loud 判定面 ----
+
+
+class TestMissingPanelDays:
+    def test_empty_when_fully_covered(self):
+        from scripts.btst_court_build import missing_panel_days
+
+        sessions = ["20260708", "20260709", "20260710"]
+        assert missing_panel_days(sessions, set(sessions)) == []
+
+    def test_missing_days_sorted_ascending(self):
+        from scripts.btst_court_build import missing_panel_days
+
+        sessions = ["20260710", "20260708", "20260709"]
+        panel = {"20260708"}
+        assert missing_panel_days(sessions, panel) == ["20260709", "20260710"]
+
+    def test_distinct_from_limit_up_guard(self):
+        """面板守卫与 limit_up 守卫是两个判定面 — 各自独立可调用."""
+        from scripts.btst_court_build import missing_limit_up_days, missing_panel_days
+
+        sessions = ["20260710"]
+        # limit_up 守卫以 raw_dir 文件为准; 面板守卫以日期集合为准 — 同输入不同语义
+        assert missing_panel_days(sessions, set()) == ["20260710"]
+        # missing_limit_up_days 需要 raw_dir; 只验证可导入与签名存在 (行为属其自身测试面)
+        assert callable(missing_limit_up_days)

@@ -165,6 +165,16 @@ def ticker_frame(group: pd.DataFrame, upto: str) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
+def missing_panel_days(sessions: list[str], panel_dates: set[str]) -> list[str]:
+    """R96 Op4: 日历会话中缺 raw 面板日的清单 (升序) — 静默丢弃会空洞化宇宙审计.
+
+    与 _btst_court_common.missing_limit_up_days 同族: 构建前置 fail-loud 的
+    判定面; 面板缺日曾是静默过滤 (s in panel_dates), 缺口会话从宇宙里消失
+    而无任何披露。
+    """
+    return sorted(s for s in sessions if s not in panel_dates)
+
+
 def ratchet_replay(frame: pd.DataFrame, entry_idx: int, entry_price: float) -> tuple[int, str] | None:
     """逐字复用生产 evaluate_shadow_exit → (exit_row_idx, reason); exit = 该行次日语义由调用方按开盘执行.
 
@@ -326,6 +336,16 @@ def main() -> None:
     by_day = {d: g for d, g in panel.groupby("trade_date")}
     groups = {c: g for c, g in panel.groupby("ts_code")}
     panel_dates = set(by_day.keys())
+    # R96 Op4: 缺面板日 fail-closed — 静默过滤会让宇宙审计对缺口会话空洞化
+    # (与下方 missing_lu 守卫同族; 此前 s in panel_dates 是无声丢弃)。
+    missing_panel = missing_panel_days(sessions_cal, panel_dates)
+    if missing_panel:
+        raise SystemExit(
+            f"raw 面板缺 {len(missing_panel)} 天 ({missing_panel[:5]}…) — "
+            "court 宇宙不可静默缩窗, 中止; "
+            f"先跑 scripts/btst_court_fetch.py --start {sessions_cal[0]} "
+            f"--limit-list-start {sessions_cal[0]} 续传"
+        )
     sessions = [s for s in sessions_cal if s in panel_dates]
     print(f"  Window A sessions={len(sessions)} ({sessions[0]}..{sessions[-1]})")
 
