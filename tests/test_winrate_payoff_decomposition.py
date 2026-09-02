@@ -1617,3 +1617,93 @@ class TestBuildTimestampNotIdentity:
         assert meta["recorded"] is False
         assert meta["reason"] == "court_not_advanced"
         assert [r["date"] for r in load_trigger_ledger(ledger)] == ["20260901"]
+
+
+class TestThreshold060AnchorTrigger:
+    """R100 Op1: 0.60 锚触发器 (条件③ 0.60-0.70 CI>0 ∧ 条件② 转负) 的判定面."""
+
+    @staticmethod
+    def _row(group, n, expectancy=None, ci=None):
+        return {
+            "group": group, "n": n, "wins": 0, "winrate": None,
+            "avg_win": None, "avg_loss": None, "payoff": None,
+            "expectancy": expectancy, "cluster_ci_low_90": ci,
+            "attribution_vs_all": None,
+        }
+
+    def _rows(self, *, strong=None, mid=None, midhigh=None):
+        rows = []
+        if strong is not None:
+            rows.append(self._row("strength=≥0.70", **strong))
+        if mid is not None:
+            rows.append(self._row("strength=0.50-0.60", **mid))
+        if midhigh is not None:
+            rows.append(self._row("strength=0.60-0.70", **midhigh))
+        return rows
+
+    def test_conjunction_060_armed_when_c3_and_c2_lit(self):
+        status = threshold_trigger_status(self._rows(
+            mid=dict(n=303, expectancy=-0.0097),
+            midhigh=dict(n=340, expectancy=0.0101, ci=0.0007),
+        ))
+        c3 = status["condition_3_midhigh_bucket_ci_above_zero"]
+        assert c3["lit"] is True and c3["judged"] is True
+        assert status["conjunction_060_armed"] is True
+        assert "0.50→0.60" in status["verdict_060"]
+
+    def test_conjunction_060_not_armed_when_c2_positive(self):
+        status = threshold_trigger_status(self._rows(
+            mid=dict(n=303, expectancy=0.0017),
+            midhigh=dict(n=340, expectancy=0.0101, ci=0.0007),
+        ))
+        assert status["condition_3_midhigh_bucket_ci_above_zero"]["lit"] is True
+        assert status["conjunction_060_armed"] is False
+        assert "被保留带站稳但被砍带未转负" in status["verdict_060"]
+
+    def test_conjunction_060_not_armed_when_c3_ci_negative(self):
+        status = threshold_trigger_status(self._rows(
+            mid=dict(n=303, expectancy=-0.0097),
+            midhigh=dict(n=340, expectancy=0.0101, ci=-0.0041),
+        ))
+        assert status["condition_3_midhigh_bucket_ci_above_zero"]["lit"] is False
+        assert status["conjunction_060_armed"] is False
+        assert "被砍带转负但被保留带未站稳" in status["verdict_060"]
+
+    def test_anchors_can_diverge(self):
+        """① 与 ③ 分歧形态: ≥0.70 站稳而 0.60-0.70 未站稳 —
+        0.70 锚合取可武装而 0.60 锚不武装 (新锚更精确: 被保留带未站稳)."""
+        status = threshold_trigger_status(self._rows(
+            strong=dict(n=315, expectancy=0.0169, ci=0.0007),
+            mid=dict(n=303, expectancy=-0.0097),
+            midhigh=dict(n=340, expectancy=0.0101, ci=-0.0041),
+        ))
+        assert status["conjunction_armed"] is True
+        assert status["conjunction_060_armed"] is False
+
+    def test_c3_missing_row_not_judged(self):
+        status = threshold_trigger_status(self._rows(
+            mid=dict(n=303, expectancy=-0.0097)))
+        c3 = status["condition_3_midhigh_bucket_ci_above_zero"]
+        assert c3["judged"] is False and c3["lit"] is False
+        assert "缺失" in c3["reason"]
+        assert status["conjunction_060_armed"] is False
+
+    def test_c3_small_n_not_judged(self):
+        status = threshold_trigger_status(self._rows(
+            mid=dict(n=303, expectancy=-0.0097),
+            midhigh=dict(n=29, expectancy=0.03, ci=0.01),
+        ))
+        c3 = status["condition_3_midhigh_bucket_ci_above_zero"]
+        assert c3["judged"] is False and c3["lit"] is False
+
+    def test_c3_strictly_above_zero(self):
+        status = threshold_trigger_status(self._rows(
+            mid=dict(n=303, expectancy=-0.0097),
+            midhigh=dict(n=340, expectancy=0.01, ci=0.0),
+        ))
+        assert status["condition_3_midhigh_bucket_ci_above_zero"]["lit"] is False
+
+    def test_rule_060_preregistration_disclosed(self):
+        status = threshold_trigger_status(self._rows())
+        assert "R100" in status["rule_060"]
+        assert "共享" in status["rule_060"]  # 条件② 耦合披露

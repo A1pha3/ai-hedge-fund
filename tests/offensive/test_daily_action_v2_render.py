@@ -251,3 +251,50 @@ def test_flip_state_line_omitted_when_file_missing(case, tmp_path, monkeypatch):
     run = service.complete_run(context, candidates=())
     view = DailyActionV2Run(run, (), run.open_positions, (), ())
     assert "逐刷新翻转" not in render_daily_action_v2(view)
+
+
+# ---------- R100 Op1: 0.60 锚触发器子句 (条件③/060 合取日度可见性) ----------
+
+def _trigger_rec060(day, c3_lit=True, c3_judged=True, armed060=False, **kw):
+    rec = _trigger_rec(day, **kw)
+    rec["condition_3"] = {"lit": c3_lit, "judged": c3_judged, "n": 340, "stat": 0.0007}
+    rec["conjunction_060_armed"] = armed060
+    return rec
+
+
+def test_trigger_state_line_renders_060_anchor_clause(case, tmp_path, monkeypatch):
+    """新形态记录 → 0.60 锚子句披露条件③与 060 合取 (连亮计数)."""
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec060("20260830", c1_lit=True, c2_lit=False, c3_lit=True),
+        _trigger_rec060("20260831", c1_lit=True, c2_lit=True, c3_lit=True, armed060=True),
+    ]))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "0.60 锚条件③ 0.60-0.70 桶 CI>0 已亮（连亮 2）" in text
+    assert "0.60 锚合取③∧②已武装 → 0.50→0.60 上调评估就绪" in text
+
+
+def test_trigger_state_line_060_unarmed_and_old_ledger_forms(case, tmp_path, monkeypatch):
+    """060 未武装显示连亮; R100 前旧账本 (无 condition_3) 显示无记录不点亮."""
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec060("20260831", c1_lit=True, c2_lit=False, c3_lit=True),
+    ]))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "0.60 锚合取未武装（连亮 0）" in text
+
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260831", c1_lit=False, c2_lit=False),
+    ]))
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "0.60 锚条件③ 无记录（R100 前旧账本）" in text
+    assert "已武装" not in text.split("强度阈值触发器")[1]

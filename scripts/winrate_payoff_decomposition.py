@@ -592,7 +592,15 @@ def threshold_trigger_status(
     c2 = _condition(
         "strength=0.50-0.60", stat_key="expectancy", lit_when=lambda e: e < 0
     )
+    # 条件③ (R100 Op1 预注册 2026-09-02): 0.50→0.60 上调的直接锚 = 被保留的
+    # 0.60-0.70 带自身 (R97 census: 唯一 stable_positive 带)。与既有 ①(≥0.70
+    # 代理锚) 是同一方向的两个锚: ③ 更精确 (锚定被保留带), ① 更保守 (要求
+    # 更高带也站稳)。两者可分歧 — 分歧时都不武装对应合取, 各自独立积累。
+    c3 = _condition(
+        "strength=0.60-0.70", stat_key="cluster_ci_low_90", lit_when=lambda ci: ci > 0
+    )
     armed = bool(c1["lit"]) and bool(c2["lit"])
+    armed_060 = bool(c3["lit"]) and bool(c2["lit"])
     if armed:
         verdict = "合取点亮 — 满足启动阈值上调正式评估的资格 (owner 决策 + 预注册; 本工具不提案)"
     elif c1["lit"]:
@@ -601,18 +609,36 @@ def threshold_trigger_status(
         verdict = "条件②点亮, 条件①未点亮 — 合取不成立, 阈值 0.50 维持"
     else:
         verdict = "两条件均未点亮 — 阈值 0.50 维持"
+    if armed_060:
+        verdict_060 = "0.60 锚合取点亮 — 0.50→0.60 上调评估资格成立 (owner 决策 + 预注册; 本工具不提案)"
+    elif c3["lit"]:
+        verdict_060 = "条件③点亮, 条件②未点亮 — 0.60 锚合取不成立 (被保留带站稳但被砍带未转负)"
+    elif c2["lit"]:
+        verdict_060 = "条件②点亮, 条件③未点亮 — 0.60 锚合取不成立 (被砍带转负但被保留带未站稳)"
+    else:
+        verdict_060 = "0.60 锚两条件均未点亮 — 阈值 0.50 维持"
     return {
         "rule": (
             "预注册触发器 (AGENTS.md 项1): ①≥0.70 桶净口径 CI90 下界>0 且 "
             "②0.50-0.60 桶净期望<0 (均需 n≥min_n) — 合取点亮才启动阈值上调"
             "正式评估; 稳定性由连续多次刷新的逐次记录累积, 单次刷新只报告本次状态"
         ),
+        "rule_060": (
+            "预注册 0.60 锚触发器 (R100 Op1, 2026-09-02; 证据基础 = R97 census"
+            " 0.60-0.70 唯一 stable_positive + R99 构成归因): ③0.60-0.70 桶净口径"
+            " CI90 下界>0 且 ②0.50-0.60 桶净期望<0 (均需 n≥min_n) — 0.60 锚合取"
+            "点亮 = 0.50→0.60 上调评估资格; 条件②与 0.70 锚合取共享 (耦合披露),"
+            " ①/③ 分歧时各自独立积累互不替代"
+        ),
         "anchor": THRESHOLD_TRIGGER_ANCHOR,
         "min_n": min_n,
         "condition_1_strong_bucket_ci_above_zero": c1,
         "condition_2_mid_bucket_expectancy_negative": c2,
+        "condition_3_midhigh_bucket_ci_above_zero": c3,
         "conjunction_armed": armed,
+        "conjunction_060_armed": armed_060,
         "verdict": verdict,
+        "verdict_060": verdict_060,
     }
 
 
@@ -750,7 +776,13 @@ def record_trigger_status(
             k: trigger.get("condition_2_mid_bucket_expectancy_negative", {}).get(k)
             for k in ("lit", "judged", "n", "stat")
         },
+        # R100 Op1 起追加 (旧记录无此二键 → 读取面按未点亮/断链保守处理)
+        "condition_3": {
+            k: trigger.get("condition_3_midhigh_bucket_ci_above_zero", {}).get(k)
+            for k in ("lit", "judged", "n", "stat")
+        },
         "conjunction_armed": bool(trigger.get("conjunction_armed")),
+        "conjunction_060_armed": bool(trigger.get("conjunction_060_armed")),
     }
     if court_binding is not None:
         # 无绑定不写字段 (与 R81 旧形态逐字一致): 不假装知道数据身份
@@ -853,8 +885,17 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
         L.append("")
         L.append(_cond_line("条件① ≥0.70 桶净口径 CI90 下界>0", c1))
         L.append(_cond_line("条件② 0.50-0.60 桶净期望<0", c2))
+        c3 = trigger.get("condition_3_midhigh_bucket_ci_above_zero") or {}
+        L.append(_cond_line("条件③ 0.60-0.70 桶净口径 CI90 下界>0 (R100 预注册 2026-09-02)", c3))
         L.append(f"- **合取: {'点亮' if trigger.get('conjunction_armed') else '未点亮'}** — {trigger.get('verdict')}")
-        L.append(f"  (锚 {trigger.get('anchor')})")
+        L.append(
+            f"- **0.60 锚合取 (③∧②): {'点亮' if trigger.get('conjunction_060_armed') else '未点亮'}**"
+            f" — {trigger.get('verdict_060')}"
+        )
+        L.append(
+            "  (锚 %s; 条件②被两合取共享 — 耦合成文; ①/③ 分歧时各自独立积累互不替代)"
+            % trigger.get("anchor")
+        )
         stab = payload.get("threshold_stability")
         if isinstance(stab, dict) and stab.get("records"):
             L.append(
@@ -864,6 +905,12 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
                 f" (历史最多合取连亮 {stab['max_conjunction_streak']}; 记录 {stab['first_date']}"
                 f"→{stab['last_date']}) — 合取连亮持续出现才具备启动正式评估资格;"
                 "稳定阈值 K 属 owner 预注册范围, 本工具只计数不判定"
+            )
+            L.append(
+                f"- 0.60 锚稳定计数: 条件③ 连亮 {stab.get('condition_3_streak', 0)}/{stab['records']}"
+                f" · 0.60 锚合取连亮 {stab.get('conjunction_060_streak', 0)}/{stab['records']}"
+                f" (历史最多 {stab.get('max_conjunction_060_streak', 0)}; R100 起积累,"
+                " 旧记录缺键按断链保守处理)"
             )
         else:
             L.append("- 稳定计数: 账本尚无记录 (首刷后逐次累积)")

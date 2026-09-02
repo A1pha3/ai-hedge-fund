@@ -129,3 +129,67 @@ def test_max_conjunction_true_historical_scan():
     assert tt.trigger_stability([_rec("20260901", armed=False)] * 3)[
         "max_conjunction_streak"
     ] == 0
+
+
+# --- R100 Op1: 0.60 锚 (条件③/060 合取) 稳定计数 ------------------------------
+
+
+def _rec060(day, c3_lit=True, armed060=False, with_c3=True, **kw):
+    rec = _rec(day, **kw)
+    if with_c3:
+        rec["condition_3"] = {"lit": c3_lit, "judged": True, "n": 340, "stat": 0.0007}
+        rec["conjunction_060_armed"] = armed060
+    return rec
+
+
+def test_stability_060_empty_ledger_zeroes():
+    st = tt.trigger_stability([])
+    assert st["condition_3_streak"] == 0
+    assert st["conjunction_060_streak"] == 0
+    assert st["max_conjunction_060_streak"] == 0
+
+
+def test_stability_060_streak_and_break():
+    records = [
+        _rec060("20260829", c3_lit=True, armed060=True),
+        _rec060("20260830", c3_lit=True, armed060=True),
+        _rec060("20260831", c3_lit=False, armed060=False),
+    ]
+    st = tt.trigger_stability(records)
+    assert st["condition_3_streak"] == 0  # 最新未亮 → 断链
+    assert st["conjunction_060_streak"] == 0
+    assert st["max_conjunction_060_streak"] == 2  # 历史段如实
+    st2 = tt.trigger_stability(records[:2])
+    assert st2["condition_3_streak"] == 2
+    assert st2["conjunction_060_streak"] == 2
+    assert st2["condition_3_last_lit"] is True
+    assert st2["conjunction_060_last_armed"] is True
+
+
+def test_stability_060_old_records_break_conservatively():
+    """R100 前旧记录无 060 键 → 未点亮断链 (未知不延长连亮)."""
+    records = [
+        _rec("20260829"),  # 旧形态: 无 condition_3 / conjunction_060_armed
+        _rec060("20260830", c3_lit=True, armed060=True),
+        _rec060("20260831", c3_lit=True, armed060=True),
+    ]
+    st = tt.trigger_stability(records)
+    assert st["condition_3_streak"] == 2  # 旧记录在最新锚定段之前, 不影响向前计数
+    assert st["conjunction_060_streak"] == 2
+    # 但旧记录夹在中间会断链:
+    records2 = [
+        _rec060("20260829", c3_lit=True, armed060=True),
+        _rec("20260830"),  # 旧形态夹中间
+        _rec060("20260831", c3_lit=True, armed060=True),
+    ]
+    st2 = tt.trigger_stability(records2)
+    assert st2["condition_3_streak"] == 1
+    assert st2["conjunction_060_streak"] == 1
+    assert st2["max_conjunction_060_streak"] == 1  # 两段各 1, 取最大
+
+
+def test_stability_060_last_lit_from_old_record_is_none():
+    records = [_rec("20260829")]
+    st = tt.trigger_stability(records)
+    assert st["condition_3_last_lit"] is None
+    assert st["conjunction_060_last_armed"] is None

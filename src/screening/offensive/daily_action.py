@@ -1524,6 +1524,7 @@ def _render_trigger_state_line() -> str | None:
 
     c1_raw = latest.get("condition_1") or {}
     c2_raw = latest.get("condition_2") or {}
+    c3_raw = latest.get("condition_3") or {}
     c1_judged = bool(c1_raw.get("judged"))
     c2_judged = bool(c2_raw.get("judged"))
     c1 = (
@@ -1538,11 +1539,28 @@ def _render_trigger_state_line() -> str | None:
         if c2_judged
         else "条件② 0.50-0.60 转负 样本不足未判定"
     )
+    # 0.60 锚子句 (R100 Op1 预注册): 旧记录无 condition_3 → 未判定形态
+    # (缺键 = 未知, 不点亮不计数 — 与 fail-open 整行省略同族但按格披露)。
+    if not c3_raw:
+        c3 = "0.60 锚条件③ 无记录（R100 前旧账本）"
+    elif not c3_raw.get("judged"):
+        c3 = "0.60 锚条件③ 0.60-0.70 桶 CI>0 样本不足未判定"
+    else:
+        c3 = (
+            f"0.60 锚条件③ 0.60-0.70 桶 CI>0 {'已亮' if c3_raw.get('lit') else '未亮'}"
+            f"（连亮 {stab.get('condition_3_streak', 0)}）"
+        )
     armed = latest.get("conjunction_armed") is True
     conj = (
         "合取已武装 → 阈值上调正式评估就绪（owner 预注册动作）"
         if armed
         else "合取未武装"
+    )
+    armed_060 = latest.get("conjunction_060_armed") is True
+    conj_060 = (
+        "0.60 锚合取③∧②已武装 → 0.50→0.60 上调评估就绪（owner 预注册动作）"
+        if armed_060
+        else f"0.60 锚合取未武装（连亮 {stab.get('conjunction_060_streak', 0)}）"
     )
     court = latest.get("court")
     coverage = (
@@ -1552,7 +1570,8 @@ def _render_trigger_state_line() -> str | None:
     )
     anchor = latest.get("anchor") or "production_aligned/t10"
     return (
-        f"强度阈值触发器（{anchor} · 账本 {stab['records']} 条）：{c1} · {c2} · {conj}{coverage}"
+        f"强度阈值触发器（{anchor} · 账本 {stab['records']} 条）：{c1} · {c2} · {conj}；"
+        f"{c3} · {conj_060}{coverage}"
     )
 
 
