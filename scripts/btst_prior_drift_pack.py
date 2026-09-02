@@ -84,11 +84,23 @@ def kelly_view(prior: Mapping[str, Any], rebuilt: Mapping[str, Any]) -> dict[str
             return None
         return kelly_fraction(float(stats["winrate"]), float(stats["avg_gain"]), float(stats["avg_loss"]))
 
+    prior_f = _f(prior)
+    rebuilt_f = _f(rebuilt)
+    crosses = (
+        prior_f is not None and rebuilt_f is not None
+        and (prior_f > PER_SETUP_CAP) != (rebuilt_f > PER_SETUP_CAP)
+    )
     return {
-        "prior_full_kelly": _f(prior),
-        "rebuilt_full_kelly": _f(rebuilt),
+        "prior_full_kelly": prior_f,
+        "rebuilt_full_kelly": rebuilt_f,
         "per_setup_cap": PER_SETUP_CAP,
-        "cap_binding_note": "若两侧 f* 均低于 cap, 漂移是披露级而非仓位级 (R15: cap 是现体系绑定约束)",
+        "active_sizing_impact": "none — 生产 BTST sizing = setup_max_pct × drawdown_factor × strength_factor (daily_action.py:2337, 纯 cap 制, 不调 kelly_fraction)",
+        "latent_impact": (
+            "若未来接 Kelly sizing: 漂移跨 cap 边界 (f* 从 cap 之上落到之下) — 潜在仓位级"
+            if crosses
+            else "两侧 f* 相对 cap 同侧 — 无潜在边界跨越"
+        ),
+        "disclosure_impact": "real — 先验数字进每日报告与 top_setups 排序展示路径",
     }
 
 
@@ -161,6 +173,8 @@ def render_md(payload: Mapping[str, Any]) -> str:
             "",
             f"E 漂移: **{h['er_delta_pp']}pp** · full Kelly: 先验 {h['kelly']['prior_full_kelly']}"
             f" vs 重建 {h['kelly']['rebuilt_full_kelly']} (cap {h['kelly']['per_setup_cap']})",
+            "",
+            f"仓位影响: 今日 {h['kelly']['active_sizing_impact']} · 潜在 {h['kelly']['latent_impact']}",
             "",
         ]
     sel = payload["selection_view"]

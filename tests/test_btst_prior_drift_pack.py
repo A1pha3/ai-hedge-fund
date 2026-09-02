@@ -70,7 +70,7 @@ class TestKellyView:
         assert view["prior_full_kelly"] is not None
         assert view["rebuilt_full_kelly"] is not None
         assert view["per_setup_cap"] == 0.10
-        assert "披露级" in view["cap_binding_note"]
+        assert "disclosure_impact" in view  # R98 Op3: 三态表述取代旧 cap_binding_note
 
     def test_missing_fields_give_none(self):
         view = kelly_view({"winrate": None}, {"winrate": 0.5, "avg_gain": 0.1, "avg_loss": -0.1})
@@ -110,3 +110,23 @@ class TestBuildPayload:
         assert len(payload["options"]) == 2
         assert any("重校准" in o for o in payload["options"])
         assert any("等待" in o for o in payload["options"])
+
+
+class TestKellyThreeStateFraming:
+    """R98 Op3 对抗修复: 生产 sizing 事实 (cap 制) 必须在场, 不得暗示今日仓位受影响."""
+
+    def test_active_sizing_impact_is_none_cap_regime(self):
+        prior = {"winrate": 0.4645, "avg_gain": 0.1344, "avg_loss": -0.1062}
+        rebuilt = {"winrate": 0.4462, "avg_gain": 0.1305, "avg_loss": -0.1049}
+        view = kelly_view(prior, rebuilt)
+        assert view["active_sizing_impact"].startswith("none")
+        assert "daily_action.py:2337" in view["active_sizing_impact"]
+        assert "latent_impact" in view and "disclosure_impact" in view
+        # 该例 f*: prior 0.389 > cap, rebuilt 0.0099 < cap → 跨边界
+        assert "跨 cap 边界" in view["latent_impact"]
+
+    def test_latent_no_cross_when_same_side(self):
+        prior = {"winrate": 0.55, "avg_gain": 0.10, "avg_loss": -0.08}
+        rebuilt = {"winrate": 0.54, "avg_gain": 0.10, "avg_loss": -0.08}
+        view = kelly_view(prior, rebuilt)
+        assert "无潜在边界跨越" in view["latent_impact"]
