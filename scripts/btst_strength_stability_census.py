@@ -187,6 +187,11 @@ def render_md(payload: Mapping[str, Any]) -> str:
         "- 符号一致性是必要条件 (R15 纪律); 排序稳定不足以判定",
         "- early 窗幸存者偏差方向为乐观化: stable_negative 判定对偏差稳健,",
         "  stable_positive 判定需打折 (early 的正 E 上界被高估)",
+        "- 宇宙口径: 全候选 (含 crisis/risk_off 事件), 与分解工具的 normal-only 口径不同 —",
+        "  例: production 0.50-0.60 全宇宙 E=−0.74% vs normal-only +0.17% (差额即危机污染);",
+        "  regime 参照轴单独呈现, 消费方勿将本表与 normal-only 表混读",
+        "- 多重比较告诫: 四带普查后 0.60-0.70 是唯一 stable_positive — post-hoc 选择,",
+        "  属 hypothesis-generating; 前向确认 (触发器/前向 trial) 前不构成任何参数变更依据",
         "",
     ]
     return "\n".join(lines)
@@ -217,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
             "verdicts": VERDICTS,
             "split": "window-median signal_date, time-ordered",
         },
+        "universe": "all_candidates",
         "discipline": [
             "纯诊断 (宪法 #2); 参数变化 = 新证据世代 owner 决策",
             "符号一致性必要 (R15); early 幸存者偏差方向成文",

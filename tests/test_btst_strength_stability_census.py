@@ -107,3 +107,16 @@ class TestCensusAxis:
         assert by_group["0.50-0.60"]["cells"]["full"]["n"] == 100
         assert by_group[">=0.70"]["cells"]["full"]["n"] == 100
         assert by_group["<0.50"]["cells"] == {}
+
+
+class TestAdversarialDisclosure:
+    """R97 Op3 对抗修复: 宇宙口径与多重比较告诫必须始终在场."""
+
+    def test_md_discloses_universe_and_multiplicity(self):
+        from scripts.btst_strength_stability_census import render_md
+
+        payload = {"rows": [], "merged_verdicts": []}
+        text = render_md(payload)
+        assert "全候选" in text and "normal-only" in text
+        assert "多重比较" in text and "hypothesis-generating" in text
+        assert "post-hoc" in text
