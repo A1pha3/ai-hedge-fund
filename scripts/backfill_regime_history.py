@@ -6,6 +6,8 @@ tushare 5 端点全部可用, detect_market_state(date) 是自包含单日函数
 
 幂等: 已有标签的日期 (auto_screening 报告 + 上次 backfill) 跳过.
 可中断: 每 50 日存盘, 中断后重跑从断点继续.
+端点: 默认昨日 (--end 覆盖, ≥今日拒绝 — 当日标签是 --auto 收盘后的职责,
+半日数据回填会制造伪标签, 与空窗同为 court 证据的对偶污染面).
 """
 from __future__ import annotations
 
@@ -21,9 +23,30 @@ logger = logging.getLogger(__name__)
 _REGIME_HISTORY_PATH = Path("data/reports/regime_history.json")
 _REPORTS_DIR = Path("data/reports/")
 _START_DATE = "20200101"
-_END_DATE = "20260707"
 _SAVE_EVERY = 50  # 每 50 日存盘一次 (防中断)
 _SLEEP_PER_DAY = 0.3  # 限频 (tushare)
+
+
+def _resolve_end_date(raw_end: str | None, *, today: "date | None" = None) -> str:
+    """回填端点解析: 默认昨日; 显式 --end 尊重; end≥今日一律拒绝.
+
+    当日 regime 是 --auto 生产写入者的职责 (收盘后 detect_market_state 定型);
+    回填在盘中跑会用半日数据算出伪标签 — 这是 2026-07-08..16 空窗教训的
+    对偶面: 空窗使 court 整日剔除, 半日伪标签则会污染 regime 分层证据。
+    """
+    from datetime import date as _date, timedelta as _timedelta
+
+    today = today or _date.today()
+    yesterday = (today - _timedelta(days=1)).strftime("%Y%m%d")
+    resolved = str(raw_end or "").strip() or yesterday
+    if len(resolved) != 8 or not resolved.isdigit():
+        raise SystemExit(f"invalid --end: {raw_end!r} (期望 YYYYMMDD)")
+    if resolved >= today.strftime("%Y%m%d"):
+        raise SystemExit(
+            f"--end {resolved} >= 今日 {today.strftime('%Y%m%d')} — "
+            "当日标签由 --auto 收盘后写入, 回填拒绝半日数据"
+        )
+    return resolved
 
 
 def _load_existing_history() -> dict[str, str]:
@@ -50,12 +73,12 @@ def _load_existing_map() -> dict[str, str]:
     return merged
 
 
-def _fetch_trading_days() -> list[str]:
+def _fetch_trading_days(end: str = "20260707") -> list[str]:
     """拉 2020-2026 交易日列表 (tushare trade_cal)."""
     from src.tools.tushare_api import _get_pro
 
     pro = _get_pro()
-    df = pro.trade_cal(exchange="", start_date=_START_DATE, end_date=_END_DATE, is_open=1)
+    df = pro.trade_cal(exchange="", start_date=_START_DATE, end_date=end, is_open=1)
     if df is None or len(df) == 0:
         return []
     return sorted(df["cal_date"].astype(str).tolist())
@@ -116,22 +139,32 @@ def _save_history(mapping: dict[str, str]) -> None:
     tmp.replace(_REGIME_HISTORY_PATH)
 
 
-def backfill(*, max_days: int | None = None, sleep: float = _SLEEP_PER_DAY) -> dict[str, str]:
+def backfill(
+    *,
+    max_days: int | None = None,
+    sleep: float = _SLEEP_PER_DAY,
+    end: str | None = None,
+) -> dict[str, str]:
     """backfill regime 历史. 返回完整 date→regime 映射.
+
+    幂等: 交易日中已有标签的日子 (regime_history + auto_screening 报告)
+    不重算不覆盖 — 只补缺标签日。
 
     Args:
         max_days: 最多 backfill 多少天 (None=全部; 测试/调试用)
         sleep: 每日 sleep 秒数 (限频)
+        end: 回填端点 YYYYMMDD (默认昨日; ≥今日被 _resolve_end_date 拒绝)
 
     Returns:
         ``{YYYYMMDD: regime}`` (含已有 + 本次新增)
     """
+    resolved_end = _resolve_end_date(end)
     existing = _load_existing_map()
-    trading_days = _fetch_trading_days()
+    trading_days = _fetch_trading_days(resolved_end)
     pending = [d for d in trading_days if d not in existing]
     logger.info(
-        "regime backfill: 交易日 %d, 已有标签 %d, 待 backfill %d",
-        len(trading_days), len(existing), len(pending),
+        "regime backfill: 端点 %s, 交易日 %d, 已有标签 %d, 待 backfill %d",
+        resolved_end, len(trading_days), len(existing), len(pending),
     )
     print(f"交易日 {len(trading_days)}, 已有标签 {len(existing)}, 待 backfill {len(pending)}")
 
@@ -158,9 +191,15 @@ def backfill(*, max_days: int | None = None, sleep: float = _SLEEP_PER_DAY) -> d
     return mapping
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="backfill regime_history 缺标签日 (幂等, 只补缺不覆盖)")
+    parser.add_argument("--end", default=None, help="回填端点 YYYYMMDD (默认昨日; ≥今日拒绝)")
+    parser.add_argument("--max-days", type=int, default=None, help="最多回填天数 (测试/调试)")
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-    backfill()
+    backfill(max_days=args.max_days, end=args.end)
 
 
 if __name__ == "__main__":
