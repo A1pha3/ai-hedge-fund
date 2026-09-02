@@ -500,3 +500,100 @@ class TestEndToEnd:
 
     def test_focus_ks_frozen(self):
         assert FOCUS_KS == (12, 14)
+
+
+class TestAdversarialHardening:
+    """Op2 对抗审查修复面: 方向语义/家族稳健性/切面 CI 一致性。"""
+
+    def test_marginal_log_direction_below_k10(self):
+        """k<10: 缩短持有 — net_k < net_10 → log_d < 0, 除以负天数 → 正值
+        = 提前退出每天的**对数代价** (不是延长收益)。符号方向钉死。"""
+        grids = [{2: 0.01, 10: 0.10, 14: 0.2}]
+        rows = paired_rows(grids, ["d1"], [_extras()], 2)
+        s = paired_summary(rows, 2)
+        # log_d = log(1+net_2) − log(1+net_10) < 0; /(2−10) < 0 → 正
+        assert s["marginal_log_per_day"] > 0
+        assert s["marginal_log_per_day"] == pytest.approx(
+            (math.log1p(0.01 - ROUNDTRIP_COST) - math.log1p(0.10 - ROUNDTRIP_COST))
+            / (2 - 10)
+        )
+
+    def test_marginal_log_direction_above_k10(self):
+        """k>10: 延长持有 — 正值 = 多持有每天的边际对数收益。"""
+        grids = [{10: 0.0, 14: 0.08}]
+        rows = paired_rows(grids, ["d1"], [_extras()], 14)
+        assert paired_summary(rows, 14)["marginal_log_per_day"] > 0
+
+    def test_render_discloses_direction_semantics(self):
+        """md 纪律行必须标注双向语义, 防止 k<10 行被误读。"""
+        payload = {"production": {"all_candidates": {"skipped": "x"}}}
+        md = render_md(payload)
+        assert "缩短" in md and "延长" in md
+
+    def test_family_robustness_counts(self):
+        """family_robustness: 全 k 曲线的 CI 越零计数 (焦点选择事后性的
+        家族级稳健性披露)。构造 summaries 含一个越零 k。"""
+        s = {
+            11: {"ci90_low": -0.01, "mean_d": 0.0},
+            12: {"ci90_low": 0.001, "mean_d": 0.01},
+            14: {"ci90_low": -0.01, "mean_d": 0.0},
+        }
+        p = {k: {"sign_consistent": True} for k in s}
+        q = qualification(s, p)
+        fam = q["family_robustness"]
+        assert fam["n_ks_judged"] == 3
+        assert fam["n_ks_ci_above_zero"] == 1
+        assert fam["ks_ci_above_zero"] == [12]
+
+    def test_family_robustness_none_above_zero(self):
+        s = {11: {"ci90_low": -0.01, "mean_d": 0.0}, 14: {"ci90_low": None, "mean_d": 0.0}}
+        p = {k: {"sign_consistent": True} for k in s}
+        q = qualification(s, p)
+        fam = q["family_robustness"]
+        assert fam["n_ks_ci_above_zero"] == 0
+        assert fam["ks_ci_above_zero"] == []
+
+    def test_strength_slice_has_ci_when_large(self):
+        """by_strength 桶 n≥MIN_CELL_N 时输出 ci90_low (与 by_regime 对齐)。"""
+        raw = tmp_path_world = None
+        import tempfile
+        from pathlib import Path as _P
+
+        tmp = _P(tempfile.mkdtemp())
+        table, raw_dir = TestEndToEnd._make_world(
+            tmp,
+            opens_fn=lambda i, entry: [entry * (1 + 0.004 * (j + 1)) for j in range(15)],
+            n_events=MIN_CELL_N + 5,
+            strength_fn=lambda i: 0.6,
+        )
+        ev = pd.read_csv(table, dtype={"signal_date": str})
+        payload = analyze_universe(ev, raw_dir, CAL)
+        sl = payload["all_candidates"]["slices"]["t14"]["by_strength"]
+        for bucket, v in sl.items():
+            assert set(v.keys()) == {"n", "mean_d", "ci90_low"}
+            if v["n"] >= MIN_CELL_N:
+                assert v["ci90_low"] is not None
+
+    def test_family_line_in_md(self):
+        agg = {
+            "n_events": 1,
+            "exclusions": {},
+            "curve": [],
+            "baseline_drift": [],
+            "split_half": {},
+            "slices": {},
+            "qualification": {
+                "qualified": False,
+                "focus_k": [12, 14],
+                "per_k": {"12": "not_supported", "14": "not_supported"},
+                "spearman_halves": None,
+                "family_robustness": {
+                    "n_ks_judged": 14,
+                    "n_ks_ci_above_zero": 0,
+                    "ks_ci_above_zero": [],
+                },
+                "criterion": "x",
+            },
+        }
+        md = render_md({"production": {"all_candidates": agg}})
+        assert "family robust: no k has paired CI90>0" in md

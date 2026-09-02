@@ -14,6 +14,9 @@ t14 E=+1.99% CI[+0.62] vs t10 +1.32% CI[−0.29]), 但其 ΔE 是**跨事件集�
      宪法 #2 的经济目标是组合单位净值长期对数增长; 多持有 (k−10) 天换来的
      边际对数收益若为负, per-trade E 提升不构成采纳理由。一阶近似: 单票串行
      资金、无再入场机会成本建模 (组合级留 owner 前向 Trial)。
+     **方向语义**: k>10 时正值 = 延长持有的每日边际对数收益 (好); k<10 时
+     除以负天数 — 正值 = **缩短持有的每日对数代价** (提前退出放弃的收益,
+     不是延长收益), 解读方向相反, 渲染层有标注。
   4. 稳定性: split-half (signal_date 中点切分) 符号合取 + 跨焦点 k 排序稳定
      (R15 判据镜像); regime/strength 切面 (n<30 只披露); early 窗同构。
 
@@ -265,11 +268,22 @@ def qualification(
     qualified = bool(verdicts) and all(v == "supported" for v in verdicts.values()) and (
         rho is None or rho >= SPEARMAN_MIN
     )
+    # 家族级稳健性: 焦点对 (Bonferroni×2) 之外, 全 k 曲线里 CI 越零的计数 —
+    # 焦点选择的事后性 (t12/t14 是 R95 看数据后的峰) 使该披露成为消费纪律:
+    # 若家族内有越零 k, 「焦点未越零」的结论不能外推为「持有轴无信号」。
+    ks_judged = sorted(k for k, s in summaries.items() if s.get("ci90_low") is not None)
+    ks_above = sorted(k for k in ks_judged if summaries[k]["ci90_low"] > 0)
+    family = {
+        "n_ks_judged": len(ks_judged),
+        "n_ks_ci_above_zero": len(ks_above),
+        "ks_ci_above_zero": ks_above,
+    }
     return {
         "qualified": qualified,
         "focus_k": list(FOCUS_KS),
         "per_k": {str(k): v for k, v in verdicts.items()},
         "spearman_halves": rho,
+        "family_robustness": family,
         "criterion": "focus CI90_low>0 ∧ split-half sign consistent ∧ (3+ focus: halves Spearman≥0.5)",
     }
 
@@ -365,12 +379,16 @@ def analyze_universe(ev: pd.DataFrame, raw_dir: Path, cal: list[str]) -> dict[st
             rows = paired_rows(g, d, x, k)
             assert rows is not None
             by_regime: dict[str, tuple[list[float], list[str]]] = {}
-            by_strength: dict[str, list[float]] = {}
+            by_strength: dict[str, tuple[list[float], list[str]]] = {}
             for r in rows:
                 vals, dd = by_regime.setdefault(r["regime"], ([], []))
                 vals.append(r["d"])
                 dd.append(r["day"])
-                by_strength.setdefault(strength_bucket(r["strength"]), []).append(r["d"])
+                s_vals, s_days = by_strength.setdefault(
+                    strength_bucket(r["strength"]), ([], [])
+                )
+                s_vals.append(r["d"])
+                s_days.append(r["day"])
             slices[f"t{k}"] = {
                 "by_regime": {
                     key: {
@@ -383,8 +401,14 @@ def analyze_universe(ev: pd.DataFrame, raw_dir: Path, cal: list[str]) -> dict[st
                     for key, (v, dd) in sorted(by_regime.items())
                 },
                 "by_strength": {
-                    key: {"n": len(v), "mean_d": sum(v) / len(v)}
-                    for key, v in sorted(by_strength.items())
+                    key: {
+                        "n": len(v),
+                        "mean_d": sum(v) / len(v),
+                        "ci90_low": (
+                            cluster_boot_ci_low(v, dd) if len(v) >= MIN_CELL_N else None
+                        ),
+                    }
+                    for key, (v, dd) in sorted(by_strength.items())
                 },
             }
         return {
@@ -423,6 +447,8 @@ def render_md(payload: dict[str, Any]) -> str:
         "",
         "纯诊断 (宪法 #2); 配对差在同一事件集内消元 unexited 选择效应;",
         "对齐基线漂移单独披露; 边际对数增速 = 资金占用调整后的每持有日对数增量;",
+        "**方向**: k>10 边际列正值 = 延长持有每日边际对数收益; k<10 除以负天数,",
+        "正值 = 缩短持有的每日对数代价 (提前退出放弃的收益) — 解读方向相反;",
         f"预注册焦点 k∈{list(FOCUS_KS)} (R95 锚定, Bonferroni×2); 全曲线同表披露;",
         "CI 为信号日聚类 bootstrap 90% 下界 (per-call seeded); n<30 只披露不判定。",
         "",
@@ -471,6 +497,20 @@ def render_md(payload: dict[str, Any]) -> str:
                 f"资格判定 (R15 合取镜像): **{'qualified' if q['qualified'] else 'not_qualified'}**"
                 f" — per_k={q['per_k']}, halves_spearman={q['spearman_halves']}"
             )
+            fam = q.get("family_robustness") or {}
+            if fam:
+                if fam["n_ks_ci_above_zero"] == 0:
+                    fam_txt = (
+                        f"family robust: no k has paired CI90>0 "
+                        f"({fam['n_ks_judged']} k judged) — not_qualified 对焦点选择事后性与"
+                        " 多重比较稳健"
+                    )
+                else:
+                    fam_txt = (
+                        f"family caveat: {fam['n_ks_ci_above_zero']}/{fam['n_ks_judged']} k "
+                        f"CI90>0 {fam['ks_ci_above_zero']} — 焦点未越零不可外推为持有轴无信号"
+                    )
+                lines.append(f"family 声明: {fam_txt}")
             lines.append("")
             for fk, sl in agg["slices"].items():
                 lines.append(f"### {scope} / {fk} 切面")
