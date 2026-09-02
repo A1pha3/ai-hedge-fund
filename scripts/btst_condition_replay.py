@@ -48,6 +48,8 @@ REPORTS_DIR = Path("data/reports")
 REGIME_BLOCK_LABELS = {"crisis", "risk_off"}
 PRODUCTION_MIN_STRENGTH = 0.50
 BUCKETS = ("regime_blocked", "detect_miss_today", "would_fire_today")
+# R96 Op5: 面板缺票的显式分类 — 不参与三桶 detect 归因 (无事实可算), 只披露绝不静默消失
+PANEL_MISSING_BUCKET = "panel_missing_ticker"
 
 _REALIZED_RE = re.compile(r"realized=([+-]?\d+(?:\.\d+)?)%")
 
@@ -155,6 +157,15 @@ def attach_realized(results: Sequence[ReplayResult], realized: Mapping[tuple[str
 def bucket_stats(results: Sequence[ReplayResult]) -> dict[str, Any]:
     """三桶 realized 对照 (只按信号日事实分桶, realized 是对照量)."""
     payload: dict[str, Any] = {}
+    panel_missing = [r for r in results if r.bucket == PANEL_MISSING_BUCKET]
+    if panel_missing:
+        values = [r.realized_pct for r in panel_missing if r.realized_pct is not None]
+        payload[PANEL_MISSING_BUCKET] = {
+            "n_buys": len(panel_missing),
+            "n_realized": len(values),
+            "tickers": sorted({r.ticker for r in panel_missing}),
+            "note": "面板缺票 — detect 不可算, 只披露不归因",
+        }
     for bucket in BUCKETS:
         rows = [r for r in results if r.bucket == bucket]
         values = [r.realized_pct for r in rows if r.realized_pct is not None]
@@ -194,6 +205,12 @@ def render_md(payload: Mapping[str, Any]) -> str:
             f"| {bucket} | {s['n_buys']} | {s['n_realized']} | {s['win_rate_pct']} "
             f"| {s['avg_win_pct']} | {s['avg_loss_pct']} | {s['expectancy_pct']} |"
         )
+    pm = payload["buckets"].get("panel_missing_ticker")
+    if pm:
+        lines += [
+            "",
+            f"⚠️ panel_missing_ticker: {pm['n_buys']} 笔 (detect 无面板输入不可归因, 只披露): {', '.join(pm['tickers'])}",
+        ]
     stages = payload["buckets"].get("detect_miss_stages") or {}
     if stages:
         lines += ["", "## detect miss 归因 (今日输入)", "", "| stage | 笔数 |", "|---|---|"]
@@ -279,7 +296,24 @@ def main(argv: list[str] | None = None) -> int:
         regime = regime_labels.get(signal_date, "unknown")
         ts_code = next((c for c in groups if c.startswith(ticker + ".")), None)
         if ts_code is None:
-            continue  # 面板无此票 — 记录进 miss 明细意义有限, 跳过并计数
+            # R96 Op5 (对抗审查修复): 面板缺票绝不静默消失 — 显式披露行,
+            # 计入 n_buys 守恒; 不参与三桶 detect 归因 (detect 无输入不可算)。
+            results.append(
+                ReplayResult(
+                    signal_date=signal_date,
+                    ticker=ticker,
+                    horizon=int(record.get("horizon") or 10),
+                    regime=regime,
+                    hit=False,
+                    miss_stage="panel_missing",
+                    court_strength=0.0,
+                    industry_name=None,
+                    industry_pct=None,
+                    bucket=PANEL_MISSING_BUCKET,
+                    realized_pct=realized.get((signal_date, ticker)),
+                )
+            )
+            continue
         frame = ticker_frame(groups[ts_code], signal_date)
         flows = flow_store.get_range(ticker, "20200101", "20991231")
         ind_name = industry_of(sw_rows, ticker, signal_date)

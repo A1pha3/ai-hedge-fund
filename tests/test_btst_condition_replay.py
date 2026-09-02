@@ -164,3 +164,54 @@ class TestRealizedAndStats:
         ]
         stats = bucket_stats(records)
         assert stats["detect_miss_stages"] == {"c3_industry_weak": 2}
+
+
+class TestPanelMissingFailLoud:
+    """R96 Op5 对抗修复: 面板缺票绝不静默消失."""
+
+    def _pm_record(self, ticker="999999", realized=-5.0):
+        from scripts.btst_condition_replay import ReplayResult, PANEL_MISSING_BUCKET
+
+        return ReplayResult(
+            signal_date="20260813", ticker=ticker, horizon=10, regime="normal",
+            hit=False, miss_stage="panel_missing", court_strength=0.0,
+            industry_name=None, industry_pct=None,
+            bucket=PANEL_MISSING_BUCKET, realized_pct=realized,
+        )
+
+    def test_panel_missing_disclosed_and_conserved(self):
+        from scripts.btst_condition_replay import bucket_stats
+
+        normal = [self._pm_record(ticker="600600", realized=-5.0)]
+        # normal row needs a real bucket; reuse _record-style via bucket_stats directly
+        from scripts.btst_condition_replay import ReplayResult
+        would = ReplayResult(signal_date="20260821", ticker="601212", horizon=10,
+                             regime="normal", hit=True, miss_stage=None, court_strength=0.65,
+                             industry_name="有色金属", industry_pct=2.7,
+                             bucket="would_fire_today", realized_pct=None)
+        stats = bucket_stats([self._pm_record(realized=-5.0), would])
+        pm = stats["panel_missing_ticker"]
+        assert pm["n_buys"] == 1
+        assert pm["tickers"] == ["999999"]
+        # 不污染三桶: would_fire 仍只有 1
+        assert stats["would_fire_today"]["n_buys"] == 1
+        assert stats["regime_blocked"]["n_buys"] == 0
+
+    def test_no_panel_missing_key_when_covered(self):
+        from scripts.btst_condition_replay import bucket_stats, ReplayResult
+
+        row = ReplayResult(signal_date="20260821", ticker="601212", horizon=10,
+                           regime="normal", hit=True, miss_stage=None, court_strength=0.65,
+                           industry_name="有色金属", industry_pct=2.7,
+                           bucket="would_fire_today", realized_pct=None)
+        stats = bucket_stats([row])
+        assert "panel_missing_ticker" not in stats
+
+    def test_md_discloses_panel_missing(self):
+        from scripts.btst_condition_replay import bucket_stats, render_md
+
+        stats = bucket_stats([self._pm_record(realized=-5.0)])
+        payload = {"buckets": stats, "records": [self._pm_record(realized=-5.0).__dict__]}
+        text = render_md(payload)
+        assert "panel_missing_ticker" in text
+        assert "999999" in text
