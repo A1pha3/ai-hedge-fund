@@ -42,6 +42,7 @@ ranked_candidates.sort + 敞口截断), 没有每日新仓数量上限。R98 先
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from datetime import date
@@ -341,6 +342,136 @@ def segment_premium(df: pd.DataFrame, horizon: int) -> list[dict[str, Any]]:
     return rows
 
 
+# --- R99 Op2 对抗面: placebo 置换 / 并列率 / rank 深度 ------------------------
+#
+# 质疑 (对抗审查提出): 带内 premium 可能不是「排名携带信息」而是 (a) 强度
+# 并列时排名退化为 ts_code 字母序 (上市板块/年代代理), (b) 组员身份构成。
+# placebo 置换直接证伪: 组内随机重排谁拿 rank-1 标签 (保持组结构与收益不
+# 变), premium 的置换分布 vs 观测值 — p 小 = 标签携带组内信息; p 大 = 溢价
+# 来自组员构成, 排名假设被证伪。p 值只披露不授权 (双侧语义: 观测落在置换
+# 分布两侧极端都算「标签有信息」, 方向另由观测 premium 符号给出)。
+
+PLACEBO_DRAWS = 1_000
+PLACEBO_SEED = 20260902  # per-call seeded, 与进程历史无关 (R13 纪律)
+
+
+def _multi_groups(df: pd.DataFrame, horizon: int, band: str | None) -> pd.DataFrame:
+    """多候选 (signal_date, band) 组成员帧 (band=None 池化)。"""
+    sub = df if band is None else df[df["strength_bucket"] == band]
+    grp_size = sub.groupby(["signal_date", "strength_bucket"])["ts_code"].transform("size")
+    return sub[grp_size >= 2]
+
+
+def tie_disclosure(df: pd.DataFrame, horizon: int) -> list[dict[str, Any]]:
+    """并列率与强度差分布: rank-1 与组内次强的 trigger_strength 关系。
+
+    tie = 完全并列 (排名退化为 ts_code 字母序); delta 分布给出「带内排名」
+    实际承载的强度分辨率。
+    """
+    rows: list[dict[str, Any]] = []
+    for band in BANDS:
+        multi = _multi_groups(df, horizon, band)
+        cum = multi.groupby(["signal_date", "strength_bucket"]).cumcount()
+        first = multi[cum == 0][["signal_date", "strength_bucket", "trigger_strength"]]
+        second = multi[cum == 1][["signal_date", "strength_bucket", "trigger_strength"]]
+        if not len(first):
+            rows.append({"band": band, "multi_groups": 0})
+            continue
+        merged = first.merge(
+            second,
+            on=["signal_date", "strength_bucket"],
+            suffixes=("_1", "_2"),
+            validate="one_to_one",
+        )
+        deltas = (merged["trigger_strength_1"] - merged["trigger_strength_2"]).tolist()
+        ties = sum(1 for d in deltas if abs(d) < 1e-12)
+        rows.append(
+            {
+                "band": band,
+                "multi_groups": len(merged),
+                "tie_groups": ties,
+                "tie_fraction": (ties / len(merged)) if len(merged) else None,
+                "strength_delta_mean": (sum(deltas) / len(deltas)) if deltas else None,
+                "strength_delta_max": max(deltas) if deltas else None,
+            }
+        )
+    return rows
+
+
+def placebo_rank_premium(
+    df: pd.DataFrame, horizon: int, draws: int = PLACEBO_DRAWS
+) -> list[dict[str, Any]]:
+    """组内随机重排 rank-1 标签的置换检验 (每强度带)。
+
+    每次抽取: 每个多候选组内均匀随机选一名为 placebo-rank-1, 其余为
+    placebo-rank-2+; placebo premium = E(r2+) − E(r1)。双侧 p 值 =
+    置换分布中 |p − placebo均值| ≥ |观测 − placebo均值| 的比例 +1 修正
+    (经典置换检验)。种子 per-call (带名混合), 只披露不授权。
+    """
+    import random as _random
+
+    ret_col = _ret_col(horizon)
+    rows: list[dict[str, Any]] = []
+    for band in BANDS:
+        multi = _multi_groups(df, horizon, band)
+        observed = _band_premium_stats(df, horizon, band)["premium"]
+        if not len(multi) or observed is None:
+            rows.append(
+                {"band": band, "observed_premium": observed, "placebo_mean": None, "p_two_sided": None, "n_draws": 0}
+            )
+            continue
+        # 带名 → 稳定整数盐 (hash() 进程间不稳定, 不能作种子分量)
+        salt = int(hashlib.sha256(band.encode()).hexdigest()[:8], 16)
+        rng = _random.Random(PLACEBO_SEED + salt)
+        groups: list[list[float]] = [
+            g[ret_col].tolist() for _, g in multi.groupby(["signal_date", "strength_bucket"])
+        ]
+        premia: list[float] = []
+        for _ in range(draws):
+            r1_sum = 0.0
+            r1_n = 0
+            r2_sum = 0.0
+            r2_n = 0
+            for members in groups:
+                pick = rng.randrange(len(members))
+                for i, v in enumerate(members):
+                    if i == pick:
+                        r1_sum += v
+                        r1_n += 1
+                    else:
+                        r2_sum += v
+                        r2_n += 1
+            premia.append(r2_sum / r2_n - r1_sum / r1_n)
+        p_mean = sum(premia) / len(premia)
+        obs_dev = abs(observed - p_mean)
+        extreme = sum(1 for p in premia if abs(p - p_mean) >= obs_dev)
+        rows.append(
+            {
+                "band": band,
+                "observed_premium": observed,
+                "placebo_mean": p_mean,
+                "p_two_sided": (extreme + 1) / (len(premia) + 1),
+                "n_draws": len(premia),
+            }
+        )
+    return rows
+
+
+def rank_depth_table(df: pd.DataFrame, horizon: int) -> list[dict[str, Any]]:
+    """每带 rank-1 / rank-2 / rank-3+ 三格 — 溢价是单调还是仅 rank-1 处。"""
+    ret_col = _ret_col(horizon)
+    rows: list[dict[str, Any]] = []
+    for band in BANDS:
+        multi = _multi_groups(df, horizon, band)
+        cum = multi.groupby(["signal_date", "strength_bucket"]).cumcount() + 1
+        row: dict[str, Any] = {"band": band}
+        for label, mask in (("rank1", cum == 1), ("rank2", cum == 2), ("rank3plus", cum >= 3)):
+            sub = multi[mask]
+            row[label] = win_loss_stats(sub[ret_col].tolist(), sub["signal_date"].tolist())
+        rows.append(row)
+    return rows
+
+
 def normalize_day(value: object) -> str:
     """signal_date → 'YYYYMMDD' 字符串 (镜像 census 语义, 畸形值 fail-closed)。"""
     text = str(value).replace("-", "").strip()
@@ -378,6 +509,9 @@ def build_report(
             "rank_premium_stability": rank_premium_stability(df, h),
             "segment_premium": segment_premium(df, h),
             "cross_window_early": cross_window_premium(early_df, h),
+            "tie_disclosure": tie_disclosure(df, h),
+            "placebo_rank_premium": placebo_rank_premium(df, h),
+            "rank_depth": rank_depth_table(df, h),
         }
     return report
 
@@ -454,6 +588,40 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         for row in block["segment_premium"]:
             pm = "—" if row["premium"] is None else f"{row['premium']:+.2%}"
             lines.append(f"- {row['segment']}: n={row['n']}, premium={pm}")
+        lines.append("")
+        lines.append("### 并列率披露 (rank-1 与次强并列时排名退化为 ts_code 字母序)")
+        lines.append("| 带 | 多候选组 | 并列组 | 并列率 | 强度差均值 | 强度差最大 |")
+        lines.append("|---|---|---|---|---|---|")
+        for row in block["tie_disclosure"]:
+            if not row.get("multi_groups"):
+                lines.append(f"| {row['band']} | 0 | — | — | — | — |")
+                continue
+            tf = "—" if row["tie_fraction"] is None else f"{row['tie_fraction']:.1%}"
+            dm = "—" if row["strength_delta_mean"] is None else f"{row['strength_delta_mean']:.4f}"
+            dx = "—" if row["strength_delta_max"] is None else f"{row['strength_delta_max']:.4f}"
+            lines.append(
+                f"| {row['band']} | {row['multi_groups']} | {row['tie_groups']} | {tf} | {dm} | {dx} |"
+            )
+        lines.append("")
+        lines.append("### placebo 置换检验 (组内随机重排 rank-1 标签; p 只披露不授权)")
+        lines.append("| 带 | 观测 premium | placebo 均值 | 双侧 p | 抽取数 |")
+        lines.append("|---|---|---|---|---|")
+        for row in block["placebo_rank_premium"]:
+            op = "—" if row["observed_premium"] is None else f"{row['observed_premium']:+.2%}"
+            pm = "—" if row["placebo_mean"] is None else f"{row['placebo_mean']:+.2%}"
+            pv = "—" if row["p_two_sided"] is None else f"{row['p_two_sided']:.3f}"
+            lines.append(f"| {row['band']} | {op} | {pm} | {pv} | {row['n_draws']} |")
+        lines.append("")
+        lines.append("### rank 深度 (rank-1 / rank-2 / rank-3+; 单调性披露)")
+        lines.append("| 带 | r1 n/E | r2 n/E | r3+ n/E |")
+        lines.append("|---|---|---|---|")
+        for row in block["rank_depth"]:
+            cells = []
+            for k in ("rank1", "rank2", "rank3plus"):
+                c = row[k]
+                e = "—" if c["expectancy"] is None else f"{c['expectancy']:+.2%}"
+                cells.append(f"{c['n']} / {e}")
+            lines.append(f"| {row['band']} | {cells[0]} | {cells[1]} | {cells[2]} |")
         cw = block["cross_window_early"]
         if cw:
             lines.append("")

@@ -262,3 +262,100 @@ class TestLoadUniverse:
         with pytest.raises(SystemExit) as exc:
             load_universe(csv)
         assert "缺少生产过滤列" in str(exc.value)
+
+
+# --- R99 Op2 对抗面: placebo 置换 / 并列率 / rank 深度 ------------------------
+
+
+class TestTieDisclosure:
+    def test_tie_fraction_and_deltas(self):
+        rows = [
+            # D1: 并列 (0.80/0.80) → tie; D2: 不并列 (0.80/0.75); D3: 三深不并列
+            {"date": "20260101", "ts": "AAA", "str": 0.80, "ret": 0.01},
+            {"date": "20260101", "ts": "BBB", "str": 0.80, "ret": 0.02},
+            {"date": "20260102", "ts": "CCC", "str": 0.80, "ret": 0.01},
+            {"date": "20260102", "ts": "DDD", "str": 0.75, "ret": 0.02},
+            {"date": "20260103", "ts": "EEE", "str": 0.80, "ret": 0.01},
+            {"date": "20260103", "ts": "FFF", "str": 0.78, "ret": 0.02},
+            {"date": "20260103", "ts": "GGG", "str": 0.75, "ret": 0.03},
+        ]
+        from scripts.btst_daily_selection_anatomy import tie_disclosure
+
+        df = with_daily_rank(_frame(rows), 10)
+        table = {r["band"]: r for r in tie_disclosure(df, 10)}
+        hi = table["≥0.70"]
+        assert hi["multi_groups"] == 3 and hi["tie_groups"] == 1
+        assert hi["tie_fraction"] == pytest.approx(1 / 3)
+        assert hi["strength_delta_max"] == pytest.approx(0.05)  # D3: 0.80−0.75
+
+
+class TestPlaceboRankPremium:
+    def test_strong_signal_small_p(self):
+        from scripts.btst_daily_selection_anatomy import placebo_rank_premium
+
+        rows = []
+        for i in range(40):
+            d = f"202601{i + 1:02d}"
+            rows.append({"date": d, "ts": f"A{i}", "str": 0.80, "ret": -0.05})
+            rows.append({"date": d, "ts": f"B{i}", "str": 0.75, "ret": 0.05})
+        df = with_daily_rank(_frame(rows), 10)
+        table = {r["band"]: r for r in placebo_rank_premium(df, 10, draws=200)}
+        hi = table["≥0.70"]
+        assert hi["observed_premium"] == pytest.approx(0.10)
+        assert hi["p_two_sided"] < 0.05
+
+    def test_pure_noise_p_large(self):
+        from scripts.btst_daily_selection_anatomy import placebo_rank_premium
+
+        rows = []
+        for i in range(40):
+            d = f"202601{i + 1:02d}"
+            rows.append({"date": d, "ts": f"A{i}", "str": 0.80, "ret": 0.03})
+            rows.append({"date": d, "ts": f"B{i}", "str": 0.75, "ret": 0.03})
+        df = with_daily_rank(_frame(rows), 10)
+        table = {r["band"]: r for r in placebo_rank_premium(df, 10, draws=100)}
+        hi = table["≥0.70"]
+        assert hi["observed_premium"] == pytest.approx(0.0)
+        assert hi["p_two_sided"] > 0.9
+
+    def test_determinism(self):
+        from scripts.btst_daily_selection_anatomy import placebo_rank_premium
+
+        rows = []
+        for i in range(10):
+            d = f"202601{i + 1:02d}"
+            rows.append({"date": d, "ts": f"A{i}", "str": 0.80, "ret": -0.02})
+            rows.append({"date": d, "ts": f"B{i}", "str": 0.75, "ret": 0.04})
+        df = with_daily_rank(_frame(rows), 10)
+        a = json.dumps(placebo_rank_premium(df, 10, draws=50), sort_keys=True)
+        b = json.dumps(placebo_rank_premium(df, 10, draws=50), sort_keys=True)
+        assert a == b
+
+    def test_empty_band_disclosed_not_crashed(self):
+        from scripts.btst_daily_selection_anatomy import placebo_rank_premium
+
+        rows = [{"date": "20260101", "ts": "A", "str": 0.55, "ret": 0.01}] * 1
+        df = with_daily_rank(_frame(rows), 10)
+        table = {r["band"]: r for r in placebo_rank_premium(df, 10, draws=10)}
+        assert table["0.60-0.70"]["n_draws"] == 0
+        assert table["0.60-0.70"]["p_two_sided"] is None
+
+
+class TestRankDepth:
+    def test_three_depth_cells(self):
+        from scripts.btst_daily_selection_anatomy import rank_depth_table
+
+        rows = [
+            {"date": "20260101", "ts": "AAA", "str": 0.80, "ret": 0.01},
+            {"date": "20260101", "ts": "BBB", "str": 0.75, "ret": 0.02},
+            {"date": "20260101", "ts": "CCC", "str": 0.72, "ret": 0.03},
+            {"date": "20260102", "ts": "DDD", "str": 0.80, "ret": 0.00},
+            {"date": "20260102", "ts": "EEE", "str": 0.75, "ret": 0.01},
+        ]
+        df = with_daily_rank(_frame(rows), 10)
+        table = {r["band"]: r for r in rank_depth_table(df, 10)}
+        hi = table["≥0.70"]
+        assert hi["rank1"]["n"] == 2
+        assert hi["rank2"]["n"] == 2
+        assert hi["rank3plus"]["n"] == 1  # 仅 D1 第三名 CCC
+        assert hi["rank3plus"]["expectancy"] == pytest.approx(0.03 - ROUNDTRIP_COST)
