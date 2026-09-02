@@ -1707,3 +1707,92 @@ class TestThreshold060AnchorTrigger:
         status = threshold_trigger_status(self._rows())
         assert "R100" in status["rule_060"]
         assert "共享" in status["rule_060"]  # 条件② 耦合披露
+
+
+class TestTriggerSnapshot060AndRender:
+    """R100 Op2 对抗收口: 落账快照新字段三形态 + MD 060 行渲染.
+
+    Op1 审查结论: 判定/计数/状态行四面语义正确 (含锚分歧), 缺口在快照
+    写入形态与报告渲染无测试钉死 — 未来重构可静默丢 condition_3 字段或
+    060 行而不红。
+    """
+
+    @staticmethod
+    def _trigger060(c3_lit=True, c2_lit=False, n=300):
+        return {
+            "rule": "预注册触发器", "rule_060": "R100 0.60 锚",
+            "anchor": "production_aligned/t10", "min_n": 30,
+            "condition_1_strong_bucket_ci_above_zero": {
+                "lit": True, "judged": True, "n": n, "stat": 0.0023},
+            "condition_2_mid_bucket_expectancy_negative": {
+                "lit": c2_lit, "judged": True, "n": n, "stat": 0.0097},
+            "condition_3_midhigh_bucket_ci_above_zero": {
+                "lit": c3_lit, "judged": True, "n": n, "stat": 0.0007},
+            "conjunction_armed": False,
+            "conjunction_060_armed": bool(c3_lit and c2_lit),
+            "verdict": "测试夹具", "verdict_060": "测试夹具 060",
+        }
+
+    def test_snapshot_writes_060_fields(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status(
+            {"threshold_trigger": self._trigger060()}, "20260902", ledger_path=ledger
+        )
+        rec = load_trigger_ledger(ledger)[0]
+        assert rec["condition_3"]["lit"] is True
+        assert rec["condition_3"]["stat"] == 0.0007
+        assert rec["conjunction_060_armed"] is False
+
+    def test_old_form_payload_writes_old_form_record(self, tmp_path):
+        """旧形态 payload (无 060 键) → 记录无新键, 不假装判定 (向后兼容)."""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        old_trigger = TestTriggerStabilityLedger._trigger()
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status(
+            {"threshold_trigger": old_trigger}, "20260831", ledger_path=ledger
+        )
+        rec = load_trigger_ledger(ledger)[0]
+        assert "condition_3" not in rec
+        assert "conjunction_060_armed" not in rec
+
+    def test_same_day_replace_upgrades_record_form(self, tmp_path):
+        """同日以新形态重刷 → 当日记录升级含 060 键 (同日替换语义, 跨日旧记录不动)."""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status(
+            {"threshold_trigger": TestTriggerStabilityLedger._trigger()},
+            "20260901", ledger_path=ledger,
+        )
+        record_trigger_status(
+            {"threshold_trigger": self._trigger060()}, "20260901", ledger_path=ledger
+        )
+        records = load_trigger_ledger(ledger)
+        assert len(records) == 1
+        assert "condition_3" in records[0]
+
+    def test_render_md_contains_060_lines(self):
+        from scripts.winrate_payoff_decomposition import render_md
+        payload = {
+            "horizons": {},
+            "threshold_trigger": self._trigger060(),
+            "threshold_stability": {
+                "records": 2, "first_date": "20260901", "last_date": "20260902",
+                "condition_1_streak": 2, "condition_2_streak": 0,
+                "conjunction_streak": 0, "max_conjunction_streak": 0,
+                "condition_3_streak": 1, "conjunction_060_streak": 0,
+                "max_conjunction_060_streak": 0,
+            },
+        }
+        text = render_md(payload, "20260902")
+        assert "条件③ 0.60-0.70 桶净口径 CI90 下界>0 (R100 预注册 2026-09-02)" in text
+        assert "0.60 锚合取 (③∧②)" in text
+        assert "条件②被两合取共享" in text
+        assert "0.60 锚稳定计数" in text
+        assert "条件③ 连亮 1/2" in text

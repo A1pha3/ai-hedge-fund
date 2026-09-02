@@ -776,14 +776,18 @@ def record_trigger_status(
             k: trigger.get("condition_2_mid_bucket_expectancy_negative", {}).get(k)
             for k in ("lit", "judged", "n", "stat")
         },
-        # R100 Op1 起追加 (旧记录无此二键 → 读取面按未点亮/断链保守处理)
-        "condition_3": {
-            k: trigger.get("condition_3_midhigh_bucket_ci_above_zero", {}).get(k)
-            for k in ("lit", "judged", "n", "stat")
-        },
         "conjunction_armed": bool(trigger.get("conjunction_armed")),
-        "conjunction_060_armed": bool(trigger.get("conjunction_060_armed")),
     }
+    # 060 键 (R100 Op1 起存在) 按 payload 键存在性条件写入 — 旧形态 payload
+    # 落账保持旧形态 (省略键), 绝不写 NULL 值字段假装有判定面 (R100 Op2b
+    # 对抗修复: NULL 形 condition_3 曾使读取面把旧记录误标『样本不足』)。
+    if "condition_3_midhigh_bucket_ci_above_zero" in trigger:
+        snapshot["condition_3"] = {
+            k: trigger["condition_3_midhigh_bucket_ci_above_zero"].get(k)
+            for k in ("lit", "judged", "n", "stat")
+        }
+    if "conjunction_060_armed" in trigger:
+        snapshot["conjunction_060_armed"] = bool(trigger.get("conjunction_060_armed"))
     if court_binding is not None:
         # 无绑定不写字段 (与 R81 旧形态逐字一致): 不假装知道数据身份
         snapshot["court"] = dict(court_binding)
