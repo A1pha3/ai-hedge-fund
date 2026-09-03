@@ -1212,3 +1212,47 @@ def test_unknown_regime_reason_is_not_fabricated_as_normal() -> None:
     blocked = _kernel().decide_shadow(challenger)
     assert isinstance(blocked, NoTradeDecision)
     assert blocked.reason is BlockReason.REGIME_ADMISSION_BLOCKED
+
+
+def test_empty_candidates_is_no_signal_not_capacity_exhausted() -> None:
+    """R105: 零候选会话的 no-trade 语义是 NO_SIGNAL (生产者无信号),
+    不是 CAPACITY_EXHAUSTED (sizing 容量耗尽)。
+
+    生产实锤: 官方前向 Trial 08-28/09-02/09-03 三会话零 SELECTED 候选
+    (生产 setup_output_log plan_eligible 0↔0 交叉一致), 双臂共 6 行
+    trial_arm_decisions 被错标 CAPACITY_EXHAUSTED。executable 路径同场景
+    在 admission 层报 NO_SIGNAL (no candidates / no admitted), shadow
+    路径经 decide_core 的 not any(ENTRY_PLANNED) 一刀切混报 — 两路径
+    语义必须对称: 容量语义只在有候选时定义。"""
+
+    champion, challenger, *_ = _paired_world(candidates=())
+    champion_decision = _kernel().decide_shadow(champion)
+    challenger_decision = _kernel().decide_shadow(challenger)
+    for decision, arm in (
+        (champion_decision, "CHAMPION"),
+        (challenger_decision, "CHALLENGER"),
+    ):
+        assert isinstance(decision, NoTradeDecision), arm
+        assert decision.reason is BlockReason.NO_SIGNAL, arm
+
+
+def test_empty_candidates_beats_deadline_and_risk_ordering() -> None:
+    """R105: 零候选的 NO_SIGNAL 判定不越过更高优先级的 no-trade 门 —
+    deadline miss 与 risk block 仍然先于空候选语义报告 (与有候选会话
+    的核心不变式一致: DEADLINE_MISSED > risk > sizing/admission)。"""
+
+    champion, *_ = _paired_world(candidates=())
+    from datetime import timedelta
+
+    missed = champion.model_copy(
+        update={
+            "shared": champion.shared.model_copy(
+                update={
+                    "trusted_at": champion.shared.trusted_at + timedelta(hours=2),
+                }
+            )
+        }
+    )
+    decision = _kernel().decide_shadow(missed)
+    assert isinstance(decision, NoTradeDecision)
+    assert decision.reason is BlockReason.DEADLINE_MISSED

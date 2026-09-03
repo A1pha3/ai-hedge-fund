@@ -82,6 +82,11 @@ def decide_core(
     risk = evaluate_portfolio_risk(capital=capital, trusted_at=trusted_at)
     if risk.block_reason is not None:
         return CoreNoTrade(reason=risk.block_reason)
+    if not candidates:
+        # 零候选的 no-trade 语义是 NO_SIGNAL (生产者无信号), 与
+        # executable admission 的 no-candidates 分支对称; 容量语义
+        # (CAPACITY_EXHAUSTED) 只在有候选进 sizing 时才定义。
+        return CoreNoTrade(reason=BlockReason.NO_SIGNAL)
     adjusted = apply_portfolio_risk_once(
         unscaled_lineage_targets=constraints.lineage_gross_cap_cents,
         unscaled_portfolio_gross_cap_cents=constraints.portfolio_gross_cap_cents,

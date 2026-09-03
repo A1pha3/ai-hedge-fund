@@ -434,8 +434,9 @@ class TestDecideSession:
         )
         champion, challenger = world.stack.decision_store.pair(receipt.pair_key)
         assert {champion.arm, challenger.arm} == {"CHAMPION", "CHALLENGER"}
-        # 合成快照零候选: 决策 reason 是核内无行 (CAPACITY_EXHAUSTED 空集),
-        # 分类 NO_SIGNAL — SELECTED 候选在批的真实路径由
+        # 合成快照零候选: 决策 reason 是 NO_SIGNAL (R105 语义修复 —
+        # 零候选≠容量耗尽, 与 executable admission 对称), 分类 NO_SIGNAL —
+        # SELECTED 候选在批的真实路径由
         # TestSelectedCandidateDeadlineChain (live_candidates fixture) 承载。
         assert receipt.champion_status == receipt.challenger_status
 

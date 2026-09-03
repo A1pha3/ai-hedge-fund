@@ -471,3 +471,41 @@ def test_decide_passes_existing_gross_exposure_to_sizing(monkeypatch) -> None:
         trusted_at=NOW,
     )
     assert captured["existing"] == capital.total_gross_exposure_cents
+
+
+def test_decide_core_empty_candidates_is_no_signal() -> None:
+    """R105: 空候选进 decide_core 是 NO_SIGNAL, 不是 CAPACITY_EXHAUSTED。
+
+    容量语义只在有候选进 sizing 时才定义; 与 executable admission 的
+    no-candidates 分支 (admission 层 NO_SIGNAL) 对称。生产实锤: 前向
+    Trial 08-28/09-02/09-03 三会话零 SELECTED 候选被错标容量耗尽。"""
+
+    from src.screening.offensive.v3.kernel.core import (
+        CoreNoTrade,
+        DecisionConstraints,
+        decide_core,
+    )
+
+    capital = _snapshot(
+        as_of=NOW,
+        valid_until=NOW + timedelta(hours=18),
+        as_observed_nav_cents=10_000_000,
+        lifetime_high_water_mark_cents=10_000_000,
+        active_epoch_high_water_mark_cents=10_000_000,
+    )
+    result = decide_core(
+        candidates=(),
+        constraints=DecisionConstraints(
+            lineage_gross_cap_cents={},
+            sizing_config=_config(),
+            portfolio_gross_cap_cents=400_000,
+            policy_epoch=1,
+        ),
+        capital=capital,
+        prices={},
+        industries={},
+        deadlines=_deadlines(),
+        trusted_at=NOW,
+    )
+    assert isinstance(result, CoreNoTrade)
+    assert result.reason is BlockReason.NO_SIGNAL
