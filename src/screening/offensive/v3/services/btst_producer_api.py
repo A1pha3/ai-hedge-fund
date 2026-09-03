@@ -45,6 +45,7 @@ from src.screening.offensive.v3.evidence.repository import (
     TrustHeadProvider,
     VerifierProtocol,
 )
+from src.screening.offensive.v3.producers.auto import candidate_ingestion_window
 from src.screening.offensive.v3.producers.btst import (
     BTST_BEHAVIOR_BASELINE,
     BTST_PRODUCER_NAMESPACE,
@@ -100,18 +101,32 @@ class BtstProducerApi:
         )
 
     def produce_and_publish(
-        self, snapshot: VerifiedDailyActionSnapshot
+        self,
+        snapshot: VerifiedDailyActionSnapshot,
+        *,
+        published_at: datetime | None = None,
     ) -> tuple[EvidenceRecord[SignalEvidence], ...]:
         """运行 BTST 原始信号漏斗并发布全部签名 SignalEvidence。
 
         无 runtime gate (btst_canary 是合法 mode): 直接委托
-        ``produce_btst_signals`` 并逐信封发布, 返回与信封一一对应的
+        ``produce_btst_signal_artifacts`` 并逐信封发布, 返回与信封一一对应的
         发布记录 (每个候选 CANDIDATE → SELECTED 两枚)。
+
+        ``published_at`` (R103) 是信封 available_at 的注入面: 官方前向
+        Trial 路径 (trial_session_driver) 传实际发布时刻 —
+        trusted_evidence_cutoff = 成员水位+1s 必须落在 seal_creation_deadline
+        (signal_date 16:00 UTC) 内, available_at 钉入库窗关闭会让任何有
+        SELECTED 候选的会话结构性 DEADLINE_MISSED (生产 2026-08-31/09-01
+        实锤)。缺省 None 保持 legacy 窗关闭语义 (shadow 流无 deadline
+        消费面, 行为与历史逐字节一致)。
         """
         records: list[EvidenceRecord[SignalEvidence]] = []
+        if published_at is None:
+            _, published_at = candidate_ingestion_window(snapshot.signal_date)
         for artifact in produce_btst_signal_artifacts(
             snapshot,
             behavior_fingerprint=self._behavior_fingerprint,
+            published_at=published_at,
         ):
             envelope = artifact.envelope
             candidate_bytes = artifact.payload.canonical_bytes()

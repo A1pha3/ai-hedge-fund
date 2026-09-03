@@ -492,8 +492,17 @@ def test_publish_fault_leaves_only_a_safe_orphan_raw_blob(
         btst_producer, "produce_btst_signal_artifacts", None
     )
     assert callable(artifact_factory), "BTST producer must expose payload artifacts"
+    from datetime import datetime, timezone
+
+    from src.screening.offensive.v3.producers.auto import (
+        candidate_ingestion_window,
+    )
+
+    _, window_close = candidate_ingestion_window(_snapshot().signal_date)
     first = artifact_factory(
-        _snapshot(), behavior_fingerprint=BTST_FINGERPRINT
+        _snapshot(),
+        behavior_fingerprint=BTST_FINGERPRINT,
+        published_at=window_close,
     )[0]
 
     def fail_publish(*args, **kwargs):
@@ -925,6 +934,9 @@ class TestCandidateIngestionWindow:
         assert window_close == datetime(2026, 8, 6, 15, 0, tzinfo=timezone.utc)
         assert window_close - window_open == timedelta(hours=24)
 
+        # R103: available_at 是调用方显式注入的可用时刻 — legacy shadow 面
+        # 传窗关闭, 官面前向 Trial 路径传实际发布时刻 (deadline 相容性由
+        # test_trial_session_driver.TestSelectedCandidateDeadlineChain 钉死)。
         envelope = _signal_envelope(
             snapshot=_snapshot(),
             candidate=_candidate(),
@@ -932,6 +944,31 @@ class TestCandidateIngestionWindow:
             behavior_fingerprint=BTST_FINGERPRINT,
             strategy_semver=btst_producer.BTST_STRATEGY_SEMVER,
             producer_namespace=btst_producer.BTST_PRODUCER_NAMESPACE,
+            available_at=window_close,
         )
         assert envelope.observed_at == window_open
         assert envelope.available_at == window_close
+
+        published = window_open + timedelta(minutes=30)
+        official = _signal_envelope(
+            snapshot=_snapshot(),
+            candidate=_candidate(),
+            stage=SignalStage.SELECTED,
+            behavior_fingerprint=BTST_FINGERPRINT,
+            strategy_semver=btst_producer.BTST_STRATEGY_SEMVER,
+            producer_namespace=btst_producer.BTST_PRODUCER_NAMESPACE,
+            available_at=published,
+        )
+        assert official.available_at == published
+        assert official.observed_at == window_open
+
+        with pytest.raises(ValueError, match="timeline contract"):
+            _signal_envelope(
+                snapshot=_snapshot(),
+                candidate=_candidate(),
+                stage=SignalStage.SELECTED,
+                behavior_fingerprint=BTST_FINGERPRINT,
+                strategy_semver=btst_producer.BTST_STRATEGY_SEMVER,
+                producer_namespace=btst_producer.BTST_PRODUCER_NAMESPACE,
+                available_at=window_open - timedelta(seconds=1),
+            )

@@ -21,16 +21,19 @@ entry_price/target_weight/signal_date/snapshot_id/setup_consumed_fingerprint/ind
 family_id = f"{BTST_PRODUCER_NAMESPACE}:{snapshot.snapshot_id}"
 (STRATEGY_LINEAGE 要求非空 family_id)。
 
-时间链约定: 与 ``producers.auto`` 完全一致 — 信封时间戳全部由
-``snapshot.signal_date`` 派生 (observed_at = signal_date 15:00 UTC,
-available_at = signal_date+1 15:00 UTC); 测试将 signal_date 选为 clock
-前一天以满足 store 的 ingested_at 窗口约束。
+时间链约定 (R103): 与 ``producers.auto`` 完全一致 — observed_at =
+effective_at = provider_published_at = signal_date 15:00 UTC; available_at
+是调用方显式注入的可用时刻 (官方路径 ``produce_btst_signal_artifacts`` =
+实际发布时刻 ``published_at``, legacy shadow 面 ``produce_btst_signals`` =
+入库窗关闭 signal_date+1 15:00 UTC)。钉窗关闭曾使官方前向 Trial 任何有
+SELECTED 候选的会话结构性 DEADLINE_MISSED (生产 2026-08-31/09-01 实锤)。
 """
 
 from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 from typing import Final
 
@@ -45,7 +48,10 @@ from src.screening.offensive.v3.contracts.btst_candidate import (
     BtstRawCandidatePayload,
 )
 from src.screening.offensive.v3.contracts.evidence import SignalEvidence
-from src.screening.offensive.v3.producers.auto import _signal_envelope
+from src.screening.offensive.v3.producers.auto import (
+    _signal_envelope,
+    candidate_ingestion_window,
+)
 from src.tools.ashare_board_utils import (
     BEIJING_EXCHANGE_SYMBOL_PREFIXES,
     SHANGHAI_EXCHANGE_SYMBOL_PREFIXES,
@@ -219,8 +225,15 @@ def produce_btst_signal_artifacts(
     *,
     behavior_fingerprint: str,
     strategy_semver: str = BTST_STRATEGY_SEMVER,
+    published_at: datetime,
 ) -> tuple[BtstSignalArtifact, ...]:
-    """Produce envelopes together with the canonical candidate bytes they bind."""
+    """Produce envelopes together with the canonical candidate bytes they bind.
+
+    ``published_at`` 是信封 available_at 的权威注入 (R103): 官方前向 Trial
+    路径传实际发布时刻 — trusted_evidence_cutoff = 成员水位+1s 必须落在
+    seal_creation_deadline (signal_date 16:00 UTC) 内, available_at 钉
+    入库窗关闭会让任何有候选的会话结构性 DEADLINE_MISSED。
+    """
 
     scan = scan_from_verified_snapshot(snapshot)
     artifacts: list[BtstSignalArtifact] = []
@@ -245,6 +258,7 @@ def produce_btst_signal_artifacts(
                 behavior_fingerprint=behavior_fingerprint,
                 strategy_semver=strategy_semver,
                 producer_namespace=BTST_PRODUCER_NAMESPACE,
+                available_at=published_at,
             )
             envelope = SignalEvidence.model_validate(
                 legacy_envelope.model_dump(mode="python")
@@ -261,7 +275,11 @@ def produce_btst_signals(
     behavior_fingerprint: str,
     strategy_semver: str = BTST_STRATEGY_SEMVER,
 ) -> tuple[SignalEvidence, ...]:
-    """BTST raw targets/features 信号: 只输出候选原始字段, 无 sizing。
+    """BTST raw targets/features 信号 (legacy shadow 面): 只输出候选原始字段, 无 sizing。
+
+    available_at 保持 legacy 语义 = 入库窗关闭 (无 deadline 消费面, 行为与
+    历史逐字节一致); 官方路径请用 :func:`produce_btst_signal_artifacts` 并
+    显式注入 ``published_at``。
 
     Args:
         snapshot: 已验证 PIT 快照 (纯函数输入, 不重开缓存文件)。
@@ -272,12 +290,14 @@ def produce_btst_signals(
         每个候选两枚信封 (CANDIDATE → SELECTED), 顺序与扫描一致
         (trigger_strength 降序、ticker 升序)。无候选时返回空元组。
     """
+    _, window_close = candidate_ingestion_window(snapshot.signal_date)
     return tuple(
         artifact.envelope
         for artifact in produce_btst_signal_artifacts(
             snapshot,
             behavior_fingerprint=behavior_fingerprint,
             strategy_semver=strategy_semver,
+            published_at=window_close,
         )
     )
 

@@ -163,9 +163,19 @@ class ForwardBtstProducerPort(Protocol):
     ``BtstProducerApi`` already satisfies it. ``produce_and_publish`` runs
     exactly once per signal session; ``candidate_payload`` re-verifies the
     record against the store before the raw payload is trusted.
+
+    ``published_at`` (R103) 是信封 available_at 的注入面: 官方前向 Trial
+    路径传实际发布时刻 — trusted_evidence_cutoff (成员水位+1s) 必须落在
+    seal_creation_deadline (signal_session 16:00 UTC) 内; 缺省 None 保持
+    legacy 窗关闭语义 (shadow 流无 deadline 消费面, 行为与历史一致)。
     """
 
-    def produce_and_publish(self, snapshot: object) -> tuple[EvidenceRecord, ...]: ...
+    def produce_and_publish(
+        self,
+        snapshot: object,
+        *,
+        published_at: datetime | None = None,
+    ) -> tuple[EvidenceRecord, ...]: ...
 
     def candidate_payload(self, record: EvidenceRecord, *, expected_signal_session: date) -> object: ...
 

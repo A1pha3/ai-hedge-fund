@@ -650,8 +650,14 @@ class OfficialTrialSessionDriver:
             produce_btst_signal_artifacts,
         )
 
+        # R103: available_at = 实际发布时刻 — trusted_evidence_cutoff (成员
+        # 水位+1s) 必须落在 seal_creation_deadline (signal_session 16:00 UTC)
+        # 内; 钉入库窗关闭会使任何有 SELECTED 候选的会话结构性 DEADLINE_MISSED。
+        # 重放幂等由下方 presence 复用路径保证 (成员存在即复用, 水位冻结)。
         artifacts = produce_btst_signal_artifacts(
-            snapshot, behavior_fingerprint=BTST_BEHAVIOR_BASELINE
+            snapshot,
+            behavior_fingerprint=BTST_BEHAVIOR_BASELINE,
+            published_at=now,
         )
         selected_ids = tuple(
             artifact.envelope.evidence_id
@@ -706,7 +712,12 @@ class OfficialTrialSessionDriver:
                     if record is None
                 ],
             )
-        self._producer.produce_and_publish(snapshot)
+        # R103: available_at = 实际发布时刻 (经 producer 服务注入) —
+        # trusted_evidence_cutoff (成员水位+1s) 必须落在 seal_creation_deadline
+        # (signal_session 16:00 UTC) 内; 钉入库窗关闭会使任何有 SELECTED 候选
+        # 的会话结构性 DEADLINE_MISSED。重放幂等由上方 presence 复用路径保证
+        # (成员存在即复用, 水位冻结在首发布时刻)。
+        self._producer.produce_and_publish(snapshot, published_at=now)
         records = tuple(
             self._existing(
                 self._stack.btst_repository, evidence_id, cutoff=probe_cutoff

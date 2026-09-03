@@ -20,11 +20,18 @@ authorization 字段, 本模块也不会生成任何授权类字段。
 family_id = f"{AUTO_PRODUCER_NAMESPACE}:{snapshot.snapshot_id}"
 (STRATEGY_LINEAGE 要求非空 family_id)。
 
-时间链约定: 信封时间戳全部由 ``snapshot.signal_date`` 派生 —
-observed_at = effective_at = provider_published_at = signal_date 15:00 UTC,
-available_at = signal_date+1 15:00 UTC (24 小时窗口)。发布 (store
-ingested_at = clock()) 必须落在此窗口内; 测试将 signal_date 选为 clock
-前一天以满足该约束。
+时间链约定 (R103 修复): observed_at = effective_at = provider_published_at =
+signal_date 15:00 UTC (观察时刻, 由 ``snapshot.signal_date`` 派生);
+available_at 是**调用方显式注入的可用时刻** — 不再隐式钉死在入库窗关闭。
+入库窗 (:func:`candidate_ingestion_window`, signal_date 15:00 UTC 起 24h,
+双端闭) 只是 store 时间线契约 (``observed_at <= ingested_at <= available_at``)
+与首驱动守卫的合法边界, 不等于证据的可用时刻:
+- 官方前向 Trial 路径 (``produce_btst_signal_artifacts``) 注入实际发布时刻
+  — trusted_evidence_cutoff = 成员水位+1s 必须落在 seal_creation_deadline
+  (signal_date 16:00 UTC) 之前, 钉窗关闭 (signal_date+1 15:00 UTC) 会让任何
+  有候选的会话结构性 DEADLINE_MISSED (生产 08-31/09-01 实锤)。
+- legacy shadow 路径 (``produce_auto_signals`` / ``produce_btst_signals``,
+  无 deadline 消费面) 显式传窗关闭, 行为与历史逐字节一致。
 """
 
 from __future__ import annotations
@@ -77,6 +84,7 @@ def produce_auto_signals(
         (trigger_strength 降序、ticker 升序)。无候选时返回空元组。
     """
     scan = scan_from_verified_snapshot(snapshot)
+    _, window_close = candidate_ingestion_window(snapshot.signal_date)
     envelopes: list[SignalEvidence] = []
     for candidate in scan.candidates:
         for stage in (SignalStage.CANDIDATE, SignalStage.SELECTED):
@@ -88,6 +96,7 @@ def produce_auto_signals(
                     behavior_fingerprint=behavior_fingerprint,
                     strategy_semver=strategy_semver,
                     producer_namespace=AUTO_PRODUCER_NAMESPACE,
+                    available_at=window_close,
                 )
             )
     return tuple(envelopes)
@@ -113,16 +122,23 @@ def _signal_envelope(
     behavior_fingerprint: str,
     strategy_semver: str,
     producer_namespace: str,
+    available_at: datetime,
 ) -> SignalEvidence:
     """构造一枚候选漏斗阶段的不可变信号信封。
 
-    时间链由 ``snapshot.signal_date`` 经
-    :func:`candidate_ingestion_window` 派生: observed_at = effective_at =
-    provider_published_at = signal_date 15:00 UTC, available_at =
-    signal_date+1 15:00 UTC (24 小时窗口)。evidence_id 与 family_id 契约
-    见模块 docstring。信封只携带原始候选字段, 不含任何授权/sizing 输出。
+    时间链: observed_at = effective_at = provider_published_at = signal_date
+    15:00 UTC (:func:`candidate_ingestion_window` 下界); ``available_at`` 是
+    调用方显式注入的可用时刻 (R103: 官方路径=实际发布时刻, legacy shadow
+    路径=入库窗关闭), 必须满足 ``observed_at <= available_at`` 且覆盖实际
+    入库时刻 (store 双端闭契约)。evidence_id 与 family_id 契约见模块
+    docstring。信封只携带原始候选字段, 不含任何授权/sizing 输出。
     """
-    session_start, window_close = candidate_ingestion_window(snapshot.signal_date)
+    session_start, _ = candidate_ingestion_window(snapshot.signal_date)
+    if available_at < session_start:
+        raise ValueError(
+            "signal envelope available_at precedes its observed_at"
+            " (timeline contract: observed_at <= available_at)"
+        )
     return SignalEvidence(
         evidence_id=(
             f"{producer_namespace}:{snapshot.snapshot_id}:"
@@ -139,7 +155,7 @@ def _signal_envelope(
         effective_at=session_start,
         provider_published_at=session_start,
         observed_at=session_start,
-        available_at=window_close,
+        available_at=available_at,
         mode=ExecutionMode.RESEARCH_RECONSTRUCTION,
         source_authority=f"{producer_namespace}.producer",
         payload_content_hash=hashlib.sha256(

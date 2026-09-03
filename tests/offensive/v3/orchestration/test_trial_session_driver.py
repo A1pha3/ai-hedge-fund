@@ -434,8 +434,98 @@ class TestDecideSession:
         )
         champion, challenger = world.stack.decision_store.pair(receipt.pair_key)
         assert {champion.arm, challenger.arm} == {"CHAMPION", "CHALLENGER"}
-        # 两个 SELECTED 候选入批 → 会话分类 RUN (normal regime 两臂都放行)。
+        # 合成快照零候选: 决策 reason 是核内无行 (CAPACITY_EXHAUSTED 空集),
+        # 分类 NO_SIGNAL — SELECTED 候选在批的真实路径由
+        # TestSelectedCandidateDeadlineChain (live_candidates fixture) 承载。
         assert receipt.champion_status == receipt.challenger_status
+
+
+class TestSelectedCandidateDeadlineChain:
+    """R103: SELECTED 候选在批时, 候选信封 available_at 与 seal deadline 的相容性。
+
+    生产实锤 (2026-08-31/09-01): 候选信封 available_at 钉死在入库窗关闭
+    (signal_date+1 15:00 UTC), trusted_evidence_cutoff = 水位+1s 恒超
+    seal_creation_deadline (signal_date 16:00 UTC) — 夜间链 23:05 北京
+    (15:05 UTC, seal 窗内) 的准时 decide 被记 DEADLINE_MISSED, 双臂同命
+    使「双臂相等」类断言恒真掩盖缺陷。本组测试断言 reason 本身。
+    """
+
+    def _reasons(self, world: _DriverWorld, receipt) -> tuple[str, str]:
+        champion, challenger = world.stack.decision_store.pair(receipt.pair_key)
+
+        def _reason(decision) -> str:
+            reason = getattr(decision, "reason", None)
+            if reason is None:
+                # ShadowDecision (真实交易决策, 无 no-trade reason 字段)
+                return "PLANNED"
+            return reason.value if hasattr(reason, "value") else str(reason)
+
+        return _reason(champion.decision), _reason(challenger.decision)
+
+    def test_on_time_decide_with_candidates_not_deadline_missed(
+        self, live_candidates: _DriverWorld
+    ) -> None:
+        """RED: 修复前准时 (15:30 UTC, seal 窗 15:00–16:00 内) decide 的
+        SELECTED 会话被结构性记 DEADLINE_MISSED; 修复后必须进入 kernel
+        真实分支 (sizing/admission 层), deadline 不再因信封钉窗关闭而误判。"""
+        world = live_candidates
+        world.driver.ensure_trial_registration()
+        receipt = world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        champion_reason, challenger_reason = self._reasons(world, receipt)
+        assert champion_reason != "DEADLINE_MISSED", (
+            "on-time decide must not be deadline-blocked when candidates exist: "
+            f"champion reason was {champion_reason}"
+        )
+        assert challenger_reason != "DEADLINE_MISSED"
+        champion, challenger = world.stack.decision_store.pair(receipt.pair_key)
+        for arm in (champion, challenger):
+            # ShadowDecision.counterfactual_lines 只投影 core 的
+            # ENTRY_PLANNED 行 — 非空即证明决策真实穿过了
+            # deadline → risk → sizing 全链 (缺省 min_length=1)。
+            assert getattr(arm.decision, "counterfactual_lines", ()), (
+                "on-time decide with admitted candidates must project at least"
+                f" one counterfactual entry line ({arm.arm} decision:"
+                f" {arm.decision!r:.200})"
+            )
+
+    def test_late_in_window_decide_still_deadline_missed(
+        self, live_candidates: _DriverWorld
+    ) -> None:
+        """语义保持: 入库窗内 (24h) 但 seal deadline 后的首驱动仍诚实
+        DEADLINE_MISSED — 修复只把准时 decide 的水位拉回 deadline 内,
+        不允许晚 decide 冒充准时。"""
+        world = live_candidates
+        world.driver.ensure_trial_registration()
+        late = datetime(2026, 8, 7, 10, 0, tzinfo=UTC)
+        receipt = world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=late
+        )
+        champion_reason, _ = self._reasons(world, receipt)
+        assert champion_reason == "DEADLINE_MISSED"
+
+    def test_replay_with_candidates_exact_and_watermark_frozen(
+        self, live_candidates: _DriverWorld
+    ) -> None:
+        """候选在场时重放幂等: 同钟重放与推进钟重放 pair 逐字节恰等
+        (成员复用 → 水位冻结在首发布时刻, 不随重放时钟漂移)。"""
+        world = live_candidates
+        world.driver.ensure_trial_registration()
+        first = world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        rows_first = world.stack.decision_store.pair(first.pair_key)
+        world.now = DECIDE_AT + timedelta(minutes=20)
+        second = world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=world.now
+        )
+        assert second.pair_key == first.pair_key
+        assert second.champion_status == first.challenger_status or (
+            second.champion_status == first.champion_status
+        )
+        rows_second = world.stack.decision_store.pair(second.pair_key)
+        assert rows_second == rows_first
 
     def test_replay_same_clock_is_exact(self, world: _DriverWorld) -> None:
         world.driver.ensure_trial_registration()
