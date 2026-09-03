@@ -527,6 +527,104 @@ class TestSelectedCandidateDeadlineChain:
         rows_second = world.stack.decision_store.pair(second.pair_key)
         assert rows_second == rows_first
 
+
+class TestDeadlineBoundaryAdversarial:
+    """R104: seal 窗边界两侧钉死 (防 off-by-one 回归)。
+
+    seal_creation_deadline = signal_session 16:00 UTC; kernel 判据是严格
+    ``trusted_at > deadline``。trusted_at = 成员水位+1s:
+    - decide 15:59:59 → 水位+1s = 16:00:00 恰等 deadline → 必须通过;
+    - decide 16:00:30 (仍在 24h 入库窗内) → 诚实 DEADLINE_MISSED。
+    """
+
+    def test_decide_at_seal_boundary_last_second_plans(
+        self, live_candidates: _DriverWorld
+    ) -> None:
+        world = live_candidates
+        world.driver.ensure_trial_registration()
+        last_second = datetime(2026, 8, 6, 15, 59, 59, tzinfo=UTC)
+        receipt = world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=last_second
+        )
+        champion, challenger = world.stack.decision_store.pair(receipt.pair_key)
+        for arm in (champion, challenger):
+            reason = getattr(arm.decision, "reason", None)
+            assert reason is None or str(reason) != "DEADLINE_MISSED", (
+                "decide at 15:59:59 (watermark+1s == deadline, strict > not"
+                f" triggered) must pass the seal gate ({arm.arm})"
+            )
+            assert getattr(arm.decision, "counterfactual_lines", ())
+
+    def test_decide_just_past_deadline_honest_miss(
+        self, live_candidates: _DriverWorld
+    ) -> None:
+        world = live_candidates
+        world.driver.ensure_trial_registration()
+        past = datetime(2026, 8, 6, 16, 0, 30, tzinfo=UTC)
+        receipt = world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=past
+        )
+        champion, _ = world.stack.decision_store.pair(receipt.pair_key)
+        reason = getattr(champion.decision, "reason", None)
+        assert str(reason) == "DEADLINE_MISSED"
+
+
+class TestPartialPublicationWatermark:
+    """R104: 部分发布 crash-retry 的水位不变式 (R103 语义 PoC)。
+
+    首驱动在候选发布处崩溃 (regime/排程已以 t1 提交); t2 重驱动复用
+    regime/排程 (各自冻结 t1) + 候选新发布 (t2) → 水位 = max = t2+1s。
+    收敛判据: 重驱动成功、双臂决策通过 deadline 门、无类型化冲突。
+    """
+
+    def test_crash_between_members_converges_on_retry(
+        self, live_candidates: _DriverWorld
+    ) -> None:
+        world = live_candidates
+        world.driver.ensure_trial_registration()
+        producer = world.driver._producer  # noqa: SLF001 — 故障注入点
+        original = producer.produce_and_publish
+        state = {"failed": False}
+
+        def flaky_publish(snapshot, *, published_at=None):
+            if not state["failed"]:
+                state["failed"] = True
+                raise RuntimeError("injected candidate-publication fault")
+            return original(snapshot, published_at=published_at)
+
+        producer.produce_and_publish = flaky_publish
+        t1 = datetime(2026, 8, 6, 15, 10, tzinfo=UTC)
+        # 生产形态: CLI 单源注入 (clock=lambda:now) — driver 参数与 store
+        # 时钟同一时刻。world 时钟逐驱动对齐, 不构造时间畸形世界。
+        world.now = t1
+        with pytest.raises(RuntimeError, match="injected candidate-publication"):
+            world.driver.decide_session(
+                snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=t1
+            )
+        t2 = datetime(2026, 8, 6, 15, 20, tzinfo=UTC)
+        world.now = t2
+        receipt = world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=t2
+        )
+        champion, challenger = world.stack.decision_store.pair(receipt.pair_key)
+        for arm in (champion, challenger):
+            reason = getattr(arm.decision, "reason", None)
+            assert reason is None or str(reason) != "DEADLINE_MISSED", (
+                "retry watermark = max(regime t1 frozen, candidates t2) + 1s"
+                " = 15:20:01 must sit inside the 16:00 seal deadline"
+                f" ({arm.arm} reason={reason})"
+            )
+            assert getattr(arm.decision, "counterfactual_lines", ())
+        # 成员各自冻结在首次发布时刻 (regime 是 bootstrap 种子时刻,
+        # 排程是 t1, 候选是 t2): 重驱动复用而非重发, 水位 = max = t2 —
+        # regime 的 available_at 不随重驱动重盖 (< t2 即冻结证据)。
+        regime_record = world.stack.regime_repository.active_revision(
+            "regime:csi300:1.0", t2 + timedelta(seconds=1)
+        )
+        assert regime_record is not None
+        assert regime_record.evidence.available_at < t2
+        assert regime_record.evidence.available_at < t1 + timedelta(seconds=1)
+
     def test_replay_same_clock_is_exact(self, world: _DriverWorld) -> None:
         world.driver.ensure_trial_registration()
         first = world.driver.decide_session(

@@ -572,6 +572,28 @@ def test_full_funnel_publishes_candidate_and_selected_per_candidate(
         assert active.evidence.stage == record.evidence.stage
 
 
+def test_legacy_default_publish_pins_window_close_availability(
+    world: _World,
+) -> None:
+    """R104 对抗钉: shadow 服务面缺省 (无 published_at) 的 available_at 语义。
+
+    官方前向 Trial 路径 (trial_session_driver) 注入实际发布时刻 —
+    trusted_evidence_cutoff 必须落在 seal_creation_deadline 内 (生产
+    2026-08-31/09-01 的结构性 DEADLINE_MISSED 即此处钉窗关闭所致);
+    本测试钉死 shadow 缺省路径与历史逐字节一致 (入库窗关闭), 防未来
+    调用方把缺省路径误当官方路径消费。
+    """
+    from src.screening.offensive.v3.producers.auto import (
+        candidate_ingestion_window,
+    )
+
+    records = world.service.produce_and_publish(_snapshot())  # 缺省: 无 published_at
+    _, window_close = candidate_ingestion_window(SIGNAL_DATE)
+    assert records, "fixture premise: the scan yields candidates"
+    for record in records:
+        assert record.evidence.available_at == window_close
+
+
 def test_behavior_fingerprint_is_injected_onto_every_envelope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
