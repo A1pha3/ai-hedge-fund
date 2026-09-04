@@ -160,3 +160,41 @@ class TestRenderGapLine:
         line = self._line(tmp_path)
         assert line is not None
         assert "跨半不一致" in line
+
+
+def test_gap_reference_ignores_non_dated_lookalike_files(tmp_path):
+    """R109 Op2: 形状守卫 — 非日期同前缀文件不参与『最新』选择 (劫持 PoC 修复面).
+
+    修复前: glob + sorted[-1] 使 winrate_payoff_decomposition_backup.json
+    (合法 payload, 'backup' > '2' 字典序靠后) 被当作最新报告,
+    evidence_date 渲染为 'backup'。修复后只有 \\d{8} 日期段命名参与。
+    """
+    base = tmp_path
+    junk_payload = {
+        "universes": {"production_aligned": {
+            "gap_anatomy": {"available": True, "buckets": [
+                {"bucket": "5~10%", "n": 10, "expectancy": -0.5},
+                {"bucket": "0~2%", "n": 10, "expectancy": 0.1},
+            ]},
+            "horizons": {"t10": [{"group": "ALL", "n": 99}]},
+        }},
+    }
+    (base / "winrate_payoff_decomposition_backup.json").write_text(
+        json.dumps(junk_payload), encoding="utf-8")
+    # 无日期命名文件时: 垃圾文件被忽略 → 返回 None (不假装有证据)
+    assert gap_execution_reference(base) is None
+
+    # 有日期命名文件时: 垃圾文件被忽略, 取日期文件
+    real = dict(junk_payload)
+    real["universes"]["production_aligned"]["gap_anatomy"] = {
+        "available": True,
+        "buckets": [
+            {"bucket": "5~10%", "n": 10, "expectancy": -0.5},
+            {"bucket": "0~2%", "n": 30, "expectancy": 0.1},
+        ],
+    }
+    (base / "winrate_payoff_decomposition_20260904.json").write_text(
+        json.dumps(real), encoding="utf-8")
+    ref = gap_execution_reference(base)
+    assert ref is not None
+    assert ref["evidence_date"] == "20260904"

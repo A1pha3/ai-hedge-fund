@@ -412,3 +412,40 @@ def test_trigger_state_line_discloses_max_streaks_and_k_pending(case, tmp_path, 
     assert "历史最多连亮 2" in text       # 0.70 锚合取全历史最大武装段
     assert "060 锚 0" in text            # 0.60 锚历史最大武装段 (无 060 键)
     assert "K 未预注册" in text          # 稳定阈值 K 属 owner 预注册动作
+
+
+def test_prior_drift_line_ignores_non_dated_lookalike_files(case, tmp_path, monkeypatch):
+    """R109 Op2 PoC: 同前缀非日期文件 (合法 payload) 不得劫持披露行 — 形状守卫."""
+    base = _write_decomposition_report(tmp_path, expectancy=-0.0001, wr=0.4456)
+    junk = {
+        "universes": {"production_aligned": {"horizons": {"t10": [
+            {"group": "ALL", "n": 99, "winrate": 0.99, "expectancy": 0.99,
+             "cluster_ci_low_90": 0.9}]}}},
+    }
+    (base / "winrate_payoff_decomposition_backup.json").write_text(
+        json.dumps(junk), encoding="utf-8")
+    _patch_drift_reports_dir(monkeypatch, base)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "先验漂移披露" in text
+    assert "20260904" in text      # 仍取真实日期报告
+    assert "99.0%" not in text     # 垃圾文件 payload 未渗入
+    assert "backup" not in text
+
+
+def test_prior_drift_line_omitted_when_all_row_missing_keys(case, tmp_path, monkeypatch):
+    """ALL 行缺 expectancy/winrate 键: 整行省略零崩溃 (畸形报告家族)."""
+    base = tmp_path / "reports"
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "winrate_payoff_decomposition_20260904.json").write_text(
+        json.dumps({"universes": {"production_aligned": {"horizons": {"t10": [
+            {"group": "ALL", "n": 100}]}}}}), encoding="utf-8")
+    _patch_drift_reports_dir(monkeypatch, base)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "先验漂移披露" not in render_daily_action_v2(view)

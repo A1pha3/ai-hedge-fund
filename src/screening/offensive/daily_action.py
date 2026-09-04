@@ -1487,15 +1487,19 @@ def _render_prior_drift_line(reports_dir: str | Path | None = None) -> str | Non
     fail-open 家族纪律 (镜像 R85 触发器行/R87 翻转行/R92 gap 行): 报告缺失/
     损坏/结构不符 → 整行省略 (只取**最新**一份, 不回退旧报告 — 损坏时以
     行缺席示警, 不以陈旧数字冒充当前证据); 未达材料阈值 → 省略 (无噪声)。
+    报告读取走 gap_disclosure.latest_decomposition_report 单一实现
+    (R109 Op2: 文件名日期段形状守卫, 同前缀杂文件不可劫持)。
     本行是披露不是行为改变 — 先验不进仓位链 (known_distributions 头注),
     本行不进入任何计划/评分/仓位/退出决策路径。
     """
     try:
         base = Path(reports_dir) if reports_dir is not None else _PRIOR_DRIFT_REPORTS_DIR
-        reports = sorted(base.glob("winrate_payoff_decomposition_*.json"))
-        if not reports:
+        from src.screening.offensive.gap_disclosure import latest_decomposition_report
+
+        found = latest_decomposition_report(base)
+        if found is None:
             return None
-        payload = json.loads(reports[-1].read_text(encoding="utf-8"))
+        report_path, payload = found
         rows = payload["universes"]["production_aligned"]["horizons"]["t10"]
         row = next(item for item in rows if item.get("group") == "ALL")
         dist = get_known_distribution("btst_breakout", 10)
@@ -1507,7 +1511,7 @@ def _render_prior_drift_line(reports_dir: str | Path | None = None) -> str | Non
         wr_delta_pp = abs(dist.winrate * 100 - evidence_wr_pp)
         if er_delta_pp < _PRIOR_DRIFT_MIN_ER_PP and wr_delta_pp < _PRIOR_DRIFT_MIN_WR_PP:
             return None
-        report_date = reports[-1].stem.rsplit("_", 1)[-1]
+        report_date = report_path.stem.rsplit("_", 1)[-1]
         ci_low = row.get("cluster_ci_low_90")
         ci_text = (
             f"（CI90 下界 {ci_low:+.1%}）"
@@ -1522,7 +1526,7 @@ def _render_prior_drift_line(reports_dir: str | Path | None = None) -> str | Non
             f"胜率 {wr_delta_pp:.1f}pp — 重校准属 owner 决策（R98 决策包），"
             f"本行仅披露不改变决策"
         )
-    except (OSError, ValueError, KeyError, TypeError, StopIteration, json.JSONDecodeError):
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
         return None
 
 

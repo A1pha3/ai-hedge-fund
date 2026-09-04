@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from pathlib import Path
 
 # 分桶边界预注册于 2026-09-01 (R92 Op1, 探索性 in-sample; 任何政策使用 =
@@ -37,6 +38,40 @@ GAP_HIGH_THRESHOLD = 0.05
 _HIGH_GAP_BUCKETS = ("5~10%", GAP_TOP_BUCKET)
 
 _REPORT_GLOB = "winrate_payoff_decomposition_*.json"
+# 文件名日期段形状守卫 (R109 Op2): 『字典序 = 时间序』前提只对 YYYYMMDD
+# 命名成立 — glob 同前缀的 backup/editor 杂文件 ('b' > '2' 排在日期之后)
+# 会被 sorted[-1] 误当最新报告, PoC 实锤可劫持披露行渲染假证据。
+_DATED_SUFFIX_RE = re.compile(r"_(\d{8})$")
+
+
+def latest_decomposition_report(
+    reports_dir: str | Path = Path("data/reports"),
+) -> tuple[Path, dict] | None:
+    """最新分解报告的唯一读取家 (R109 Op2 收敛 gap 参考行与先验漂移行的同族读取)。
+
+    只接受文件名日期段为 \\d{8} 的报告 (形状守卫); 新鲜度 = 日期字典序最大者。
+    文件缺失/不可读/非法 JSON/顶层非对象 → None (fail-open, 不假装有证据);
+    损坏的最新报告不回退旧报告 — 以 None 示警, 不以陈旧数字冒充当前证据。
+    """
+    directory = Path(reports_dir)
+    try:
+        dated = sorted(
+            path
+            for path in directory.glob(_REPORT_GLOB)
+            if _DATED_SUFFIX_RE.search(path.stem)
+        )
+    except OSError:
+        return None
+    if not dated:
+        return None
+    path = dated[-1]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return path, payload
 
 
 def gap_bucket(gap: float | None) -> str:
@@ -60,18 +95,10 @@ def gap_execution_reference(
     侧无样本 → None (不渲染半边缺失的参考)。split_stable = split-half
     可判定桶方向全一致 (R15 判据镜像; False 时操作员行如实措辞)。
     """
-    directory = Path(reports_dir)
-    try:
-        candidates = sorted(directory.glob(_REPORT_GLOB))
-    except OSError:
+    found = latest_decomposition_report(reports_dir)
+    if found is None:
         return None
-    if not candidates:
-        return None
-    path = candidates[-1]  # 文件名内嵌 YYYYMMDD, 字典序 = 时间序
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return None
+    _path, payload = found
     universes = payload.get("universes") if isinstance(payload, dict) else None
     aligned = universes.get("production_aligned") if isinstance(universes, dict) else None
     gap = aligned.get("gap_anatomy") if isinstance(aligned, dict) else None
@@ -114,7 +141,7 @@ def gap_execution_reference(
             if all_row is not None and isinstance(all_row.get("n"), int):
                 total_n = all_row["n"]
     return {
-        "evidence_date": path.stem.rsplit("_", 1)[-1],
+        "evidence_date": _path.stem.rsplit("_", 1)[-1],
         "n_hi": int(hi_n),
         "e_hi": hi_we / hi_n,
         "n_lo": int(lo_n),
