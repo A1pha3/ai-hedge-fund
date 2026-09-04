@@ -896,6 +896,14 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
             "  (锚 %s; 条件②被两合取共享 — 耦合成文; ①/③ 分歧时各自独立积累互不替代)"
             % trigger.get("anchor")
         )
+        # R115 Op1: 账本写失败的显式披露 — 修复前写失败时稳定性/K 整段静默
+        # 缺席, 与条件段照常渲染自相矛盾且失败本身不可见。
+        record = payload.get("threshold_record")
+        if isinstance(record, dict) and record.get("reason") == "write_failed":
+            L.append(
+                "- **触发器账本写入失败 (write_failed)**: 本页稳定计数与 K 披露"
+                "读自账本现状 (不含本次判定), 夜刷写面需检查。"
+            )
         stab = payload.get("threshold_stability")
         if isinstance(stab, dict) and stab.get("records"):
             # K 子句单一事实源 (R112 Op1): 未注册 → 原句逐字保留 (旧 payload
@@ -1136,7 +1144,11 @@ def main(argv: list[str] | None = None) -> int:
         court_binding=binding, require_advance=True,
     )
     payload["threshold_record"] = record_meta
-    if record_meta.get("recorded") or record_meta.get("reason") == "court_not_advanced":
+    # R115 Op1: 披露条件从 recorded||court_not_advanced 收敛为 threshold_trigger
+    # 存在 — 账本写失败 (write_failed) 只降级写面本身, 稳定计数与 K 披露仍读
+    # 账本现状真话 (修复前静默丢失半边披露, 与 --daily-action 触发器行直读
+    # 账本的降级口径不一致); MD 侧由 render_md 按 threshold_record 渲染显式告警。
+    if isinstance(payload.get("threshold_trigger"), dict):
         ledger_records = load_trigger_ledger(Path(args.trigger_ledger))
         payload["threshold_stability"] = trigger_stability(ledger_records)
         # K 预注册消费面 (R112 Op1) + 反回溯观测 (R113 Op2): **先观测后披露**

@@ -336,7 +336,14 @@ def observe_k_registration(
 
 
 def load_k_observations(path: Path | str | None = None) -> list[dict]:
-    """读观测日志, 按观测日升序; 缺失/损坏行 advisory 跳过 (账本同族)."""
+    """读观测日志, 按观测日升序; 缺失/损坏行 advisory 跳过 (账本同族)。
+
+    R115 Op1 形状守卫: ``observed_date`` 必须是 YYYYMMDD 字符串 — 只查键
+    存在时, 畸形观测日 (9 位 ``202609011``) 曾经 ``effective_k_registration``
+    流入资格窗口起算日, 再经 ``trigger_qualification`` 形状复验 ValueError
+    裸逃逸炸掉 ``--daily-action`` 渲染与夜刷 build 双面 (fail-open 家族纪律:
+    证据面损坏不得阻断披露/生产面)。畸形行 advisory 跳过, 不假装有观测。
+    """
     log_path = Path(path) if path is not None else K_OBSERVATION_LOG_PATH
     try:
         text = log_path.read_text(encoding="utf-8")
@@ -351,7 +358,12 @@ def load_k_observations(path: Path | str | None = None) -> list[dict]:
             rec = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(rec, dict) and rec.get("observed_date") and rec.get("k_hash"):
+        observed = rec.get("observed_date") if isinstance(rec, dict) else None
+        if (
+            isinstance(observed, str)
+            and _K_DATE_RE.fullmatch(observed)
+            and rec.get("k_hash")
+        ):
             records.append(rec)
     return sorted(records, key=lambda r: str(r["observed_date"]))
 
@@ -366,17 +378,25 @@ def effective_k_registration(
     夜刷未跑) → 声明日暂态生效, 最迟当晚修正; 声明日早于首次观测 →
     backdated=True (回溯注册实锤), 以观测日起算 — Op1 的「K 必须先于它
     资格化的亮存在」从诚实声明升级为观测凭证。
+
+    R115 Op2 加固: 「首次」= **最早**匹配观测 (``min``, 顺序无关 — 修复前
+    ``next()`` 取调用方列表首条, 乱序注入返回不同起算日, PoC 实锤); 畸形
+    ``observed_date`` 记录不构成观测证据 (R113 P3 同族纪律: 只认 YYYYMMDD,
+    不参与 — 对直接调用者也不信输入形状)。
     """
     _validate_registration_shape(registration)
     k_hash = k_registration_hash(registration)
     declared = str(registration["registered_date"])
-    first_observed = next(
+    first_observed = min(
         (
-            str(rec["observed_date"])
+            rec["observed_date"]
             for rec in observations
-            if rec.get("k_hash") == k_hash
+            if isinstance(rec, dict)
+            and rec.get("k_hash") == k_hash
+            and isinstance(rec.get("observed_date"), str)
+            and _K_DATE_RE.fullmatch(rec["observed_date"])
         ),
-        None,
+        default=None,
     )
     if first_observed is None or first_observed <= declared:
         return (declared, False)

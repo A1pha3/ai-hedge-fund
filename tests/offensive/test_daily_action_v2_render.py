@@ -642,3 +642,32 @@ def test_picks_quality_line_count_only_when_bucket_row_missing(case, tmp_path, m
     assert "≥0.70 × 1（历史期望 +1.69%）" in text
     assert "<0.50 × 1" in text
     assert "<0.50 × 1（历史期望" not in text
+
+
+def test_trigger_state_line_survives_polluted_observation_log(case, tmp_path, monkeypatch):
+    """F3 全链 (修复前 RED = ValueError 裸逃逸炸掉整个 --daily-action 渲染):
+    污染 K 观测日志行 → 触发器行照常渲染, K 披露回落声明日起算."""
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260830", c1_lit=True, c2_lit=True, armed=True),
+    ]))
+    kfile = _kfile(tmp_path, _K_OK)
+    _patch_k(monkeypatch, kfile)
+    from src.screening.offensive import threshold_trigger as tt
+    reg = tt.load_k_registration(kfile)[1]
+    log = tmp_path / "k_obs.jsonl"
+    log.write_text(
+        json.dumps(
+            {"observed_date": "202609011", "k_hash": tt.k_registration_hash(reg)},
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(tt, "K_OBSERVATION_LOG_PATH", log)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "强度阈值触发器" in text
+    assert "自 20260829 起计资格连亮 1/2" in text

@@ -1980,3 +1980,50 @@ class TestTriggerSnapshot060AndRender:
         ])
         assert rc == 0
         assert not klog.exists()
+
+
+def test_main_preserves_disclosure_when_ledger_write_failed(tmp_path):
+    """F1 (修复前 RED = 稳定性/K 披露静默丢失): 账本写失败只降级写面本身 —
+    稳定计数与 K 披露仍读账本现状真话, MD 渲染显式告警行, 报告生成本体不阻断
+    (与 --daily-action 触发器行直读账本的降级口径一致)."""
+    import pandas as pd
+    from datetime import date as _date
+    from scripts import winrate_payoff_decomposition as mod
+    rows = []
+    for i in range(40):
+        rows.append({
+            "symbol": f"{600000+i}",
+            "signal_date": f"2026-01-{(i % 20) + 1:02d}",
+            "regime": "normal",
+            "trigger_strength": 0.75 if i % 2 else 0.55,
+            "gross_ret_t10": 0.03 * (1 if i % 2 else -1),
+            "gross_ret_t5": 0.015,
+            "fillable": True, "gate_blocked": False, "degraded": False,
+            "st_name": False, "industry_missing": False,
+            "excluded_ticker": False, "price_ge_3": True,
+        })
+    table = tmp_path / "court.csv.gz"
+    pd.DataFrame(rows).to_csv(table, index=False)
+    ledger_dir = tmp_path / "ledger_dir"
+    ledger_dir.mkdir()  # 目录路径 → os.replace 失败 → write_failed
+    kfile = tmp_path / "k.json"
+    kfile.write_text(json.dumps({
+        "anchor": "production_aligned/t10", "k_070": 5,
+        "registered_date": "20260101",
+    }), encoding="utf-8")
+    rc = mod.main([
+        "--court-table", str(table), "--report-dir", str(tmp_path / "rep"),
+        "--trigger-ledger", str(ledger_dir),
+        "--k-registration", str(kfile),
+        "--k-observation-log", str(tmp_path / "k_obs.jsonl"),
+    ])
+    assert rc == 0
+    stamp = _date.today().strftime("%Y%m%d")
+    payload = json.loads(
+        (tmp_path / "rep" / f"winrate_payoff_decomposition_{stamp}.json").read_text(encoding="utf-8")
+    )
+    assert payload["threshold_record"]["reason"] == "write_failed"
+    assert isinstance(payload["threshold_stability"], dict)
+    assert payload["threshold_k"]["state"] == "registered"
+    md = (tmp_path / "rep" / f"winrate_payoff_decomposition_{stamp}.md").read_text(encoding="utf-8")
+    assert "触发器账本写入失败" in md

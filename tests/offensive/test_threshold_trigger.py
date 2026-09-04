@@ -536,3 +536,64 @@ def test_script_reexports_same_strength_bucket_objects():
 
     assert deco.strength_bucket is tt.strength_bucket
     assert deco.ALL_STRENGTH_BUCKETS is tt.ALL_STRENGTH_BUCKETS
+
+
+# ---------- R115 Op1: 对抗审查加固 (观测形状守卫/顺序无关) ----------
+
+def test_load_k_observations_skips_malformed_observed_date(tmp_path):
+    """F3: observed_date 非 8 位数字 (9 位/带横线/非 str/缺失) 的行 advisory 跳过 —
+    证据面损坏不得流入资格面 (修复前 9 位行曾使 k_qualification_disclosure
+    ValueError 裸逃逸, 炸掉 --daily-action 渲染与夜刷 build 双面)."""
+    good = {"observed_date": "20260905", "k_hash": "sha256:" + "a" * 64}
+    rows = [
+        good,
+        {"observed_date": "202609051", "k_hash": "sha256:" + "b" * 64},
+        {"observed_date": "2026-9-5", "k_hash": "sha256:" + "c" * 64},
+        {"observed_date": 20260905, "k_hash": "sha256:" + "d" * 64},
+        {"k_hash": "sha256:" + "e" * 64},
+    ]
+    log = tmp_path / "obs.jsonl"
+    log.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
+        encoding="utf-8",
+    )
+    assert tt.load_k_observations(log) == [good]
+
+
+def test_effective_registration_ignores_malformed_observed_dates():
+    """F3: 直接注入的畸形 observed_date 记录不构成观测证据 — 回落声明日起算."""
+    reg = dict(_K_OK)
+    polluted = [{"observed_date": "202609011", "k_hash": tt.k_registration_hash(reg)}]
+    assert tt.effective_k_registration(reg, polluted) == ("20260901", False)
+
+
+def test_effective_registration_order_independent():
+    """F2: 『首次观测日』= 最早匹配 — 同观测集任意顺序注入逐字等价
+    (修复前 next() 取首条, 乱序注入返回不同起算日, PoC 实锤)."""
+    reg = {**_K_OK, "registered_date": "20260825"}
+    h = tt.k_registration_hash(reg)
+    early = {"observed_date": "20260903", "k_hash": h}
+    late = {"observed_date": "20260905", "k_hash": h}
+    assert tt.effective_k_registration(reg, [late, early]) == ("20260903", True)
+    assert tt.effective_k_registration(reg, [early, late]) == ("20260903", True)
+
+
+def test_k_disclosure_survives_polluted_observation_log(tmp_path, monkeypatch):
+    """F3 全链: 污染观测日志 (畸形日期+匹配 k_hash) 下披露不抛异常, 回落声明日."""
+    reg_file = _kfile(tmp_path, _K_OK)
+    monkeypatch.setattr(tt, "K_REGISTRATION_PATH", reg_file)
+    reg = tt.load_k_registration(reg_file)[1]
+    log = tmp_path / "obs.jsonl"
+    log.write_text(
+        json.dumps(
+            {"observed_date": "202609011", "k_hash": tt.k_registration_hash(reg)},
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(tt, "K_OBSERVATION_LOG_PATH", log)
+    records = [_armed_rec("20260903", armed=True)]
+    disc = tt.k_qualification_disclosure(records)
+    assert disc["state"] == "registered"
+    assert "自 20260901 起计" in disc["line_070"]
