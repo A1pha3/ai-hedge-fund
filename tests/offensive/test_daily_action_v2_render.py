@@ -671,3 +671,157 @@ def test_trigger_state_line_survives_polluted_observation_log(case, tmp_path, mo
     text = render_daily_action_v2(view)
     assert "强度阈值触发器" in text
     assert "自 20260829 起计资格连亮 1/2" in text
+
+
+# ---------- R115 Op2: 证据新鲜度告警行 ----------
+
+def _freshness_sessions():
+    from datetime import date as _date
+
+    return tuple(_date(2026, 8, d) for d in (24, 25, 26, 27, 28, 31))
+
+
+def _write_refresh_status(base, ok=True, day="20260830"):
+    payload = {
+        "date": day, "ok": ok,
+        "fetch": ({"rc": 0, "error": None} if ok
+                  else {"rc": 1, "error": "exit rc=1: fetch boom"}),
+        "build": ({"rc": 0, "window_start": "20250701", "error": None} if ok
+                  else {"skipped": "fetch_failed"}),
+    }
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "court_refresh_status.json"
+    p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return p
+
+
+def test_freshness_line_omitted_when_fresh_and_ok(tmp_path, monkeypatch):
+    """报告距今日 1 个交易日 (正常节律: 每晚刷新覆盖前一交易日) + 昨夜 ok →
+    整行省略零噪声 (R109 漂移行先例: 未达材料阈值不出行)."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, date="20260828")
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260828", c1_lit=True, c2_lit=False, window_end="20260828"),
+    ]))
+    monkeypatch.setattr(da, "_COURT_REFRESH_STATUS_PATH", tmp_path / "no-status.json")
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is None
+
+
+def test_freshness_line_renders_when_stale_two_sessions(tmp_path, monkeypatch):
+    """报告距今日 ≥2 个交易日 → 出行: 陈旧 N 个交易日 + 账本最后判定 +
+    court 覆盖至 + 诚实边界 (≥2 = 至少一夜未刷新)."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, date="20260827")
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260827", c1_lit=True, c2_lit=False, window_end="20260827"),
+    ]))
+    monkeypatch.setattr(da, "_COURT_REFRESH_STATUS_PATH", tmp_path / "no-status.json")
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "证据新鲜度告警" in line
+    assert "20260827" in line
+    assert "陈旧 2 个交易日" in line
+    assert "触发器账本最后判定 20260827" in line
+    assert "court 覆盖至 20260827" in line
+    assert "仅披露" in line
+
+
+def test_freshness_line_natural_day_fallback_without_calendar(tmp_path, monkeypatch):
+    """交易日历缺失/报告日不在日历 → 自然日兜底文案, 阈值 4 天保守降级."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, date="20260820")
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, tmp_path / "no-ledger.jsonl")
+    monkeypatch.setattr(da, "_COURT_REFRESH_STATUS_PATH", tmp_path / "no-status.json")
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=()
+    )
+    assert line is not None
+    assert "陈旧 11 个自然日（交易日折算不可用）" in line
+
+
+def test_freshness_line_renders_when_refresh_failed_even_if_fresh(tmp_path, monkeypatch):
+    """昨夜刷新 status ok=False → 即使报告新鲜也出行, 含归因尾 (操作员当晚
+    即知夜刷链中断, 不必等陈旧显形)."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, date="20260828")
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260828", c1_lit=True, c2_lit=False, window_end="20260828"),
+    ]))
+    status_dir = tmp_path / "st"
+    _write_refresh_status(status_dir, ok=False)
+    monkeypatch.setattr(da, "_COURT_REFRESH_STATUS_PATH", status_dir / "court_refresh_status.json")
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "昨夜 court 刷新失败" in line
+    assert "fetch_failed" in line
+
+
+def test_freshness_line_omitted_when_report_missing(tmp_path, monkeypatch):
+    """报告缺失 → 整行省略 (判定面未建立是稳态, fail-open 家族纪律)."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    _patch_drift_reports_dir(monkeypatch, tmp_path / "no-such-reports")
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is None
+
+
+def test_freshness_line_tolerates_corrupt_status(tmp_path, monkeypatch):
+    """status 损坏 → 刷新子句省略不假装, 陈旧判定照常 (fail-open)."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, date="20260820")
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, tmp_path / "no-ledger.jsonl")
+    status_dir = tmp_path / "st"
+    status_dir.mkdir(parents=True, exist_ok=True)
+    (status_dir / "court_refresh_status.json").write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(da, "_COURT_REFRESH_STATUS_PATH", status_dir / "court_refresh_status.json")
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "陈旧" in line
+    assert "昨夜 court 刷新失败" not in line
+
+
+def test_freshness_line_renders_in_daily_action_when_stale(case, tmp_path, monkeypatch):
+    """渲染面集成: 陈旧时 --daily-action 输出含告警行 (触发器行之后)."""
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, date="20260827")
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260827", c1_lit=True, c2_lit=False, window_end="20260827"),
+    ]))
+    monkeypatch.setattr(da, "_COURT_REFRESH_STATUS_PATH", tmp_path / "no-status.json")
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", _freshness_sessions)
+    service, _repository, as_of, _sessions = case
+    as_of = as_of.replace(year=2026, month=8, day=31)
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "证据新鲜度告警" in text

@@ -190,3 +190,34 @@ class TestFailureDiagnosability:
         assert "call failed" in str(status["fetch"]["error"])
         assert "skipped" in status["build"]
         assert status["ok"] is False
+
+
+class TestCourtNightlyRefreshStatusPersistence:
+    """R115 Op2: 结构化 status 原子落盘 — 操作员新鲜度告警行的归因真话来源."""
+
+    def test_status_artifact_written_on_success(self, tmp_path):
+        _write_manifest(tmp_path, {"window": {"start": "20250102"}})
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=_RecordingRunner())
+        assert status["ok"] is True
+        data = json.loads(
+            (tmp_path / "data/reports/court_refresh_status.json").read_text(encoding="utf-8")
+        )
+        assert data["ok"] is True
+        assert data["build"]["rc"] == 0
+
+    def test_status_artifact_written_on_fetch_failure(self, tmp_path):
+        runner = _RecordingRunner(rc_by_script={"scripts/btst_court_fetch.py": 1})
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        assert status["ok"] is False
+        data = json.loads(
+            (tmp_path / "data/reports/court_refresh_status.json").read_text(encoding="utf-8")
+        )
+        assert data["ok"] is False
+        assert data["build"]["skipped"] == "fetch_failed"
+
+    def test_status_persist_failure_is_advisory(self, tmp_path):
+        """data/reports 为文件 → 落盘失败只 WARNING, 返回值形状不变不抛."""
+        (tmp_path / "data").write_text("not a dir", encoding="utf-8")
+        runner = _RecordingRunner(rc_by_script={"scripts/btst_court_fetch.py": 1})
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        assert status["ok"] is False

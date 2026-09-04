@@ -24,8 +24,10 @@ fail-open 纪律: 任何失败只进结构化 status + 打印, 绝不抛 — 夜
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 from typing import Callable
@@ -33,6 +35,10 @@ from typing import Callable
 # 与 scripts/_btst_court_common.py TABLE_DIR 单源 (drift-guard 见测试):
 # build 换目录而编排器不知 → 从旧 manifest 派生旧窗口重建错表。
 COURT_TABLE_DIR_REL = "data/research/btst_court/event_tables"
+
+# 夜刷结构化 status 的落盘位置 (R115 Op2): stdout 只进 launcher 日志,
+# --daily-action 证据新鲜度告警行需要磁盘真话做 fetch/build 失败归因。
+COURT_REFRESH_STATUS_REL = "data/reports/court_refresh_status.json"
 
 FetchBuildRunner = Callable[[list[str], Path, int], tuple[int, str, str]]
 
@@ -88,6 +94,35 @@ def _run_step(
     return rc, None
 
 
+def _persist_status(root: Path, status: dict[str, object]) -> None:
+    """结构化 status 原子落盘 (R115 Op2): tempfile + fsync + os.replace。
+
+    落盘失败 advisory 不抛 (夜刷 fail-open 家族纪律 — 判定面刷新本身
+    绝不被诊断面写坏阻断); 缺席时新鲜度告警行只少归因子句, 不假装。
+    """
+    path = root / COURT_REFRESH_STATUS_REL
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(
+            dir=str(path.parent), prefix=".court_refresh_", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(status, fh, ensure_ascii=False, indent=1)
+                fh.write("\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except OSError as exc:
+        print(f"WARNING: court 刷新状态落盘失败 (advisory, 不阻断): {exc}")
+
+
 def run_court_nightly_refresh(
     repo_root: Path | None = None,
     *,
@@ -141,5 +176,6 @@ def run_court_nightly_refresh(
             }
             status["ok"] = build_rc == 0 and build_err is None
 
+    _persist_status(root, status)
     print("court_nightly_refresh:", json.dumps(status, ensure_ascii=False))
     return status

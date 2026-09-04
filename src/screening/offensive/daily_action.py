@@ -1474,6 +1474,13 @@ _PRIOR_DRIFT_MIN_ER_PP = 0.25
 _PRIOR_DRIFT_MIN_WR_PP = 1.0
 _PRIOR_DRIFT_REPORTS_DIR = Path("data/reports")
 
+# 证据新鲜度告警阈值 (R115 Op2): 正常节律 = 分解报告每晚刷新覆盖前一交易日,
+# --daily-action (~15:05, 夜刷之前) 距最新报告 ≤1 个交易日; ≥2 = 至少一夜
+# 未刷新。自然日兜底 4 天 = 周末 + 1 假日冗余 (交易日历不可用时保守降级)。
+_FRESHNESS_STALE_SESSIONS = 2
+_FRESHNESS_STALE_DAYS_FALLBACK = 4
+_COURT_REFRESH_STATUS_PATH = Path("data/reports/court_refresh_status.json")
+
 
 def _render_prior_drift_line(reports_dir: str | Path | None = None) -> str | None:
     """先验漂移披露行 (R109 Op1): 冻结先验 vs 最新 court 证据的日度可见性。
@@ -1728,6 +1735,112 @@ def _render_trigger_state_line() -> str | None:
     )
 
 
+def _render_evidence_freshness_line(
+    as_of,
+    reports_dir: str | Path | None = None,
+    calendar_sessions: tuple | None = None,
+    status_path: str | Path | None = None,
+) -> str | None:
+    """证据新鲜度告警行 (R115 Op2): 判定面夜刷静默冻结的显式告警。
+
+    launcher Step 6 (R93/R110) 是 fail-open — fetch/build 失败只进结构化
+    status, court 表/触发器账本/分解报告静默冻结在最后覆盖日, 操作员只有
+    被动读数 (court 覆盖至 X / 报告日期) 而无机制提示。本行把异常变成日度
+    可见: 最新分解报告距今日 ≥2 个交易日 (trading-calendar 感知, 复用
+    ``_load_authoritative_session_dates`` + ``TradingSessionCalendar`` 单一
+    实现) 或昨夜 court 刷新 status ok=False (R115 Op2 落盘工件) 时出行;
+    正常日零噪声 (R109 漂移行先例: 未达材料阈值 → 省略)。
+
+    fail-open 家族纪律 (R85/R87/R92/R109 同族): 报告缺失 → 整行省略 (判定
+    面未建立是稳态); 账本缺失 → 对应子句省略; 状态缺失/损坏 → 刷新子句
+    省略 (advisory, 不假装有归因)。本行是披露不是行为改变 — 不进入任何
+    计划/评分/仓位/退出决策路径。
+    """
+    try:
+        from src.screening.offensive.gap_disclosure import latest_decomposition_report
+        from src.screening.offensive import threshold_trigger as _tt
+
+        base = (
+            Path(reports_dir) if reports_dir is not None
+            else _PRIOR_DRIFT_REPORTS_DIR
+        )
+        found = latest_decomposition_report(base)
+        if found is None:
+            return None
+        report_path, _payload = found
+        report_day = report_path.stem.rsplit("_", 1)[-1]
+
+        ledger_last = None
+        window_end = None
+        records = _tt.load_trigger_ledger()
+        if records:
+            ledger_last = str(records[-1].get("date"))
+            court = records[-1].get("court")
+            if isinstance(court, dict) and court.get("window_end"):
+                window_end = str(court["window_end"])
+
+        status = None
+        status_file = (
+            Path(status_path) if status_path is not None
+            else _COURT_REFRESH_STATUS_PATH
+        )
+        try:
+            loaded = json.loads(status_file.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                status = loaded
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            status = None
+
+        sessions = (
+            tuple(calendar_sessions)
+            if calendar_sessions is not None
+            else tuple(_load_authoritative_session_dates())
+        )
+        report_date = datetime.strptime(report_day, "%Y%m%d").date()
+        dist_text = None
+        stale = False
+        if sessions:
+            from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
+
+            calendar = TradingSessionCalendar.from_dates(sessions)
+            try:
+                dist = calendar.session_distance(report_date, as_of)
+            except ValueError:
+                dist = None
+            if dist is not None:
+                stale = dist >= _FRESHNESS_STALE_SESSIONS
+                dist_text = f"陈旧 {dist} 个交易日"
+        if dist_text is None:
+            days = (as_of - report_date).days
+            stale = days >= _FRESHNESS_STALE_DAYS_FALLBACK
+            dist_text = f"陈旧 {days} 个自然日（交易日折算不可用）"
+
+        refresh_clause = ""
+        if status is not None and status.get("ok") is False:
+            detail = None
+            build = status.get("build")
+            if isinstance(build, dict):
+                detail = build.get("skipped") or build.get("error")
+            fetch = status.get("fetch")
+            if not detail and isinstance(fetch, dict):
+                detail = fetch.get("error")
+            detail_text = f"（{str(detail)[:120]}）" if detail else ""
+            refresh_clause = f" · 昨夜 court 刷新失败{detail_text}"
+        if not stale and not refresh_clause:
+            return None
+        parts = [f"分解报告 {report_day}（{dist_text}）"]
+        if ledger_last:
+            parts.append(f"触发器账本最后判定 {ledger_last}")
+        if window_end:
+            parts.append(f"court 覆盖至 {window_end}")
+        return (
+            "证据新鲜度告警：" + " · ".join(parts) + refresh_clause
+            + " — 判定面夜刷可能中断，恢复前证据冻结在上述日期；仅披露不改变决策"
+        )
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+        return None
+
+
 def _render_flip_state_line(as_of) -> str | None:
     """当日逐刷新翻转状态行 (R87 Op1) — admission 噪声的日度可见性。
 
@@ -1864,6 +1977,12 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     trigger_line = _render_trigger_state_line()
     if trigger_line:
         lines.append(trigger_line)
+        lines.append("")
+    # 证据新鲜度告警行 (R115 Op2): 判定面夜刷静默冻结的显式告警 — 异常
+    # (陈旧 ≥2 交易日 / 昨夜刷新失败) 时出行, 正常日省略零噪声.
+    freshness_line = _render_evidence_freshness_line(as_of)
+    if freshness_line:
+        lines.append(freshness_line)
         lines.append("")
     # 翻转状态行 (R87 Op1): 当日逐刷新口径差的披露 — 零翻转/无工件省略.
     flip_line = _render_flip_state_line(as_of)
