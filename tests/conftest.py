@@ -68,6 +68,14 @@ def _isolate_threshold_trigger_ledger(monkeypatch: pytest.MonkeyPatch, tmp_path)
     from src.screening.offensive import threshold_trigger
 
     monkeypatch.setattr(threshold_trigger, "LEDGER_PATH", tmp_path / "no-trigger-ledger.jsonl")
+    # R113: K 预注册文件与观测日志同一隔离 — owner 未来落真实文件时全套件
+    # 保持 hermetic (显式 per-test patch 仍在其后生效可覆盖)。
+    monkeypatch.setattr(
+        threshold_trigger, "K_REGISTRATION_PATH", tmp_path / "no-k-registration.json"
+    )
+    monkeypatch.setattr(
+        threshold_trigger, "K_OBSERVATION_LOG_PATH", tmp_path / "no-k-observations.jsonl"
+    )
 
 
 @pytest.fixture(autouse=True)

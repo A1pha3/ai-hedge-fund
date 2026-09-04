@@ -42,8 +42,13 @@ import numpy as np
 import pandas as pd
 
 from src.screening.offensive.threshold_trigger import (  # noqa: E402
+    K_OBSERVATION_LOG_PATH,
+    K_REGISTRATION_PATH,
     k_qualification_disclosure,
+    load_k_observations,
+    load_k_registration,
     load_trigger_ledger,
+    observe_k_registration,
     trigger_stability,
 )
 
@@ -1113,6 +1118,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="报告输出目录 (测试用 tmp)")
     parser.add_argument("--trigger-ledger", default=str(TRIGGER_LEDGER_PATH),
                         help="阈值触发器稳定账本路径 (诊断面, 同日替换幂等)")
+    parser.add_argument("--k-registration", default=str(K_REGISTRATION_PATH),
+                        help="owner K 预注册文件路径 (缺失/损坏 = 未注册态)")
+    parser.add_argument("--k-observation-log",
+                        default=str(K_OBSERVATION_LOG_PATH),
+                        help="K 注册观测日志路径 (append-only, 反回溯起算凭证)")
     parser.add_argument("--universes", nargs="+",
                         default=["all_candidates", "production_aligned"],
                         choices=["all_candidates", "production_aligned"],
@@ -1139,9 +1149,35 @@ def main(argv: list[str] | None = None) -> int:
     if record_meta.get("recorded") or record_meta.get("reason") == "court_not_advanced":
         ledger_records = load_trigger_ledger(Path(args.trigger_ledger))
         payload["threshold_stability"] = trigger_stability(ledger_records)
-        # K 预注册消费面 (R112 Op1): 披露 dict 进 payload (JSON 落盘可复现),
-        # MD 渲染只消费 payload — 与 --daily-action 渲染行同源单一实现.
-        payload["threshold_k"] = k_qualification_disclosure(ledger_records)
+        # K 预注册消费面 (R112 Op1) + 反回溯观测 (R113 Op2): **先观测后披露**
+        # — 本 build 见到的注册内容先落 append-only 观测日志 (回溯改写声明
+        # 日期的凭证), 披露窗口再按 max(声明, 首次观测) 起算。观测写入失败
+        # advisory 不阻断 build (诊断面家族纪律); 观测缺席时披露以声明日
+        # 暂态生效, 最迟下一次成功观测修正。
+        k_state, k_reg = load_k_registration(Path(args.k_registration))
+        observation_meta: dict[str, object] | None = None
+        if k_state == "registered" and k_reg is not None:
+            try:
+                observed = observe_k_registration(
+                    k_reg, date_str, path=Path(args.k_observation_log)
+                )
+                observation_meta = {
+                    "observed": True,
+                    "observed_date": observed["observed_date"],
+                    "k_hash": observed["k_hash"],
+                }
+            except OSError as exc:
+                print(f"K 注册观测日志写入失败 (advisory, 不阻断): {exc}")
+        payload["threshold_k"] = k_qualification_disclosure(
+            ledger_records,
+            registration=(k_state, k_reg),
+            observation_log=(
+                load_k_observations(Path(args.k_observation_log))
+                if k_state == "registered" else None
+            ),
+        )
+        if observation_meta is not None:
+            payload["threshold_k_observation"] = observation_meta
         if record_meta.get("reason") == "court_not_advanced":
             print(
                 "court 未前进 (manifest/行数与账本最新记录一致) — 触发器账本不追加"

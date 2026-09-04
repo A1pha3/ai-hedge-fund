@@ -623,12 +623,12 @@ class TestTriggerStabilityLedger:
             "anchor": "production_aligned/t10", "k_070": 5,
             "registered_date": "20260101",
         }), encoding="utf-8")
-        # k_qualification_disclosure 在 src 模块全局解析 K_REGISTRATION_PATH
-        from src.screening.offensive import threshold_trigger as _tt
-        monkeypatch.setattr(_tt, "K_REGISTRATION_PATH", kfile)
+        klog = tmp_path / "k_obs.jsonl"
         rc = mod.main([
             "--court-table", str(table), "--report-dir", str(tmp_path / "rep"),
             "--trigger-ledger", str(ledger),
+            "--k-registration", str(kfile),
+            "--k-observation-log", str(klog),
         ])
         assert rc == 0
         import json as _json
@@ -639,6 +639,16 @@ class TestTriggerStabilityLedger:
         )
         assert payload["threshold_k"]["state"] == "registered"
         assert "预注册 K=5" in payload["threshold_k"]["line_070"]
+        # R113: 先观测后披露 — 首次 build 落观测凭证, 幂等重放不重复追加
+        assert payload["threshold_k_observation"]["observed"] is True
+        assert mod.load_k_observations(klog)
+        mod.main([
+            "--court-table", str(table), "--report-dir", str(tmp_path / "rep"),
+            "--trigger-ledger", str(ledger),
+            "--k-registration", str(kfile),
+            "--k-observation-log", str(klog),
+        ])
+        assert len(mod.load_k_observations(klog)) == 1
 
     def test_main_writes_ledger_and_md(self, tmp_path, monkeypatch):
         """端到端: 生产对齐口径刷新 → 账本落盘 + MD 稳定计数行。"""
@@ -1882,3 +1892,91 @@ class TestTriggerSnapshot060AndRender:
         assert "条件②被两合取共享" in text
         assert "0.60 锚稳定计数" in text
         assert "条件③ 连亮 1/2" in text
+
+    def test_build_backdated_registration_poC(self, tmp_path):
+        """R113 P1 回溯注册 PoC (经 main 全链): 声明日期早于首次观测 →
+        披露以观测日起算并明语标注, 亮不追溯。"""
+        import pandas as pd
+        from src.screening.offensive.threshold_trigger import (
+            k_registration_hash,
+        )
+        from scripts import winrate_payoff_decomposition as mod
+        rows = []
+        for i in range(40):
+            rows.append({
+                "symbol": f"{600000+i}",
+                "signal_date": f"2026-01-{(i % 20) + 1:02d}",
+                "regime": "normal",
+                "trigger_strength": 0.75 if i % 2 else 0.55,
+                "gross_ret_t10": 0.03 * (1 if i % 2 else -1),
+                "gross_ret_t5": 0.015,
+                "fillable": True, "gate_blocked": False, "degraded": False,
+                "st_name": False, "industry_missing": False,
+                "excluded_ticker": False, "price_ge_3": True,
+            })
+        table = tmp_path / "court.csv.gz"
+        pd.DataFrame(rows).to_csv(table, index=False)
+        ledger = tmp_path / "trigger_ledger.jsonl"
+        reg_payload = {
+            "anchor": "production_aligned/t10", "k_070": 2,
+            "registered_date": "20260101",  # 事后回溯声明
+        }
+        kfile = tmp_path / "k.json"
+        kfile.write_text(json.dumps(reg_payload), encoding="utf-8")
+        klog = tmp_path / "k_obs.jsonl"
+        from datetime import date as _date
+        today = _date.today().strftime("%Y%m%d")
+        # 观测哈希绑定 load 归一化后的消费内容 (k_060 缺省补 None 等) —
+        # 与 build 侧 observe_k_registration(load_k_registration(...)) 同一形态
+        from src.screening.offensive.threshold_trigger import load_k_registration
+        _, normalized = load_k_registration(kfile)
+        klog.write_text(json.dumps({
+            "observed_date": today,
+            "k_hash": k_registration_hash(normalized),
+            "declared_registered_date": "20260101",
+        }), encoding="utf-8")
+        rc = mod.main([
+            "--court-table", str(table), "--report-dir", str(tmp_path / "rep"),
+            "--trigger-ledger", str(ledger),
+            "--k-registration", str(kfile),
+            "--k-observation-log", str(klog),
+        ])
+        assert rc == 0
+        stamp = _date.today().strftime("%Y%m%d")
+        payload = json.loads(
+            (tmp_path / "rep" / f"winrate_payoff_decomposition_{stamp}.json").read_text(encoding="utf-8")
+        )
+        k_disc = payload["threshold_k"]
+        assert k_disc["state"] == "registered"
+        assert k_disc["backdated"] is True
+        assert k_disc["effective_registered_date"] == today
+        assert "以观测日起算" in k_disc["line_070"]
+
+    def test_build_unregistered_k_no_observation_write(self, tmp_path):
+        """K 未注册 → 不写观测日志 (无注册即无观测对象)."""
+        import pandas as pd
+        from scripts import winrate_payoff_decomposition as mod
+        rows = []
+        for i in range(40):
+            rows.append({
+                "symbol": f"{600000+i}",
+                "signal_date": f"2026-01-{(i % 20) + 1:02d}",
+                "regime": "normal",
+                "trigger_strength": 0.75 if i % 2 else 0.55,
+                "gross_ret_t10": 0.03 * (1 if i % 2 else -1),
+                "gross_ret_t5": 0.015,
+                "fillable": True, "gate_blocked": False, "degraded": False,
+                "st_name": False, "industry_missing": False,
+                "excluded_ticker": False, "price_ge_3": True,
+            })
+        table = tmp_path / "court.csv.gz"
+        pd.DataFrame(rows).to_csv(table, index=False)
+        klog = tmp_path / "k_obs.jsonl"
+        rc = mod.main([
+            "--court-table", str(table), "--report-dir", str(tmp_path / "rep"),
+            "--trigger-ledger", str(tmp_path / "trigger_ledger.jsonl"),
+            "--k-registration", str(tmp_path / "absent.json"),
+            "--k-observation-log", str(klog),
+        ])
+        assert rc == 0
+        assert not klog.exists()

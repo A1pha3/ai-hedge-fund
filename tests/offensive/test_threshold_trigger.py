@@ -363,3 +363,149 @@ def test_k_disclosure_json_serializable():
     records = [_armed_rec("20260901", armed_060=True)]
     disc = tt.k_qualification_disclosure(records, ("registered", reg))
     json.dumps(disc, ensure_ascii=False)
+
+
+# ---------- R113 Op2: K 预注册对抗加固 (回溯注册防御/形状设防) ----------
+
+def test_observe_k_registration_appends_and_idempotent(tmp_path):
+    """观测日志 append-only: 首次写入, 同内容同日重放不重复追加."""
+    log = tmp_path / "k_obs.jsonl"
+    reg = dict(_K_OK)
+    first = tt.observe_k_registration(reg, "20260905", path=log)
+    assert first["observed_date"] == "20260905"
+    assert first["declared_registered_date"] == "20260901"
+    second = tt.observe_k_registration(reg, "20260905", path=log)
+    assert second["k_hash"] == first["k_hash"]
+    records = tt.load_k_observations(log)
+    assert len(records) == 1
+    # 同内容次日观测 → 新记录 (连续性), k_hash 相同
+    tt.observe_k_registration(reg, "20260908", path=log)
+    records = tt.load_k_observations(log)
+    assert len(records) == 2
+    assert records[0]["k_hash"] == records[1]["k_hash"]
+
+
+def test_observe_k_registration_different_content_new_hash(tmp_path):
+    log = tmp_path / "k_obs.jsonl"
+    tt.observe_k_registration(dict(_K_OK), "20260905", path=log)
+    changed = {**_K_OK, "k_070": 4}
+    tt.observe_k_registration(changed, "20260906", path=log)
+    records = tt.load_k_observations(log)
+    assert len(records) == 2
+    assert records[0]["k_hash"] != records[1]["k_hash"]
+
+
+def test_load_k_observations_missing_and_corrupt(tmp_path):
+    log = tmp_path / "k_obs.jsonl"
+    assert tt.load_k_observations(log) == []
+    log.write_text('{"observed_date": "20260905", "k_hash": "a"}\nnot-json\n',
+                   encoding="utf-8")
+    records = tt.load_k_observations(log)
+    assert len(records) == 1
+
+
+def test_effective_registration_no_log_declared_stands():
+    reg = dict(_K_OK)
+    effective, backdated = tt.effective_k_registration(reg, [])
+    assert effective == "20260901" and backdated is False
+
+
+def test_effective_registration_backdated_corrected():
+    """P1 回溯注册 PoC: 声明日期早于首次观测 → 以观测日起算 (旧亮不追溯)."""
+    reg = {**_K_OK, "registered_date": "20260825"}  # 事后回溯声明
+    log = [
+        {"observed_date": "20260905", "k_hash": tt.k_registration_hash(reg),
+         "declared_registered_date": "20260825"},
+    ]
+    effective, backdated = tt.effective_k_registration(reg, log)
+    assert effective == "20260905" and backdated is True
+
+
+def test_effective_registration_other_content_ignored():
+    """日志里其他内容哈希的观测不约束本注册 (各自独立)."""
+    reg = dict(_K_OK)
+    log = [
+        {"observed_date": "20260905", "k_hash": "sha256:other-content",
+         "declared_registered_date": "20260825"},
+    ]
+    effective, backdated = tt.effective_k_registration(reg, log)
+    assert effective == "20260901" and backdated is False
+
+
+def test_disclosure_backdated_recomputes_window_and_discloses():
+    """回溯形态: 资格连亮按观测日重算 + 披露行明语标注修正."""
+    reg = {**_K_OK, "registered_date": "20260825"}  # 回溯声明到亮之前
+    records = [
+        _armed_rec("20260825"), _armed_rec("20260826"),
+        _armed_rec("20260905"), _armed_rec("20260906"),
+    ]
+    log = [
+        {"observed_date": "20260905", "k_hash": tt.k_registration_hash(reg),
+         "declared_registered_date": "20260825"},
+    ]
+    disc = tt.k_qualification_disclosure(
+        records, ("registered", reg), observation_log=log
+    )
+    assert disc["backdated"] is True
+    assert disc["effective_registered_date"] == "20260905"
+    assert "以观测日起算" in disc["line_070"]
+    assert "资格连亮 2/3" in disc["line_070"]  # 只数观测日后的 2 条
+
+
+def test_disclosure_not_backdated_line_unchanged():
+    """诚实注册 (观测日不晚于声明日) → 行文与 Op1 逐字同形."""
+    reg = dict(_K_OK)
+    records = [_armed_rec("20260901"), _armed_rec("20260902"), _armed_rec("20260903")]
+    log = [
+        {"observed_date": "20260901", "k_hash": tt.k_registration_hash(reg),
+         "declared_registered_date": "20260901"},
+    ]
+    disc = tt.k_qualification_disclosure(records, ("registered", reg), observation_log=log)
+    assert disc["backdated"] is False
+    assert "以观测日起算" not in disc["line_070"]
+    assert "资格连亮 3/3" in disc["line_070"]
+
+
+def test_disclosure_loads_observation_log_default_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(tt, "K_REGISTRATION_PATH", _kfile(tmp_path, _K_OK))
+    log = tmp_path / "k_obs.jsonl"
+    log.write_text(json.dumps({
+        "observed_date": "20260905",
+        "k_hash": tt.k_registration_hash(dict(_K_OK)),
+        "declared_registered_date": "20260901",
+    }), encoding="utf-8")
+    monkeypatch.setattr(tt, "K_OBSERVATION_LOG_PATH", log)
+    records = [_armed_rec("20260905")]
+    disc = tt.k_qualification_disclosure(records)
+    assert disc["backdated"] is True
+    assert disc["effective_registered_date"] == "20260905"
+
+
+def test_qualification_rejects_malformed_registration():
+    """P2: 导出纯函数对 registration 形状复验 — 非法一律 ValueError 不静默."""
+    bad = [
+        None,
+        {},
+        {**_K_OK, "k_070": 2.5},        # float — int() 截断可使 2/2.5 判达标
+        {**_K_OK, "k_070": True},        # bool
+        {k: v for k, v in _K_OK.items() if k != "anchor"},
+        {**_K_OK, "registered_date": "2026-9-1"},
+    ]
+    records = [_armed_rec("20260901")]
+    for reg in bad:
+        try:
+            tt.trigger_qualification(records, reg)
+        except ValueError:
+            continue
+        raise AssertionError(f"expected ValueError for {reg!r}")
+
+
+def test_qualification_excludes_malformed_date_records():
+    """P3: 窗口内只认 YYYYMMDD 记录 — 畸形日期不参与资格 (保守断链)."""
+    reg = dict(_K_OK)
+    records = [
+        _armed_rec("2026-9-1"),   # 畸形: 字典序 >= 声明日但形状非法
+        _armed_rec("20260901"),
+    ]
+    qual = tt.trigger_qualification(records, reg)
+    assert qual["q_070"] == 1

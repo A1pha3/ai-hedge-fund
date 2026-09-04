@@ -17,11 +17,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from pathlib import Path
 
 LEDGER_PATH = Path("data/reports/threshold_trigger_ledger.jsonl")
 K_REGISTRATION_PATH = Path("data/reports/threshold_trigger_k.json")
+K_OBSERVATION_LOG_PATH = Path(
+    "data/reports/threshold_trigger_k_observations.jsonl"
+)
+_K_DATE_RE = re.compile(r"\d{8}")
 
 
 def _resolve(ledger_path: Path | str | None) -> Path:
@@ -227,16 +233,23 @@ def trigger_qualification(
     - ``q_060``/``qualified_060``: 0.60 锚合取 vs ``k_060``; ``k_060`` 缺失
       → 两者 None (该锚未预注册, 绝不借 0.70 的 K)。
 
-    日期比较用与账本排序同一字符串空间 (YYYYMMDD); 畸形日期记录由排序/
-    比较的保守断链语义兜底, 不在此重复校验 (读取面 advisory 家族纪律)。
+    形状防御 (R113 Op2): 本函数在 ``__all__`` 导出, 直接调用者的
+    registration 不经 load 形状校验 — float K 经 ``int()`` 截断可使
+    2/2.5 判达标, bool K 是 int 子类可伪装; 形状复验 fail-closed
+    (ValueError), 绝不静默截断。日期窗口只认 YYYYMMDD 形状记录 —
+    畸形日期 (如 ``2026-9-1``) 字典序可比但形状非法, 不参与资格
+    (保守断链, 读取面 advisory 家族纪律)。
     """
+    _validate_registration_shape(registration)
     k_070 = registration["k_070"]
     k_060 = registration.get("k_060")
     reg_date = str(registration["registered_date"])
     anchor = str(registration["anchor"])
     suffix = [
         rec for rec in records
-        if str(rec.get("anchor")) == anchor and str(rec.get("date")) >= reg_date
+        if str(rec.get("anchor")) == anchor
+        and _K_DATE_RE.fullmatch(str(rec.get("date") or ""))
+        and str(rec.get("date")) >= reg_date
     ]
     q_070 = 0
     for rec in reversed(suffix):
@@ -262,9 +275,115 @@ def trigger_qualification(
     return out
 
 
+def k_registration_hash(registration: dict[str, object]) -> str:
+    """注册内容身份 (canonical JSON 的 sha256): 回溯改写声明日期/数值即新
+    内容 → 新哈希 → 旧观测不约束新内容, 新观测重开起算窗口。"""
+    canonical = json.dumps(
+        registration, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    )
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def observe_k_registration(
+    registration: dict[str, object],
+    observed_date: str,
+    path: Path | str | None = None,
+) -> dict[str, object]:
+    """K 注册观测日志 (R113 Op2): 夜刷 build 单写者把「何时首次见到这份
+    声明」落进 append-only JSONL — registered_date 从此有观测凭证, 回溯
+    改写声明日期会被 ``effective_k_registration`` 交叉出并以观测日起算。
+
+    幂等: 同内容同日重放不重复追加; 日志自身损坏行 advisory 跳过
+    (诊断面家族纪律)。调用方 (分解报告 build) 失败 advisory 不阻断。
+    """
+    log_path = Path(path) if path is not None else K_OBSERVATION_LOG_PATH
+    k_hash = k_registration_hash(registration)
+    existing = load_k_observations(log_path)
+    for rec in existing:
+        if rec.get("k_hash") == k_hash and rec.get("observed_date") == observed_date:
+            return rec
+    record = {
+        "observed_date": observed_date,
+        "k_hash": k_hash,
+        "declared_registered_date": str(registration["registered_date"]),
+        "anchor": str(registration["anchor"]),
+        "k_070": registration.get("k_070"),
+        "k_060": registration.get("k_060"),
+    }
+    line = json.dumps(record, ensure_ascii=False, sort_keys=True)
+    with log_path.open("a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+    return record
+
+
+def load_k_observations(path: Path | str | None = None) -> list[dict]:
+    """读观测日志, 按观测日升序; 缺失/损坏行 advisory 跳过 (账本同族)."""
+    log_path = Path(path) if path is not None else K_OBSERVATION_LOG_PATH
+    try:
+        text = log_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    records: list[dict] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict) and rec.get("observed_date") and rec.get("k_hash"):
+            records.append(rec)
+    return sorted(records, key=lambda r: str(r["observed_date"]))
+
+
+def effective_k_registration(
+    registration: dict[str, object],
+    observations: list[dict],
+) -> tuple[str, bool]:
+    """反回溯有效起算日 (R113 Op2): ``max(声明日, 该内容哈希首次观测日)``。
+
+    返回 ``(effective_registered_date, backdated)``。无观测记录 (文件刚落,
+    夜刷未跑) → 声明日暂态生效, 最迟当晚修正; 声明日早于首次观测 →
+    backdated=True (回溯注册实锤), 以观测日起算 — Op1 的「K 必须先于它
+    资格化的亮存在」从诚实声明升级为观测凭证。
+    """
+    _validate_registration_shape(registration)
+    k_hash = k_registration_hash(registration)
+    declared = str(registration["registered_date"])
+    first_observed = next(
+        (
+            str(rec["observed_date"])
+            for rec in observations
+            if rec.get("k_hash") == k_hash
+        ),
+        None,
+    )
+    if first_observed is None or first_observed <= declared:
+        return (declared, False)
+    return (first_observed, True)
+
+
+def _validate_registration_shape(registration: object) -> None:
+    if not isinstance(registration, dict):
+        raise ValueError("registration must be a dict")
+    anchor = registration.get("anchor")
+    if not isinstance(anchor, str) or not anchor:
+        raise ValueError("registration.anchor must be a non-empty str")
+    registered_date = registration.get("registered_date")
+    if not isinstance(registered_date, str) or not _K_DATE_RE.fullmatch(registered_date):
+        raise ValueError("registration.registered_date must be YYYYMMDD str")
+    if not _is_pos_int(registration.get("k_070")):
+        raise ValueError("registration.k_070 must be an int >= 1")
+    k_060 = registration.get("k_060")
+    if k_060 is not None and not _is_pos_int(k_060):
+        raise ValueError("registration.k_060 must be None or an int >= 1")
+
+
 def k_qualification_disclosure(
     records: list[dict],
     registration: tuple[str, dict[str, object] | None] | None = None,
+    observation_log: list[dict] | None = None,
 ) -> dict[str, object]:
     """K 子句单一事实源 (R112): ``--daily-action`` 渲染行与分解报告 MD 的
     稳定计数行都从这里取 K 披露文本 — 两处消费面不许各自措辞漂移 (R109
@@ -277,13 +396,26 @@ def k_qualification_disclosure(
     """
     state, reg = registration if registration is not None else load_k_registration()
     if state == "registered" and reg is not None:
-        qual = trigger_qualification(records, reg)
+        # 反回溯窗口 (R113 Op2): 起算日 = max(声明, 首次观测); 观测日志显式
+        # 注入 (script build 已观测后传入) 或从默认路径现读 (渲染面).
+        log_records = (
+            observation_log if observation_log is not None
+            else load_k_observations()
+        )
+        effective_date, backdated = effective_k_registration(reg, log_records)
+        reg_effective = {**reg, "registered_date": effective_date}
+        qual = trigger_qualification(records, reg_effective)
         k_070 = int(reg["k_070"])  # type: ignore[arg-type]
         q_070 = int(qual["q_070"])  # type: ignore[arg-type]
         line_070 = (
-            f"预注册 K={k_070}（自 {reg['registered_date']} 起计资格连亮 "
+            f"预注册 K={k_070}（自 {effective_date} 起计资格连亮 "
             f"{q_070}/{k_070}）"
         )
+        if backdated:
+            line_070 += (
+                f"— 声明日期 {reg['registered_date']} 早于首次观测，"
+                "以观测日起算"
+            )
         if qual["qualified_070"]:
             line_070 += " → 正式评估资格达成（owner 预注册动作）"
         line_060: str | None = None
@@ -302,6 +434,8 @@ def k_qualification_disclosure(
                 None if qual["qualified_060"] is None
                 else bool(qual["qualified_060"])
             ),
+            "effective_registered_date": effective_date,
+            "backdated": bool(backdated),
         }
     if state == "malformed":
         return {
@@ -310,6 +444,8 @@ def k_qualification_disclosure(
             "line_060": None,
             "qualified_070": False,
             "qualified_060": None,
+            "effective_registered_date": None,
+            "backdated": False,
         }
     return {
         "state": "unregistered",
@@ -317,15 +453,22 @@ def k_qualification_disclosure(
         "line_060": None,
         "qualified_070": False,
         "qualified_060": None,
+        "effective_registered_date": None,
+        "backdated": False,
     }
 
 
 __all__ = [
     "LEDGER_PATH",
     "K_REGISTRATION_PATH",
+    "K_OBSERVATION_LOG_PATH",
     "load_trigger_ledger",
     "trigger_stability",
     "load_k_registration",
     "trigger_qualification",
     "k_qualification_disclosure",
+    "k_registration_hash",
+    "observe_k_registration",
+    "load_k_observations",
+    "effective_k_registration",
 ]
