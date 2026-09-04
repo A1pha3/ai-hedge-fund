@@ -2200,3 +2200,256 @@ class TestAdvanceBarVanishRace:
         assert rc == 2
         assert payload["ok"] is False
         assert payload["code"] == "bar_csv_missing"
+
+
+# ---------------------------------------------------------------------------
+# R106: first-RUN lifecycle — decide(RUN pair) → advance settle/exit 全链
+# ---------------------------------------------------------------------------
+
+
+class TestFirstRunAdvanceLifecycle:
+    """R106: 首个生产 RUN 将首次驱动的持仓结算全链, 在官方栈上钉死。
+
+    58 个既有测试中 ``live_candidates`` (R103 让扫描真实产出 SELECTED 候选)
+    与 ``advance_sessions`` 零交集——全部 advance 测试跑在零候选 mark-only
+    世界; 生产 5 个已驱动会话亦全部零持仓。首个生产 RUN (regime 回 normal
+    + 可成手候选) 将首次驱动 decide(RUN pair) → advance T+1 入场结算 →
+    持有 marks → T+10 出场平仓。本类把该全链的不变式 (成交/守恒/NAV 精确
+    计数/crash-resume/恰等重放) 钉死在官方 driver 上——R103「SELECTED 路径
+    零覆盖烧毁 08-31/09-01」的同族盲区收口。
+
+    影子诊断口径: 世界夹具的放大 caps (per-ticker 20 万分) 让两候选都形成
+    入场计划; bars 开盘 1100 分恰等 kernel 买上限 (信号日 close), 正常可成交。
+    """
+
+    @staticmethod
+    def _bars(session: date) -> dict[str, object]:
+        from src.screening.offensive.v3.execution.lifecycle import DailyBar
+
+        return {
+            f"{ticker}.SZ": DailyBar(
+                security_id=f"{ticker}.SZ",
+                session=session,
+                open_cents=1100,
+                high_cents=1200,
+                low_cents=1050,
+                close_cents=1150,
+                limit_up_cents=1320,
+                limit_down_cents=880,
+            )
+            for ticker in TICKERS
+        }
+
+    @staticmethod
+    def _schedule_end(world: _DriverWorld) -> date:
+        """冻结排程评估窗末 (第 10 个后继会话 = kernel target_exit_session)。"""
+        schedule = world.driver._derive_schedule(
+            SIGNAL_SESSION,
+            available_at=datetime(
+                SIGNAL_SESSION.year,
+                SIGNAL_SESSION.month,
+                SIGNAL_SESSION.day,
+                7,
+                0,
+                tzinfo=UTC,
+            ),
+        )
+        return schedule.following_sessions[-1]
+
+    def _decide_run(self, world: _DriverWorld):
+        world.driver.ensure_trial_registration()
+        receipt = world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        assert receipt.champion_status == "RUN", (
+            "normal-regime live candidates must yield a champion RUN"
+            f" (got {receipt.champion_status})"
+        )
+        assert receipt.challenger_status == "RUN", (
+            "normal-regime live candidates must yield a challenger RUN"
+            f" (got {receipt.challenger_status})"
+        )
+        return receipt
+
+    def test_run_advance_t1_entry_settles_and_holds(
+        self, live_candidates: _DriverWorld
+    ) -> None:
+        """T+1 推进: 双臂入场成交落账 (settlements/open_at_end 非空) + 守恒。"""
+        world = live_candidates
+        self._decide_run(world)
+        t1 = SIGNAL_SESSION + timedelta(days=1)
+        receipt = world.driver.advance_sessions(
+            signal_session=SIGNAL_SESSION,
+            through_session=t1,
+            bars_by_session={s: self._bars(s) for s in (SIGNAL_SESSION, t1)},
+            now=LATER_AT,
+        )
+        assert receipt.through_session == t1
+        # 双臂各恰 1 条入场结算 (fixture 世界 lineage/risk 预算下仅 rank-1
+        # 300001 成行 —— 与生产 rank-1-only 现实同构)
+        for arm, count in receipt.settlements_by_arm.items():
+            assert count == 1, (
+                f"RUN pair must settle the rank-1 entry on {arm} at T+1"
+                f" (settlements={count})"
+            )
+        assert all(receipt.conservation_ok_by_arm.values())
+        # T+1 收盘仍持有 (出场在 T+10): 悬挂持仓非空
+        for arm, open_positions in receipt.open_at_end_by_arm.items():
+            assert open_positions, f"{arm} must still hold positions at T+1"
+
+    def test_run_full_window_t10_exit_closes_and_conserves(
+        self, live_candidates: _DriverWorld
+    ) -> None:
+        """全窗口推进至评估窗末: 出场平仓、守恒、NAV = genesis + 窗口会话数。"""
+        from src.screening.offensive.v3.contracts.trial import TrialArm
+        from src.screening.offensive.v3.orchestration.arm_layout import (
+            open_arm_capital_repository,
+        )
+
+        world = live_candidates
+        self._decide_run(world)
+        end = self._schedule_end(world)
+        window = [
+            SIGNAL_SESSION + timedelta(days=offset)
+            for offset in range((end - SIGNAL_SESSION).days + 1)
+        ]
+        assert len(window) == 11  # 信号会话 + 10 个后继 (冻结排程)
+        receipt = world.driver.advance_sessions(
+            signal_session=SIGNAL_SESSION,
+            through_session=end,
+            bars_by_session={s: self._bars(s) for s in window},
+            now=LATER_AT,
+        )
+        assert receipt.through_session == end
+        for arm, open_positions in receipt.open_at_end_by_arm.items():
+            assert not open_positions, (
+                f"T+10 unconditional open exit must close all positions on"
+                f" {arm} (open_at_end={open_positions})"
+            )
+        assert all(receipt.conservation_ok_by_arm.values())
+        # 每臂: 2 入场 + 2 出场 = 4 settlements; NAV 观察行 = genesis +
+        # 每驱动会话一条 (成交/费用不另增行 — glue 契约在官方栈上的镜像)。
+        for arm_enum in (TrialArm.CHAMPION, TrialArm.CHALLENGER):
+            # 1 入场 + 1 出场 (rank-1 单票全周期)
+            assert receipt.settlements_by_arm[arm_enum.value] == 2
+            repository = open_arm_capital_repository(world.root, arm_enum)
+            path = repository.nav_projections()
+            assert len(path.as_observed) == 1 + len(window)
+            assert all(o.nav_cents > 0 for o in path.as_observed)
+            assert path.restated_final == ()
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="R106 缺陷钉死 (修复归下一 src op): close_valuation 的空-marks"
+        " 守卫 (repository.py 'valuation_mark_missing') 在幂等重放检测之前"
+        "执行 —— advance#1 (through T+3, T+1 入场已落账) 后 advance#2 重放"
+        "信号会话的 liquid valuation 时, 守卫用当前投影 (持仓已开) 拒绝了"
+        "历史合法的空-marks 重放。生产形态: 首个 RUN 后第二晚夜间链 advance"
+        "即撞死, 持仓永无法 mark/exit, 执行窗口整体砖死。",
+    )
+    def test_run_crash_resume_mid_window_converges(
+        self, live_candidates: _DriverWorld
+    ) -> None:
+        """窗口中途 crash-resume: advance T+3 后重放至 T+10 收敛 (append-only
+        台账 + 幂等结算); 终态与直达全窗口一致 (平仓/守恒/NAV 不双计)。
+
+        RED 实证 (2026-09-04): CapitalConflict valuation_mark_missing ——
+        见 xfail reason; 幂等重放语义的修复在独立 src op 交付。"""
+        from src.screening.offensive.v3.contracts.trial import TrialArm
+        from src.screening.offensive.v3.orchestration.arm_layout import (
+            open_arm_capital_repository,
+        )
+
+        world = live_candidates
+        self._decide_run(world)
+        t3 = SIGNAL_SESSION + timedelta(days=3)
+        world.driver.advance_sessions(
+            signal_session=SIGNAL_SESSION,
+            through_session=t3,
+            bars_by_session={
+                s: self._bars(s)
+                for s in (
+                    SIGNAL_SESSION,
+                    SIGNAL_SESSION + timedelta(days=1),
+                    SIGNAL_SESSION + timedelta(days=2),
+                    t3,
+                )
+            },
+            now=LATER_AT,
+        )
+        end = self._schedule_end(world)
+        window = [
+            SIGNAL_SESSION + timedelta(days=offset)
+            for offset in range((end - SIGNAL_SESSION).days + 1)
+        ]
+        resumed = world.driver.advance_sessions(
+            signal_session=SIGNAL_SESSION,
+            through_session=end,
+            bars_by_session={s: self._bars(s) for s in window},
+            now=LATER_AT + timedelta(days=1),
+        )
+        assert resumed.through_session == end
+        for arm, open_positions in resumed.open_at_end_by_arm.items():
+            assert not open_positions, f"{arm} must be flat after resume to T+10"
+        assert all(resumed.conservation_ok_by_arm.values())
+        for arm_enum in (TrialArm.CHAMPION, TrialArm.CHALLENGER):
+            assert resumed.settlements_by_arm[arm_enum.value] == 2
+            path = open_arm_capital_repository(
+                world.root, arm_enum
+            ).nav_projections()
+            assert len(path.as_observed) == 1 + len(window)
+
+    def test_run_full_window_exact_replay_idempotent(
+        self, live_candidates: _DriverWorld
+    ) -> None:
+        """全窗口恰等重放: 同 through 二次 advance receipt 等价、trial root
+        字节稳定 (资本副作用幂等, 不双计)。"""
+        world = live_candidates
+        self._decide_run(world)
+        end = self._schedule_end(world)
+        window = [
+            SIGNAL_SESSION + timedelta(days=offset)
+            for offset in range((end - SIGNAL_SESSION).days + 1)
+        ]
+        bars = {s: self._bars(s) for s in window}
+        first = world.driver.advance_sessions(
+            signal_session=SIGNAL_SESSION,
+            through_session=end,
+            bars_by_session=bars,
+            now=LATER_AT,
+        )
+        nav_after_first = self._arm_nav_facts(world)
+        second = world.driver.advance_sessions(
+            signal_session=SIGNAL_SESSION,
+            through_session=end,
+            bars_by_session=bars,
+            now=LATER_AT + timedelta(hours=2),
+        )
+        assert second.through_session == first.through_session
+        assert second.settlements_by_arm == first.settlements_by_arm
+        assert second.open_at_end_by_arm == first.open_at_end_by_arm
+        assert all(second.conservation_ok_by_arm.values())
+        # 语义幂等 oracle (R42 教训: sqlite WAL sidecar 的 GC 时序使裸字节
+        # digest 跨 advance 天然竞态): 双臂 NAV 观察行数与终值冷读等价。
+        assert self._arm_nav_facts(world) == nav_after_first
+
+    @staticmethod
+    def _arm_nav_facts(world: _DriverWorld) -> dict:
+        """Per-arm (NAV 观察行数, max nav_cents) 的只读冷读事实。"""
+        import sqlite3
+
+        facts = {}
+        for arm in ("champion", "challenger"):
+            conn = sqlite3.connect(
+                f"file:{world.root}/arms/{arm}/capital.sqlite3?mode=ro",
+                uri=True,
+            )
+            try:
+                rows = conn.execute(
+                    "SELECT count(*), coalesce(max(nav_cents), -1)"
+                    " FROM nav_observations"
+                ).fetchone()
+            finally:
+                conn.close()
+            facts[arm] = tuple(rows)
+        return facts
