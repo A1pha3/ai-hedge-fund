@@ -525,3 +525,120 @@ def test_trigger_state_line_k_malformed_disclosed(case, tmp_path, monkeypatch):
     text = render_daily_action_v2(view)
     assert "预注册文件损坏" in text
     assert "正式评估资格达成" not in text
+
+
+# ---------- R114 Op3: 入选质量构成披露行 ----------
+
+def _write_decomp_report_with_buckets(tmp_path, day="20260904"):
+    base = tmp_path / "reports"
+    base.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {"group": "ALL", "n": 1627, "winrate": 0.4456, "expectancy": -0.0001,
+         "cluster_ci_low_90": -0.0163},
+        {"group": "strength=≥0.70", "n": 340, "winrate": 0.4853,
+         "expectancy": 0.0169, "cluster_ci_low_90": 0.0007},
+        {"group": "strength=0.60-0.70", "n": 431, "winrate": 0.4501,
+         "expectancy": 0.0103, "cluster_ci_low_90": -0.0035},
+        {"group": "strength=0.50-0.60", "n": 341, "winrate": 0.4575,
+         "expectancy": 0.0014, "cluster_ci_low_90": -0.023},
+    ]
+    (base / f"winrate_payoff_decomposition_{day}.json").write_text(
+        json.dumps({"universes": {"production_aligned": {"horizons": {"t10": rows}}}}),
+        encoding="utf-8",
+    )
+    return base
+
+
+def _patch_quality_reports_dir(monkeypatch, base):
+    from src.screening.offensive import daily_action as da
+    monkeypatch.setattr(da, "_PRIOR_DRIFT_REPORTS_DIR", base)
+
+
+def _detail(ticker, strength):
+    from src.screening.offensive.daily_action import PlanDetail
+    from datetime import date as _d
+    return PlanDetail(
+        ticker=ticker, setup="btst_breakout", horizon=10,
+        trigger_strength=strength, expected_exit_date=_d(2026, 8, 31),
+        distribution=None, metadata={},
+    )
+
+
+def test_picks_quality_line_buckets_and_expectancies(case, tmp_path, monkeypatch):
+    """有 picks + 有报告 → 分桶计数与 court 实测净期望同屏."""
+    _patch_quality_reports_dir(monkeypatch, _write_decomp_report_with_buckets(tmp_path))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(
+        run, (), run.open_positions, (), (),
+        plan_details=(
+            _detail("111.SZ", 0.72),
+            _detail("222.SZ", 0.72),
+            _detail("333.SZ", 0.55),
+        ),
+    )
+    text = render_daily_action_v2(view)
+    assert "入选质量构成" in text
+    assert "≥0.70 × 2（历史期望 +1.69%）" in text
+    assert "0.50-0.60 × 1（历史期望 +0.14%）" in text
+    assert "0.60-0.70 × 0" in text
+    assert "<0.50 × 0" in text
+    assert "20260904" in text and "n=1627" in text
+    assert "不改变计划与执行" in text
+
+
+def test_picks_quality_line_absent_without_picks(case, tmp_path, monkeypatch):
+    _patch_quality_reports_dir(monkeypatch, _write_decomp_report_with_buckets(tmp_path))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "入选质量构成" not in render_daily_action_v2(view)
+
+
+def test_picks_quality_line_absent_when_report_corrupt(case, tmp_path, monkeypatch):
+    """最新报告损坏 → 整行省略, 不回退旧报告 (镜像漂移行纪律)."""
+    base = _write_decomp_report_with_buckets(tmp_path, day="20260903")
+    (base / "winrate_payoff_decomposition_20260904.json").write_text(
+        "\x00 not json", encoding="utf-8")
+    _patch_quality_reports_dir(monkeypatch, base)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(
+        run, (), run.open_positions, (), (),
+        plan_details=(_detail("111.SZ", 0.72),),
+    )
+    assert "入选质量构成" not in render_daily_action_v2(view)
+
+
+def test_picks_quality_line_count_only_when_bucket_row_missing(case, tmp_path, monkeypatch):
+    """报告缺个别桶行 (如 <0.50) → 该桶只计数不出 E, 其余桶正常."""
+    base = tmp_path / "reports"
+    base.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {"group": "ALL", "n": 1627, "winrate": 0.4456, "expectancy": -0.0001,
+         "cluster_ci_low_90": -0.0163},
+        {"group": "strength=≥0.70", "n": 340, "winrate": 0.4853,
+         "expectancy": 0.0169, "cluster_ci_low_90": 0.0007},
+    ]
+    (base / "winrate_payoff_decomposition_20260904.json").write_text(
+        json.dumps({"universes": {"production_aligned": {"horizons": {"t10": rows}}}}),
+        encoding="utf-8",
+    )
+    _patch_quality_reports_dir(monkeypatch, base)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(
+        run, (), run.open_positions, (), (),
+        plan_details=(
+            _detail("111.SZ", 0.72),
+            _detail("222.SZ", 0.48),
+        ),
+    )
+    text = render_daily_action_v2(view)
+    assert "≥0.70 × 1（历史期望 +1.69%）" in text
+    assert "<0.50 × 1" in text
+    assert "<0.50 × 1（历史期望" not in text

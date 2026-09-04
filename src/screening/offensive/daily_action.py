@@ -1567,6 +1567,79 @@ def _render_gap_reference_line(
     )
 
 
+def _render_picks_quality_line(
+    plan_details,
+    reports_dir: str | Path | None = None,
+) -> str | None:
+    """今日入选质量构成行 (R114 Op3): 当日输出与 court 证据的最后一段通路。
+
+    证据 (分解报告) → 触发器 (K 资格) 都已有日度可见性, 但「今天选出的票
+    处于哪个历史期望区间」此前不可见 — 全体 E 与 ≥0.70 桶 E 差距 1.7pp
+    (20260904), 同日入选构成直接决定实际实现的期望。本行把 plan_details
+    按 court 同口径强度桶 (strength_bucket 单一实现, 左闭右开) 分桶, 与
+    最新分解报告 production_aligned/t10 各桶实测净期望并置。
+
+    fail-open 家族纪律 (R85/R87/R92/R109 同族): 无 picks/报告缺失/损坏/
+    结构不符 → 整行省略 (只取最新一份不回退, 走 latest_decomposition_report
+    单一读取家); 个别桶行缺失 → 该桶只计数不出 E。本行是披露不是行为改变
+    — 不进入任何计划/评分/仓位/退出决策路径。
+    """
+    if not plan_details:
+        return None
+    try:
+        from src.screening.offensive.gap_disclosure import (
+            latest_decomposition_report,
+        )
+        from src.screening.offensive.threshold_trigger import strength_bucket
+
+        base = (
+            Path(reports_dir) if reports_dir is not None
+            else _PRIOR_DRIFT_REPORTS_DIR
+        )
+        found = latest_decomposition_report(base)
+        if found is None:
+            return None
+        report_path, payload = found
+        rows = payload["universes"]["production_aligned"]["horizons"]["t10"]
+        bucket_rows: dict[str, dict] = {}
+        all_n = None
+        for row in rows:
+            group = row.get("group")
+            if not isinstance(group, str):
+                continue
+            if group == "ALL":
+                n = row.get("n")
+                if isinstance(n, int):
+                    all_n = n
+            elif group.startswith("strength="):
+                bucket_rows[group[len("strength="):]] = row
+        if not bucket_rows:
+            return None
+        counts: dict[str, int] = {}
+        for detail in plan_details:
+            bucket = strength_bucket(float(detail.trigger_strength))
+            counts[bucket] = counts.get(bucket, 0) + 1
+        parts = []
+        for bucket in ("≥0.70", "0.60-0.70", "0.50-0.60", "<0.50", "unknown"):
+            count = counts.get(bucket, 0)
+            if bucket == "unknown" and count == 0:
+                continue
+            row = bucket_rows.get(bucket)
+            e = row.get("expectancy") if isinstance(row, dict) else None
+            if isinstance(e, (int, float)) and math.isfinite(float(e)):
+                parts.append(f"{bucket} × {count}（历史期望 {e:+.2%}）")
+            else:
+                parts.append(f"{bucket} × {count}")
+        report_date = report_path.stem.rsplit("_", 1)[-1]
+        head_n = f" · 全体 n={all_n}" if all_n is not None else ""
+        return (
+            f"入选质量构成（court 生产对齐 T+10 净口径 · {report_date}{head_n}）："
+            f"{' · '.join(parts)} — 当日入选的历史期望参考，不改变计划与执行"
+        )
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+        return None
+
+
 def _render_trigger_state_line() -> str | None:
     """预注册强度阈值触发器的操作员状态行 (R85 Op1)。
 
@@ -1808,6 +1881,12 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     drift_line = _render_prior_drift_line()
     if drift_line:
         lines.append(drift_line)
+        lines.append("")
+    # 入选质量构成行 (R114 Op3): 当日输出与 court 证据的并置 — 无 picks/
+    # 证据缺失整行省略 (fail-open 家族), 与上方四行省略语义一致.
+    quality_line = _render_picks_quality_line(run.plan_details)
+    if quality_line:
+        lines.append(quality_line)
         lines.append("")
     if summary is not None:
         lines.append(f"今日摘要：{summary}")

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 
@@ -154,6 +155,24 @@ def trigger_stability(records: list[dict]) -> dict[str, object]:
             current_run = 0
     out["max_conjunction_060_streak"] = historical_max_060
     return out
+
+
+ALL_STRENGTH_BUCKETS: tuple[str, ...] = ("<0.50", "0.50-0.60", "0.60-0.70", "≥0.70", "unknown")
+
+
+def strength_bucket(strength: float | None) -> str:
+    """强度分桶 (R114 Op3 自分解脚本逐字上移 — 单一实现): 0.50/0.60/0.70
+    左闭右开 (与 panel_signal_decomposition 同侧)。court 分组与操作员渲染
+    行共用本函数, 两侧口径不可漂移 (R109 Op2 纪律)。"""
+    if strength is None or (isinstance(strength, float) and math.isnan(strength)):
+        return "unknown"
+    if strength < 0.50:
+        return "<0.50"
+    if strength < 0.60:
+        return "0.50-0.60"
+    if strength < 0.70:
+        return "0.60-0.70"
+    return "≥0.70"
 
 
 _K_DEFAULT_LINE = "稳定阈值 K 未预注册（连亮达标数属 owner 预注册动作）"
@@ -471,4 +490,6 @@ __all__ = [
     "observe_k_registration",
     "load_k_observations",
     "effective_k_registration",
+    "ALL_STRENGTH_BUCKETS",
+    "strength_bucket",
 ]

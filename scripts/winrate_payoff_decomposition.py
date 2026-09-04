@@ -42,6 +42,7 @@ import numpy as np
 import pandas as pd
 
 from src.screening.offensive.threshold_trigger import (  # noqa: E402
+    ALL_STRENGTH_BUCKETS,
     K_OBSERVATION_LOG_PATH,
     K_REGISTRATION_PATH,
     k_qualification_disclosure,
@@ -49,6 +50,7 @@ from src.screening.offensive.threshold_trigger import (  # noqa: E402
     load_k_registration,
     load_trigger_ledger,
     observe_k_registration,
+    strength_bucket,
     trigger_stability,
 )
 
@@ -75,7 +77,6 @@ STRENGTH_BUCKETS: tuple[tuple[float, str], ...] = (
     (0.70, "≥0.70"),
 )
 # 全桶序 (含 <0.50 与 unknown) — 分组/切片视图共用的单一序, 防两侧漂移
-ALL_STRENGTH_BUCKETS: tuple[str, ...] = ("<0.50", "0.50-0.60", "0.60-0.70", "≥0.70", "unknown")
 
 # 执行面 gap 解剖 (R92 Op1): T+1 开盘缺口分桶 — 单一定义家在
 # src.screening.offensive.gap_disclosure (R92 Op3 迁居; 本模块 re-export
@@ -126,19 +127,8 @@ def net_returns(gross: list[float | None]) -> list[float | None]:
     ]
 
 
-def strength_bucket(strength: float | None) -> str:
-    """0.50/0.60/0.70 左闭右开 (与 panel_signal_decomposition 同侧)。"""
-    if strength is None or (isinstance(strength, float) and math.isnan(strength)):
-        return "unknown"
-    if strength < 0.50:
-        return "<0.50"
-    if strength < 0.60:
-        return "0.50-0.60"
-    if strength < 0.70:
-        return "0.60-0.70"
-    return "≥0.70"
-
-
+# strength_bucket/ALL_STRENGTH_BUCKETS 上移 src.screening.offensive.threshold_trigger
+# (R114 Op3 单一实现; 模块头部 re-export, 兼容既有 import 面)。
 def win_loss_stats(
     rets: list[float],
     days: list[str] | None = None,

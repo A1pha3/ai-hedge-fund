@@ -509,3 +509,30 @@ def test_qualification_excludes_malformed_date_records():
     ]
     qual = tt.trigger_qualification(records, reg)
     assert qual["q_070"] == 1
+
+
+# ---------- R114 Op3: strength_bucket 单一实现上移 ----------
+
+def test_strength_bucket_edges_left_closed():
+    """0.50/0.60/0.70 左闭右开 — 与 court 分组口径逐位一致 (上移钉死)."""
+    assert tt.strength_bucket(0.499) == "<0.50"
+    assert tt.strength_bucket(0.50) == "0.50-0.60"
+    assert tt.strength_bucket(0.599) == "0.50-0.60"
+    assert tt.strength_bucket(0.60) == "0.60-0.70"
+    assert tt.strength_bucket(0.699) == "0.60-0.70"
+    assert tt.strength_bucket(0.70) == "≥0.70"
+    assert tt.strength_bucket(0.95) == "≥0.70"
+    assert tt.strength_bucket(None) == "unknown"
+    assert tt.strength_bucket(float("nan")) == "unknown"
+
+
+def test_strength_buckets_constant_shape():
+    assert tt.ALL_STRENGTH_BUCKETS == ("<0.50", "0.50-0.60", "0.60-0.70", "≥0.70", "unknown")
+
+
+def test_script_reexports_same_strength_bucket_objects():
+    """脚本 re-export 是同一对象 — 上移后无双实现漂移面 (R109 Op2 纪律)."""
+    import scripts.winrate_payoff_decomposition as deco
+
+    assert deco.strength_bucket is tt.strength_bucket
+    assert deco.ALL_STRENGTH_BUCKETS is tt.ALL_STRENGTH_BUCKETS
