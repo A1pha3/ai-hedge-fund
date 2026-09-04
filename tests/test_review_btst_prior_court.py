@@ -436,3 +436,44 @@ def test_production_dates_early_slices_empty_and_guard_intact():
     outside = pd.DataFrame({"signal_date": ["20211220"], "gross_ret_t10": [0.01]})
     with pytest.raises(ValueError, match="coverage gap"):
         slice_partitions(outside)
+
+
+# ---------- R111 Op1: 先验对齐哨点 CI 成员断言 ----------
+
+def test_prior_ci_membership_inside_passes_silently():
+    """先验期望在 CI 内 → 静默通过 (20260904 真实形态回归锚: +0.56% ∈ [-1.63%,+1.60%])."""
+    rpc.assert_prior_within_evidence_ci("T+10", 0.0056, {"ci90_low": -0.0163, "ci90_high": 0.0160})
+
+
+def test_prior_ci_membership_high_side_violation_raises():
+    """高侧越界 (R98 37x 家族的统计极限形态): CI 收窄到先验之下 → AssertionError 含三数字."""
+    with pytest.raises(AssertionError) as exc_info:
+        rpc.assert_prior_within_evidence_ci("T+10", 0.0056, {"ci90_low": 0.0000, "ci90_high": 0.0040})
+    msg = str(exc_info.value)
+    assert "0.0056" in msg and "0.0000" in msg and "0.0040" in msg
+    assert "T+10" in msg
+
+
+def test_prior_ci_membership_low_side_violation_raises():
+    """低侧越界 (证据强势化/先验陈旧为负) → 同样 raise — 双侧对称不偏袒."""
+    with pytest.raises(AssertionError):
+        rpc.assert_prior_within_evidence_ci("T+8", -0.0018, {"ci90_low": 0.0005, "ci90_high": 0.0090})
+
+
+def test_prior_ci_membership_none_ci_does_not_judge():
+    """CI 为 None (样本不足) → 不判定: 证据缺失既不是对齐证据也不构成误报."""
+    rpc.assert_prior_within_evidence_ci("T+10", 0.0056, {"ci90_low": None, "ci90_high": None})
+
+
+def test_t8_ci_membership_wiring_with_clustered_bootstrap():
+    """run_check 的 T+8 接线形态: 合成聚类数据走 stats_block → 成员断言消费 (n_boot 有界)."""
+    days = ["20260101"] * 3 + ["20260102"] * 3 + ["20260103"] * 2
+    gross = [0.05, 0.03, 0.04, 0.02, 0.06, 0.01, -0.02, 0.03]
+    u8 = pd.DataFrame({"gross_ret_t8": gross, "signal_date": days}).astype({"signal_date": str})
+    m8 = u8["gross_ret_t8"].notna()
+    t8 = rpc.net_ret(u8.loc[m8, "gross_ret_t8"])
+    stats = rpc.stats_block(t8, u8.loc[m8, "signal_date"], n_boot=200)
+    assert stats["ci90_low"] is not None and stats["ci90_high"] is not None
+    assert stats["ci90_low"] <= stats["mean"] <= stats["ci90_high"]
+    # 均值即先验 → 成员断言静默 (接线语义: stats_block 产物直接可消费)
+    rpc.assert_prior_within_evidence_ci("T+8", stats["mean"], stats)

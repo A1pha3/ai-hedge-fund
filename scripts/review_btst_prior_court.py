@@ -370,6 +370,26 @@ def build_report(ev: pd.DataFrame, n_boot: int = N_BOOT_DEFAULT) -> dict:
     }
 
 
+def assert_prior_within_evidence_ci(name: str, prior_er: float, stats: dict) -> None:
+    """先验期望 ∈ 当前证据 90% 聚类 CI (R111 Op1): 哨点从绝对带升级为统计成员断言.
+
+    ±1pp 绝对带对乘性漂移结构性失明 (R98 实测: 先验相对高估 ~37x / 0.55pp
+    带内静默)。成员断言直接表达『当前证据不再支持先验』: 宽 CI 期少误报,
+    court 数据增长 CI 收窄时自动收紧, 乘性漂移无处遁形。ci90_low/high 为
+    None (样本不足) → 不判定 — 证据缺失不构成对齐证据, 也不构成误报理由
+    (表新鲜度/非空由上游断言守门)。只收紧不放松: 与既有 ±1pp/方向断言
+    是 AND 关系, 重校准仍是 owner 决策 (R98 漂移决策包形态)。
+    """
+    lo, hi = stats.get("ci90_low"), stats.get("ci90_high")
+    if lo is None or hi is None:
+        return
+    assert lo <= prior_er <= hi, (
+        f"{name} CI 成员断言失败: 先验期望 {prior_er:+.4f} 落在当前生产对齐 "
+        f"90% 聚类 CI [{lo:+.4f}, {hi:+.4f}] 之外 — 当前证据已不支持先验, "
+        f"重校准属 owner 决策 (走漂移决策包形态), 回 Observe"
+    )
+
+
 def run_check(ev: pd.DataFrame, today: date | None = None) -> None:
     """真实事件表方向断言 + 表新鲜度/公式漂移 fail-closed 断言 (verification 冻结命令)."""
     today = today or date.today()
@@ -411,11 +431,16 @@ def run_check(ev: pd.DataFrame, today: date | None = None) -> None:
     assert 0 < top1["trade_mean"] < 0.04, (
         f"top-1 量级断言失败: {top1['mean']:.4f} 不在 (0, 0.04) — 与预验 (+1.77% 毛 / +1.12% 净) 背离"
     )
+    # CI 成员断言 (R111 Op1): 统计对齐面 — 复用 build_report 已算的生产对齐
+    # 聚类 CI (n_boot=1_000), 不重复 bootstrap.
+    assert_prior_within_evidence_ci("T+10", prior["expected_return"], prod)
     # T+8 对齐哨点 (2026-08-22 补齐重校准的配套): 与 T+10 同款 ±1pp/胜率
     # 虚高 <10pp 语义 — court 表重建后 T+8 先验脱钩当天暴露.
     from src.screening.offensive.known_distributions import BTST_BREAKOUT_T8
 
-    t8 = net_ret(candidate_universe(ev)["gross_ret_t8"].dropna())
+    u8 = candidate_universe(ev)
+    m8 = u8["gross_ret_t8"].notna()
+    t8 = net_ret(u8.loc[m8, "gross_ret_t8"])
     t8_er_delta = abs(BTST_BREAKOUT_T8.expected_return - t8.mean()) * 100
     assert t8_er_delta <= 1.0, (
         f"T+8 对齐断言失败: 先验期望 {BTST_BREAKOUT_T8.expected_return:.4f} 与 "
@@ -425,6 +450,9 @@ def run_check(ev: pd.DataFrame, today: date | None = None) -> None:
         f"T+8 方向断言失败: 先验胜率 {BTST_BREAKOUT_T8.winrate:.4f} 高于 court "
         f"{(t8 > 0).mean():.4f} 达 10pp — 回到旧虚高关系"
     )
+    # T+8 CI 成员断言 (R111 Op1): 现算聚类 CI (n_boot 与 build_report 一致).
+    t8_stats = stats_block(t8, u8.loc[m8, "signal_date"], n_boot=1_000)
+    assert_prior_within_evidence_ci("T+8", BTST_BREAKOUT_T8.expected_return, t8_stats)
     print(
         json.dumps({
             "check": "ok",
