@@ -40,13 +40,19 @@ def _fail(code: str, message: str, **details: object) -> int:
     return 2
 
 
-def _fail_driver(exc: "TrialSessionDriverError") -> int:
-    """按 ``_fail`` 输出契约构造 driver 错误 (R47, D1 收口)。
+def _fail_typed(exc: "TrialSessionDriverError | EvidenceStoreError | TrialStoreError") -> int:
+    """按 ``_fail`` 输出契约透传任一 store/driver 类型化异常 (R47, R108b 收口).
 
     ``exc.code`` 是权威码; details 里的同名 ``code`` 键显式弃用 —
     此前的 ``_fail("driver_failed", str(exc), code=exc.code, **exc.details)``
     位置/关键字 ``code`` 恒碰撞, 任何 driver 类型化错误都被 TypeError
     掩盖 (R38/R41 同族第四处)。
+
+    R108b 起同时承接 store 级两族 (``EvidenceStoreError`` /
+    ``TrialStoreError``, 均带同名 ``.code``/``.details`` 契约): 此前它们
+    自三入口裸逃逸为 rc=1 traceback, 夜间链只能记无类型 decide_failed
+    (R108 宿主实演取证: trusted_clock_rollback / arm_decision_conflict
+    两个真实形态)。
     """
     details = dict(exc.details)
     details.pop("code", None)
@@ -300,10 +306,12 @@ def _cmd_decide(args: argparse.Namespace) -> int:
     from src.screening.offensive.v3.evidence.governance_identity import (
         load_governance_identity,
     )
+    from src.screening.offensive.v3.evidence.repository import EvidenceStoreError
     from src.screening.offensive.v3.orchestration.trial_session_driver import (
         OfficialTrialSessionDriver,
         TrialSessionDriverError,
     )
+    from src.screening.offensive.v3.orchestration.trial_store import TrialStoreError
 
     identity = load_governance_identity(identity_dir, trusted_at=now)
     driver = OfficialTrialSessionDriver(
@@ -318,7 +326,9 @@ def _cmd_decide(args: argparse.Namespace) -> int:
             snapshot=snapshot, signal_session=signal_session, now=now
         )
     except TrialSessionDriverError as exc:
-        return _fail_driver(exc)
+        return _fail_typed(exc)
+    except (EvidenceStoreError, TrialStoreError) as exc:
+        return _fail_typed(exc)
     return _ok(
         {
             "mode": "execute",
@@ -499,10 +509,12 @@ def _cmd_advance(args: argparse.Namespace) -> int:
     from src.screening.offensive.v3.evidence.governance_identity import (
         load_governance_identity,
     )
+    from src.screening.offensive.v3.evidence.repository import EvidenceStoreError
     from src.screening.offensive.v3.orchestration.trial_session_driver import (
         OfficialTrialSessionDriver,
         TrialSessionDriverError,
     )
+    from src.screening.offensive.v3.orchestration.trial_store import TrialStoreError
 
     identity = load_governance_identity(identity_dir, trusted_at=now)
     driver = OfficialTrialSessionDriver(
@@ -519,7 +531,9 @@ def _cmd_advance(args: argparse.Namespace) -> int:
             now=now,
         )
     except TrialSessionDriverError as exc:
-        return _fail_driver(exc)
+        return _fail_typed(exc)
+    except (EvidenceStoreError, TrialStoreError) as exc:
+        return _fail_typed(exc)
     return _ok(
         {
             "mode": "execute",
@@ -630,14 +644,18 @@ def _cmd_finalize(args: argparse.Namespace) -> int:
         research_program_id=args.research_program,
         now=now,
     )
+    from src.screening.offensive.v3.evidence.repository import EvidenceStoreError
     from src.screening.offensive.v3.orchestration.trial_session_driver import (
         TrialSessionDriverError,
     )
+    from src.screening.offensive.v3.orchestration.trial_store import TrialStoreError
 
     try:
         finalized = stack.runner.finalize_missed_sessions(now)
     except TrialSessionDriverError as exc:
-        return _fail_driver(exc)
+        return _fail_typed(exc)
+    except (EvidenceStoreError, TrialStoreError) as exc:
+        return _fail_typed(exc)
     return _ok(
         {
             "mode": "execute",

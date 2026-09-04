@@ -281,7 +281,16 @@ class TestLegalStartupStatesAndDegradation:
     def test_empty_root_reports_missing_sections(self, tmp_path: Path) -> None:
         empty_root = tmp_path / "empty-root"
         empty_root.mkdir()
-        report = _status_json("--trial-root", str(empty_root), "--json")
+        # nightly 历史默认读仓库级 data/reports 全局路径 (R108b 环境泄漏修复):
+        # 不显式钉进 tmp, 该测试在无 data/ 的隔离 slot 绿、在宿主 (真实夜间
+        # 历史在位) 红 — 断言随运行机器漂移。显式指向空 tmp 恢复单测自足。
+        report = _status_json(
+            "--trial-root",
+            str(empty_root),
+            "--json",
+            "--nightly-history",
+            str(tmp_path / "no-such-nightly.jsonl"),
+        )
         assert report["decisions"]["status"] == "missing"
         assert report["spine"]["status"] == "missing"
         assert report["arms"]["champion"]["status"] == "missing"

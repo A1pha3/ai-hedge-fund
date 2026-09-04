@@ -1890,12 +1890,12 @@ def test_driver_error_reports_typed_code_without_collision(capsys):
     """
     import json
 
-    from scripts.v3_trial_session import _fail_driver
+    from scripts.v3_trial_session import _fail_typed
     from src.screening.offensive.v3.orchestration.trial_session_driver import (
         TrialSessionDriverError,
     )
 
-    rc = _fail_driver(
+    rc = _fail_typed(
         TrialSessionDriverError(
             "regime_session_regression",
             "regime head regression",
@@ -1916,7 +1916,7 @@ def test_driver_error_reports_typed_code_without_collision(capsys):
 def test_driver_error_details_cannot_shadow_code():
     """结构性保证: TrialSessionDriverError 构造器即拒绝 details 携带
     code 键 (位置/关键字同名碰撞) — details 永远不可能遮蔽权威码,
-    _fail_driver 的同名键防御只是对鸭子/子类形态的纵深。"""
+    _fail_typed 的同名键防御只是对鸭子/子类形态的纵深。"""
     import pytest
 
     from src.screening.offensive.v3.orchestration.trial_session_driver import (
