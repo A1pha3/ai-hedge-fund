@@ -477,3 +477,54 @@ def test_t8_ci_membership_wiring_with_clustered_bootstrap():
     assert stats["ci90_low"] <= stats["mean"] <= stats["ci90_high"]
     # 均值即先验 → 成员断言静默 (接线语义: stats_block 产物直接可消费)
     rpc.assert_prior_within_evidence_ci("T+8", stats["mean"], stats)
+
+
+def test_prior_ci_membership_boundary_inclusive():
+    """恰在 CI 边界上算成员 (<= 包含语义 = 少误报) — R111 Op2 钉死, 防未来改 <."""
+    rpc.assert_prior_within_evidence_ci("T+10", 0.0040, {"ci90_low": -0.0010, "ci90_high": 0.0040})
+    rpc.assert_prior_within_evidence_ci("T+10", -0.0010, {"ci90_low": -0.0010, "ci90_high": 0.0040})
+
+
+def test_t8_empty_universe_fails_closed_with_clear_message(monkeypatch):
+    """空 T+8 宇宙 → 明语 fail-closed (消灭 NaN ≤ 1.0 = False 的密文脆断)."""
+    from datetime import date as _date
+
+    ev = _ev_prod([
+        {"signal_date": "20260101", "trigger_strength": 0.9, "fillable": True,
+         "gate_blocked": False, "gross_ret_t10": 0.02, "gross_ret_t8": float("nan"),
+         "regime": "normal"},
+    ])  # gross_ret_t8 全 NaN → m8 全 False → t8 空
+    # 手术式隔离: freshness 门放行 + build_report 打桩 (先验自洽, 上游断言全过),
+    # 使 run_check 直达 T+8 段 — 被测面只有空宇宙守卫, 不喂全链合成数据.
+    prior = rpc.prior_snapshot()
+    prod_stub = {
+        "n": 100, "mean": prior["expected_return"],
+        "winrate": prior["winrate"] - 0.01,
+        "ci90_low": prior["expected_return"] - 0.01,
+        "ci90_high": prior["expected_return"] + 0.01,
+    }
+    rep_stub = {
+        "fingerprint": {"prior": prior},
+        "all_candidates": prod_stub,
+        "production_aligned": prod_stub,
+        "daily_topk": {"top_1": {"trade_mean": 0.01, "winrate": 0.5}},
+        "deviation": {},
+    }
+    monkeypatch.setattr(
+        rpc, "table_freshness",
+        lambda *a, **k: {"manifest_present": True, "age_days": 0, "formula_match": True},
+    )
+    monkeypatch.setattr(rpc, "build_report", lambda frame, n_boot=1_000: rep_stub)
+    with pytest.raises(AssertionError, match="T\\+8 宇宙为空"):
+        rpc.run_check(ev, today=_date(2026, 9, 5))
+
+
+def test_stats_block_ci_deterministic_for_fixed_input():
+    """确定性回归锚: 同输入两次调用 CI 逐字节相等 (BOOT_SEED 固定前提)."""
+    days = ["20260101"] * 4 + ["20260102"] * 4
+    gross = [0.05, -0.02, 0.04, 0.01, 0.03, 0.06, -0.01, 0.02]
+    s = pd.Series(gross, dtype=float)
+    d = pd.Series(days, dtype=object)
+    a = rpc.stats_block(s, d, n_boot=200)
+    b = rpc.stats_block(s, d, n_boot=200)
+    assert (a["ci90_low"], a["ci90_high"]) == (b["ci90_low"], b["ci90_high"])

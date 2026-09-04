@@ -441,6 +441,12 @@ def run_check(ev: pd.DataFrame, today: date | None = None) -> None:
     u8 = candidate_universe(ev)
     m8 = u8["gross_ret_t8"].notna()
     t8 = net_ret(u8.loc[m8, "gross_ret_t8"])
+    # R111 Op2: 空宇宙 fail-closed 明语 — 全新表/新列缺失的早期形态下旧路径
+    # 以 NaN<=1.0=False 脆断, 消息是不可操作的 NaN 密文; 在此显式拦截.
+    assert len(t8) > 0, (
+        "T+8 宇宙为空: candidate_universe 内无任何非空 gross_ret_t8 — "
+        "表未覆盖 T+8 收益列或宇宙过滤全灭, 哨点无法判定 (fail-closed)"
+    )
     t8_er_delta = abs(BTST_BREAKOUT_T8.expected_return - t8.mean()) * 100
     assert t8_er_delta <= 1.0, (
         f"T+8 对齐断言失败: 先验期望 {BTST_BREAKOUT_T8.expected_return:.4f} 与 "
