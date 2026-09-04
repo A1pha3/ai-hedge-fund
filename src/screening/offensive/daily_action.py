@@ -1575,7 +1575,9 @@ def _render_trigger_state_line() -> str | None:
     是 src.screening.offensive.threshold_trigger 单一实现, 本函数只拼装
     披露文本: 账本缺失/空 → 整行省略 (fail-open, 不假装有判定);
     本行是披露不是行为改变 — 武装与否不改变任何当日决策路径 (配置不是
-    权限, 阈值评估是 owner 预注册动作)。
+    权限, 阈值评估是 owner 预注册动作)。R112 Op1 起 K 子句经
+    k_qualification_disclosure 单一事实源: owner 预注册 K 后披露资格连亮
+    与达标态, 未注册/损坏形态分别保持默认句/明语披露。
     """
     from src.screening.offensive import threshold_trigger as _tt
 
@@ -1638,7 +1640,14 @@ def _render_trigger_state_line() -> str | None:
     # 「连亮达标数」本身是 owner 预注册动作, 该事实不可见同样是观测缺口.
     max_streak = int(stab.get("max_conjunction_streak") or 0)
     max_streak_060 = int(stab.get("max_conjunction_060_streak") or 0)
-    k_note = "稳定阈值 K 未预注册（连亮达标数属 owner 预注册动作）"
+    # K 预注册消费面 (R112 Op1): 未注册保持默认句, 损坏明语披露, 注册后披露
+    # K/起算日/资格连亮/达标与否 — 文本全部来自 k_qualification_disclosure
+    # 单一事实源 (与分解报告 MD 同源, 不各自措辞). 资格达成只是披露:
+    # 正式评估仍是 owner 门, 本行不进入任何计划/评分/仓位/退出决策路径.
+    k_disc = _tt.k_qualification_disclosure(records)
+    k_note = str(k_disc["line_070"])
+    if k_disc.get("line_060"):
+        k_note += f"；0.60 锚 {k_disc['line_060']}"
     return (
         f"强度阈值触发器（{anchor} · 账本 {stab['records']} 条）：{c1} · {c2} · {conj}；"
         f"{c3} · {conj_060} · 历史最多连亮 {max_streak}/060 锚 {max_streak_060}"

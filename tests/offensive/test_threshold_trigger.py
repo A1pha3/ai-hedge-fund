@@ -193,3 +193,173 @@ def test_stability_060_last_lit_from_old_record_is_none():
     st = tt.trigger_stability(records)
     assert st["condition_3_last_lit"] is None
     assert st["conjunction_060_last_armed"] is None
+
+
+# ---------- R112 Op1: 稳定阈值 K 预注册消费面 (反前瞻资格判定) ----------
+
+_K_OK = {
+    "anchor": "production_aligned/t10",
+    "k_070": 3,
+    "k_060": 3,
+    "registered_date": "20260901",
+    "owner_ref": "owner:mini 预注册",
+}
+
+
+def _kfile(tmp_path, payload):
+    path = tmp_path / "threshold_trigger_k.json"
+    if isinstance(payload, str):
+        path.write_text(payload, encoding="utf-8")
+    else:
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def _armed_rec(day, armed=True, armed_060=None, anchor="production_aligned/t10"):
+    rec = _rec(day, c1_lit=True, c2_lit=True, armed=armed, court={"window_end": day})
+    if armed_060 is not None:
+        rec["condition_3"] = {"lit": True, "judged": True, "n": 400, "stat": 0.002}
+        rec["conjunction_060_armed"] = armed_060
+    if anchor is not None:
+        rec["anchor"] = anchor
+    return rec
+
+
+def test_load_k_registration_unregistered(tmp_path):
+    """K 文件缺失 → unregistered (现默认态, 行为不变)."""
+    state, reg = tt.load_k_registration(tmp_path / "none.json")
+    assert state == "unregistered" and reg is None
+
+
+def test_load_k_registration_registered_ok(tmp_path):
+    state, reg = tt.load_k_registration(_kfile(tmp_path, _K_OK))
+    assert state == "registered"
+    assert reg["k_070"] == 3 and reg["k_060"] == 3
+    assert reg["registered_date"] == "20260901"
+    assert reg["anchor"] == "production_aligned/t10"
+
+
+def test_load_k_registration_registered_without_k060(tmp_path):
+    """k_060 可选 — 只预注册 0.70 锚是合法形态."""
+    payload = {k: v for k, v in _K_OK.items() if k != "k_060"}
+    state, reg = tt.load_k_registration(_kfile(tmp_path, payload))
+    assert state == "registered" and reg["k_060"] is None
+
+
+def test_load_k_registration_malformed_variants(tmp_path):
+    """JSON 损坏/形状不符 → malformed (文件存在却不合法是 owner 可见异常态)."""
+    bad_payloads = [
+        "\x00 not json",
+        [],
+        {k: v for k, v in _K_OK.items() if k != "anchor"},      # anchor 缺失
+        {k: v for k, v in _K_OK.items() if k != "k_070"},       # k_070 缺失
+        {**_K_OK, "k_070": 0},                                   # k 必须 >=1
+        {**_K_OK, "k_070": "3"},                                 # 非整数
+        {**_K_OK, "k_070": True},                                # bool 不是合法 K
+        {**_K_OK, "k_070": 2.5},                                 # 非整数
+        {**_K_OK, "registered_date": "2026-9-1"},                # 非 YYYYMMDD
+        {**_K_OK, "registered_date": 20260901},                  # 非 str
+        {**_K_OK, "k_060": "3"},                                 # 可选键存在则同型
+        {**_K_OK, "owner_ref": 7},                               # owner_ref 非 str
+    ]
+    for payload in bad_payloads:
+        state, reg = tt.load_k_registration(_kfile(tmp_path, payload))
+        assert state == "malformed" and reg is None, f"payload={payload!r}"
+
+
+def test_qualification_counts_only_from_registration_date():
+    """反前瞻核心: 注册日前的连亮不追溯 — 只数 date >= registered_date."""
+    records = [
+        _armed_rec("20260830"), _armed_rec("20260831"),
+        _armed_rec("20260901"), _armed_rec("20260902"),
+    ]
+    reg = dict(_K_OK)  # registered_date=20260901, k_070=3
+    qual = tt.trigger_qualification(records, reg)
+    assert qual["q_070"] == 2              # 0901+0902 两条
+    assert qual["qualified_070"] is False  # 2 < 3
+    # 同一账本, 若注册更早 (0901 前全在窗内) — 4 连亮达标
+    early = {**_K_OK, "registered_date": "20260830"}
+    qual_early = tt.trigger_qualification(records, early)
+    assert qual_early["q_070"] == 4
+    assert qual_early["qualified_070"] is True
+
+
+def test_qualification_breaks_on_unarmed_within_suffix():
+    records = [
+        _armed_rec("20260901"), _armed_rec("20260902", armed=False),
+        _armed_rec("20260903"), _armed_rec("20260904"),
+    ]
+    qual = tt.trigger_qualification(records, dict(_K_OK))
+    assert qual["q_070"] == 2  # 尾部连亮: 0903+0904
+    assert qual["qualified_070"] is False
+
+
+def test_qualification_060_anchor_independent():
+    """0.60 锚独立用 k_060, 互不替代 — 070 未达标不影响 060 判定."""
+    records = [
+        _armed_rec("20260901", armed=False, armed_060=True),
+        _armed_rec("20260902", armed=False, armed_060=True),
+        _armed_rec("20260903", armed=False, armed_060=True),
+    ]
+    qual = tt.trigger_qualification(records, dict(_K_OK))
+    assert qual["q_070"] == 0 and qual["qualified_070"] is False
+    assert qual["q_060"] == 3 and qual["qualified_060"] is True
+
+
+def test_qualification_k060_missing_not_judged():
+    """k_060 未预注册 → 0.60 锚不判定 (None), 绝不借 0.70 的 K."""
+    reg = {k: v for k, v in _K_OK.items() if k != "k_060"}
+    records = [_armed_rec("20260901", armed_060=True)]
+    qual = tt.trigger_qualification(records, reg)
+    assert qual["q_060"] is None and qual["qualified_060"] is None
+
+
+def test_qualification_anchor_mismatch_excluded():
+    """K 绑定 anchor — 异 anchor 记录不参与资格连亮 (数据驱动, 不硬编码)."""
+    records = [_armed_rec("20260901", anchor="all_candidates/t10") for _ in range(5)]
+    qual = tt.trigger_qualification(records, dict(_K_OK))
+    assert qual["q_070"] == 0 and qual["qualified_070"] is False
+
+
+def test_k_disclosure_unregistered_default_text():
+    state = tt.k_qualification_disclosure([], ("unregistered", None))
+    assert state["state"] == "unregistered"
+    assert "K 未预注册" in state["line_070"]
+    assert state["line_060"] is None
+    assert state["qualified_070"] is False
+
+
+def test_k_disclosure_loads_default_path(tmp_path, monkeypatch):
+    """registration 省略 → 从 K_REGISTRATION_PATH 读取 (渲染面同一路径)."""
+    monkeypatch.setattr(tt, "K_REGISTRATION_PATH", _kfile(tmp_path, _K_OK))
+    records = [_armed_rec("20260901"), _armed_rec("20260902"), _armed_rec("20260903")]
+    disc = tt.k_qualification_disclosure(records)
+    assert disc["state"] == "registered"
+    assert disc["qualified_070"] is True
+    assert "预注册 K=3" in disc["line_070"]
+    assert "正式评估资格达成" in disc["line_070"]
+
+
+def test_k_disclosure_malformed_disclosed():
+    disc = tt.k_qualification_disclosure([], ("malformed", None))
+    assert disc["state"] == "malformed"
+    assert "损坏" in disc["line_070"]
+    assert disc["qualified_070"] is False
+
+
+def test_k_disclosure_registered_not_yet_qualified_progress_visible():
+    reg = dict(_K_OK)  # k_070=3
+    records = [_armed_rec("20260901"), _armed_rec("20260902")]
+    disc = tt.k_qualification_disclosure(records, ("registered", reg))
+    assert disc["qualified_070"] is False
+    assert "资格连亮 2/3" in disc["line_070"]
+    assert "正式评估资格达成" not in disc["line_070"]
+    assert disc["line_060"] is not None and "3" in disc["line_060"]
+
+
+def test_k_disclosure_json_serializable():
+    """payload["threshold_k"] 进 JSON 报告 — 结构必须可序列化."""
+    reg = dict(_K_OK)
+    records = [_armed_rec("20260901", armed_060=True)]
+    disc = tt.k_qualification_disclosure(records, ("registered", reg))
+    json.dumps(disc, ensure_ascii=False)

@@ -554,6 +554,92 @@ class TestTriggerStabilityLedger:
         assert "合取连亮 0/2" in md
         assert "稳定阈值 K 属 owner 预注册" in md
 
+    def test_render_md_k_registered_consumes_threshold_k(self):
+        """K 预注册 → MD 稳定计数行消费 threshold_k 披露 (与渲染行同源)."""
+        from src.screening.offensive.threshold_trigger import (
+            k_qualification_disclosure,
+        )
+        from scripts.winrate_payoff_decomposition import render_md
+        payload = self._payload(self._trigger())
+        payload["horizons"] = {"t10": []}
+        payload["threshold_stability"] = {
+            "records": 2, "first_date": "20260830", "last_date": "20260831",
+            "condition_1_streak": 2, "condition_2_streak": 0,
+            "conjunction_streak": 2, "max_conjunction_streak": 2,
+            "condition_3_streak": 0, "conjunction_060_streak": 0,
+            "max_conjunction_060_streak": 0,
+        }
+        records = [
+            {"date": "20260830", "anchor": "production_aligned/t10",
+             "conjunction_armed": True},
+            {"date": "20260831", "anchor": "production_aligned/t10",
+             "conjunction_armed": True},
+        ]
+        reg = {"anchor": "production_aligned/t10", "k_070": 2, "k_060": None,
+               "registered_date": "20260830"}
+        payload["threshold_k"] = k_qualification_disclosure(records, ("registered", reg))
+        md = render_md(payload, "20260831")
+        assert "预注册 K=2" in md
+        assert "正式评估资格达成" in md
+        assert "稳定阈值 K 属 owner 预注册" not in md  # 矛盾句必须消失
+
+    def test_render_md_k_absent_payload_keeps_default_sentence(self):
+        """旧 payload 无 threshold_k 键 (或结构不符) → 默认句逐字保留."""
+        from scripts.winrate_payoff_decomposition import render_md
+        payload = self._payload(self._trigger())
+        payload["horizons"] = {"t10": []}
+        payload["threshold_stability"] = {
+            "records": 1, "first_date": "20260831", "last_date": "20260831",
+            "condition_1_streak": 1, "condition_2_streak": 0,
+            "conjunction_streak": 0, "max_conjunction_streak": 0,
+            "condition_3_streak": 0, "conjunction_060_streak": 0,
+            "max_conjunction_060_streak": 0,
+        }
+        md = render_md(payload, "20260831")
+        assert "稳定阈值 K 属 owner 预注册" in md
+
+    def test_build_report_attaches_threshold_k(self, tmp_path, monkeypatch):
+        """build 路径把 K 披露挂进 payload — JSON 落盘可复现, MD 只读 payload."""
+        import pandas as pd
+        from scripts import winrate_payoff_decomposition as mod
+        rows = []
+        for i in range(40):
+            rows.append({
+                "symbol": f"{600000+i}",
+                "signal_date": f"2026-01-{(i % 20) + 1:02d}",
+                "regime": "normal",
+                "trigger_strength": 0.75 if i % 2 else 0.55,
+                "gross_ret_t10": 0.03 * (1 if i % 2 else -1),
+                "gross_ret_t5": 0.015,
+                "fillable": True, "gate_blocked": False, "degraded": False,
+                "st_name": False, "industry_missing": False,
+                "excluded_ticker": False, "price_ge_3": True,
+            })
+        table = tmp_path / "court.csv.gz"
+        pd.DataFrame(rows).to_csv(table, index=False)
+        ledger = tmp_path / "trigger_ledger.jsonl"
+        kfile = tmp_path / "k.json"
+        kfile.write_text(json.dumps({
+            "anchor": "production_aligned/t10", "k_070": 5,
+            "registered_date": "20260101",
+        }), encoding="utf-8")
+        # k_qualification_disclosure 在 src 模块全局解析 K_REGISTRATION_PATH
+        from src.screening.offensive import threshold_trigger as _tt
+        monkeypatch.setattr(_tt, "K_REGISTRATION_PATH", kfile)
+        rc = mod.main([
+            "--court-table", str(table), "--report-dir", str(tmp_path / "rep"),
+            "--trigger-ledger", str(ledger),
+        ])
+        assert rc == 0
+        import json as _json
+        from datetime import date as _date
+        stamp = _date.today().strftime("%Y%m%d")
+        payload = _json.loads(
+            (tmp_path / "rep" / f"winrate_payoff_decomposition_{stamp}.json").read_text(encoding="utf-8")
+        )
+        assert payload["threshold_k"]["state"] == "registered"
+        assert "预注册 K=5" in payload["threshold_k"]["line_070"]
+
     def test_main_writes_ledger_and_md(self, tmp_path, monkeypatch):
         """端到端: 生产对齐口径刷新 → 账本落盘 + MD 稳定计数行。"""
         import pandas as pd

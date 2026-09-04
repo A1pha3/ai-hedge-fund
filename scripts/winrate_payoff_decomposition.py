@@ -42,6 +42,7 @@ import numpy as np
 import pandas as pd
 
 from src.screening.offensive.threshold_trigger import (  # noqa: E402
+    k_qualification_disclosure,
     load_trigger_ledger,
     trigger_stability,
 )
@@ -902,19 +903,31 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
         )
         stab = payload.get("threshold_stability")
         if isinstance(stab, dict) and stab.get("records"):
+            # K 子句单一事实源 (R112 Op1): 未注册 → 原句逐字保留 (旧 payload
+            # 无 threshold_k 键同路), 注册/损坏 → k_qualification_disclosure
+            # 的披露文本, 与 --daily-action 渲染行同源不漂移.
+            k_disc = payload.get("threshold_k")
+            if isinstance(k_disc, dict) and k_disc.get("state"):
+                k_tail = str(k_disc.get("line_070"))
+                k_060_tail = (
+                    f"; 0.60 锚 {k_disc['line_060']}" if k_disc.get("line_060") else ""
+                )
+            else:
+                k_tail = "稳定阈值 K 属 owner 预注册范围, 本工具只计数不判定"
+                k_060_tail = ""
             L.append(
                 f"- 稳定计数 (跨刷新逐次记录, 机械化累积): 条件① 连亮 {stab['condition_1_streak']}"
                 f"/{stab['records']} · 条件② 连亮 {stab['condition_2_streak']}/{stab['records']}"
                 f" · 合取连亮 {stab['conjunction_streak']}/{stab['records']}"
                 f" (历史最多合取连亮 {stab['max_conjunction_streak']}; 记录 {stab['first_date']}"
                 f"→{stab['last_date']}) — 合取连亮持续出现才具备启动正式评估资格;"
-                "稳定阈值 K 属 owner 预注册范围, 本工具只计数不判定"
+                f"{k_tail}"
             )
             L.append(
                 f"- 0.60 锚稳定计数: 条件③ 连亮 {stab.get('condition_3_streak', 0)}/{stab['records']}"
                 f" · 0.60 锚合取连亮 {stab.get('conjunction_060_streak', 0)}/{stab['records']}"
                 f" (历史最多 {stab.get('max_conjunction_060_streak', 0)}; R100 起积累,"
-                " 旧记录缺键按断链保守处理)"
+                f" 旧记录缺键按断链保守处理){k_060_tail}"
             )
         else:
             L.append("- 稳定计数: 账本尚无记录 (首刷后逐次累积)")
@@ -1124,9 +1137,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     payload["threshold_record"] = record_meta
     if record_meta.get("recorded") or record_meta.get("reason") == "court_not_advanced":
-        payload["threshold_stability"] = trigger_stability(
-            load_trigger_ledger(Path(args.trigger_ledger))
-        )
+        ledger_records = load_trigger_ledger(Path(args.trigger_ledger))
+        payload["threshold_stability"] = trigger_stability(ledger_records)
+        # K 预注册消费面 (R112 Op1): 披露 dict 进 payload (JSON 落盘可复现),
+        # MD 渲染只消费 payload — 与 --daily-action 渲染行同源单一实现.
+        payload["threshold_k"] = k_qualification_disclosure(ledger_records)
         if record_meta.get("reason") == "court_not_advanced":
             print(
                 "court 未前进 (manifest/行数与账本最新记录一致) — 触发器账本不追加"

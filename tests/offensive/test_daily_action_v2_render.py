@@ -129,6 +129,9 @@ def _trigger_rec(day, c1_lit, c2_lit, c1_judged=True, c2_judged=True, armed=Fals
 def _patch_ledger(monkeypatch, path):
     from src.screening.offensive import threshold_trigger as tt
     monkeypatch.setattr(tt, "LEDGER_PATH", path)
+    # hermeticity (R112): K 预注册文件同样钉到 tmp — owner 未来落真实 K 文件
+    # 时, 既有「未注册」pin 断言不受宿主工作目录真实文件影响。
+    monkeypatch.setattr(tt, "K_REGISTRATION_PATH", path.parent / "k_registration_absent.json")
 
 
 def test_trigger_state_line_renders_conditions_and_streaks(case, tmp_path, monkeypatch):
@@ -449,3 +452,76 @@ def test_prior_drift_line_omitted_when_all_row_missing_keys(case, tmp_path, monk
     run = service.complete_run(context, candidates=())
     view = DailyActionV2Run(run, (), run.open_positions, (), ())
     assert "先验漂移披露" not in render_daily_action_v2(view)
+
+
+# ---------- R112 Op1: 触发器行 K 预注册消费面 ----------
+
+def _kfile(tmp_path, payload, name="threshold_trigger_k.json"):
+    path = tmp_path / name
+    path.write_text(
+        payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return path
+
+
+_K_OK = {
+    "anchor": "production_aligned/t10",
+    "k_070": 2,
+    "k_060": 2,
+    "registered_date": "20260829",
+    "owner_ref": "owner:mini 预注册",
+}
+
+
+def _patch_k(monkeypatch, path):
+    from src.screening.offensive import threshold_trigger as tt
+    monkeypatch.setattr(tt, "K_REGISTRATION_PATH", path)
+
+
+def test_trigger_state_line_k_registered_discloses_qualification(case, tmp_path, monkeypatch):
+    """owner 预注册 K → 行内披露 K/起算日/资格连亮; 达标 → 资格达成明语."""
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260829", c1_lit=True, c2_lit=True, armed=True),
+        _trigger_rec("20260830", c1_lit=True, c2_lit=True, armed=True),
+    ]))
+    _patch_k(monkeypatch, _kfile(tmp_path, _K_OK))  # 注册日起两条全武装 → 2/2 达标
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "预注册 K=2（自 20260829 起计资格连亮 2/2）" in text
+    assert "正式评估资格达成" in text
+
+
+def test_trigger_state_line_k_registered_not_yet_qualified(case, tmp_path, monkeypatch):
+    """注册日晚于连亮起点 → 不追溯计旧亮, 进度如实可见."""
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260829", c1_lit=True, c2_lit=True, armed=True),
+        _trigger_rec("20260830", c1_lit=True, c2_lit=True, armed=True),
+    ]))
+    late = {**_K_OK, "registered_date": "20260830", "k_070": 3}
+    _patch_k(monkeypatch, _kfile(tmp_path, late))  # 窗内只有 0830 一条 → 1/3
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "资格连亮 1/3" in text
+    assert "正式评估资格达成" not in text
+
+
+def test_trigger_state_line_k_malformed_disclosed(case, tmp_path, monkeypatch):
+    """K 文件存在但损坏 → 明语披露, 不假装未注册也不猜字段."""
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260830", c1_lit=True, c2_lit=True, armed=True),
+    ]))
+    _patch_k(monkeypatch, _kfile(tmp_path, "{not json"))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "预注册文件损坏" in text
+    assert "正式评估资格达成" not in text
