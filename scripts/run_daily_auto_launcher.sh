@@ -143,4 +143,17 @@ else
   echo "[$(date -Iseconds)] [daily_auto] --daily-action OK"
 fi
 
+# Step 6: court 判定面夜度保鲜 (R93 Op1) — fetch+build 是触发器账本『稳定越
+# 零』/gap 罚分/先验对齐三类证据「随数据增长机械复算」的数据增长端 (R84 钩子
+# 只挂在 build 上)。fail-open: 任何失败只进结构化 status, 绝不影响前面生产
+# 步骤的退出码; build 的 --start 从生产 manifest window.start 派生, 建表窗
+# 口变更仍以 R89 Op1 的 manifest 真话为单一来源。
+"$PYTHON" - <<PYEOF || true
+from dotenv import dotenv_values; import os
+for k,v in dotenv_values('$REPO/.env').items():
+    v is not None and os.environ.setdefault(k,v)
+from src.screening.offensive.court_nightly_refresh import run_court_nightly_refresh
+run_court_nightly_refresh()
+PYEOF
+
 echo "[$(date -Iseconds)] [daily_auto] done"
