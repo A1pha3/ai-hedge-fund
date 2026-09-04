@@ -1467,6 +1467,65 @@ def complete_daily_action_v2(
     )
 
 
+# 先验漂移披露阈值 (R109 Op1): |ΔE| < 0.25pp 且 |Δ胜率| < 1.0pp 视为噪声级
+# (n_boot 种子抖动量级, recheck ±1pp 哨点带的 1/4), 不出行避免常驻噪声;
+# 任一超阈值才披露。数值本身不进任何决策路径。
+_PRIOR_DRIFT_MIN_ER_PP = 0.25
+_PRIOR_DRIFT_MIN_WR_PP = 1.0
+_PRIOR_DRIFT_REPORTS_DIR = Path("data/reports")
+
+
+def _render_prior_drift_line(reports_dir: str | Path | None = None) -> str | None:
+    """先验漂移披露行 (R109 Op1): 冻结先验 vs 最新 court 证据的日度可见性。
+
+    R98 漂移包定性先验 vs court 重建「相对高估 ~37x」(er_delta 0.55pp), 但
+    recheck 哨点 ±1pp 绝对带对该量级结构性静默 — 漂移此前只能靠手工跑决策
+    包发现。本行把最新 winrate_payoff_decomposition 报告 (R84 钩子随 court
+    build 每夜刷新) 的 production_aligned/t10/ALL 行与 BTST_BREAKOUT_T10
+    冻结先验并置披露, 先验是什么与证据现在说什么同屏。
+
+    fail-open 家族纪律 (镜像 R85 触发器行/R87 翻转行/R92 gap 行): 报告缺失/
+    损坏/结构不符 → 整行省略 (只取**最新**一份, 不回退旧报告 — 损坏时以
+    行缺席示警, 不以陈旧数字冒充当前证据); 未达材料阈值 → 省略 (无噪声)。
+    本行是披露不是行为改变 — 先验不进仓位链 (known_distributions 头注),
+    本行不进入任何计划/评分/仓位/退出决策路径。
+    """
+    try:
+        base = Path(reports_dir) if reports_dir is not None else _PRIOR_DRIFT_REPORTS_DIR
+        reports = sorted(base.glob("winrate_payoff_decomposition_*.json"))
+        if not reports:
+            return None
+        payload = json.loads(reports[-1].read_text(encoding="utf-8"))
+        rows = payload["universes"]["production_aligned"]["horizons"]["t10"]
+        row = next(item for item in rows if item.get("group") == "ALL")
+        dist = get_known_distribution("btst_breakout", 10)
+        if dist is None:
+            return None
+        evidence_er_pp = float(row["expectancy"]) * 100
+        evidence_wr_pp = float(row["winrate"]) * 100
+        er_delta_pp = abs(dist.expected_return * 100 - evidence_er_pp)
+        wr_delta_pp = abs(dist.winrate * 100 - evidence_wr_pp)
+        if er_delta_pp < _PRIOR_DRIFT_MIN_ER_PP and wr_delta_pp < _PRIOR_DRIFT_MIN_WR_PP:
+            return None
+        report_date = reports[-1].stem.rsplit("_", 1)[-1]
+        ci_low = row.get("cluster_ci_low_90")
+        ci_text = (
+            f"（CI90 下界 {ci_low:+.1%}）"
+            if isinstance(ci_low, (int, float)) and math.isfinite(float(ci_low))
+            else ""
+        )
+        return (
+            f"先验漂移披露：BTST T+10 先验 期望 {dist.expected_return:+.2%}/"
+            f"胜率 {dist.winrate:.1%} vs 最新 court 生产对齐（{report_date}，"
+            f"n={row.get('n')}）期望 {evidence_er_pp / 100:+.2%}/"
+            f"胜率 {evidence_wr_pp:.1f}%{ci_text} · 偏离 E {er_delta_pp:.2f}pp/"
+            f"胜率 {wr_delta_pp:.1f}pp — 重校准属 owner 决策（R98 决策包），"
+            f"本行仅披露不改变决策"
+        )
+    except (OSError, ValueError, KeyError, TypeError, StopIteration, json.JSONDecodeError):
+        return None
+
+
 def _render_gap_reference_line(
     reports_dir: str | Path | None = None,
 ) -> str | None:
@@ -1569,9 +1628,17 @@ def _render_trigger_state_line() -> str | None:
         else ""
     )
     anchor = latest.get("anchor") or "production_aligned/t10"
+    # 历史最多连亮 + K 未预注册 (R109 Op1): threshold_trigger 已计算
+    # max_conjunction_streak/max_conjunction_060_streak 但渲染行此前只显示
+    # 最新锚定连亮 — 临近生效期 (①已亮) 时操作员缺「历史最多」半边读数;
+    # 「连亮达标数」本身是 owner 预注册动作, 该事实不可见同样是观测缺口.
+    max_streak = int(stab.get("max_conjunction_streak") or 0)
+    max_streak_060 = int(stab.get("max_conjunction_060_streak") or 0)
+    k_note = "稳定阈值 K 未预注册（连亮达标数属 owner 预注册动作）"
     return (
         f"强度阈值触发器（{anchor} · 账本 {stab['records']} 条）：{c1} · {c2} · {conj}；"
-        f"{c3} · {conj_060}{coverage}"
+        f"{c3} · {conj_060} · 历史最多连亮 {max_streak}/060 锚 {max_streak_060}"
+        f"{coverage} · {k_note}"
     )
 
 
@@ -1722,6 +1789,12 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     gap_line = _render_gap_reference_line()
     if gap_line:
         lines.append(gap_line)
+        lines.append("")
+    # 先验漂移披露行 (R109 Op1): 冻结先验 vs 最新 court 证据的日度可见性 —
+    # 报告缺失/损坏/未达材料阈值时整行省略 (fail-open), 同上三家省略语义.
+    drift_line = _render_prior_drift_line()
+    if drift_line:
+        lines.append(drift_line)
         lines.append("")
     if summary is not None:
         lines.append(f"今日摘要：{summary}")

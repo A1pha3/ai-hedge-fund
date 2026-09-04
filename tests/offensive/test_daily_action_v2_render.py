@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import json
+
 import pytest
 
 from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
@@ -298,3 +300,115 @@ def test_trigger_state_line_060_unarmed_and_old_ledger_forms(case, tmp_path, mon
     text = render_daily_action_v2(view)
     assert "0.60 锚条件③ 无记录（R100 前旧账本）" in text
     assert "已武装" not in text.split("强度阈值触发器")[1]
+
+
+# ---------- R109 Op1: 先验漂移披露行 + 触发器行 max 连亮/K 读数 ----------
+
+def _write_decomposition_report(tmp_path, wr=0.4456, expectancy=-0.0001,
+                                ci_low=-0.0163, n=1627, date="20260904"):
+    """合成 winrate_payoff_decomposition 报告 (production_aligned/t10/ALL 行)."""
+    base = tmp_path / "reports"
+    base.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "universes": {
+            "production_aligned": {
+                "horizons": {
+                    "t10": [
+                        {
+                            "group": "ALL", "n": n, "wins": int(n * wr),
+                            "winrate": wr, "avg_win": 0.1303, "avg_loss": -0.1049,
+                            "payoff": 1.243, "expectancy": expectancy,
+                            "cluster_ci_low_90": ci_low,
+                            "attribution_vs_all": None,
+                        },
+                    ],
+                },
+            },
+        },
+    }
+    path = base / f"winrate_payoff_decomposition_{date}.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return base
+
+
+def _patch_drift_reports_dir(monkeypatch, path):
+    from src.screening.offensive import daily_action as da
+    monkeypatch.setattr(da, "_PRIOR_DRIFT_REPORTS_DIR", path)
+
+
+def test_prior_drift_line_renders_when_material(case, tmp_path, monkeypatch):
+    """材料漂移 (|ΔE|≥0.25pp): 披露行并置先验与最新 court 数字 + owner 决策指引."""
+    _patch_drift_reports_dir(
+        monkeypatch, _write_decomposition_report(tmp_path, expectancy=-0.0001, wr=0.4456)
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "先验漂移披露" in text
+    assert "+0.56%" in text          # 先验 E (BTST_BREAKOUT_T10)
+    assert "46.5%" in text           # 先验胜率 (46.45% 经 .1%% 格式化四舍五入)
+    assert "-0.01%" in text          # 最新 court 生产对齐 E
+    assert "44.6%" in text           # 最新 court 生产对齐 胜率
+    assert "20260904" in text        # 报告日期
+    assert "owner" in text           # 重校准属 owner 决策
+    assert "仅披露" in text          # 不改变决策的诚实边界
+
+
+def test_prior_drift_line_omitted_when_aligned(case, tmp_path, monkeypatch):
+    """未达材料阈值 (|ΔE|<0.25pp 且 |Δ胜率|<1.0pp): 整行省略无噪声."""
+    _patch_drift_reports_dir(
+        monkeypatch,
+        _write_decomposition_report(tmp_path, expectancy=0.0056, wr=0.4650),
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "先验漂移披露" not in render_daily_action_v2(view)
+
+
+def test_prior_drift_line_omitted_when_report_missing(case, tmp_path, monkeypatch):
+    """报告目录缺失/为空: 整行省略无异常 (fail-open 家族纪律)."""
+    _patch_drift_reports_dir(monkeypatch, tmp_path / "no-such-reports")
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "先验漂移披露" not in render_daily_action_v2(view)
+
+
+def test_prior_drift_line_omitted_when_report_corrupt(case, tmp_path, monkeypatch):
+    """最新报告损坏 (垃圾字节): 整行省略, 不以陈旧报告冒充当前证据."""
+    base = tmp_path / "reports"
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "winrate_payoff_decomposition_20260903.json").write_text(
+        json.dumps({"universes": {"production_aligned": {"horizons": {"t10": [
+            {"group": "ALL", "n": 1500, "winrate": 0.46, "expectancy": 0.005,
+             "cluster_ci_low_90": 0.001}]}}}}), encoding="utf-8")
+    (base / "winrate_payoff_decomposition_20260904.json").write_text(
+        "\x00 not json", encoding="utf-8")
+    _patch_drift_reports_dir(monkeypatch, base)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "先验漂移披露" not in render_daily_action_v2(view)
+
+
+def test_trigger_state_line_discloses_max_streaks_and_k_pending(case, tmp_path, monkeypatch):
+    """触发器行补「历史最多连亮」两读数 + K 未预注册子句 (R109 Op1)."""
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260829", c1_lit=True, c2_lit=True, armed=True),
+        _trigger_rec("20260830", c1_lit=True, c2_lit=True, armed=True),
+        _trigger_rec("20260831", c1_lit=True, c2_lit=False, armed=False),
+    ]))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "历史最多连亮 2" in text       # 0.70 锚合取全历史最大武装段
+    assert "060 锚 0" in text            # 0.60 锚历史最大武装段 (无 060 键)
+    assert "K 未预注册" in text          # 稳定阈值 K 属 owner 预注册动作
