@@ -400,3 +400,106 @@ class TestNightlyTail:
         assert nightly["last_date"] == "20260903"
         assert nightly["failed_stage_count"] == 1
         assert nightly["tail"][-1]["stage"] == "advance"
+
+
+class TestAdversarialHardening:
+    """R107 Op2: 对 Op1 的对抗性审查实锤三发现的回归钉死。
+
+    P1 LEGAL_TERMINAL 是法律终态持仓 (bust/correction 后的终端态), 不是
+    在持——canonical held 集是 repository.py:1693 的 ('OPEN','EXIT_PENDING')。
+    P2 0 字节/空 schema 决策库是 R37 钉死的合法启动形态 (首 decide 自愈
+    落表), 不得报 error (合法状态污名化为损坏)。
+    P3 非空 -wal 下 immutable 冷读可能滞后于活写者, 报告必须可见。
+    """
+
+    def test_legal_terminal_not_counted_as_held(self, tmp_path: Path) -> None:
+        import sqlite3
+
+        root = tmp_path / "synthetic-arm-root"
+        (root / "arms" / "champion").mkdir(parents=True)
+        conn = sqlite3.connect(root / "arms" / "champion" / "capital.sqlite3")
+        conn.execute(
+            "CREATE TABLE nav_observations ("
+            " as_of TEXT, nav_cents INTEGER, capital_version INTEGER,"
+            " issued_unit_quanta INTEGER)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE positions (
+                position_lineage_id TEXT, economic_lot_id TEXT,
+                security_id TEXT, state TEXT, settled_quantity_units INTEGER
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO positions VALUES ('l1','lot1','300001.SZ','OPEN',100)"
+        )
+        conn.execute(
+            "INSERT INTO positions VALUES"
+            " ('l2','lot2','600000.SH','LEGAL_TERMINAL',200)"
+        )
+        conn.execute(
+            "INSERT INTO positions VALUES"
+            " ('l3','lot3','000001.SZ','EXIT_PENDING',300)"
+        )
+        conn.execute(
+            "INSERT INTO positions VALUES ('l4','lot4','000002.SZ','CLOSED',400)"
+        )
+        conn.commit()
+        conn.close()
+
+        report = _status_json("--trial-root", str(root), "--json")
+        arm = report["arms"]["champion"]
+        assert arm["status"] == "ok"
+        assert arm["open_position_count"] == 2  # OPEN + EXIT_PENDING, 绝非 3
+        assert {p["state"] for p in arm["open_positions"]} == {
+            "OPEN",
+            "EXIT_PENDING",
+        }
+
+    def test_zero_byte_decisions_db_is_not_initialized(self, tmp_path: Path) -> None:
+        root = tmp_path / "zero-byte-root"
+        root.mkdir()
+        (root / "decisions.sqlite3").write_bytes(b"")
+        report = _status_json("--trial-root", str(root), "--json")
+        assert report["decisions"]["status"] == "not_initialized"
+
+    def test_empty_schema_decisions_db_is_not_initialized(
+        self, tmp_path: Path
+    ) -> None:
+        import sqlite3
+
+        root = tmp_path / "empty-schema-root"
+        root.mkdir()
+        conn = sqlite3.connect(root / "decisions.sqlite3")
+        conn.execute("CREATE TABLE unrelated (x)")  # 合法 sqlite, 无决策表
+        conn.commit()
+        conn.close()
+        report = _status_json("--trial-root", str(root), "--json")
+        assert report["decisions"]["status"] == "not_initialized"
+
+    def test_wal_sidecar_freshness_disclosed(self, tmp_path: Path) -> None:
+        world = _DriverWorld(tmp_path)
+        world.driver.ensure_trial_registration()
+        world.driver.decide_session(
+            snapshot=_snapshot(), signal_session=SIGNAL_SESSION, now=DECIDE_AT
+        )
+        _settle_world(world)
+
+        copy_root = tmp_path / "wal-copy"
+        shutil.copytree(world.root, copy_root)
+        (copy_root / "decisions.sqlite3-wal").write_bytes(b"x" * 4096)
+
+        report = _status_json("--trial-root", str(copy_root), "--json")
+        sidecars = report["sidecars"]
+        assert sidecars["decisions.sqlite3"]["wal_bytes"] == 4096
+        # 主体事实不受假 wal 影响 (immutable 冷读主文件)
+        assert report["decisions"]["status"] == "ok"
+
+        import contextlib
+        import io
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            status_main(["--trial-root", str(copy_root)])
+        assert "WAL" in buffer.getvalue() or "wal" in buffer.getvalue()

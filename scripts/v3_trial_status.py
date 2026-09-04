@@ -37,10 +37,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from src.screening.offensive.v3.contracts import PositionState
+
 DEFAULT_TRIAL_ROOT = Path("data/v3_trial_root")
 DEFAULT_NIGHTLY_HISTORY = Path("logs/cron/v3_nightly_history.jsonl")
 ARMS = ("champion", "challenger")
 EVIDENCE_DBS = ("evidence.sqlite3", "bars-evidence.sqlite3")
+# canonical 持仓 held 集 (repository.py open_position_rows 同款): LEGAL_TERMINAL
+# 是 bust/correction 后的法律终态持仓, 不是在持——绝不计入。
+HELD_POSITION_STATES = (PositionState.OPEN.value, PositionState.EXIT_PENDING.value)
 
 
 class TrialStatusError(ValueError):
@@ -57,6 +62,43 @@ def _connect_ro(path: Path) -> sqlite3.Connection:
     return sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)
 
 
+def _open_fact_db(path: Path, required_table: str):
+    """分层类型化打开: (状态, 连接或异常)。
+
+    - ``missing``: 文件不存在 (启动前形态);
+    - ``not_initialized``: 合法 sqlite 但 required 表未落 (R37 钉死的合法
+      启动形态——决策库 0 字节/空 schema 由首 decide 自愈落表, 绝非损坏);
+    - ``error``: 非 sqlite 字节 / 查询失败 (fail-closed, 不吞);
+    - ``ok``: 表在, 连接已开 (caller 负责 close)。
+    """
+    if not path.is_file():
+        return "missing", None
+    try:
+        conn = _connect_ro(path)
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (required_table,),
+            ).fetchone()
+        except sqlite3.Error as exc:
+            conn.close()
+            return ("error", exc)
+        if row is None:
+            conn.close()
+            return "not_initialized", None
+        return "ok", conn
+    except sqlite3.Error as exc:
+        return ("error", exc)
+
+
+def _wal_bytes(path: Path) -> int:
+    """-wal sidecar 大小: >0 时 immutable 冷读可能滞后于活写者 (披露面)。"""
+    try:
+        return (Path(str(path) + "-wal")).stat().st_size
+    except OSError:
+        return 0
+
+
 def _section_ok(**fields: Any) -> dict[str, Any]:
     return {"status": "ok", **fields}
 
@@ -65,25 +107,35 @@ def _section_missing(detail: str) -> dict[str, Any]:
     return {"status": "missing", "detail": detail}
 
 
+def _section_not_initialized(detail: str) -> dict[str, Any]:
+    return {"status": "not_initialized", "detail": detail}
+
+
 def _section_error(exc: BaseException) -> dict[str, Any]:
     return {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:300]}
 
 
 def _collect_trial(root: Path) -> dict[str, Any]:
     db = root / "decisions.sqlite3"
-    if not db.is_file():
+    state, conn_or_exc = _open_fact_db(db, "trial_registrations")
+    if state == "missing":
         return _section_missing("decisions store not initialized (no decide yet)")
+    if state == "not_initialized":
+        return _section_not_initialized(
+            "decisions store schema not yet created (no decide committed)"
+        )
+    if state == "error":
+        return _section_error(conn_or_exc)
+    conn = conn_or_exc
     try:
-        conn = _connect_ro(db)
-        try:
-            rows = conn.execute(
-                "SELECT trial_id, registered_at, genesis_manifest_json"
-                " FROM trial_registrations"
-            ).fetchall()
-        finally:
-            conn.close()
+        rows = conn.execute(
+            "SELECT trial_id, registered_at, genesis_manifest_json"
+            " FROM trial_registrations"
+        ).fetchall()
     except sqlite3.Error as exc:
         return _section_error(exc)
+    finally:
+        conn.close()
     registrations = []
     for trial_id, registered_at, genesis_json in rows:
         genesis: dict[str, Any] = {}
@@ -113,23 +165,29 @@ def _collect_trial(root: Path) -> dict[str, Any]:
 
 def _collect_spine(root: Path) -> dict[str, Any]:
     db = root / "spine.sqlite3"
-    if not db.is_file():
+    state, conn_or_exc = _open_fact_db(db, "expected_sessions")
+    if state == "missing":
         return _section_missing("spine not registered (enroll-spine 未跑)")
+    if state == "not_initialized":
+        return _section_not_initialized(
+            "spine schema not yet created (enroll-spine 未跑)"
+        )
+    if state == "error":
+        return _section_error(conn_or_exc)
+    conn = conn_or_exc
     try:
-        conn = _connect_ro(db)
-        try:
-            enrolled = conn.execute(
-                "SELECT research_program_id, signal_session, assessment_date,"
-                " enrolled_at FROM expected_sessions ORDER BY signal_session"
-            ).fetchall()
-            revisions = conn.execute(
-                "SELECT signal_session, revision, status, recorded_at"
-                " FROM session_status_revisions ORDER BY signal_session, revision"
-            ).fetchall()
-        finally:
-            conn.close()
+        enrolled = conn.execute(
+            "SELECT research_program_id, signal_session, assessment_date,"
+            " enrolled_at FROM expected_sessions ORDER BY signal_session"
+        ).fetchall()
+        revisions = conn.execute(
+            "SELECT signal_session, revision, status, recorded_at"
+            " FROM session_status_revisions ORDER BY signal_session, revision"
+        ).fetchall()
     except sqlite3.Error as exc:
         return _section_error(exc)
+    finally:
+        conn.close()
     terminal: dict[str, dict[str, Any]] = {}
     for session, revision, status, recorded_at in revisions:
         terminal[str(session)] = {
@@ -177,19 +235,25 @@ def _classify_decision_json(raw: str) -> dict[str, Any]:
 
 def _collect_decisions(root: Path) -> dict[str, Any]:
     db = root / "decisions.sqlite3"
-    if not db.is_file():
+    state, conn_or_exc = _open_fact_db(db, "trial_arm_decisions")
+    if state == "missing":
         return _section_missing("decisions store not initialized (no decide yet)")
+    if state == "not_initialized":
+        return _section_not_initialized(
+            "decisions store schema not yet created (no decide committed)"
+        )
+    if state == "error":
+        return _section_error(conn_or_exc)
+    conn = conn_or_exc
     try:
-        conn = _connect_ro(db)
-        try:
-            rows = conn.execute(
-                "SELECT signal_session, arm, decision_json, created_at"
-                " FROM trial_arm_decisions ORDER BY signal_session, arm"
-            ).fetchall()
-        finally:
-            conn.close()
+        rows = conn.execute(
+            "SELECT signal_session, arm, decision_json, created_at"
+            " FROM trial_arm_decisions ORDER BY signal_session, arm"
+        ).fetchall()
     except sqlite3.Error as exc:
         return _section_error(exc)
+    finally:
+        conn.close()
     sessions: dict[str, dict[str, dict[str, Any]]] = {}
     for session, arm, decision_json, created_at in rows:
         arm_row = dict(_classify_decision_json(decision_json))
@@ -214,23 +278,32 @@ def _collect_decisions(root: Path) -> dict[str, Any]:
 
 def _collect_arm(root: Path, arm: str) -> dict[str, Any]:
     db = root / "arms" / arm / "capital.sqlite3"
-    if not db.is_file():
+    state, conn_or_exc = _open_fact_db(db, "nav_observations")
+    if state == "missing":
         return _section_missing(f"arm ledger not restored (genesis-seed 未跑): arms/{arm}")
+    if state == "not_initialized":
+        return _section_not_initialized(
+            f"arm ledger schema not created: arms/{arm}"
+        )
+    if state == "error":
+        return _section_error(conn_or_exc)
+    conn = conn_or_exc
     try:
-        conn = _connect_ro(db)
-        try:
-            navs = conn.execute(
-                "SELECT as_of, nav_cents, capital_version, issued_unit_quanta"
-                " FROM nav_observations ORDER BY capital_version"
-            ).fetchall()
-            positions = conn.execute(
-                "SELECT security_id, state, settled_quantity_units"
-                " FROM positions WHERE state != 'CLOSED' ORDER BY security_id"
-            ).fetchall()
-        finally:
-            conn.close()
+        navs = conn.execute(
+            "SELECT as_of, nav_cents, capital_version, issued_unit_quanta"
+            " FROM nav_observations ORDER BY capital_version"
+        ).fetchall()
+        placeholders = ",".join("?" for _ in HELD_POSITION_STATES)
+        positions = conn.execute(
+            f"SELECT security_id, state, settled_quantity_units"
+            f" FROM positions WHERE state IN ({placeholders})"
+            " ORDER BY security_id",
+            HELD_POSITION_STATES,
+        ).fetchall()
     except sqlite3.Error as exc:
         return _section_error(exc)
+    finally:
+        conn.close()
     latest_nav = (
         {
             "as_of": str(navs[-1][0]),
@@ -256,20 +329,24 @@ def _collect_arm(root: Path, arm: str) -> dict[str, Any]:
 
 
 def _collect_evidence_db(db: Path) -> dict[str, Any]:
-    if not db.is_file():
+    state, conn_or_exc = _open_fact_db(db, "evidence_records")
+    if state == "missing":
         return _section_missing(f"{db.name} not seeded (seed-evidence 未跑)")
+    if state == "not_initialized":
+        return _section_not_initialized(f"{db.name} schema not yet seeded")
+    if state == "error":
+        return _section_error(conn_or_exc)
+    conn = conn_or_exc
     try:
-        conn = _connect_ro(db)
-        try:
-            rows = conn.execute(
-                "SELECT issuer_namespace, evidence_kind, COUNT(*), MAX(ingested_at)"
-                " FROM evidence_records GROUP BY issuer_namespace, evidence_kind"
-                " ORDER BY issuer_namespace, evidence_kind"
-            ).fetchall()
-        finally:
-            conn.close()
+        rows = conn.execute(
+            "SELECT issuer_namespace, evidence_kind, COUNT(*), MAX(ingested_at)"
+            " FROM evidence_records GROUP BY issuer_namespace, evidence_kind"
+            " ORDER BY issuer_namespace, evidence_kind"
+        ).fetchall()
     except sqlite3.Error as exc:
         return _section_error(exc)
+    finally:
+        conn.close()
     namespaces = [
         {
             "namespace": namespace,
@@ -333,6 +410,24 @@ def collect_report(
             name: _collect_evidence_db(trial_root / name) for name in EVIDENCE_DBS
         },
         "nightly": _collect_nightly(nightly_history, tail),
+    }
+    # sidecar 新鲜度披露: immutable 冷读只见已 checkpoint 主文件, 非空 -wal
+    # 意味着可能存在未落盘增量 (活写窗口/崩溃残留) —— 如实可见, 不假装新鲜。
+    db_paths = {
+        "decisions.sqlite3": trial_root / "decisions.sqlite3",
+        "spine.sqlite3": trial_root / "spine.sqlite3",
+        "evidence.sqlite3": trial_root / "evidence.sqlite3",
+        "bars-evidence.sqlite3": trial_root / "bars-evidence.sqlite3",
+        **{
+            f"arms/{arm}/capital.sqlite3": trial_root
+            / "arms"
+            / arm
+            / "capital.sqlite3"
+            for arm in ARMS
+        },
+    }
+    report["sidecars"] = {
+        name: {"wal_bytes": _wal_bytes(path)} for name, path in db_paths.items()
     }
     decisions = report["decisions"]
     report["summary"] = {
@@ -468,6 +563,16 @@ def _render_human(report: dict[str, Any]) -> str:
         lines.append(
             f"nightly: [{nightly['status']}]"
             f" {nightly.get('detail') or nightly.get('error')}"
+        )
+
+    nonempty_wals = [
+        name for name, info in report.get("sidecars", {}).items()
+        if info.get("wal_bytes", 0) > 0
+    ]
+    if nonempty_wals:
+        lines.append(
+            f"⚠ 非空 WAL ({', '.join(nonempty_wals)}): immutable 冷读可能滞后于"
+            " 活写者/崩溃残留 — 本报告只含已 checkpoint 数据"
         )
 
     degraded = report["summary"]["sections_degraded"]
