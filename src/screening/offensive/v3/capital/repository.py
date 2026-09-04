@@ -7395,12 +7395,26 @@ class CapitalRepository:
                     }
                 )
             )
-            if not request.marks and context.open_position_rows():
-                raise CapitalConflict(
-                    "valuation_mark_missing",
-                    "close valuation must mark every open position",
-                )
             if not request.marks:
+                # Idempotent replay of an already-recorded liquid valuation
+                # converges regardless of positions opened after it was
+                # written (the recorded valuation was complete at its own
+                # PIT); only a genuinely new liquid valuation must mark
+                # every currently open position. Window replay re-drives
+                # pre-entry sessions after later entries have committed —
+                # the guard must not reject those historical replays.
+                replayed = (
+                    context.observation_row_for_event(
+                        ObservationKind.AS_OBSERVED,
+                        derive_event_id(request.idempotency_key),
+                    )
+                    is not None
+                )
+                if not replayed and context.open_position_rows():
+                    raise CapitalConflict(
+                        "valuation_mark_missing",
+                        "close valuation must mark every open position",
+                    )
                 return self._close_valuation_liquid(context, request)
 
             legs = tuple(

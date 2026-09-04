@@ -2338,23 +2338,17 @@ class TestFirstRunAdvanceLifecycle:
             assert all(o.nav_cents > 0 for o in path.as_observed)
             assert path.restated_final == ()
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="R106 缺陷钉死 (修复归下一 src op): close_valuation 的空-marks"
-        " 守卫 (repository.py 'valuation_mark_missing') 在幂等重放检测之前"
-        "执行 —— advance#1 (through T+3, T+1 入场已落账) 后 advance#2 重放"
-        "信号会话的 liquid valuation 时, 守卫用当前投影 (持仓已开) 拒绝了"
-        "历史合法的空-marks 重放。生产形态: 首个 RUN 后第二晚夜间链 advance"
-        "即撞死, 持仓永无法 mark/exit, 执行窗口整体砖死。",
-    )
     def test_run_crash_resume_mid_window_converges(
         self, live_candidates: _DriverWorld
     ) -> None:
         """窗口中途 crash-resume: advance T+3 后重放至 T+10 收敛 (append-only
         台账 + 幂等结算); 终态与直达全窗口一致 (平仓/守恒/NAV 不双计)。
 
-        RED 实证 (2026-09-04): CapitalConflict valuation_mark_missing ——
-        见 xfail reason; 幂等重放语义的修复在独立 src op 交付。"""
+        R106 Op1 RED 实证 → Op2 修复回归: close_valuation 空-marks 守卫曾
+        在幂等重放检测之前执行, 重放信号会话 (空仓期) liquid valuation 被
+        当前投影 (advance#1 已落账的 T+1 持仓) 拒绝 —— 生产形态 = 首个
+        RUN 后第二晚夜间链 advance 即砖死。修复: 重放检测 (deterministic
+        observation identity) 前置, 守卫只对真正新的 liquid valuation 生效。"""
         from src.screening.offensive.v3.contracts.trial import TrialArm
         from src.screening.offensive.v3.orchestration.arm_layout import (
             open_arm_capital_repository,
@@ -2398,6 +2392,78 @@ class TestFirstRunAdvanceLifecycle:
                 world.root, arm_enum
             ).nav_projections()
             assert len(path.as_observed) == 1 + len(window)
+
+    def test_run_crash_resume_with_suspended_holding_day_converges(
+        self, live_candidates: _DriverWorld
+    ) -> None:
+        """对抗变体: 中途 crash-resume × 持有期内停牌日。
+
+        T+2 (持有日) 停牌: bar.suspended=True, mark 顺延最后已知收盘
+        (T+1 close 1150); NAV 照常逐会话观察。advance#1 through T+3 落账
+        (含停牌日 mark 顺延), advance#2 重放全窗口至 T+10 —— 停牌日的
+        suspended liquid/marked valuation 重放同样必须在守卫之前收敛,
+        终态平仓/守恒/NAV 不双计。"""
+        from src.screening.offensive.v3.contracts.trial import TrialArm
+        from src.screening.offensive.v3.orchestration.arm_layout import (
+            open_arm_capital_repository,
+        )
+
+        world = live_candidates
+        suspended_session = SIGNAL_SESSION + timedelta(days=2)
+
+        def _bars_with_suspension(session: date) -> dict[str, object]:
+            bars = self._bars(session)
+            if session == suspended_session:
+                bars = {
+                    ticker: _replace_suspended(bar)
+                    for ticker, bar in bars.items()
+                }
+            return bars
+
+        def _replace_suspended(bar):
+            from dataclasses import replace
+
+            return replace(bar, suspended=True)
+
+        self._decide_run(world)
+        t3 = SIGNAL_SESSION + timedelta(days=3)
+        world.driver.advance_sessions(
+            signal_session=SIGNAL_SESSION,
+            through_session=t3,
+            bars_by_session={
+                s: _bars_with_suspension(s)
+                for s in (
+                    SIGNAL_SESSION,
+                    SIGNAL_SESSION + timedelta(days=1),
+                    suspended_session,
+                    t3,
+                )
+            },
+            now=LATER_AT,
+        )
+        end = self._schedule_end(world)
+        window = [
+            SIGNAL_SESSION + timedelta(days=offset)
+            for offset in range((end - SIGNAL_SESSION).days + 1)
+        ]
+        resumed = world.driver.advance_sessions(
+            signal_session=SIGNAL_SESSION,
+            through_session=end,
+            bars_by_session={s: _bars_with_suspension(s) for s in window},
+            now=LATER_AT + timedelta(days=1),
+        )
+        assert resumed.through_session == end
+        for arm, open_positions in resumed.open_at_end_by_arm.items():
+            assert not open_positions, f"{arm} must be flat after resume to T+10"
+        assert all(resumed.conservation_ok_by_arm.values())
+        for arm_enum in (TrialArm.CHAMPION, TrialArm.CHALLENGER):
+            assert resumed.settlements_by_arm[arm_enum.value] == 2
+            path = open_arm_capital_repository(
+                world.root, arm_enum
+            ).nav_projections()
+            # 停牌日不减少观察行 (mark-only NAV 照常), 不双计
+            assert len(path.as_observed) == 1 + len(window)
+            assert path.restated_final == ()
 
     def test_run_full_window_exact_replay_idempotent(
         self, live_candidates: _DriverWorld
