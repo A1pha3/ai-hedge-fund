@@ -1619,20 +1619,52 @@ def test_render_removes_dead_paper_pnl_promise(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_full_market_scan_does_not_require_report():
+def test_full_market_scan_does_not_require_report(tmp_path):
     """full_market 模式不读 --auto 报告, 直接扫 price_cache 全市场.
 
     第一性原理: --auto 的 score_b 候选池选"好股票", 凸性 setup 要"极端股票"
     (涨停/超跌), 两者交集≈0. full_market 绕过候选池, 直扫全市场.
+
+    journal 必须落 tmp_path: generate_daily_action 默认 legacy_persistence=True,
+    命中候选时 record_buy/close_matured 会直写 tracker 目录 — 默认目录即生产
+    journal (R121a 取证: 生产 journal 内 20260821 三笔 BUY 即本测试历史运行产物).
     """
     from src.screening.offensive.daily_action import generate_daily_action
     from src.screening.offensive.paper_tracker import PaperTracker
 
-    tracker = PaperTracker()
+    tracker = PaperTracker(journal_dir=tmp_path)
     # full_market 模式: 不传 report_path, 不应有异常
     actions = generate_daily_action(tracker=tracker, scan_mode="full_market")
     # 能跑完就说明不依赖报告 (trade_date 从 price_cache 推断)
     assert isinstance(actions, list)
+
+
+def test_no_default_dir_paper_tracker_in_this_module():
+    """AST 守卫: 本测试模块禁止无参 PaperTracker() 实例化.
+
+    无参构造默认指向生产 data/paper_trading/ — 在 legacy_persistence=True 的
+    调用路径里, 测试运行会直写生产 journal/portfolio_state (R121a 沙箱 canary
+    RED 实锤: 单次测试运行即追加 EXIT 并改写 portfolio_state)。任何新测试需要
+    tracker 时必须显式注入 tmp_path journal 目录。
+    """
+    import ast
+    from pathlib import Path
+
+    module = Path(__file__)
+    tree = ast.parse(module.read_text(encoding="utf-8"))
+    offenders = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "PaperTracker"
+        and not node.args
+        and not node.keywords
+    ]
+    assert not offenders, (
+        f"PaperTracker() 无参实例化会写生产 journal, 行号 {offenders}; "
+        "请注入 PaperTracker(journal_dir=tmp_path)"
+    )
 
 
 def test_oversold_bounce_distribution_registered():
