@@ -1437,3 +1437,29 @@ def test_day_cohort_trigger_line_survives_poisoned_condition_values(case, tmp_pa
     assert "日层 cohort 触发器" in text
     assert "样本不足未判定" in text
     assert "日层合取未武装" in text
+
+
+# ---------- R128 Op1: 强度触发器状态行渲染毒化守卫 ----------
+
+def test_trigger_state_line_poisoned_condition_renders_unjudged(case, tmp_path, monkeypatch):
+    """R128 Op1 (R127 Op2 渲染消费面同族收尾): 行内条件值 truthy 非 dict
+    (手编账本/损坏写入/形态演化) — 修复前 `_render_trigger_state_line` 的
+    `latest.get("condition_1") or {}` 对 truthy 非 dict 不兜底, `.get` 裸
+    AttributeError 炸 --daily-action 日度命令 (R115 Op1 fail-open 家族违例)。
+    修复后毒化格按未判定披露 (缺键同语义, advisory 不假装), 非毒化子句照常。"""
+    for poisoned in ("lit", ["lit"], 7, True):
+        rec = _trigger_rec("20260830", c1_lit=True, c2_lit=False)
+        rec["condition_1"] = poisoned
+        _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+            _trigger_rec("20260829", c1_lit=True, c2_lit=False),
+            rec,
+        ]))
+        service, _repository, as_of, _sessions = case
+        context = service.advance_lifecycle(as_of)
+        run = service.complete_run(context, candidates=())
+        view = DailyActionV2Run(run, (), run.open_positions, (), ())
+        text = render_daily_action_v2(view)
+        assert "强度阈值触发器" in text  # 整行不炸 (fail-open 家族)
+        assert "条件① ≥0.70 桶 CI>0 样本不足未判定" in text  # 毒化格降级未判定
+        assert "条件② 0.50-0.60 转负 未亮（连亮 0）" in text  # 非毒化格照常
+        assert "court 覆盖至 20260830" in text  # 覆盖子句不受牵连

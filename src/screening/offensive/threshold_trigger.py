@@ -61,16 +61,22 @@ def load_trigger_ledger(ledger_path: Path | str | None = None) -> list[dict]:
     return sorted(records, key=lambda r: str(r["date"]))
 
 
-def condition_lit(rec: dict, key: str) -> bool | None:
-    """行内条件值形状守卫 (R127 Op2, R126 Op2 日层族守卫的单一实现提升):
-    条件值必须恰为 dict 且 lit 键可读 — truthy 非 dict 形态 (手编账本/
-    损坏写入/形态演化; `or {}` 只兜 falsy 不兜 truthy) 与缺键同语义,
-    返回 None (断链), 绝不让毒化行以裸 AttributeError 炸掉消费面
-    (R115 Op1 家族纪律: 证据面损坏不得阻断披露/生产面)。"""
+def condition_dict(rec: dict, key: str) -> dict | None:
+    """行内条件值形状守卫 (R128 Op1, R127 Op2 condition_lit 的基元提升):
+    条件值必须恰为 dict — truthy 非 dict 形态 (手编账本/损坏写入/形态
+    演化; `or {}` 只兜 falsy 不兜 truthy) 与缺键同语义返回 None, 绝不让
+    毒化行以裸 AttributeError 炸掉消费面 (R115 Op1 家族纪律: 证据面损坏
+    不得阻断披露/生产面)。调用方 `condition_dict(...) or {}` 对 None 与
+    空 dict 均安全收敛为空判定。"""
     cond = rec.get(key)
-    if not isinstance(cond, dict):
-        return None
-    return cond.get("lit")
+    return cond if isinstance(cond, dict) else None
+
+
+def condition_lit(rec: dict, key: str) -> bool | None:
+    """行内条件 lit 读数 (condition_dict 单一守卫的 lit 投影):
+    条件值非 dict → None (断链); dict → cond.get("lit")。"""
+    cond = condition_dict(rec, key)
+    return None if cond is None else cond.get("lit")
 
 
 def trigger_stability(records: list[dict]) -> dict[str, object]:
@@ -514,6 +520,7 @@ __all__ = [
     "K_REGISTRATION_PATH",
     "K_OBSERVATION_LOG_PATH",
     "load_trigger_ledger",
+    "condition_dict",
     "condition_lit",
     "trigger_stability",
     "load_k_registration",

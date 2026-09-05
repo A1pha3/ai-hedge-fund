@@ -1952,9 +1952,12 @@ def _render_trigger_state_line() -> str | None:
     latest = records[-1]
     stab = _tt.trigger_stability(records)
 
-    c1_raw = latest.get("condition_1") or {}
-    c2_raw = latest.get("condition_2") or {}
-    c3_raw = latest.get("condition_3") or {}
+    # R128 Op1: 条件值经 condition_dict 单一守卫读取 — truthy 非 dict 形态
+    # (手编账本/损坏写入) 不再裸 AttributeError 炸本行 (R115 fail-open 家族;
+    # None/空 dict 对 `or {}` 均安全收敛), 毒化格按未判定披露。
+    c1_raw = _tt.condition_dict(latest, "condition_1") or {}
+    c2_raw = _tt.condition_dict(latest, "condition_2") or {}
+    c3_raw = _tt.condition_dict(latest, "condition_3") or {}
     c1_judged = bool(c1_raw.get("judged"))
     c2_judged = bool(c2_raw.get("judged"))
     c1 = (
