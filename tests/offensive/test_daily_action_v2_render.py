@@ -1056,3 +1056,116 @@ def test_alignment_line_count_inconsistency_omits_line(tmp_path, mutate):
     payload = _alignment_summary()
     mutate(payload)
     assert da._render_universe_alignment_line(_write_alignment(tmp_path, payload)) is None
+
+
+# ---------- R121b Op2: 宇宙对齐行分 store 时代归属披露 ----------
+
+def _stores_block(journal_buys=18, ledger_buys=15, ledger_realized=None):
+    """R121b stores 块 — journal 18 + ledger 15 = union 33 的取证镜像."""
+    stores = {}
+    if journal_buys:
+        stores["legacy_journal"] = {
+            "buys": journal_buys, "open_buys": 3,
+            "realized_only": {
+                "n": 12, "win_rate_pct": 16.67, "avg_win_pct": 8.52,
+                "avg_loss_pct": -10.9, "payoff": 0.78, "expectancy_pct": -7.5,
+            },
+        }
+    if ledger_buys:
+        stores["ledger_v2"] = {
+            "buys": ledger_buys, "open_buys": 6,
+            "realized_only": ledger_realized if ledger_realized is not None else {
+                "n": 9, "win_rate_pct": 22.22, "avg_win_pct": 10.49,
+                "avg_loss_pct": -13.0, "payoff": 0.81, "expectancy_pct": -8.93,
+            },
+        }
+    return stores
+
+
+def test_alignment_line_store_split_clause_and_ledger_realized(tmp_path):
+    """stores 块在场: 分 store 计数子句 + 台账已平仓子句 + 合并口径尾注."""
+    from src.screening.offensive import daily_action as da
+
+    counts = {**_alignment_summary()["class_counts"],
+              "matched": 27, "day_missing_from_court": 3, "ticker_not_in_court_day": 3}
+    payload = _alignment_summary(
+        total_buys=33,
+        class_counts=counts,
+        latest_split_signal_date="20260813",
+        realized_only={**_alignment_summary()["realized_only"],
+                       "n": 21, "expectancy_pct": -8.3},
+        stores=_stores_block(),
+    )
+    line = da._render_universe_alignment_line(_write_alignment(tmp_path, payload))
+    assert line is not None
+    assert "生产 BUY 33 · matched 27 · 分裂 6（最晚分裂 20260813）" in line
+    assert "（legacy journal 18 · v2 台账 15）" in line
+    assert "· 台账已平仓 9 胜率 22.22% 期望 -8.93%" in line
+    assert "legacy journal+v2 台账合并已平仓口径" in line
+    # 旧 journal-only 尾注不再出现 (口径更新防同屏矛盾)
+    assert "realized 为 paper journal 已平仓口径" not in line
+
+
+def test_alignment_line_legacy_summary_renders_unchanged(tmp_path):
+    """无 stores 键的旧 summary → 渲染逐字节回退旧行 (向后兼容契约)."""
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary()
+    assert "stores" not in payload
+    line = da._render_universe_alignment_line(_write_alignment(tmp_path, payload))
+    assert line is not None
+    assert "（legacy journal" not in line and "v2 台账" not in line
+    assert "· 台账已平仓" not in line
+    assert "realized 为 paper journal 已平仓口径" in line
+
+
+def test_alignment_line_empty_stores_renders_old_tail(tmp_path):
+    """stores 显式空块 (ledger 缺席的 legacy-only 世界) → 同旧行, 无分裂子句."""
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary(stores={
+        "legacy_journal": {"buys": 18, "open_buys": 3, "realized_only": None},
+    })
+    line = da._render_universe_alignment_line(_write_alignment(tmp_path, payload))
+    assert line is not None
+    assert "（legacy journal 18）" in line
+    assert "v2 台账" not in line
+    assert "· 台账已平仓" not in line
+    assert "legacy journal+v2 台账合并已平仓口径" not in line
+
+
+@pytest.mark.parametrize("mutate, ledger_gone", [
+    (lambda s: s.update(ledger_v2={"buys": "15", "open_buys": 0}), True),
+    (lambda s: s.update(ledger_v2={"buys": True, "open_buys": 0}), True),
+    (lambda s: s.update(ledger_v2="garbage"), True),
+    # legacy buys=0 → legacy 项省略, ledger 项照常 (不是整块拒绝)
+    (lambda s: s.update(legacy_journal={"buys": 0}), False),
+])
+def test_alignment_line_malformed_store_block_omits_clause(tmp_path, mutate, ledger_gone):
+    """stores 畸形 (buys 非正整数/块非 dict) → 该项省略, 行不炸不渲染垃圾."""
+    from src.screening.offensive import daily_action as da
+
+    stores = _stores_block()
+    mutate(stores)
+    counts = {**_alignment_summary()["class_counts"],
+              "matched": 27, "day_missing_from_court": 3, "ticker_not_in_court_day": 3}
+    payload = _alignment_summary(total_buys=33, class_counts=counts, stores=stores)
+    line = da._render_universe_alignment_line(_write_alignment(tmp_path, payload))
+    assert line is not None
+    assert ("· 台账已平仓" in line) is (not ledger_gone)
+
+
+def test_alignment_line_ledger_realized_non_finite_omits_subclause(tmp_path):
+    """台账 realized 数值垃圾 → 台账子句省略, 分 store 计数子句照常 (R119 P1 镜像)."""
+    from src.screening.offensive import daily_action as da
+
+    bad = {"n": 9, "win_rate_pct": "22.22", "expectancy_pct": float("nan"),
+           "avg_win_pct": None, "avg_loss_pct": None, "payoff": None}
+    counts = {**_alignment_summary()["class_counts"],
+              "matched": 27, "day_missing_from_court": 3, "ticker_not_in_court_day": 3}
+    payload = _alignment_summary(total_buys=33, class_counts=counts,
+                                 stores=_stores_block(ledger_realized=bad))
+    line = da._render_universe_alignment_line(_write_alignment(tmp_path, payload))
+    assert line is not None
+    assert "（legacy journal 18 · v2 台账 15）" in line
+    assert "· 台账已平仓" not in line

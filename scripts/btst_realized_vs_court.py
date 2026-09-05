@@ -44,6 +44,7 @@ import argparse
 import json
 import os
 import re
+import sqlite3
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,6 +53,7 @@ from typing import Any, Iterable, Mapping, Sequence
 import pandas as pd
 
 JOURNAL_PATH = Path("data/paper_trading/journal.jsonl")
+LEDGER_PATH = Path("data/paper_trading_v2/ledger.sqlite3")
 COURT_TABLE_PATH = Path("data/research/btst_court/event_tables/event_table_v1.csv.gz")
 COURT_MANIFEST_PATH = Path("data/research/btst_court/event_tables/manifest_v1.json")
 REGIME_PATH = Path("data/reports/regime_history.json")
@@ -87,7 +89,13 @@ class ClassificationInputs:
 
 @dataclass(frozen=True)
 class SignalRecord:
-    """一笔生产 BUY 的对账分类结果."""
+    """一笔生产 BUY 的对账分类结果.
+
+    ``store`` 是时代归属 (R121b): ``legacy_journal`` = v2 台账启用前的
+    paper journal 信号; ``ledger_v2`` = data/paper_trading_v2 台账交易
+    (2026-08-14 起唯一生产计划创建路径)。两 store 是生产 BUY 流的两个
+    纪元, 单独任何一个都不是完整的生产宇宙。
+    """
 
     signal_date: str
     ticker: str
@@ -99,6 +107,7 @@ class SignalRecord:
     realized_pct: float | None = None
     court_gross_ret_horizon: float | None = None
     direction_agree: bool | None = None
+    store: str = "legacy_journal"
 
 
 @dataclass
@@ -107,6 +116,7 @@ class Reconciliation:
     class_counts: dict[str, int] = field(default_factory=lambda: {c: 0 for c in CLASSES})
     matched_records: list[SignalRecord] = field(default_factory=list)
     realized_records: list[SignalRecord] = field(default_factory=list)
+    duplicate_buys_skipped: int = 0
 
 
 def normalize_day(value: object) -> str:
@@ -128,6 +138,69 @@ def load_journal(path: Path | str = JOURNAL_PATH) -> list[dict[str, Any]]:
             raise ValueError(f"journal line is not an object: {line[:80]}")
         records.append(payload)
     return records
+
+
+STORE_LEGACY_JOURNAL = "legacy_journal"
+STORE_LEDGER_V2 = "ledger_v2"
+
+# v2 台账只读接入 (R121b): 不经 LedgerRepository — 那是写侧构造器, 会建库/
+# 迁移; 对账是纯读诊断, 直接 sqlite3 mode=ro 读 trades 表。成本字段
+# (commission/tax/slippage) 是台账结算的精确经济事实, realized 按净额口径。
+_LEDGER_TRADES_QUERY = (
+    "SELECT signal_date, ticker, state, raw_entry_price, quantity,"
+    " entry_commission, entry_tax, entry_slippage,"
+    " raw_exit_price, exit_commission, exit_tax, exit_slippage"
+    " FROM trades"
+)
+
+
+def load_ledger_buys(path: Path | str = LEDGER_PATH) -> list[dict[str, Any]]:
+    """读 v2 生产台账 trades 表 → 归一 BUY 记录 (含已平仓净额 realized).
+
+    缺库抛 OSError (调用方决定 fail-open/fail-closed); 损坏行/畸形值
+    fail-closed 抛 ValueError — 与 load_journal 同纪律。open 仓 realized
+    为 None (未平仓不冒充已兑现)。
+    """
+    uri = f"file:{Path(path).resolve()}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        rows = conn.execute(_LEDGER_TRADES_QUERY).fetchall()
+    finally:
+        conn.close()
+    buys: list[dict[str, Any]] = []
+    for row in rows:
+        (signal_date, ticker, state, entry_px, qty, entry_comm, entry_tax,
+         entry_slip, exit_px, exit_comm, exit_tax, exit_slip) = row
+        day = normalize_day(signal_date)
+        code = str(ticker or "").strip()
+        if len(code) != 6 or not code.isdigit():
+            raise ValueError(f"ledger ticker unparseable: {ticker!r}")
+        realized: float | None = None
+        if str(state) == "closed":
+            for name, value in (
+                ("raw_entry_price", entry_px), ("quantity", qty),
+                ("raw_exit_price", exit_px),
+            ):
+                if not isinstance(value, (int, float)) or value is None:
+                    raise ValueError(f"ledger closed trade missing {name}: {row!r}")
+            costs = lambda *xs: float(sum(x or 0.0 for x in xs))  # noqa: E731
+            basis = float(entry_px) * float(qty) + costs(entry_comm, entry_tax, entry_slip)
+            proceeds = float(exit_px) * float(qty) - costs(exit_comm, exit_tax, exit_slip)
+            if basis <= 0:
+                raise ValueError(f"ledger non-positive cost basis: {row!r}")
+            realized = (proceeds / basis - 1.0) * 100.0
+        buys.append(
+            {
+                "date": day,
+                "ticker": code,
+                # v2 可执行合约固定 T+10 (宪法 #2); 台账不存 horizon 列。
+                "horizon": 10,
+                "trigger_strength": None,
+                "realized_pct": realized,
+                "store": STORE_LEDGER_V2,
+            }
+        )
+    return buys
 
 
 def extract_realized(exit_record: Mapping[str, Any]) -> float | None:
@@ -168,11 +241,20 @@ def classify_buy(
     inputs: ClassificationInputs,
     realized_by_key: Mapping[tuple[str, str], float],
 ) -> SignalRecord:
-    """单笔 BUY → 六类之一. 分类序 = 判定优先级 (window → regime → panel → day → ticker)."""
+    """单笔 BUY → 六类之一. 分类序 = 判定优先级 (window → regime → panel → day → ticker).
+
+    ``store`` 从 BUY 记录携带 (R121b 时代归属); ``trigger_strength`` 为 None
+    的来源 (v2 台账不存信号强度) → paper_strength/strength_drift 置 None,
+    绝不以 0.0 冒充强度 (假漂移比无漂移更有害)。
+    """
     signal_date = normalize_day(buy.get("date"))
     ticker = str(buy.get("ticker") or "")
     horizon = int(buy.get("horizon") or 10)
-    paper_strength = float(buy.get("trigger_strength") or 0.0)
+    raw_strength = buy.get("trigger_strength")
+    paper_strength: float | None = (
+        float(raw_strength) if raw_strength is not None else None
+    )
+    store = str(buy.get("store") or STORE_LEGACY_JOURNAL)
 
     classification: str
     court_row: Mapping[str, Any] | None = None
@@ -192,9 +274,17 @@ def classify_buy(
 
     court_strength = float(court_row["trigger_strength"]) if court_row is not None else None
     strength_drift = (
-        paper_strength - court_strength if court_strength is not None else None
+        paper_strength - court_strength
+        if (court_strength is not None and paper_strength is not None)
+        else None
     )
-    realized = realized_by_key.get((signal_date, ticker))
+    # 台账 BUY 自带净额 realized (R121b); journal BUY 走 EXIT reasoning 映射。
+    inline_realized = buy.get("realized_pct")
+    realized = (
+        float(inline_realized)
+        if isinstance(inline_realized, (int, float))
+        else realized_by_key.get((signal_date, ticker))
+    )
 
     court_gross: float | None = None
     direction_agree: bool | None = None
@@ -217,6 +307,7 @@ def classify_buy(
         realized_pct=realized,
         court_gross_ret_horizon=court_gross,
         direction_agree=direction_agree,
+        store=store,
     )
 
 
@@ -236,25 +327,40 @@ def realized_map_from_journal(journal: Sequence[Mapping[str, Any]]) -> dict[tupl
 def reconcile(
     journal: Sequence[Mapping[str, Any]],
     inputs: ClassificationInputs,
+    *,
+    extra_buys: Sequence[Mapping[str, Any]] = (),
 ) -> Reconciliation:
-    """journal + 分类索引 → 全量对账. BUY 幂等键 (信号日, ticker) 去重取首条."""
+    """journal (+ extra_buys) + 分类索引 → union 全量对账.
+
+    BUY 幂等键 (信号日, ticker) 去重取首条; journal 先史 precedence —
+    跨 store 重键时保留 journal 记录, 台账重键计入 ``duplicate_buys_skipped``
+    (两 store 同键 = 时代归属异常, 计数显形而不是静默吞并)。
+    """
     realized_by_key = realized_map_from_journal(journal)
     result = Reconciliation()
     seen: set[tuple[str, str]] = set()
-    for record in journal:
-        if str(record.get("action") or "").upper() != "BUY":
-            continue
-        key = (normalize_day(record.get("date")), str(record.get("ticker") or ""))
+
+    def _ingest(buy: Mapping[str, Any]) -> bool:
+        key = (normalize_day(buy.get("date")), str(buy.get("ticker") or ""))
         if key in seen:
-            continue
+            return False
         seen.add(key)
-        classified = classify_buy(record, inputs, realized_by_key)
+        classified = classify_buy(buy, inputs, realized_by_key)
         result.records.append(classified)
         result.class_counts[classified.classification] += 1
         if classified.classification == "matched":
             result.matched_records.append(classified)
         if classified.realized_pct is not None:
             result.realized_records.append(classified)
+        return True
+
+    for record in journal:
+        if str(record.get("action") or "").upper() != "BUY":
+            continue
+        _ingest(record)
+    for buy in extra_buys:
+        if not _ingest(buy):
+            result.duplicate_buys_skipped += 1
     return result
 
 
@@ -278,11 +384,37 @@ def realized_stats(records: Sequence[SignalRecord]) -> dict[str, Any] | None:
     }
 
 
+def stores_block(recon: Reconciliation) -> dict[str, dict[str, Any]]:
+    """per-store 时代归属块 (R121b): 每个 store 的 buys/open/realized。
+
+    ``buys`` = 该 store 计入 union 的 BUY 数; ``open_buys`` = buys − 已平仓
+    (journal 僵尸 open 与台账 open 仓都显形, 不假装全部已兑现);
+    ``realized_only`` = 该 store 自身口径的胜率/赔率/E (journal = EXIT
+    reasoning 滑点口径, ledger = 台账结算净额口径 — 锚点本异, 分列披露)。
+    """
+    stores: dict[str, dict[str, Any]] = {}
+    for store in (STORE_LEGACY_JOURNAL, STORE_LEDGER_V2):
+        records = [r for r in recon.records if r.store == store]
+        if not records:
+            continue
+        realized = realized_stats([r for r in records if r.realized_pct is not None])
+        stores[store] = {
+            "buys": len(records),
+            "open_buys": len(records) - len(
+                [r for r in records if r.realized_pct is not None]
+            ),
+            "realized_only": realized,
+        }
+    return stores
+
+
 def summary_payload(recon: Reconciliation, *, court_window: tuple[str, str] | None) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "class_counts": dict(recon.class_counts),
         "total_buys": len(recon.records),
         "realized_only": realized_stats(recon.realized_records),
+        "stores": stores_block(recon),
+        "duplicate_buys_skipped": recon.duplicate_buys_skipped,
         "matched_records": [
             {
                 "signal_date": r.signal_date,
@@ -337,6 +469,8 @@ def build_alignment_summary(
         "total_buys": len(recon.records),
         "class_counts": dict(recon.class_counts),
         "realized_only": realized_stats(recon.realized_records),
+        "stores": stores_block(recon),
+        "duplicate_buys_skipped": recon.duplicate_buys_skipped,
         "latest_split_signal_date": max(split_dates) if split_dates else None,
         "latest_matched_signal_date": max(matched_dates) if matched_dates else None,
     }
@@ -381,6 +515,31 @@ def render_md(payload: Mapping[str, Any]) -> str:
         lines.append("")
     lines.append(f"生产 BUY 总数: **{payload['total_buys']}**")
     lines.append("")
+    stores = payload.get("stores") or {}
+    if stores:
+        lines.append("| 纪元 (store) | BUY | 未平仓 | 已平仓 n | 胜率 | 期望 |")
+        lines.append("|---|---|---|---|---|---|")
+        store_labels = {
+            STORE_LEGACY_JOURNAL: "legacy_journal (v2 前信号)",
+            STORE_LEDGER_V2: "ledger_v2 (v2 生产台账)",
+        }
+        for key in (STORE_LEGACY_JOURNAL, STORE_LEDGER_V2):
+            block = stores.get(key)
+            if not isinstance(block, dict):
+                continue
+            realized = block.get("realized_only")
+            lines.append(
+                f"| {store_labels[key]} | {block.get('buys', 0)} "
+                f"| {block.get('open_buys', 0)} "
+                f"| {realized.get('n') if isinstance(realized, dict) else '—'} "
+                f"| {realized.get('win_rate_pct') if isinstance(realized, dict) else '—'} "
+                f"| {realized.get('expectancy_pct') if isinstance(realized, dict) else '—'} |"
+            )
+        skipped = payload.get("duplicate_buys_skipped")
+        if isinstance(skipped, int) and skipped > 0:
+            lines.append("")
+            lines.append(f"⚠ 跨 store 重键去重 {skipped} 笔 (同 (信号日,票) 双记录 — 时代归属异常)")
+        lines.append("")
     lines.append("| 分类 | 笔数 | 语义 |")
     lines.append("|---|---|---|")
     semantics = {
@@ -413,9 +572,14 @@ def render_md(payload: Mapping[str, Any]) -> str:
             "|---|---|---|---|---|---|---|---|---|",
         ]
         for m in matched:
+            strength_text = (
+                f"{m['paper_strength']:.3f}"
+                if isinstance(m.get("paper_strength"), (int, float))
+                else "—"
+            )
             lines.append(
                 f"| {m['signal_date']} | {m['ticker']} | {m['horizon']} "
-                f"| {m['paper_strength']:.3f} | "
+                f"| {strength_text} | "
                 f"{m['court_strength'] if m['court_strength'] is not None else '—'} "
                 f"| {m['strength_drift'] if m['strength_drift'] is not None else '—'} "
                 f"| {m['realized_pct'] if m['realized_pct'] is not None else '—'} "
@@ -443,6 +607,11 @@ def _court_window_from_manifest(manifest_path: Path) -> tuple[str, str] | None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--journal", type=Path, default=JOURNAL_PATH)
+    parser.add_argument(
+        "--ledger", type=Path, default=LEDGER_PATH,
+        help="v2 生产台账 (sqlite3, 只读)。缺失 → 台账纪元不计入 (fail-open, "
+        "仅 legacy journal 纪元对账); 损坏 → 类型化异常 fail-closed。",
+    )
     parser.add_argument("--court-table", type=Path, default=COURT_TABLE_PATH)
     parser.add_argument("--court-manifest", type=Path, default=COURT_MANIFEST_PATH)
     parser.add_argument("--regime", type=Path, default=REGIME_PATH)
@@ -457,6 +626,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     journal = load_journal(args.journal)
+    # v2 台账纪元 (R121b): 文件存在才计入 — 缺失 = v2 未启用形态 (合法),
+    # 渲染面 stores 块缺 ledger_v2 时按 legacy-only 逐字回退旧行。
+    extra_buys: list[dict[str, Any]] = (
+        load_ledger_buys(args.ledger) if args.ledger.exists() else []
+    )
     court_table = pd.read_csv(args.court_table)
     court_table["signal_date"] = court_table["signal_date"].map(normalize_day)
     regime_labels = {
@@ -481,7 +655,7 @@ def main(argv: list[str] | None = None) -> int:
         regime_labels=regime_labels,
         panel_dates=panel_dates,
     )
-    recon = reconcile(journal, inputs)
+    recon = reconcile(journal, inputs, extra_buys=extra_buys)
     payload = summary_payload(recon, court_window=window)
 
     from datetime import date

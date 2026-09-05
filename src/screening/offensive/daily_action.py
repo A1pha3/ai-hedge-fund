@@ -1562,18 +1562,21 @@ def _render_universe_alignment_line(
 ) -> str | None:
     """宇宙对齐行 (R118 Op1): 证据宇宙 vs 生产宇宙的对账状态 + realized 兑现。
 
-    全部胜率/赔率证据建在 court 事件表上, 生产实际交易的是 paper journal —
-    两个宇宙若分裂, 一切度量都在错靶上。对账由夜刷链在 court build 成功后
-    经 ``btst_realized_vs_court --summary-json`` 单写者刷新 (undated 原子
-    落盘), 本行消费该工件并显式披露: 分裂笔数与最晚分裂信号日 (时代归因的
-    锚 — R118 Observe: 18 生产 BUY 9 笔分裂但全部早于 2026-08-14 regime
-    gate, gate 后信号日全 matched) + realized 已平仓胜率/期望 (journal
-    已平仓口径, 含分裂信号日交易, 与 court 期望锚点本异只作兑现参考)。
+    全部胜率/赔率证据建在 court 事件表上, 生产 BUY 流 = legacy journal
+    (v2 前信号纪元) + v2 生产台账 (paper_trading_v2, 2026-08-14 起唯一
+    计划创建路径; R121b 取证: 两 store 零重叠, 单独 journal 不是完整生产
+    宇宙) — 两个宇宙若分裂, 一切度量都在错靶上。对账由夜刷链在 court
+    build 成功后经 ``btst_realized_vs_court --summary-json`` 单写者刷新
+    (undated 原子落盘), 本行消费该工件并显式披露: 分裂笔数与最晚分裂
+    信号日 (时代归因的锚) + 分 store 计数 (R121b) + realized 已平仓
+    胜率/期望 (合并已平仓口径, 含分裂信号日交易, 与 court 期望锚点本异
+    只作兑现参考)。
 
-    fail-open 家族纪律 (R85/R87/R92/R109/R115 同族): summary 缺失/损坏/
-    形状不符 → 整行省略, 不假装有对账; 子句数据缺失 (realized 未平仓/
-    窗口缺失) → 对应子句省略。本行是披露不是行为改变 — 不进入任何计划/
-    评分/仓位/退出决策路径。
+    fail-open 家族纪律 (R85/R87/R92/R109/R115/R119 同族): summary 缺失/
+    损坏/形状不符 → 整行省略, 不假装有对账; stores 块缺失/畸形 → 分
+    store 子句省略 (旧 summary 逐字节回退旧行); 子句数据缺失 (realized
+    未平仓/窗口缺失) → 对应子句省略。本行是披露不是行为改变 — 不进入
+    任何计划/评分/仓位/退出决策路径。
     """
     path = Path(summary_path) if summary_path is not None else _ALIGNMENT_SUMMARY_PATH
     try:
@@ -1621,6 +1624,30 @@ def _render_universe_alignment_line(
     latest_split = data.get("latest_split_signal_date")
     if isinstance(latest_split, str) and latest_split:
         head += f"（最晚分裂 {latest_split}）"
+    # R121b: 时代归属子句 — 生产 BUY 流 = legacy journal (v2 前信号) + v2 台账
+    # 两个纪元, 单独 journal 不是完整生产宇宙 (R121b 取证: 台账 15 笔与 journal
+    # 零重叠且此前零披露)。stores 块缺失/畸形 → 子句省略 (fail-open, 旧 summary
+    # 逐字节回退旧行); 任一 store 的 buys 非正整数 → 该项省略不渲染垃圾。
+    stores = data.get("stores")
+    has_store_clause = False
+    has_ledger = False
+    if isinstance(stores, dict):
+        store_parts: list[str] = []
+        for key, label in (
+            ("legacy_journal", "legacy journal"),
+            ("ledger_v2", "v2 台账"),
+        ):
+            block = stores.get(key)
+            if not isinstance(block, dict):
+                continue
+            buys = block.get("buys")
+            if isinstance(buys, int) and not isinstance(buys, bool) and buys > 0:
+                store_parts.append(f"{label} {buys}")
+                if key == "ledger_v2":
+                    has_ledger = True
+        if store_parts:
+            head += "（" + " · ".join(store_parts) + "）"
+            has_store_clause = True
     if split == 0:
         head += " — 全部生产信号在 court 宇宙内"
     body = head
@@ -1636,10 +1663,31 @@ def _render_universe_alignment_line(
             and _is_finite_number(wr) and _is_finite_number(e)
         ):
             body += f" · 已平仓 {n} 胜率 {wr}% 期望 {e:+.2f}%"
-    body += (
-        " — realized 为 paper journal 已平仓口径（含分裂信号日交易），"
-        "仅披露参考，不改变计划与执行决策"
-    )
+    if has_ledger and isinstance(stores, dict):
+        ledger_block = stores.get("ledger_v2")
+        if isinstance(ledger_block, dict):
+            ledger_realized = ledger_block.get("realized_only")
+            if isinstance(ledger_realized, dict):
+                ln = ledger_realized.get("n")
+                lwr = ledger_realized.get("win_rate_pct")
+                le = ledger_realized.get("expectancy_pct")
+                # 台账已平仓子句同守卫纪律 (R119 P1 镜像) — 活生产台账的
+                # realized 是决策相关性最强的兑现读数, 单列不与 journal 混算。
+                if (
+                    isinstance(ln, int) and not isinstance(ln, bool) and ln > 0
+                    and _is_finite_number(lwr) and _is_finite_number(le)
+                ):
+                    body += f" · 台账已平仓 {ln} 胜率 {lwr}% 期望 {le:+.2f}%"
+    if has_ledger:
+        body += (
+            " — realized 为 legacy journal+v2 台账合并已平仓口径（含分裂信号日"
+            "交易，锚点本异），仅披露参考，不改变计划与执行决策"
+        )
+    else:
+        body += (
+            " — realized 为 paper journal 已平仓口径（含分裂信号日交易），"
+            "仅披露参考，不改变计划与执行决策"
+        )
     return body
 
 

@@ -334,3 +334,146 @@ class TestAlignmentSummary:
         write_alignment_summary(target, summary2)
         assert json.loads(target.read_text(encoding="utf-8"))["date"] == "20260906"
         assert not list(target.parent.glob(".alignment_*"))
+
+
+# ---------- R121b Op2: v2 台账 union 接入 (时代归属 + 分 store 披露) ----------
+
+from scripts.btst_realized_vs_court import (  # noqa: E402
+    STORE_LEDGER_V2,
+    STORE_LEGACY_JOURNAL,
+    build_alignment_summary as _build_alignment_summary,
+    load_ledger_buys,
+    stores_block,
+)
+
+_LEDGER_DDL = """
+CREATE TABLE trades (
+    trade_id TEXT PRIMARY KEY, ledger_id TEXT, ticker TEXT, setup TEXT,
+    setup_version TEXT, signal_date TEXT, planned_entry_date TEXT,
+    planned_weight REAL, priority INTEGER, state TEXT, execution_mode TEXT,
+    fill_source TEXT, entry_date TEXT, raw_entry_price REAL, quantity INTEGER,
+    entry_commission REAL, entry_tax REAL, entry_slippage REAL,
+    exit_trigger_date TEXT, exit_date TEXT, raw_exit_price REAL,
+    exit_commission REAL, exit_tax REAL, exit_slippage REAL,
+    armed_at TEXT, highest_close REAL, exit_line TEXT,
+    last_evaluated_date TEXT, forced_exit_target_date TEXT, provenance_json TEXT
+)
+"""
+
+
+def _make_ledger(tmp_path, rows):
+    p = tmp_path / "ledger.sqlite3"
+    import sqlite3
+    conn = sqlite3.connect(p)
+    conn.execute(_LEDGER_DDL)
+    conn.executemany(
+        "INSERT INTO trades (signal_date, ticker, state, raw_entry_price, quantity,"
+        " entry_commission, entry_tax, entry_slippage, raw_exit_price,"
+        " exit_commission, exit_tax, exit_slippage)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
+    conn.commit()
+    conn.close()
+    return p
+
+
+class TestLedgerUnion:
+    def test_load_ledger_buys_normalizes_and_nets_realized(self, tmp_path):
+        p = _make_ledger(tmp_path, [
+            # 净额口径: basis=100*10+0+0+0=1000, proceeds=110*10-0-5-0=1095 → +9.5%
+            ("2026-08-14", "600487", "closed", 100.0, 10, 0.0, 0.0, 0.0, 110.0, 0.0, 5.0, 0.0),
+            # open 仓 → realized None (未平仓不冒充已兑现)
+            ("2026-08-31", "002757", "open", 17.74, 100, 0.0, 0.0, 0.0, None, None, None, None),
+        ])
+        buys = load_ledger_buys(p)
+        assert len(buys) == 2
+        first, second = buys
+        assert first["date"] == "20260814" and first["ticker"] == "600487"
+        assert first["store"] == STORE_LEDGER_V2
+        assert first["horizon"] == 10
+        assert first["realized_pct"] == pytest.approx(9.5)
+        assert second["realized_pct"] is None
+
+    def test_load_ledger_corrupt_ticker_fails_closed(self, tmp_path):
+        p = _make_ledger(tmp_path, [
+            ("2026-08-14", "600487.SZ", "closed", 10.0, 10, 0, 0, 0, 11.0, 0, 0, 0),
+        ])
+        with pytest.raises(ValueError):
+            load_ledger_buys(p)
+
+    def test_reconcile_union_store_attribution(self):
+        # 独立最小世界: 一天 court 两票, journal 一票 + 台账一票 (互不重叠)
+        inputs = _inputs(
+            [{"ts_code": "000001.SZ", "signal_date": 20260821},
+             {"ts_code": "600487.SH", "signal_date": 20260821}],
+            sessions=["20260821"], regime={"20260821": "normal"}, panel=["20260821"],
+        )
+        journal = [_journal_buy("20260821", "000001", strength=0.7),
+                   _journal_exit("20260821", "000001", "+8.0")]
+        ledger_buys = [{"date": "20260821", "ticker": "600487", "horizon": 10,
+                        "trigger_strength": None, "realized_pct": -8.93,
+                        "store": STORE_LEDGER_V2}]
+        recon = reconcile(journal, inputs, extra_buys=ledger_buys)
+        assert len(recon.records) == 2
+        stores_seen = {r.store for r in recon.records}
+        assert stores_seen == {STORE_LEGACY_JOURNAL, STORE_LEDGER_V2}
+        ledger_rec = next(r for r in recon.records if r.store == STORE_LEDGER_V2)
+        assert ledger_rec.classification == "matched"
+        # 台账无信号强度 → 不以 0.0 冒充, 漂移置 None
+        assert ledger_rec.paper_strength is None and ledger_rec.strength_drift is None
+        assert ledger_rec.realized_pct == pytest.approx(-8.93)
+
+    def test_reconcile_cross_store_duplicate_counted(self):
+        inputs = _inputs(
+            [{"ts_code": "000001.SZ", "signal_date": 20260821}],
+            sessions=["20260821"], regime={"20260821": "normal"}, panel=["20260821"],
+        )
+        journal = [_journal_buy("20260821", "000001")]
+        ledger_buys = [{"date": "20260821", "ticker": "000001", "horizon": 10,
+                        "trigger_strength": None, "realized_pct": None,
+                        "store": STORE_LEDGER_V2}]
+        recon = reconcile(journal, inputs, extra_buys=ledger_buys)
+        # journal 先史 precedence: 保留 journal 记录, 台账重键计数显形
+        assert len(recon.records) == 1
+        assert recon.records[0].store == STORE_LEGACY_JOURNAL
+        assert recon.duplicate_buys_skipped == 1
+
+    def test_stores_block_and_alignment_summary(self):
+        inputs = _inputs(
+            [{"ts_code": "000001.SZ", "signal_date": 20260821},
+             {"ts_code": "600487.SH", "signal_date": 20260821}],
+            sessions=["20260821"], regime={"20260821": "normal"}, panel=["20260821"],
+        )
+        journal = [_journal_buy("20260821", "000001"),
+                   _journal_exit("20260821", "000001", "-5.0"),
+                   # journal 僵尸 open (有 BUY 无 EXIT)
+                   _journal_buy("20260821", "999999")]
+        ledger_buys = [{"date": "20260821", "ticker": "600487", "horizon": 10,
+                        "trigger_strength": None, "realized_pct": -8.93,
+                        "store": STORE_LEDGER_V2}]
+        recon = reconcile(journal, inputs, extra_buys=ledger_buys)
+        stores = stores_block(recon)
+        assert stores[STORE_LEGACY_JOURNAL]["buys"] == 2
+        assert stores[STORE_LEGACY_JOURNAL]["open_buys"] == 1
+        assert stores[STORE_LEDGER_V2]["buys"] == 1
+        assert stores[STORE_LEDGER_V2]["open_buys"] == 0
+        assert stores[STORE_LEDGER_V2]["realized_only"]["n"] == 1
+        summary = build_alignment_summary(recon, court_window=None, summary_date="20260905")
+        assert summary["stores"] == stores
+        assert summary["total_buys"] == 3
+
+    def test_render_md_shows_store_era_table(self):
+        inputs = _inputs(
+            [{"ts_code": "000001.SZ", "signal_date": 20260821}],
+            sessions=["20260821"], regime={"20260821": "normal"}, panel=["20260821"],
+        )
+        recon = reconcile([_journal_buy("20260821", "000001")], inputs,
+                          extra_buys=[{"date": "20260821", "ticker": "600487",
+                                       "horizon": 10, "trigger_strength": None,
+                                       "realized_pct": -8.93,
+                                       "store": STORE_LEDGER_V2}])
+        payload = summary_payload(recon, court_window=("20250701", "20260901"))
+        text = render_md(payload)
+        assert "ledger_v2" in text and "legacy_journal" in text
+        assert json.loads(json.dumps(payload))["stores"][STORE_LEDGER_V2]["buys"] == 1
