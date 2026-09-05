@@ -2088,6 +2088,7 @@ def _render_evidence_freshness_line(
     reports_dir: str | Path | None = None,
     calendar_sessions: tuple | None = None,
     status_path: str | Path | None = None,
+    today: date | None = None,
 ) -> str | None:
     """证据新鲜度告警行 (R115 Op2): 判定面夜刷静默冻结的显式告警。
 
@@ -2107,6 +2108,14 @@ def _render_evidence_freshness_line(
     R115b Op3 对抗收口: 报告日期在今日之后 (合法 8 位未来日文件名过得了
     形状守卫 — 伪最新/时钟异常) → 异常文案出行, 不渲染『陈旧 -N』也不
     静默; 刷新失败子句携带 status 自报日期, 不推断『昨夜』。
+
+    R127 Op1 (G1 假阳性修复): 报告晚于 readiness 快照日 (session_distance
+    < 0) 是合法当晚刷新形态 — 分解报告以墙钟 ``date.today()`` 落名, 而
+    as_of 取 readiness 快照日, 补班日晚刷后最新鲜证据反被 G1 判『时钟
+    异常』(R126 收尾冒烟实录)。距今日 (墙钟, 可注入 ``today`` 供测试) 为
+    负时区分: ``report_date <= 今日墙钟`` → 合法, 按 0 距离正常渲染
+    (新鲜即零噪声); 仅 ``report_date > 今日墙钟`` (真未来日期) 维持 G1
+    异常文案。
     """
     try:
         from src.screening.offensive.gap_disclosure import latest_decomposition_report
@@ -2149,6 +2158,8 @@ def _render_evidence_freshness_line(
             else tuple(_load_authoritative_session_dates())
         )
         report_date = datetime.strptime(report_day, "%Y%m%d").date()
+        wall_today = today if today is not None else date.today()
+        future_anomaly = report_date > wall_today
         dist_text = None
         stale = False
         if sessions:
@@ -2160,20 +2171,27 @@ def _render_evidence_freshness_line(
             except ValueError:
                 dist = None
             if dist is not None and dist < 0:
-                # R115b Op3 (G1): 报告日期在今日之后 — 文件名伪最新/时钟异常,
-                # 合法 8 位未来日过得了形状守卫, 比陈旧更值得显形 (渲染荒谬
-                # 『陈旧 -N』不如明语异常)。
-                stale = True
-                dist_text = "报告日期在今日之后（文件名或时钟异常）"
-            elif dist is not None:
+                if future_anomaly:
+                    # R115b Op3 (G1): 真未来日期 — 文件名伪最新/时钟异常,
+                    # 合法 8 位未来日过得了形状守卫, 比陈旧更值得显形 (渲染
+                    # 荒谬『陈旧 -N』不如明语异常)。
+                    stale = True
+                    dist_text = "报告日期在今日之后（文件名或时钟异常）"
+                else:
+                    # R127 Op1: 合法当晚刷新 (报告晚于快照日但 ≤ 今日墙钟)
+                    # 按最新鲜渲染, 不再误报时钟异常。
+                    dist = 0
+            if dist_text is None and dist is not None:
                 stale = dist >= _FRESHNESS_STALE_SESSIONS
                 dist_text = f"陈旧 {dist} 个交易日"
         if dist_text is None:
             days = (as_of - report_date).days
-            if days < 0:
+            if days < 0 and future_anomaly:
                 stale = True
                 dist_text = "报告日期在今日之后（文件名或时钟异常）"
             else:
+                if days < 0:
+                    days = 0
                 stale = days >= _FRESHNESS_STALE_DAYS_FALLBACK
                 dist_text = f"陈旧 {days} 个自然日（交易日折算不可用）"
 
