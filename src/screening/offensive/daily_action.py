@@ -2018,8 +2018,12 @@ def _render_trigger_state_line() -> str | None:
         k_note = str(k_disc["line_070"])
         if k_disc.get("line_060"):
             k_note += f"；0.60 锚 {k_disc['line_060']}"
+        # R130 Op2: 折叠可审计 — 同数据重复观测被折叠时显式披露条数
+        # (真相消失必有名); 干净账本零新增文案 (零噪声纪律)。
+        folded = int(stab.get("folded_duplicates") or 0)
+        fold_note = f" · 折叠同数据重复观测 {folded} 条" if folded > 0 else ""
         return (
-            f"强度阈值触发器（{anchor} · 账本 {stab['records']} 条）：{c1} · {c2} · {conj}；"
+            f"强度阈值触发器（{anchor} · 账本 {stab['records']} 条{fold_note}）：{c1} · {c2} · {conj}；"
             f"{c3} · {conj_060} · 历史最多合取连亮 {max_streak} · 历史最多 060 锚合取连亮 {max_streak_060}"
             f"{coverage} · {k_note}"
         )
@@ -2086,8 +2090,10 @@ def _render_day_cohort_trigger_line() -> str | None:
         # 未注册态缺席句即本行旧硬编码尾句 (逐字节, 零现行为变化);
         # 注册/损坏/达标态披露 K/起算日/资格连亮 (owner 预注册动作)。
         k_note = str(_ct.cohort_k_qualification_disclosure(records)["line"])
+        folded = int(stab.get("folded_duplicates") or 0)
+        fold_note = f" · 折叠同数据重复观测 {folded} 条" if folded > 0 else ""
         return (
-            f"日层 cohort 触发器（{anchor} · 账本 {stab['records']} 条）："
+            f"日层 cohort 触发器（{anchor} · 账本 {stab['records']} 条{fold_note}）："
             f"{c1} · {c2} · {conj} · 历史最多日层合取连亮 {max_streak}{coverage}"
             f" · {k_note}"
         )

@@ -771,14 +771,21 @@ def render_md(payload: Mapping[str, Any], date_str: str) -> str:
         )
         stab = payload.get("cohort_trigger_stability")
         if isinstance(stab, dict) and stab.get("records"):
+            # R130 Op2: 措辞收敛至数据状态语义; 折叠>0 显式披露 (零噪声)。
+            folded = int(stab.get("folded_duplicates") or 0)
             L.append(
-                f"- 稳定计数 (跨刷新逐次记录, 机械化累积): 条件C1 连亮 "
+                f"- 稳定计数 (连亮按不同数据状态计数, 同数据重复观测不重复累积): 条件C1 连亮 "
                 f"{stab.get('strong_bucket_streak', 0)}/{stab['records']} · "
                 f"条件C2 连亮 {stab.get('mid_buckets_streak', 0)}/{stab['records']} · "
                 f"合取连亮 {stab.get('conjunction_streak', 0)}/{stab['records']} "
                 f"(历史最多合取连亮 {stab.get('max_conjunction_streak', 0)}; "
                 f"记录 {stab.get('first_date')}→{stab.get('last_date')})"
             )
+            if folded > 0:
+                L.append(
+                    f"  - 折叠同数据重复观测 {folded} 条 (重复判定不产生新证据; "
+                    f"账本 {stab['records']} 条 → 不同数据状态 {stab['records'] - folded} 个)"
+                )
         # R129 Op1: 注册/损坏/达标态取单一事实源; 未注册缺席句保持本 MD
         # 历史措辞逐字节 (K 子系统建立前两面已有各自的诚实缺席句, 统一措辞
         # 超出本 op 冻结范围 — 见 cohort_trigger 模块注)。

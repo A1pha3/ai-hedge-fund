@@ -460,3 +460,18 @@ def test_stability_fold_distinct_states_and_missing_digest():
     records[2]["court"] = _cohort_court(None, win_end="20260904")
     st = ct.cohort_trigger_stability(records)
     assert st["strong_bucket_streak"] == 3
+
+
+def test_stability_reports_folded_duplicates():
+    """R130 Op2: 日层族折叠可审计字段 (强度族同构)。"""
+    records = [
+        _record("20260904", c1_lit=True, armed=True),
+        _record("20260905", c1_lit=True, armed=True),
+    ]
+    records[0]["court"] = _cohort_court(_dg("e3"))
+    records[1]["court"] = _cohort_court(_dg("e3"), win_end="20260905")
+    st = ct.cohort_trigger_stability(records)
+    assert st["folded_duplicates"] == 1
+    assert ct.cohort_trigger_stability([_record("20260905", c1_lit=True)])[
+        "folded_duplicates"
+    ] == 0

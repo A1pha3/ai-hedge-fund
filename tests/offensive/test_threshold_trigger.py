@@ -737,3 +737,20 @@ def test_qualification_folds_duplicates_all_in_window():
     qual = tt.trigger_qualification(records, reg)
     assert qual["q_070"] == 1
     assert qual["qualified_070"] is False
+
+
+def test_stability_reports_folded_duplicates():
+    """R130 Op2: 折叠必须可审计 — folded_duplicates = 丢弃的重复观测数。"""
+    records = [
+        _rec("20260902", c1_lit=True, court=_court(_dg("c3"))),
+        _rec("20260903", c1_lit=True, court=_court(_dg("e3"))),
+        _rec("20260904", c1_lit=True, court=_court(_dg("e3"), win_end="20260904")),
+        _rec("20260905", c1_lit=True, court=_court(_dg("e3"), win_end="20260905")),
+    ]
+    st = tt.trigger_stability(records)
+    assert st["folded_duplicates"] == 2  # e3 三条只保留首条
+    assert st["records"] == 4            # 原始账本事实
+    assert tt.trigger_stability([_rec("20260902", court=_court(_dg("c3")))])[
+        "folded_duplicates"
+    ] == 0
+    assert tt.trigger_stability([])["folded_duplicates"] == 0

@@ -670,6 +670,10 @@ def court_binding(court_table: Path, rows: int) -> dict[str, object]:
     夜度保鲜自动化 (court_nightly_refresh) 下同数据跨日重建是常态,
     built_at 在身份中会让前进门每天写『新日期旧数据』假判定记录。
     保留在 manifest 供表龄审计 (review_btst_prior_court/btst_court_views)。
+    window_start/window_end 同为**请求态**而非数据内容 (R130 Op1 成文):
+    非交易日重建只推进请求窗而事件表零变化, 故前进门身份
+    (court_data_state_equal) 只认 content_digest; 本函数保留 window
+    字段供操作员『court 覆盖至 X』披露与窗口审计。
     universe_audit_complete: manifest 宇宙审计覆盖闭合
     (days_checked + empty_days == window.sessions) → True; 键全在但不
     闭合 → False; 键缺失/畸形/manifest 损坏 → None (旧形态无 empty_days
@@ -928,14 +932,22 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
             else:
                 k_tail = "稳定阈值 K 属 owner 预注册范围, 本工具只计数不判定"
                 k_060_tail = ""
+            # R130 Op2: 措辞收敛至数据状态语义 (Op1 起连亮按不同数据状态计数);
+            # 折叠>0 时显式披露条数 (真相消失必有名), 干净账本零新增。
+            folded = int(stab.get("folded_duplicates") or 0)
             L.append(
-                f"- 稳定计数 (跨刷新逐次记录, 机械化累积): 条件① 连亮 {stab['condition_1_streak']}"
+                f"- 稳定计数 (连亮按不同数据状态计数, 同数据重复观测不重复累积): 条件① 连亮 {stab['condition_1_streak']}"
                 f"/{stab['records']} · 条件② 连亮 {stab['condition_2_streak']}/{stab['records']}"
                 f" · 合取连亮 {stab['conjunction_streak']}/{stab['records']}"
                 f" (历史最多合取连亮 {stab['max_conjunction_streak']}; 记录 {stab['first_date']}"
                 f"→{stab['last_date']}) — 合取连亮持续出现才具备启动正式评估资格;"
                 f"{k_tail}"
             )
+            if folded > 0:
+                L.append(
+                    f"  - 折叠同数据重复观测 {folded} 条 (重复判定不产生新证据; "
+                    f"账本 {stab['records']} 条 → 不同数据状态 {stab['records'] - folded} 个)"
+                )
             L.append(
                 f"- 0.60 锚稳定计数: 条件③ 连亮 {stab.get('condition_3_streak', 0)}/{stab['records']}"
                 f" · 0.60 锚合取连亮 {stab.get('conjunction_060_streak', 0)}/{stab['records']}"
@@ -1192,8 +1204,8 @@ def main(argv: list[str] | None = None) -> int:
             payload["threshold_k_observation"] = observation_meta
         if record_meta.get("reason") == "court_not_advanced":
             print(
-                "court 未前进 (manifest/行数与账本最新记录一致) — 触发器账本不追加"
-                " (同数据重判不产生新证据); 报告照常刷新"
+                "court 未前进 (数据状态摘要与账本既有记录一致) — 触发器账本不追加"
+                " (同数据重判不产生新证据, R130 起按 content_digest 判定); 报告照常刷新"
             )
     payload["court_rows"] = len(ev)
     payload["court_sessions"] = int(ev["signal_date"].nunique())

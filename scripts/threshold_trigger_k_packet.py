@@ -45,9 +45,11 @@ COHORT_ANCHOR = "production_aligned/t10/cohort_size"
 
 def _fmt_stability(stab: Mapping[str, Any], family: str) -> list[str]:
     records = int(stab.get("records") or 0)
+    folded = int(stab.get("folded_duplicates") or 0)
     lines = [
         f"  账本 {records} 条"
-        f"（{stab.get('first_date')}→{stab.get('last_date')}）"
+        + (f" · 折叠同数据重复观测 {folded} 条" if folded > 0 else "")
+        + f"（{stab.get('first_date')}→{stab.get('last_date')}）"
     ]
     if family == "strength":
         lines.append(

@@ -88,6 +88,7 @@ def cohort_trigger_stability(records: list[dict]) -> dict[str, object]:
         "conjunction_streak": 0,
         "conjunction_last_armed": None,
         "max_conjunction_streak": 0,
+        "folded_duplicates": 0,
     }
     if not records:
         return out
@@ -100,6 +101,7 @@ def cohort_trigger_stability(records: list[dict]) -> dict[str, object]:
     out["conjunction_last_armed"] = latest.get("conjunction_armed")
     # R130 Op1: 连亮扫描走折叠视图 (重复观测不膨胀)
     scan_records = collapse_adjacent_same_court_state(records)
+    out["folded_duplicates"] = len(records) - len(scan_records)
     run_c1 = run_c2 = run_and = True
     for rec in reversed(scan_records):
         lit1 = condition_lit(rec, "strong_bucket") is True

@@ -181,6 +181,7 @@ def trigger_stability(records: list[dict]) -> dict[str, object]:
         "conjunction_060_last_armed": None,
         "max_conjunction_streak": 0,
         "max_conjunction_060_streak": 0,
+        "folded_duplicates": 0,
     }
     if not records:
         return out
@@ -194,6 +195,7 @@ def trigger_stability(records: list[dict]) -> dict[str, object]:
     # 同状态重复记录判定值恒等 (判定是数据状态的确定性纯函数), 末条即
     # 折叠末条语义。
     scan_records = collapse_adjacent_same_court_state(records)
+    out["folded_duplicates"] = len(records) - len(scan_records)
     run_c1 = run_c2 = run_c3 = run_and = run_and060 = True
     for rec in reversed(scan_records):
         lit1 = condition_lit(rec, "condition_1") is True

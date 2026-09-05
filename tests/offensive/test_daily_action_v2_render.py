@@ -1654,3 +1654,48 @@ def test_strength_line_max_streak_wording_disambiguated(case, tmp_path, monkeypa
     text = render_daily_action_v2(view)
     assert "历史最多合取连亮 0 · 历史最多 060 锚合取连亮 0" in text
     assert "/060 锚合取" not in text
+
+
+def test_trigger_state_line_discloses_folded_duplicates(case, tmp_path, monkeypatch):
+    """R130 Op2: 账本含同数据重复观测时, 状态行显式披露折叠 (真相消失必有名)。"""
+    recs = []
+    for day, we in (("20260904", "20260904"), ("20260905", "20260905")):
+        r = _trigger_rec(day, c1_lit=True, c2_lit=False, window_end=we)
+        r["court"]["content_digest"] = "sha256:" + "e3" * 32
+        recs.append(r)
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, recs))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    text = render_daily_action_v2(DailyActionV2Run(run, (), run.open_positions, (), ()))
+    assert "账本 2 条 · 折叠同数据重复观测 1 条" in text
+    assert "条件① ≥0.70 桶 CI>0 已亮（连亮 1）" in text  # 重复观测不膨胀连亮
+
+
+def test_trigger_state_line_clean_ledger_has_no_fold_clause(case, tmp_path, monkeypatch):
+    """R130 Op2: 干净账本零新增文案 (零噪声纪律)。"""
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260829", c1_lit=True, c2_lit=False),
+        _trigger_rec("20260830", c1_lit=True, c2_lit=False),
+    ]))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    text = render_daily_action_v2(DailyActionV2Run(run, (), run.open_positions, (), ()))
+    assert "折叠" not in text
+
+
+def test_day_cohort_trigger_line_discloses_folded_duplicates(case, tmp_path, monkeypatch):
+    """R130 Op2: 日层行同款折叠披露。"""
+    recs = []
+    for day, we in (("20260904", "20260904"), ("20260905", "20260905")):
+        r = _day_cohort_rec(day, c1_lit=False, c2_lit=True, window_end=we)
+        r["court"]["content_digest"] = "sha256:" + "e3" * 32
+        recs.append(r)
+    _patch_day_cohort_ledger(monkeypatch, _day_cohort_ledger(tmp_path, recs))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    text = render_daily_action_v2(DailyActionV2Run(run, (), run.open_positions, (), ()))
+    assert "账本 2 条 · 折叠同数据重复观测 1 条" in text
+    assert "条件C2 中间桶(4-9/10-19)转负 已亮（连亮 1）" in text

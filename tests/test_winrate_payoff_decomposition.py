@@ -554,6 +554,28 @@ class TestTriggerStabilityLedger:
         assert "合取连亮 0/2" in md
         assert "稳定阈值 K 属 owner 预注册" in md
 
+    def test_render_md_stability_wording_and_fold_disclosure(self):
+        """R130 Op2: MD 措辞收敛至数据状态语义; 折叠>0 显式披露。"""
+        from scripts.winrate_payoff_decomposition import render_md
+        payload = self._payload(self._trigger())
+        payload["horizons"] = {"t10": []}
+        payload["threshold_stability"] = {
+            "records": 4, "first_date": "20260902", "last_date": "20260905",
+            "condition_1_streak": 3, "condition_2_streak": 0,
+            "conjunction_streak": 0, "max_conjunction_streak": 0,
+            "condition_3_streak": 0, "conjunction_060_streak": 0,
+            "max_conjunction_060_streak": 0, "folded_duplicates": 1,
+        }
+        md = render_md(payload, "20260905")
+        assert "连亮按不同数据状态计数" in md
+        assert "同数据重复观测不重复累积" in md
+        assert "跨刷新逐次记录" not in md
+        assert "折叠同数据重复观测 1 条" in md
+
+        payload["threshold_stability"]["folded_duplicates"] = 0
+        md_clean = render_md(payload, "20260905")
+        assert "折叠" not in md_clean
+
     def test_render_md_k_registered_consumes_threshold_k(self):
         """K 预注册 → MD 稳定计数行消费 threshold_k 披露 (与渲染行同源)."""
         from src.screening.offensive.threshold_trigger import (

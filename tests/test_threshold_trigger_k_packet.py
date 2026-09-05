@@ -405,3 +405,28 @@ class TestCandidateValidation:
         paths = _paths(tmp_path)
         rc = main(self._argv(tmp_path, paths, "--k060", "3"))
         assert rc == 2
+
+
+class TestFoldDisclosure:
+    def test_fmt_stability_discloses_folded_duplicates(self, tmp_path, capsys):
+        """R130 Op2: 折叠>0 → 决策包披露; 干净账本零新增。"""
+        paths = _paths(tmp_path)
+        rows = [
+            _srow("20260904", armed=True),
+            _srow("20260905", armed=True),
+        ]
+        for r in rows:
+            r["court"]["content_digest"] = "sha256:" + "e3" * 32
+        _strength_ledger(tmp_path, rows)
+        rc = main([
+            "--strength-ledger", str(paths["strength_ledger"]),
+            "--strength-k-registration", str(paths["strength_k_registration"]),
+            "--strength-k-observation-log", str(paths["strength_k_observation_log"]),
+            "--cohort-ledger", str(tmp_path / "missing.jsonl"),
+            "--cohort-k-registration", str(paths["cohort_k_registration"]),
+            "--cohort-k-observation-log", str(paths["cohort_k_observation_log"]),
+        ])
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "折叠同数据重复观测 1 条" in out
+        assert "合取连亮 1" in out  # 同状态重复观测不膨胀连亮
