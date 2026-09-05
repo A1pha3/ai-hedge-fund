@@ -754,3 +754,35 @@ def test_stability_reports_folded_duplicates():
         "folded_duplicates"
     ] == 0
     assert tt.trigger_stability([])["folded_duplicates"] == 0
+
+
+def test_fold_serialization_churn_boundary_pinned():
+    """R130 Op3 B1 (已知边界钉死, 非期望行为): content_digest 绑定 pandas
+    canonical CSV 序列化 — 解释器/库升级可致同逻辑内容产生新摘要, 此时
+    折叠不合并 (摘要不同), 连亮计入该等值状态 (+1/每次环境变更)。
+    接受理由: 按行数等做兜底会误合并 R90 内容修正型真前进 (同 rows 同
+    指纹不同内容), 弱化身份的代价高于罕见环境变更事件的 +1 噪声; 损害
+    有界 (每次环境变更至多 +1) 且方向为过度记录 (保守: 宁多记不漏记)。
+    """
+    records = [
+        _rec("20260904", c1_lit=True, court=_court(_dg("e3"))),
+        # 同一逻辑内容, 环境升级后序列化摘要变化:
+        _rec("20260905", c1_lit=True, court=_court(_dg("f4"), win_end="20260905")),
+    ]
+    st = tt.trigger_stability(records)
+    assert st["folded_duplicates"] == 0   # 摘要不同 → 不折叠
+    assert st["condition_1_streak"] == 2  # 等值状态被计为 2 (已知噪声)
+
+
+def test_fold_multiple_separate_duplicate_runs():
+    """R130 Op3: 多段相邻重复各自折叠 — A A B B → 状态 A,B,折叠 2。"""
+    records = [
+        _rec("20260901", c1_lit=True, court=_court(_dg("a1"))),
+        _rec("20260902", c1_lit=True, court=_court(_dg("a1"), win_end="20260902")),
+        _rec("20260903", c1_lit=False, court=_court(_dg("b2"))),
+        _rec("20260904", c1_lit=False, court=_court(_dg("b2"), win_end="20260904")),
+    ]
+    st = tt.trigger_stability(records)
+    assert st["condition_1_streak"] == 0   # 尾段 B 未亮断链
+    assert st["folded_duplicates"] == 2
+    assert st["records"] == 4

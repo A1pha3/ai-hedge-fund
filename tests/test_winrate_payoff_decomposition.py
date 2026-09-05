@@ -2102,3 +2102,88 @@ def test_main_preserves_disclosure_when_ledger_write_failed(tmp_path):
     assert payload["threshold_k"]["state"] == "registered"
     md = (tmp_path / "rep" / f"winrate_payoff_decomposition_{stamp}.md").read_text(encoding="utf-8")
     assert "触发器账本写入失败" in md
+
+    def test_advance_gate_corrupt_manifest_none_digest_corner(self, tmp_path):
+        """R130 Op3 B2 (已知边界钉死): 连续两次 manifest 损坏 (digest=None)
+        的 build 互不等 → 门放行双记录 — 宁多记不漏记方向, 不假装能判等。"""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        corrupt_a = dict(self.BINDING_A, content_digest=None)
+        corrupt_b = dict(self.BINDING_A, content_digest=None, window_end="20260831")
+        record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260830",
+            ledger_path=ledger, court_binding=corrupt_a,
+        )
+        meta = record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260831",
+            ledger_path=ledger, court_binding=corrupt_b,
+            require_advance=True,
+        )
+        assert meta["recorded"] is True
+        assert len(load_trigger_ledger(ledger)) == 2
+
+    def test_gate_purity_implies_fold_idle(self, tmp_path):
+        """R130 Op3 B4 (Op1+Op2 合取不变式): 门正常时折叠恒空闲 —
+        请求态漂移被写面拒收后, 账本/稳定计数零增长且 folded_duplicates=0
+        (读面折叠是纵深防御, 稳态下不参与)。"""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger, trigger_stability,
+        )
+        from src.screening.offensive.threshold_trigger import trigger_stability as tt_stability
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260904",
+            ledger_path=ledger, court_binding=dict(self.BINDING_A),
+        )
+        drift_meta = record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260905",
+            ledger_path=ledger, court_binding=dict(self.BINDING_A, window_end="20260905"),
+            require_advance=True,
+        )
+        assert drift_meta["recorded"] is False  # 门拒收重复判定
+        # 新数据前进 (day3) 正常落账:
+        record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260906",
+            ledger_path=ledger, court_binding=dict(self.BINDING_B),
+        )
+        st = tt_stability(load_trigger_ledger(ledger))
+        assert st["records"] == 2
+        assert st["folded_duplicates"] == 0  # 折叠空闲 (门已拒收)
+        assert st["condition_1_streak"] == 2
+
+    def test_advance_gate_cross_family_same_verdict_on_drift(self, tmp_path):
+        """R130 Op3 B3 (跨族单实现保证): 同一请求态漂移下强度族与日层族
+        gate 必须同判 court_not_advanced — court_data_state_equal 单一实现
+        的存在性宣言, 两族账本零追加。"""
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        from scripts.btst_signal_day_cohort import record_cohort_trigger_status
+        from src.screening.offensive.cohort_trigger import load_cohort_trigger_ledger
+        strength_ledger = tmp_path / "ledger.jsonl"
+        cohort_ledger = tmp_path / "cohort_ledger.jsonl"
+        record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260904",
+            ledger_path=strength_ledger, court_binding=dict(self.BINDING_A),
+        )
+        record_cohort_trigger_status(
+            {"cohort_trigger": {"anchor": "a", "min_n": 30}}, "20260904",
+            ledger_path=cohort_ledger, court_binding=dict(self.BINDING_A),
+        )
+        drifted = dict(self.BINDING_A, window_end="20260905")
+        s_meta = record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260905",
+            ledger_path=strength_ledger, court_binding=drifted,
+            require_advance=True,
+        )
+        c_meta = record_cohort_trigger_status(
+            {"cohort_trigger": {"anchor": "a", "min_n": 30}}, "20260905",
+            ledger_path=cohort_ledger, court_binding=drifted,
+            require_advance=True,
+        )
+        assert s_meta["recorded"] is False and s_meta["reason"] == "court_not_advanced"
+        assert c_meta["recorded"] is False and c_meta["reason"] == "court_not_advanced"
+        assert [r["date"] for r in load_trigger_ledger(strength_ledger)] == ["20260904"]
+        assert [r["date"] for r in load_cohort_trigger_ledger(cohort_ledger)] == ["20260904"]

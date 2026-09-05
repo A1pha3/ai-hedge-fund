@@ -109,6 +109,11 @@ def court_data_state_equal(left: object, right: object) -> bool:
     方向 = 宁多记不漏记: 旧形态无 digest 记录与 manifest 损坏 degrade
     形态保持既有门放行行为; corrupt-manifest 双 None digest 角落维持
     现行为, 已知边界成文)。
+    已知边界 B1 (R130 Op3 钉死): 摘要绑定 pandas canonical CSV 序列化,
+    解释器/库升级可致同逻辑内容新摘要 → 门放行一条等值判定且读面折叠
+    不合并 (连亮 +1/每次环境变更)。不按行数等兜底: 会误合并 R90 内容
+    修正型真前进 (同 rows 同指纹不同内容), 弱化身份的代价高于罕见环境
+    变更的有界噪声。test_fold_serialization_churn_boundary_pinned 钉死。
     """
     left_digest = court_content_digest(left)
     right_digest = court_content_digest(right)
