@@ -82,6 +82,60 @@ def condition_lit(rec: dict, key: str) -> bool | None:
     return None if cond is None else cond.get("lit")
 
 
+def court_content_digest(court: object) -> str | None:
+    """从 court 绑定读取数据状态摘要 (R130 Op1)。
+
+    恰 dict 且 ``content_digest`` 为非空 str 才返回, 其余 (非 dict/缺键/
+    None 值/空串) 一律 None — 守卫纪律同 ``condition_dict`` 家族: 形状
+    未知不合并、不比较、不假装。
+    """
+    if not isinstance(court, dict):
+        return None
+    digest = court.get("content_digest")
+    return digest if isinstance(digest, str) and digest else None
+
+
+def court_data_state_equal(left: object, right: object) -> bool:
+    """两份 court 绑定是否同一**数据状态** (R130 Op1)。
+
+    数据前进门的身份语义: 判定是 (数据状态, 规则) 的确定性纯函数, 同一份
+    事件表反复判定不产生新证据。绑定中的 ``window_start``/``window_end``
+    是**请求态** (本次 build 的请求窗), 不是数据内容 — 非交易日重建只推
+    进请求窗而内容不变, 整字典比较会把请求窗漂移误判为数据前进, 在账本
+    写下『新日期旧数据』重复判定记录 (2026-09-05 周六休市实录: 0905 与
+    0904 绑定唯一差异 window_end, content_digest/rows/fingerprint 全同,
+    条件①连亮被重复观测膨胀)。故身份只认 ``content_digest``: 双方均为
+    非空 str 且相等 → 同一数据状态。任一侧缺失/畸形/None → 不等 (保守
+    方向 = 宁多记不漏记: 旧形态无 digest 记录与 manifest 损坏 degrade
+    形态保持既有门放行行为; corrupt-manifest 双 None digest 角落维持
+    现行为, 已知边界成文)。
+    """
+    left_digest = court_content_digest(left)
+    right_digest = court_content_digest(right)
+    if left_digest is None or right_digest is None:
+        return False
+    return left_digest == right_digest
+
+
+def collapse_adjacent_same_court_state(records: list[dict]) -> list[dict]:
+    """折叠账本中**相邻**同数据状态的重复判定记录 (R130 Op1)。
+
+    每段相邻同 ``content_digest`` 运行只保留**首次**判定 — 重复观测不是
+    新证据 (2026-09-05 非交易日重复判定形态), 且保首与资格判定的反前瞻
+    语义一致: 注册日前首现的数据状态不因周末重复观测变成注册后证据。
+    仅相邻折叠 — A→B→A 数据回退再判定不被合并 (回归再判定是真判定);
+    缺/畸形 digest 的记录永不折叠 (未知不合并)。
+    """
+    folded: list[dict] = []
+    for rec in records:
+        if folded and court_data_state_equal(
+            folded[-1].get("court"), rec.get("court")
+        ):
+            continue
+        folded.append(rec)
+    return folded
+
+
 def trigger_stability(records: list[dict]) -> dict[str, object]:
     """连亮计数 (R81 Op2 引入; R85 Op2 修 max 语义; R100 Op1 扩 0.60 锚): 两族字段语义 —
 
@@ -101,6 +155,13 @@ def trigger_stability(records: list[dict]) -> dict[str, object]:
     truthy 非 dict 形态与缺键同语义 (断链 + last_lit None, advisory 不
     假装), 不再以裸 AttributeError 炸消费面 (R126 Op2 日层族同族修复的
     单一实现提升)。
+
+    R130 Op1 连亮语义: 计数前对相邻同数据状态 (content_digest) 的重复
+    判定记录折叠 — 同一份数据反复判定不产生新证据, 非交易日重建的重复
+    观测不膨胀连亮 (保首语义见 ``collapse_adjacent_same_court_state``)。
+    ``records``/``first_date``/``last_date`` 保持**原始账本事实** (文件
+    有几行/首末日期), 连亮字段按**不同数据状态**计数 — 两者是不同侧面,
+    都如实。
     只计数不判定 — 『稳定』阈值属 owner。
     """
     dates = [str(r.get("date")) for r in records]
@@ -129,8 +190,12 @@ def trigger_stability(records: list[dict]) -> dict[str, object]:
     out["condition_3_last_lit"] = condition_lit(latest, "condition_3")
     out["conjunction_last_armed"] = latest.get("conjunction_armed")
     out["conjunction_060_last_armed"] = latest.get("conjunction_060_armed")
+    # R130 Op1: 连亮扫描走折叠视图 (重复观测不膨胀); latest 取原始末条 —
+    # 同状态重复记录判定值恒等 (判定是数据状态的确定性纯函数), 末条即
+    # 折叠末条语义。
+    scan_records = collapse_adjacent_same_court_state(records)
     run_c1 = run_c2 = run_c3 = run_and = run_and060 = True
-    for rec in reversed(records):
+    for rec in reversed(scan_records):
         lit1 = condition_lit(rec, "condition_1") is True
         lit2 = condition_lit(rec, "condition_2") is True
         lit3 = condition_lit(rec, "condition_3") is True
@@ -156,10 +221,11 @@ def trigger_stability(records: list[dict]) -> dict[str, object]:
             out["conjunction_060_streak"] = int(out["conjunction_060_streak"]) + 1
         else:
             run_and060 = False
-    # 全历史最大武装段: 独立正向扫描, 与最新锚定循环解耦
+    # 全历史最大武装段: 独立正向扫描, 与最新锚定循环解耦 (R130 Op1 起走
+    # 折叠视图 — 重复观测不虚增历史最大段)
     historical_max = 0
     current_run = 0
-    for rec in records:
+    for rec in scan_records:
         if rec.get("conjunction_armed") is True:
             current_run += 1
             historical_max = max(historical_max, current_run)
@@ -168,7 +234,7 @@ def trigger_stability(records: list[dict]) -> dict[str, object]:
     out["max_conjunction_streak"] = historical_max
     historical_max_060 = 0
     current_run = 0
-    for rec in records:
+    for rec in scan_records:
         if rec.get("conjunction_060_armed") is True:
             current_run += 1
             historical_max_060 = max(historical_max_060, current_run)
@@ -287,6 +353,10 @@ def trigger_qualification(
     (ValueError), 绝不静默截断。日期窗口只认 YYYYMMDD 形状记录 —
     畸形日期 (如 ``2026-9-1``) 字典序可比但形状非法, 不参与资格
     (保守断链, 读取面 advisory 家族纪律)。
+
+    R130 Op1: 窗口过滤前先折叠相邻同数据状态记录 (保首) — 注册日前
+    首现的状态不因周末重复观测变成注册后证据 (反前瞻语义的重复观测
+    延伸); 窗内重复观测也只计一次 (同一数据状态只资格化一次)。
     """
     _validate_registration_shape(registration)
     k_070 = registration["k_070"]
@@ -294,7 +364,7 @@ def trigger_qualification(
     reg_date = str(registration["registered_date"])
     anchor = str(registration["anchor"])
     suffix = [
-        rec for rec in records
+        rec for rec in collapse_adjacent_same_court_state(records)
         if str(rec.get("anchor")) == anchor
         and _K_DATE_RE.fullmatch(str(rec.get("date") or ""))
         and str(rec.get("date")) >= reg_date
@@ -534,6 +604,9 @@ __all__ = [
     "load_trigger_ledger",
     "condition_dict",
     "condition_lit",
+    "court_content_digest",
+    "court_data_state_equal",
+    "collapse_adjacent_same_court_state",
     "trigger_stability",
     "load_k_registration",
     "trigger_qualification",

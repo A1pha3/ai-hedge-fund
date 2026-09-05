@@ -629,3 +629,111 @@ def test_stability_poisoned_condition_in_history_breaks_without_crash():
     assert st["condition_1_streak"] == 3  # 未毒化字段三行皆亮, 不受牵连 (_rec 默认 c1 亮)
     assert st["conjunction_streak"] == 2  # armed 与条件毒化独立 (0830+0831 皆武装)
     assert st["max_conjunction_streak"] == 2  # 0830+0831 连续武装如实
+
+
+# ---------------------------------------------------------------------------
+# R130 Op1: 前进门数据状态身份 + 相邻重复观测折叠
+# ---------------------------------------------------------------------------
+
+def _dg(tag: str) -> str:
+    return "sha256:" + tag * 32
+
+
+def _court(digest: str | None, win_end: str = "20260904") -> dict | None:
+    if digest is None and win_end is None:
+        return None
+    return {
+        "window_start": "20250701", "window_end": win_end,
+        "rows": 1950, "formula_fingerprint": "aa" * 32,
+        "content_digest": digest, "universe_audit_complete": True,
+    }
+
+
+def test_court_data_state_equal_requires_both_digests():
+    """数据状态身份: 双方 content_digest 均为非空 str 且相等才同状态。"""
+    assert tt.court_data_state_equal(_court(_dg("a1")), _court(_dg("a1"))) is True
+    assert tt.court_data_state_equal(_court(_dg("a1")), _court(_dg("b2"))) is False
+    # 任一侧缺失/畸形 → 不等 (保守方向: 宁多记不漏记)
+    assert tt.court_data_state_equal(_court(None), _court(_dg("a1"))) is False
+    assert tt.court_data_state_equal(_court(_dg("a1")), None) is False
+    assert tt.court_data_state_equal(None, None) is False
+    assert tt.court_data_state_equal("poison", _court(_dg("a1"))) is False
+    assert tt.court_data_state_equal({"content_digest": 7}, _court(_dg("a1"))) is False
+
+
+def test_stability_folds_adjacent_duplicate_observations():
+    """相邻同数据状态重复观测不膨胀连亮 (2026-09-05 重复判定形态)。"""
+    records = [
+        _rec("20260902", c1_lit=True, court=_court(_dg("c3"))),
+        _rec("20260903", c1_lit=True, court=_court(_dg("c4"))),
+        _rec("20260904", c1_lit=True, court=_court(_dg("e3"))),
+        _rec("20260905", c1_lit=True, court=_court(_dg("e3"), win_end="20260905")),
+    ]
+    st = tt.trigger_stability(records)
+    assert st["condition_1_streak"] == 3  # c3, c4, e3 三个数据状态
+    # 原始账本事实保持: 记录数/首末日不折叠
+    assert st["records"] == 4
+    assert st["first_date"] == "20260902"
+    assert st["last_date"] == "20260905"
+
+
+def test_stability_fold_keeps_first_of_run_for_conjunction():
+    """合取连亮同款折叠; 历史最大段不因重复观测虚增。"""
+    records = [
+        _rec("20260901", c2_lit=True, armed=True, court=_court(_dg("b1"))),
+        _rec("20260902", c2_lit=True, armed=True, court=_court(_dg("b1"), win_end="20260902")),
+        _rec("20260903", c2_lit=True, armed=True, court=_court(_dg("b2"))),
+    ]
+    st = tt.trigger_stability(records)
+    assert st["condition_2_streak"] == 2
+    assert st["conjunction_streak"] == 2
+    assert st["max_conjunction_streak"] == 2
+
+
+def test_stability_fold_regression_relit_not_collapsed():
+    """A→B→A 数据回退再亮不折叠 (回归再判定是真判定); 仅相邻同状态折叠。"""
+    records = [
+        _rec("20260901", c1_lit=True, court=_court(_dg("a1"))),
+        _rec("20260902", c1_lit=False, court=_court(_dg("b2"))),
+        _rec("20260903", c1_lit=True, court=_court(_dg("a1"))),
+    ]
+    st = tt.trigger_stability(records)
+    assert st["condition_1_streak"] == 1  # 尾部 A 态独立计 1
+
+
+def test_stability_fold_skipped_without_digest():
+    """缺 digest (旧形态/毒化形态) 记录永不折叠 — 未知不合并。"""
+    records = [
+        _rec("20260901", c1_lit=True, court=_court(None)),
+        _rec("20260902", c1_lit=True, court=_court(None, win_end="20260902")),
+    ]
+    st = tt.trigger_stability(records)
+    assert st["condition_1_streak"] == 2
+
+
+def test_qualification_folds_duplicates_within_window():
+    """资格窗口内重复观测不膨胀 q 值 — 保首语义: 注册前首现的状态不因
+    周末重复观测变成注册后证据。"""
+    reg = {"anchor": "production_aligned/t10", "k_070": 3,
+           "registered_date": "20260903"}
+    records = [
+        _rec("20260902", c2_lit=True, armed=True, court=_court(_dg("e3"))),  # 状态 e3 注册前首现
+        _rec("20260904", c2_lit=True, armed=True, court=_court(_dg("e3"), win_end="20260904")),  # 重复观测
+        _rec("20260905", c2_lit=True, armed=True, court=_court(_dg("f4"), win_end="20260905")),
+    ]
+    qual = tt.trigger_qualification(records, reg)
+    assert qual["q_070"] == 1  # 仅 f4 一个新状态; e3 首现在注册前不追溯
+    assert qual["qualified_070"] is False
+
+
+def test_qualification_folds_duplicates_all_in_window():
+    """窗内相邻重复折叠: 两记录同状态只计 1。"""
+    reg = {"anchor": "production_aligned/t10", "k_070": 2,
+           "registered_date": "20260901"}
+    records = [
+        _rec("20260904", c2_lit=True, armed=True, court=_court(_dg("e3"))),
+        _rec("20260905", c2_lit=True, armed=True, court=_court(_dg("e3"), win_end="20260905")),
+    ]
+    qual = tt.trigger_qualification(records, reg)
+    assert qual["q_070"] == 1
+    assert qual["qualified_070"] is False

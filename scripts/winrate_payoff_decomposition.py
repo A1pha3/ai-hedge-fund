@@ -45,6 +45,7 @@ from src.screening.offensive.threshold_trigger import (  # noqa: E402
     ALL_STRENGTH_BUCKETS,
     K_OBSERVATION_LOG_PATH,
     K_REGISTRATION_PATH,
+    court_data_state_equal,
     k_qualification_disclosure,
     load_k_observations,
     load_k_registration,
@@ -752,8 +753,12 @@ def record_trigger_status(
     require_advance=True (数据增长耦合路径) 时, 绑定与账本**任一**历史
     记录相同 → skip (R84 Op2-B): 判定是 (数据状态, 规则) 的确定性纯函数,
     同一份数据反复判定不产生新证据 — 单点 (最新) 比对会被数据状态回退
-    (备份恢复旧 court, A→B→A) 绕过。旧形态记录无 court 字段 → 门放行
-    (不追溯拒绝, 绑定自 R84 起开始积累)。
+    (备份恢复旧 court, A→B→A) 绕过。R130 Op1 起"相同"按**数据状态身份**
+    判 (court_data_state_equal): 绑定中 window_start/window_end 是请求态
+    而非数据内容, 非交易日重建 (请求窗推进、事件表零变化) 不再被误判为
+    数据前进 — 曾在 2026-09-05 (周六休市) 实录『新日期旧数据』重复判定
+    记录。任一侧缺/畸形 digest → 不等 → 门放行 (保守: 宁多记不漏记,
+    旧形态无 court 字段记录与 manifest 损坏 degrade 形态行为不变)。
     已知边界 (成文): 触发规则/锚/min_n 语义变化 = 新证据世代, 须启用新
     账本文件, 不在本门判别范围 (记录内 anchor/min_n 仅供审计比对)。
     """
@@ -789,8 +794,13 @@ def record_trigger_status(
         snapshot["court"] = dict(court_binding)
     records = load_trigger_ledger(ledger_path)
     if require_advance and court_binding is not None:
+        # R130 Op1: 门比数据状态身份 (content_digest) 而非整字典 — 绑定中
+        # window_start/window_end 是请求态, 非交易日重建只推进请求窗而内容
+        # 不变, 整字典比较曾放行『新日期旧数据』重复判定记录 (2026-09-05
+        # 周六休市实录, 每周末/假日持续追加)。任一侧缺/畸形 digest → 不等
+        # → 门放行 (保守: 宁多记不漏记, 旧形态与 manifest 损坏行为不变)。
         for previous in records:
-            if isinstance(previous.get("court"), dict) and previous["court"] == court_binding:
+            if court_data_state_equal(previous.get("court"), court_binding):
                 return {
                     "recorded": False,
                     "reason": "court_not_advanced",

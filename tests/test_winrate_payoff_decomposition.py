@@ -840,6 +840,59 @@ class TestCourtGrowthCoupling:
         )
         assert meta["recorded"] is True
 
+    def test_advance_gate_skips_request_state_only_change(self, tmp_path):
+        """R130 Op1: 仅请求态字段 (window_end) 漂移、content_digest 同 → skip。
+
+        2026-09-05 生产实录 (周六休市): 18:30 research refresh court_build
+        推进 window_end 20260904→20260905 而事件表零变化, 整字典比较使前进门
+        放行, 账本写入『新日期旧数据』重复判定记录, 条件①连亮被非交易日
+        重复观测膨胀。数据状态身份只认 content_digest。
+        """
+        from scripts.winrate_payoff_decomposition import (
+            record_trigger_status, load_trigger_ledger,
+        )
+        ledger = tmp_path / "ledger.jsonl"
+        record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260904",
+            ledger_path=ledger, court_binding=dict(self.BINDING_A),
+        )
+        request_state_drift = dict(self.BINDING_A, window_end="20260905")
+        meta = record_trigger_status(
+            {"threshold_trigger": self._trigger()}, "20260905",
+            ledger_path=ledger, court_binding=request_state_drift,
+            require_advance=True,
+        )
+        assert meta["recorded"] is False
+        assert meta["reason"] == "court_not_advanced"
+        assert [r["date"] for r in load_trigger_ledger(ledger)] == ["20260904"]
+
+    def test_advance_gate_request_state_change_cohort_family(self, tmp_path):
+        """R130 Op1: 日层族前进门同款 — 共享单一实现, window 漂移不写重复记录。"""
+        from scripts.btst_signal_day_cohort import record_cohort_trigger_status
+        from src.screening.offensive.cohort_trigger import load_cohort_trigger_ledger
+        ledger = tmp_path / "cohort_ledger.jsonl"
+        trigger = {
+            "anchor": "production_aligned/t10/cohort_size", "min_n": 30,
+            "condition_strong_bucket_ci_above_zero": {
+                "lit": True, "judged": True, "n": 100, "stat": 0.001},
+            "condition_mid_buckets_expectancy_negative": {
+                "lit": False, "judged": True, "n": 90, "stat": 0.002},
+            "conjunction_armed": False,
+        }
+        record_cohort_trigger_status(
+            {"cohort_trigger": trigger}, "20260904",
+            ledger_path=ledger, court_binding=dict(self.BINDING_A),
+        )
+        request_state_drift = dict(self.BINDING_A, window_end="20260905")
+        meta = record_cohort_trigger_status(
+            {"cohort_trigger": trigger}, "20260905",
+            ledger_path=ledger, court_binding=request_state_drift,
+            require_advance=True,
+        )
+        assert meta["recorded"] is False
+        assert meta["reason"] == "court_not_advanced"
+        assert [r["date"] for r in load_cohort_trigger_ledger(ledger)] == ["20260904"]
+
     def test_main_records_binding_and_gate(self, tmp_path, monkeypatch):
         """端到端: main 走前进门 — 同绑定重跑 skip 且披露 reason, 报告照常写出。"""
         import json

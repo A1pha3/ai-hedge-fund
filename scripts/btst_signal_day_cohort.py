@@ -58,7 +58,10 @@ from src.screening.offensive.cohort_trigger import (
     load_cohort_trigger_ledger,
     observe_cohort_k_registration,
 )
-from src.screening.offensive.threshold_trigger import load_k_observations
+from src.screening.offensive.threshold_trigger import (
+    court_data_state_equal,
+    load_k_observations,
+)
 from src.screening.offensive.gap_disclosure import (
     COHORT_BUCKET_EDGES,
     COHORT_BUCKET_LABELS,
@@ -505,9 +508,11 @@ def record_cohort_trigger_status(
     路径) 时, 绑定与账本**任一**历史记录相同 → skip (R84 Op2-B 同款:
     判定是 (数据状态, 规则) 的确定性纯函数, 同一份数据反复判定不产生新
     证据 — 单点 (最新) 比对会被数据状态回退 (备份恢复旧 court, A→B→A)
-    绕过)。旧形态记录无 court 字段 → 门放行。已知边界 (成文): 触发规则/
-    锚/min_n 语义变化 = 新证据世代, 须启用新账本文件 (记录内 anchor/min_n
-    仅供审计比对)。
+    绕过)。R130 Op1 起"相同"按数据状态身份判 (court_data_state_equal,
+    强度族同款单一实现): 请求态 window 字段漂移 (非交易日重建) 不再被
+    误判为数据前进。旧形态记录无 court 字段 / 缺 digest → 门放行。
+    已知边界 (成文): 触发规则/锚/min_n 语义变化 = 新证据世代, 须启用新
+    账本文件 (记录内 anchor/min_n 仅供审计比对)。
     """
     trigger = payload.get("cohort_trigger")
     if not isinstance(trigger, dict):
@@ -531,11 +536,11 @@ def record_cohort_trigger_status(
         snapshot["court"] = dict(court_binding)
     records = load_cohort_trigger_ledger(ledger_path)
     if require_advance and court_binding is not None:
+        # R130 Op1: 门比数据状态身份 (content_digest) 而非整字典 — 强度族
+        # 同款 (court_data_state_equal 单一实现), 请求态 window 字段漂移
+        # 不再被误判为数据前进; 任一侧缺/畸形 digest → 门放行 (保守)。
         for previous in records:
-            if (
-                isinstance(previous.get("court"), dict)
-                and previous["court"] == court_binding
-            ):
+            if court_data_state_equal(previous.get("court"), court_binding):
                 return {
                     "recorded": False,
                     "reason": "court_not_advanced",

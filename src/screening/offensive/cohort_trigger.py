@@ -23,6 +23,7 @@ import json
 from pathlib import Path
 
 from src.screening.offensive.threshold_trigger import (
+    collapse_adjacent_same_court_state,
     condition_lit,
     effective_k_registration,
     k_registration_hash,
@@ -68,6 +69,11 @@ def cohort_trigger_stability(records: list[dict]) -> dict[str, object]:
     与缺键同语义 — 断链 + last_lit None (advisory), 绝不让毒化行以裸
     AttributeError 炸掉消费面 (R115 Op1 家族纪律: 证据面损坏不得阻断
     披露/生产面); R127 Op2 起守卫经 ``condition_lit`` 单一实现委托。
+
+    R130 Op1 连亮语义 (镜像强度族): 计数前对相邻同数据状态
+    (court.content_digest) 的重复判定记录折叠 — 非交易日重建的重复
+    观测不膨胀连亮; ``records``/``first_date``/``last_date`` 保持原始
+    账本事实。资格面经 ``trigger_qualification`` 单一实现自动继承折叠。
     只计数不判定 — 『稳定』阈值属 owner。
     """
     dates = [str(r.get("date")) for r in records]
@@ -92,8 +98,10 @@ def cohort_trigger_stability(records: list[dict]) -> dict[str, object]:
     out["strong_bucket_last_lit"] = condition_lit(latest, "strong_bucket")
     out["mid_buckets_last_lit"] = condition_lit(latest, "mid_buckets")
     out["conjunction_last_armed"] = latest.get("conjunction_armed")
+    # R130 Op1: 连亮扫描走折叠视图 (重复观测不膨胀)
+    scan_records = collapse_adjacent_same_court_state(records)
     run_c1 = run_c2 = run_and = True
-    for rec in reversed(records):
+    for rec in reversed(scan_records):
         lit1 = condition_lit(rec, "strong_bucket") is True
         lit2 = condition_lit(rec, "mid_buckets") is True
         armed = rec.get("conjunction_armed") is True
@@ -109,10 +117,11 @@ def cohort_trigger_stability(records: list[dict]) -> dict[str, object]:
             out["conjunction_streak"] = int(out["conjunction_streak"]) + 1
         else:
             run_and = False
-    # 全历史最大武装段: 独立正向扫描, 与最新锚定循环解耦 (R85 Op2 语义)
+    # 全历史最大武装段: 独立正向扫描, 与最新锚定循环解耦 (R85 Op2 语义;
+    # R130 Op1 起走折叠视图 — 重复观测不虚增历史最大段)
     historical_max = 0
     current_run = 0
-    for rec in records:
+    for rec in scan_records:
         if rec.get("conjunction_armed") is True:
             current_run += 1
             historical_max = max(historical_max, current_run)

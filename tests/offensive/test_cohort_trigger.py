@@ -414,3 +414,49 @@ class TestCohortKDisclosure:
         assert first == second
         lines = [l for l in obs_path.read_text(encoding="utf-8").splitlines() if l]
         assert len(lines) == 1
+
+
+# ---------------------------------------------------------------------------
+# R130 Op1: 相邻同数据状态重复观测折叠 (强度族 threshold_trigger 单一实现复用)
+# ---------------------------------------------------------------------------
+
+def _dg(tag: str) -> str:
+    return "sha256:" + tag * 32
+
+
+def _cohort_court(digest: str | None, win_end: str = "20260904") -> dict:
+    return {
+        "window_start": "20250701", "window_end": win_end,
+        "rows": 1950, "formula_fingerprint": "aa" * 32,
+        "content_digest": digest, "universe_audit_complete": True,
+    }
+
+
+def test_stability_folds_adjacent_duplicate_observations():
+    """2026-09-05 形态: 非交易日重复判定记录不膨胀日层连亮。"""
+    records = [
+        _record("20260904", c1_lit=True, armed=True),
+        _record("20260905", c1_lit=True, armed=True),
+    ]
+    records[1]["court"] = _cohort_court(_dg("e3"), win_end="20260905")
+    records[0]["court"] = _cohort_court(_dg("e3"))
+    st = ct.cohort_trigger_stability(records)
+    assert st["strong_bucket_streak"] == 1  # 同一数据状态只计一次
+    assert st["conjunction_streak"] == 1
+    assert st["max_conjunction_streak"] == 1
+    assert st["records"] == 2  # 原始账本事实保持
+    assert st["last_date"] == "20260905"
+
+
+def test_stability_fold_distinct_states_and_missing_digest():
+    """不同状态不折叠; 缺 court/digest 记录永不折叠。"""
+    records = [
+        _record("20260902", c1_lit=True),
+        _record("20260903", c1_lit=True),
+        _record("20260904", c1_lit=True),
+    ]
+    records[0]["court"] = _cohort_court(_dg("c3"))
+    records[1]["court"] = _cohort_court(_dg("c4"))
+    records[2]["court"] = _cohort_court(None, win_end="20260904")
+    st = ct.cohort_trigger_stability(records)
+    assert st["strong_bucket_streak"] == 3
