@@ -257,8 +257,39 @@ def refresh_trigger_decomposition(table_path: Path) -> None:
     print(f"[6/6+] 触发器判定已刷新: {lines[-1] if lines else 'ok'}")
 
 
+def refresh_cohort_trigger(table_path: Path) -> None:
+    """build 成功后机械刷新日层 cohort 触发器判定 (R126 Op1; 镜像
+    refresh_trigger_decomposition)。
+
+    日层 cohort 触发器 (R126 预注册: C1=20+ 桶 CI90 下界>0 ∧ C2=中间桶
+    期望<0) 的『稳定越零』证据同样与 court 数据增长机械耦合 — cohort
+    工具 main 走同款数据前进门 (court_binding 全历史比对, 同数据重判
+    不追加)。诊断面 fail-open: 刷新失败只 WARNING, 绝不回滚/阻断 build。
+    """
+    script = Path(__file__).resolve().parent / "btst_signal_day_cohort.py"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), "--court-table", str(table_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"[warn] 日层 cohort 触发器刷新失败 (诊断面 fail-open): {exc}")
+        return
+    if result.returncode != 0:
+        tail = (result.stderr or result.stdout or "").strip().splitlines()
+        detail = tail[-1][:200] if tail else ""
+        print(f"[warn] 日层 cohort 触发器刷新失败 (诊断面 fail-open): rc={result.returncode} {detail}")
+        return
+    lines = (result.stdout or "").strip().splitlines()
+    print(f"[6/6+] 日层 cohort 触发器已刷新: {lines[0] if lines else 'ok'}")
+
+
 def _finalize_build(args: argparse.Namespace, out: Path) -> None:
-    """build 收尾接线: 默认机械刷新触发器判定, 显式旗标退出。
+    """build 收尾接线: 默认机械刷新触发器判定 (强度族 + 日层 cohort 族),
+    显式旗标退出。
 
     表目录守卫 (R88): 判定刷新只服务生产触发器账本 — 非生产 table-dir
     (早期窗口等研究宇宙, 如幸存者偏差子集) 绝不触发, 防研究证据混入
@@ -274,6 +305,7 @@ def _finalize_build(args: argparse.Namespace, out: Path) -> None:
         )
         return
     refresh_trigger_decomposition(out)
+    refresh_cohort_trigger(out)
 
 
 def overwrite_allowed(prior_fp: str | None, new_fp: str, *, force: bool) -> bool:
