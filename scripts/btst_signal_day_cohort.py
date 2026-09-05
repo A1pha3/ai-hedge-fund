@@ -156,17 +156,22 @@ def _bucket_stats(
     _ensure_scripts_on_path()
     from winrate_payoff_decomposition import win_loss_stats
 
-    day_e: dict[str, float] = {}
+    day_e: dict[str, list[float]] = {}
     for v, d in zip(net, days):
         day_e.setdefault(d, []).append(v)
-    medians = sorted(sum(v) / len(v) for v in day_e.values())
+    means = sorted(sum(v) / len(v) for v in day_e.values())
+    # 真中位: 偶数日数取两中元素均值 (上元素冒充中位 = 语义诚实缺陷 F2)
+    n = len(means)
+    median = (
+        means[n // 2] if n % 2 else (means[n // 2 - 1] + means[n // 2]) / 2
+    ) if n else None
     # n<MIN_CELL_N → CI=None (披露纪律由 win_loss_stats 内建)
     stats = win_loss_stats(net, days)
     return {
         "bucket": label,
         "days": len(day_e),
         "n": len(net),
-        "day_e_median": medians[len(medians) // 2] if medians else None,
+        "day_e_median": median,
         "event_stats": stats,
     }
 
@@ -339,24 +344,61 @@ def strong_share_correlation(
     return {"pearson": (num / den if den > 0 else None), "n_days": len(xs)}
 
 
+def _normalize_day_strict(value: object) -> str:
+    """normalize_day 的整型化外壳: 整值 float (NaN 污染导致的 dtype 上转型)
+    安全归一, 非 NaN 值语义不变 — 合法 float64 日期列不再被 '20260701.0' 拒绝。"""
+    _ensure_scripts_on_path()
+    from btst_realized_vs_court import normalize_day
+
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return normalize_day(value)
+
+
 def decompose_cohort(ev: "pd.DataFrame") -> dict[str, Any]:
     """court 事件表 → production_aligned t10 的日层分解 payload (纯函数)。"""
     _ensure_scripts_on_path()
-    from btst_realized_vs_court import normalize_day
     from winrate_payoff_decomposition import net_returns, production_aligned
 
     universe = production_aligned(ev)
-    if GROSS_COL not in universe.columns:
-        raise SystemExit(f"court 事件表缺列 {GROSS_COL}")
-    # (net, day, strong) 三元组逐位对齐 — net_returns 对 NaN gross 产 None,
-    # 跳过即对齐, 绝不按位置猜 (strength_bucket unknown 不伪装 strong)。
-    pairs = [
-        (v, d, strength_bucket(None if pd.isna(s) else float(s)) == STRONG_BUCKET)
-        for v, d, s in zip(
-            net_returns(universe[GROSS_COL].tolist()),
-            universe["signal_date"].map(normalize_day).tolist(),
-            universe["trigger_strength"].tolist(),
+    # 消费列预检 (R119 家族: 缺列类型化拒绝, 不裸 KeyError)
+    for col in (GROSS_COL, "signal_date", "trigger_strength"):
+        if col not in universe.columns:
+            raise SystemExit(f"court 事件表缺列 {col} — 生产对齐消费面无法执行")
+    # 畸形日期 fail-closed 且携带归因上下文 (R41 纪律: 不静默跳过);
+    # NaN 行不再以 dtype 上转型毒化合法行 (整值 float 先归一)。
+    norm_days: list[str] = []
+    bad_dates: list[str] = []
+    for d in universe["signal_date"].tolist():
+        try:
+            norm_days.append(_normalize_day_strict(d))
+        except (TypeError, ValueError):
+            bad_dates.append(repr(d))
+    if bad_dates:
+        raise SystemExit(
+            f"court 事件表 signal_date 畸形 {len(bad_dates)} 行 "
+            f"(样例 {bad_dates[:3]}) — 畸形行不静默跳过, fail-closed"
         )
+    # 非数值强度 fail-closed 且携带值上下文 (NaN → unknown → 非 strong)
+    norm_strong: list[bool] = []
+    bad_strengths: list[str] = []
+    for s in universe["trigger_strength"].tolist():
+        try:
+            norm_strong.append(
+                strength_bucket(None if pd.isna(s) else float(s)) == STRONG_BUCKET
+            )
+        except (TypeError, ValueError):
+            bad_strengths.append(repr(s))
+    if bad_strengths:
+        raise SystemExit(
+            f"court 事件表 trigger_strength 非数值 {len(bad_strengths)} 行 "
+            f"(样例 {bad_strengths[:3]}) — fail-closed"
+        )
+    # (net, day, strong) 三元组逐位对齐 — net_returns 对 NaN gross 产 None,
+    # 跳过即对齐, 绝不按位置猜。
+    pairs = [
+        (v, d, f)
+        for v, d, f in zip(net_returns(universe[GROSS_COL].tolist()), norm_days, norm_strong)
         if v is not None
     ]
     if not pairs:
