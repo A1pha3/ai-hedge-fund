@@ -50,7 +50,11 @@ def cohort_trigger_stability(records: list[dict]) -> dict[str, object]:
     (独立正向扫描, 断链不吞历史 — R85 Op2 修复语义)。
 
     本族账本自 R126 起积累, 无旧形态兼容负担; 记录缺键 (手工构造/未来
-    字段演化) 一律按未点亮断链。只计数不判定 — 『稳定』阈值属 owner。
+    字段演化) 一律按未点亮断链。R126 Op2 形状守卫: 行内条件值
+    (strong_bucket/mid_buckets) 非 dict 形态 (手编账本/损坏写入/形态演化)
+    与缺键同语义 — 断链 + last_lit None (advisory), 绝不让毒化行以裸
+    AttributeError 炸掉消费面 (R115 Op1 家族纪律: 证据面损坏不得阻断
+    披露/生产面)。只计数不判定 — 『稳定』阈值属 owner。
     """
     dates = [str(r.get("date")) for r in records]
     out: dict[str, object] = {
@@ -67,14 +71,22 @@ def cohort_trigger_stability(records: list[dict]) -> dict[str, object]:
     }
     if not records:
         return out
+
+    def _lit(rec: dict, key: str) -> bool | None:
+        """条件值必须恰为 dict 且 lit 键可读 — 否则按缺键 (None, 断链)。"""
+        cond = rec.get(key)
+        if not isinstance(cond, dict):
+            return None
+        return cond.get("lit")
+
     latest = records[-1]
-    out["strong_bucket_last_lit"] = (latest.get("strong_bucket") or {}).get("lit")
-    out["mid_buckets_last_lit"] = (latest.get("mid_buckets") or {}).get("lit")
+    out["strong_bucket_last_lit"] = _lit(latest, "strong_bucket")
+    out["mid_buckets_last_lit"] = _lit(latest, "mid_buckets")
     out["conjunction_last_armed"] = latest.get("conjunction_armed")
     run_c1 = run_c2 = run_and = True
     for rec in reversed(records):
-        lit1 = (rec.get("strong_bucket") or {}).get("lit") is True
-        lit2 = (rec.get("mid_buckets") or {}).get("lit") is True
+        lit1 = _lit(rec, "strong_bucket") is True
+        lit2 = _lit(rec, "mid_buckets") is True
         armed = rec.get("conjunction_armed") is True
         if run_c1 and lit1:
             out["strong_bucket_streak"] = int(out["strong_bucket_streak"]) + 1

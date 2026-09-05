@@ -135,3 +135,45 @@ class TestStability:
         assert st["conjunction_streak"] == 3
         assert st["max_conjunction_streak"] == 3
         assert st["conjunction_last_armed"] is True
+
+
+class TestInnerShapePoisoningR126Op2:
+    """R126 Op2 对抗审查返工: 行内条件值非 dict 形态不得炸读取面。
+
+    PoC 实锤 (修复前): strong_bucket/mid_buckets 为 str/int/list 时
+    ``.get`` 裸 AttributeError — Op3 接线 --daily-action 后手编账本/损坏
+    写入将炸操作员日度命令, 违反 fail-open 家族纪律 (R115 Op1 同款:
+    证据面损坏按缺键 advisory 断链, 不假装有判定也不崩溃)。
+    """
+
+    @pytest.mark.parametrize("poison", ["corrupted", 42, ["lit", True], True, 0.5])
+    def test_non_dict_condition_value_breaks_not_crashes(self, poison):
+        records = [
+            _record("20260901"),
+            _record("20260902"),
+            {**_record("20260903"), "strong_bucket": poison},
+        ]
+        st = ct.cohort_trigger_stability(records)  # 修复前 AttributeError
+        assert st["strong_bucket_streak"] == 0  # 毒化行断链
+        assert st["strong_bucket_last_lit"] is None  # 不假装有判定
+        assert st["mid_buckets_last_lit"] is False  # 好键披露真话
+        assert st["records"] == 3
+        assert st["max_conjunction_streak"] == 0
+
+    def test_poisoned_mid_bucket_only_affects_own_chain(self):
+        records = [
+            {**_record("20260901"), "mid_buckets": {"poisoned": True}},
+            _record("20260902"),
+        ]
+        st = ct.cohort_trigger_stability(records)
+        assert st["mid_buckets_streak"] == 0
+        assert st["strong_bucket_streak"] == 2  # 他链计数不受污染
+
+    def test_armed_strict_bool_semantics_unchanged(self):
+        records = [
+            _record("20260901", armed=1),  # truthy 但非字面 True
+            _record("20260902", armed=True),
+        ]
+        st = ct.cohort_trigger_stability(records)
+        assert st["conjunction_streak"] == 1  # is True 严格语义原样
+        assert st["max_conjunction_streak"] == 1
