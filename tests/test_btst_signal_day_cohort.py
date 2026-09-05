@@ -27,10 +27,12 @@ from scripts.btst_signal_day_cohort import (
     decompose_cohort,
     render_md,
     split_half_stability,
+    strength_cohort_cross_table,
     strong_share_correlation,
     variance_decomposition,
     worst_days,
 )
+from src.screening.offensive.threshold_trigger import ALL_STRENGTH_BUCKETS
 from scripts.winrate_payoff_decomposition import MIN_CELL_N
 
 
@@ -403,6 +405,156 @@ class TestStrongShareCorrelation:
     def test_zero_variance_returns_none(self):
         out = strong_share_correlation([0.01, 0.01], ["20260701", "20260702"], [True, True])
         assert out["pearson"] is None
+
+
+class TestStrengthCohortCrossTable:
+    """R131 Op1: 强度桶 × cohort 规模桶 交叉表 — 格放置/对齐/披露纪律."""
+
+    # 非对称 fixture (R13 教训): 三个信号日规模与强度构成都不同, 每格
+    # 的期望计数手工可算 — day A 1 事件 (0.75); day B 4 事件 (0.72/0.62/
+    # 0.40/0.55); day C 2 事件 (0.30/0.80)。
+    def _rows(self):
+        return [
+            ("900001", 20260701, 0.08, 0.75),
+            ("900101", 20260704, 0.05, 0.72),
+            ("900102", 20260704, 0.03, 0.62),
+            ("900103", 20260704, -0.04, 0.40),
+            ("900104", 20260704, 0.01, 0.55),
+            ("900201", 20260710, 0.02, 0.30),
+            ("900202", 20260710, 0.06, 0.80),
+        ]
+
+    def _table(self):
+        net, days, strong = _aligned(self._rows())
+        from src.screening.offensive.threshold_trigger import strength_bucket
+        labels = [strength_bucket(0.75), strength_bucket(0.72), strength_bucket(0.62),
+                  strength_bucket(0.40), strength_bucket(0.55), strength_bucket(0.30),
+                  strength_bucket(0.80)]
+        return strength_cohort_cross_table(net, days, labels)
+
+    def _cell(self, table, cohort, strength):
+        row = next(r for r in table if r["cohort_bucket"] == cohort)
+        return next(c for c in row["cells"] if c["strength_bucket"] == strength)
+
+    def test_cell_placement_asymmetric_with_manual_counts(self):
+        table = self._table()
+        # 行 = 全部 cohort 桶 (含空桶), 列 = 全部强度桶 (含 unknown)
+        assert [r["cohort_bucket"] for r in table] == list(COHORT_BUCKET_LABELS)
+        assert [c["strength_bucket"] for c in table[0]["cells"]] == list(
+            ALL_STRENGTH_BUCKETS
+        )
+        # 手工计数 oracle: 逐格 n 与 days
+        assert self._cell(table, "1", "≥0.70")["n"] == 1
+        assert self._cell(table, "1", "≥0.70")["days"] == 1
+        assert self._cell(table, "4-9", "≥0.70")["n"] == 1
+        assert self._cell(table, "4-9", "0.60-0.70")["n"] == 1
+        assert self._cell(table, "4-9", "0.50-0.60")["n"] == 1
+        assert self._cell(table, "4-9", "<0.50")["n"] == 1
+        assert self._cell(table, "2-3", "<0.50")["n"] == 1
+        assert self._cell(table, "2-3", "≥0.70")["n"] == 1
+        # 同一格内多日会聚合 days — 此 fixture 无此形态, 单独测
+        # 全体事件 n 恒等 (分格不丢事件)
+        assert sum(
+            c["n"] for r in table for c in r["cells"]
+        ) == len(self._rows())
+
+    def test_expectancy_identity_per_cell(self):
+        # 格 E = 格内成员均值 (win_loss_stats 恒等) — 手工重算一格
+        table = self._table()
+        # 4-9 桶 0.62 事件 gross 0.03 → net = 0.03 - 0.0065
+        assert self._cell(table, "4-9", "0.60-0.70")["expectancy"] == pytest.approx(0.03 - 0.0065)
+
+    def test_empty_cell_all_none_and_days_zero(self):
+        table = self._table()
+        cell = self._cell(table, "1", "<0.50")  # 单票日无弱强度事件
+        assert cell["n"] == 0 and cell["days"] == 0
+        assert cell["expectancy"] is None and cell["winrate"] is None
+        assert cell["payoff"] is None and cell["cluster_ci_low_90"] is None
+
+    def test_small_cell_ci_none_large_cell_ci_float(self):
+        net, days, strong = _aligned(
+            [
+                ("900001", 20260701, 0.08, 0.75),
+                ("900002", 20260701, 0.02, 0.30),
+                *[
+                    (f"90030{i:02d}", 20260704 + (i % 2), -0.01 - i * 0.0005, 0.55)
+                    for i in range(30)
+                ],
+            ]
+        )
+        from src.screening.offensive.threshold_trigger import strength_bucket
+        labels = [strength_bucket(0.75), strength_bucket(0.30)] + [
+            strength_bucket(0.55)
+        ] * 30
+        table = strength_cohort_cross_table(net, days, labels)
+        # 4-9 桶 (20260701 两事件落 2-3 桶? 1 日 2 事件 → 2-3; 0.75+0.30) —
+        # 30 事件分两天各 15 → cohort 10-19 桶 0.50-0.60 格 n=30≥30 且 2 日
+        big = self._cell(table, "10-19", "0.50-0.60")
+        assert big["n"] == 30 and big["days"] == 2
+        assert isinstance(big["cluster_ci_low_90"], float)
+        small = self._cell(table, "2-3", "≥0.70")
+        assert small["n"] == 1
+        assert small["cluster_ci_low_90"] is None
+
+    def test_length_mismatch_fails(self):
+        with pytest.raises(ValueError, match="length mismatch"):
+            strength_cohort_cross_table([0.1, 0.2], ["20260701"], ["≥0.70", "<0.50"])
+
+    def test_deterministic_bytes(self):
+        net, days, strong = _aligned(self._rows())
+        from src.screening.offensive.threshold_trigger import strength_bucket
+        labels = [strength_bucket(r[3]) for r in self._rows()]
+        t1 = json.dumps(strength_cohort_cross_table(net, days, labels), sort_keys=True)
+        t2 = json.dumps(strength_cohort_cross_table(net, days, labels), sort_keys=True)
+        assert t1 == t2
+
+    def test_payload_includes_cross_and_nan_alignment(self):
+        rows = self._rows() + [("888888", 20260710, float("nan"), 0.9)]
+        payload = decompose_cohort(_frame(rows))
+        cross = payload["strength_cohort_cross"]
+        # NaN gross 行跳过且不错位: 事件总数 = 7 (非 8)
+        assert sum(c["n"] for r in cross for c in r["cells"]) == 7
+        # 0.9 行 (NaN gross) 被跳过 — 若错位会污染 ≥0.70 计数
+        assert self._cell(cross, "2-3", "≥0.70")["n"] == 1
+
+
+class TestCrossRenderR131:
+    """R131 Op1: MD 交叉段 — 探索性标注 + 纪律句 + 小样本尾注."""
+
+    def _payload(self):
+        rows: list[tuple[str, int, float, float]] = [
+            ("900001", 20260701, 0.08, 0.75),
+            *[
+                (f"90030{i:02d}", 20260704, -0.05 - i * 0.001, 0.72)
+                for i in range(20)
+            ],
+            *[
+                (f"90040{i:02d}", 20260710, 0.005 + i * 0.0005, 0.30)
+                for i in range(16)
+            ],
+        ]
+        return decompose_cohort(_frame(rows))
+
+    def test_md_section_discipline_and_note(self):
+        md = render_md(self._payload(), "20260906")
+        assert "强度 × cohort 规模交叉" in md
+        assert "探索性 in-sample" in md
+        assert "交叉格判定未预注册" in md
+        assert "不进触发器账本" in md
+        assert "新证据世代 owner 决策" in md
+        # 0.75×1 = 1 事件格 + 0.30×16 落 10-19? (16 只 → 10-19 桶) — 小格尾注
+        assert f"事件 n < {MIN_CELL_N}" in md
+        assert "strength_cohort_cross" in md  # JSON 指针句
+
+    def test_md_matrix_has_strength_rows_and_cohort_columns(self):
+        payload = self._payload()
+        md = render_md(payload, "20260906")
+        for s in ALL_STRENGTH_BUCKETS:
+            assert f"| {s} " in md or md.count(f"| {s} |") >= 1
+        cross = payload["strength_cohort_cross"]
+        for row in cross:
+            if any(c["n"] for c in row["cells"]):
+                assert f"| {row['cohort_bucket']} |" in md or f"| {row['cohort_bucket']} " in md
 
 
 class TestAdversarialReworkR124:

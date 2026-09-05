@@ -59,6 +59,7 @@ from src.screening.offensive.cohort_trigger import (
     observe_cohort_k_registration,
 )
 from src.screening.offensive.threshold_trigger import (
+    ALL_STRENGTH_BUCKETS,
     court_data_state_equal,
     load_k_observations,
 )
@@ -350,6 +351,66 @@ def strong_share_correlation(
     return {"pearson": (num / den if den > 0 else None), "n_days": len(xs)}
 
 
+def strength_cohort_cross_table(
+    net: Sequence[float],
+    days: Sequence[str],
+    strength_buckets: Sequence[str],
+) -> list[dict[str, Any]]:
+    """强度桶 × cohort 规模桶 交叉表 (R131 Op1; 探索性 in-sample 诊断)。
+
+    动机: 强度条件化 (threshold_trigger, production_aligned/t10) 与日层
+    cohort 条件化 (cohort_trigger, production_aligned/t10/cohort_size) 是
+    两个预注册条件化维度, 各有独立触发器机器, 但 owner 若未来并用两门,
+    需要先知道两维度是独立还是冗余 — 并用冗余门 = 无证据的过度拟合。
+    本视图交叉两维度, 回答『强度 edge 在窄 cohort 日内是否存活』『中间桶
+    最差带是否被弱强度候选驱动』(20260905 worst-5 中 strong 占比 0% 的
+    -25.24% 灾难日提示联合结构, 边缘视图无法回答)。
+
+    纪律: 两个分组维度各自预注册 (强度桶 = 触发器锚分组, cohort 桶 = 日层
+    锚分组), **交叉格判定未预注册** — 本视图只披露不判定, 不产 lit/armed,
+    不进任何触发器账本; 探索性 in-sample (分组 in-sample 同 gap_anatomy
+    披露纪律)。复用 strength_bucket / cohort_size_bucket / win_loss_stats
+    单一实现零口径 fork; n<MIN_CELL_N 格 CI=None 只披露 (win_loss_stats
+    内建), 空格 n=0 全 None 诚实呈现; NaN/畸形强度已在上游对齐路径
+    fail-closed, 落 "unknown" 桶 (strength_bucket 单一实现语义)。
+    """
+    if not (len(net) == len(days) == len(strength_buckets)):
+        raise ValueError(
+            f"net/days/strength_buckets length mismatch: {len(net)} vs "
+            f"{len(days)} vs {len(strength_buckets)}"
+        )
+    _ensure_scripts_on_path()
+    from winrate_payoff_decomposition import win_loss_stats
+    size_of_day: dict[str, int] = {}
+    for d in days:
+        size_of_day[d] = size_of_day.get(d, 0) + 1
+    cells: dict[tuple[str, str], dict[str, list[Any]]] = {}
+    for v, d, s in zip(net, days, strength_buckets):
+        key = (cohort_size_bucket(size_of_day[d]), s)
+        acc = cells.setdefault(key, {"net": [], "days": []})
+        acc["net"].append(float(v))
+        acc["days"].append(d)
+    out: list[dict[str, Any]] = []
+    for cohort_label in COHORT_BUCKET_LABELS:
+        row_cells: list[dict[str, Any]] = []
+        for s_label in ALL_STRENGTH_BUCKETS:
+            acc = cells.get((cohort_label, s_label))
+            if acc is None:
+                row_cells.append({
+                    "strength_bucket": s_label,
+                    "days": 0,
+                    **win_loss_stats([], []),
+                })
+            else:
+                row_cells.append({
+                    "strength_bucket": s_label,
+                    "days": len(set(acc["days"])),
+                    **win_loss_stats(acc["net"], acc["days"]),
+                })
+        out.append({"cohort_bucket": cohort_label, "cells": row_cells})
+    return out
+
+
 def cohort_trigger_status(
     bucket_rows: Sequence[Mapping[str, Any]],
     *,
@@ -615,14 +676,16 @@ def decompose_cohort(ev: "pd.DataFrame") -> dict[str, Any]:
             f"court 事件表 signal_date 畸形 {len(bad_dates)} 行 "
             f"(样例 {bad_dates[:3]}) — 畸形行不静默跳过, fail-closed"
         )
-    # 非数值强度 fail-closed 且携带值上下文 (NaN → unknown → 非 strong)
+    # 非数值强度 fail-closed 且携带值上下文 (NaN → unknown → 非 strong);
+    # 同一循环产出桶标签 (R131 Op1 联合交叉视图的分组输入, 单一实现语义)。
     norm_strong: list[bool] = []
+    norm_strength_buckets: list[str] = []
     bad_strengths: list[str] = []
     for s in universe["trigger_strength"].tolist():
         try:
-            norm_strong.append(
-                strength_bucket(None if pd.isna(s) else float(s)) == STRONG_BUCKET
-            )
+            label = strength_bucket(None if pd.isna(s) else float(s))
+            norm_strong.append(label == STRONG_BUCKET)
+            norm_strength_buckets.append(label)
         except (TypeError, ValueError):
             bad_strengths.append(repr(s))
     if bad_strengths:
@@ -630,11 +693,16 @@ def decompose_cohort(ev: "pd.DataFrame") -> dict[str, Any]:
             f"court 事件表 trigger_strength 非数值 {len(bad_strengths)} 行 "
             f"(样例 {bad_strengths[:3]}) — fail-closed"
         )
-    # (net, day, strong) 三元组逐位对齐 — net_returns 对 NaN gross 产 None,
-    # 跳过即对齐, 绝不按位置猜。
+    # (net, day, strong, strength_bucket) 四元组逐位对齐 — net_returns 对
+    # NaN gross 产 None, 跳过即对齐, 绝不按位置猜。
     pairs = [
-        (v, d, f)
-        for v, d, f in zip(net_returns(universe[GROSS_COL].tolist()), norm_days, norm_strong)
+        (v, d, f, slabel)
+        for v, d, f, slabel in zip(
+            net_returns(universe[GROSS_COL].tolist()),
+            norm_days,
+            norm_strong,
+            norm_strength_buckets,
+        )
         if v is not None
     ]
     if not pairs:
@@ -642,6 +710,7 @@ def decompose_cohort(ev: "pd.DataFrame") -> dict[str, Any]:
     net = [p[0] for p in pairs]
     days = [p[1] for p in pairs]
     strong = [p[2] for p in pairs]
+    strength_buckets = [p[3] for p in pairs]
     if len(set(days)) < 2:
         raise SystemExit("单一信号日 — 日层分解无定义, fail-closed")
     payload: dict[str, Any] = {
@@ -655,6 +724,9 @@ def decompose_cohort(ev: "pd.DataFrame") -> dict[str, Any]:
         "strong_share_corr": strong_share_correlation(net, days, strong),
     }
     payload["split_half"] = split_half_stability(net, days, payload["cohort_buckets"])
+    payload["strength_cohort_cross"] = strength_cohort_cross_table(
+        net, days, strength_buckets
+    )
     return payload
 
 
@@ -750,6 +822,51 @@ def render_md(payload: Mapping[str, Any], date_str: str) -> str:
         f"(n_days={corr['n_days']}) — 相关弱 ≠ strong 无保护, 日层共同因子主导。"
     )
     L.append("")
+    cross = payload.get("strength_cohort_cross")
+    if isinstance(cross, list) and cross:
+        # R131 Op1: 强度×cohort 联合交叉视图 (探索性 in-sample) — 两门并用
+        # 的独立/冗余判断依据; 只披露不判定, 不进触发器账本。
+        L.append("## 强度 × cohort 规模交叉 (探索性 in-sample, R131 Op1)")
+        L.append("")
+        L.append(
+            "两个分组维度各自预注册 (强度桶 = 强度触发器锚分组, cohort 桶 = "
+            "日层触发器锚分组), **交叉格判定未预注册** — 本视图只披露不判定, "
+            "不进触发器账本; 回答『强度 edge 在窄 cohort 日内是否存活』"
+            "『中间桶最差带是否被弱强度候选驱动』(两条件化门并用的独立/冗余 "
+            "判断依据)。任何据此的组合构造变化 = 新证据世代 owner 决策。"
+        )
+        L.append("")
+        cohort_labels = [row["cohort_bucket"] for row in cross]
+        L.append("| 强度桶 | " + " | ".join(cohort_labels) + " |")
+        L.append("|---" * (len(cohort_labels) + 1) + "|")
+        strength_labels = [c["strength_bucket"] for c in cross[0]["cells"]]
+        small_cross: list[str] = []
+        for s_label in strength_labels:
+            row_txts = []
+            for row in cross:
+                cell = next(
+                    c for c in row["cells"]
+                    if c["strength_bucket"] == s_label
+                )
+                e = cell["expectancy"]
+                if cell["n"] == 0 or e is None:
+                    row_txts.append("—")
+                else:
+                    row_txts.append(f"{e:+.2%} ({cell['n']})")
+                    if cell["n"] < MIN_CELL_N:
+                        small_cross.append(f"{s_label}×{row['cohort_bucket']}")
+            L.append(f"| {s_label} | " + " | ".join(row_txts) + " |")
+        L.append("")
+        L.append(
+            "格值 = 净期望 E (事件 n); 完整统计 (胜率/payoff/CI90) 见 JSON "
+            "payload `strength_cohort_cross`。"
+        )
+        if small_cross:
+            L.append(
+                f"注: 交叉格 {','.join(small_cross)} 事件 n < {MIN_CELL_N} — "
+                "CI 不产出, 只披露不判定。"
+            )
+        L.append("")
     trigger = payload.get("cohort_trigger")
     if isinstance(trigger, dict):
         c1 = trigger.get("condition_strong_bucket_ci_above_zero") or {}
