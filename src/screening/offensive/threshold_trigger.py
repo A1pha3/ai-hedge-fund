@@ -61,6 +61,18 @@ def load_trigger_ledger(ledger_path: Path | str | None = None) -> list[dict]:
     return sorted(records, key=lambda r: str(r["date"]))
 
 
+def condition_lit(rec: dict, key: str) -> bool | None:
+    """行内条件值形状守卫 (R127 Op2, R126 Op2 日层族守卫的单一实现提升):
+    条件值必须恰为 dict 且 lit 键可读 — truthy 非 dict 形态 (手编账本/
+    损坏写入/形态演化; `or {}` 只兜 falsy 不兜 truthy) 与缺键同语义,
+    返回 None (断链), 绝不让毒化行以裸 AttributeError 炸掉消费面
+    (R115 Op1 家族纪律: 证据面损坏不得阻断披露/生产面)。"""
+    cond = rec.get(key)
+    if not isinstance(cond, dict):
+        return None
+    return cond.get("lit")
+
+
 def trigger_stability(records: list[dict]) -> dict[str, object]:
     """连亮计数 (R81 Op2 引入; R85 Op2 修 max 语义; R100 Op1 扩 0.60 锚): 两族字段语义 —
 
@@ -75,6 +87,11 @@ def trigger_stability(records: list[dict]) -> dict[str, object]:
     060 合取 = ③∧② (②与 0.70 锚共享, 耦合成文)。R100 前的旧记录无
     condition_3/conjunction_060_armed 键 → 按**未点亮**处理 (断链, 保守:
     未知不延长连亮 — 与『未知不驱动参数变更』同纪律)。
+
+    R127 Op2 形状守卫: 行内条件值经 ``condition_lit`` 单一实现读取 —
+    truthy 非 dict 形态与缺键同语义 (断链 + last_lit None, advisory 不
+    假装), 不再以裸 AttributeError 炸消费面 (R126 Op2 日层族同族修复的
+    单一实现提升)。
     只计数不判定 — 『稳定』阈值属 owner。
     """
     dates = [str(r.get("date")) for r in records]
@@ -98,21 +115,16 @@ def trigger_stability(records: list[dict]) -> dict[str, object]:
     if not records:
         return out
     latest = records[-1]
-    c1, c2 = latest.get("condition_1") or {}, latest.get("condition_2") or {}
-    c3 = latest.get("condition_3") or {}
-    out["condition_1_last_lit"] = c1.get("lit")
-    out["condition_2_last_lit"] = c2.get("lit")
-    out["condition_3_last_lit"] = c3.get("lit")
+    out["condition_1_last_lit"] = condition_lit(latest, "condition_1")
+    out["condition_2_last_lit"] = condition_lit(latest, "condition_2")
+    out["condition_3_last_lit"] = condition_lit(latest, "condition_3")
     out["conjunction_last_armed"] = latest.get("conjunction_armed")
     out["conjunction_060_last_armed"] = latest.get("conjunction_060_armed")
     run_c1 = run_c2 = run_c3 = run_and = run_and060 = True
     for rec in reversed(records):
-        r1 = rec.get("condition_1") or {}
-        r2 = rec.get("condition_2") or {}
-        r3 = rec.get("condition_3") or {}
-        lit1 = r1.get("lit") is True
-        lit2 = r2.get("lit") is True
-        lit3 = r3.get("lit") is True
+        lit1 = condition_lit(rec, "condition_1") is True
+        lit2 = condition_lit(rec, "condition_2") is True
+        lit3 = condition_lit(rec, "condition_3") is True
         armed = rec.get("conjunction_armed") is True
         armed060 = rec.get("conjunction_060_armed") is True
         if run_c1 and lit1:
@@ -502,6 +514,7 @@ __all__ = [
     "K_REGISTRATION_PATH",
     "K_OBSERVATION_LOG_PATH",
     "load_trigger_ledger",
+    "condition_lit",
     "trigger_stability",
     "load_k_registration",
     "trigger_qualification",
