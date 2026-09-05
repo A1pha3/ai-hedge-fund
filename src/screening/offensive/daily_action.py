@@ -1707,6 +1707,26 @@ def _render_universe_alignment_line(
                 f" · 实现归因（matched 已平仓 {gn}）: court 同票假想期望 {gc:+.2f}%"
                 f" · 逐笔实现差 {gp:+.2f}pp（含锚点差）"
             )
+            # R122c: 可信度读数 — 方向一致/相反计数 (锚点差未翻转符号 = 归因
+            # strongest 的佐证; court 缺向笔可由 gn−agree−disagree 推断, 不单列)。
+            # 计数畸形 (负值/bool/str/和>n) → 仅方向子句省略, 数值归因保留。
+            ga = gap_block.get("direction_agree_n")
+            gd = gap_block.get("direction_disagree_n")
+            if (
+                isinstance(ga, int) and not isinstance(ga, bool) and ga >= 0
+                and isinstance(gd, int) and not isinstance(gd, bool) and gd >= 0
+                and ga + gd <= gn
+            ):
+                body += f" · 方向一致 {ga} · 相反 {gd}"
+            # 样本充分性显形 — n<30 只披露不判定 (分解工具 MIN_CELL_N 同款判定
+            # 纪律; 单一实现取自对齐块生产者, 防 src/scripts 双常量漂移)。
+            from scripts.btst_realized_vs_court import REALIZATION_GAP_MIN_CELL_N
+
+            if gn < REALIZATION_GAP_MIN_CELL_N:
+                body += (
+                    f"（样本不足 n={gn} < {REALIZATION_GAP_MIN_CELL_N}，"
+                    "只披露不判定）"
+                )
     if has_ledger:
         body += (
             " — realized 为 legacy journal+v2 台账合并已平仓口径（含分裂信号日"

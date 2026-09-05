@@ -666,3 +666,46 @@ class TestR122RealizationGap:
         payload["realization_gap"] = {**payload["realization_gap"], "n": 999}
         text = render_md(payload)
         assert "实现缺口归因" not in text
+
+    def test_render_md_direction_line_and_sample_note(self):
+        """R122c: MD 归因段方向行 (含 court 缺向计数) + 样本不足尾注."""
+        inputs = _inputs(
+            [{"ts_code": "000001.SZ", "signal_date": 20260821,
+              "strength": 0.6, "gross_ret_t10": -0.0989}],
+            sessions=["20260821"], regime={"20260821": "normal"}, panel=["20260821"],
+        )
+        journal = [
+            _journal_buy("20260821", "000001"),
+            _journal_exit("20260821", "000001", "-6.42"),
+        ]
+        recon = reconcile(journal, inputs)
+        payload = summary_payload(recon, court_window=None)
+        payload["realization_gap"] = {
+            **payload["realization_gap"],
+            "direction_agree_n": 0, "direction_disagree_n": 0,
+        }
+        text = render_md(payload)
+        assert "方向对照" in text and "court 缺向 1" in text
+        assert "样本不足" in text and "只披露不判定" in text
+
+    def test_render_md_direction_malformed_omits_line_only(self):
+        """方向计数畸形 (agree+disagree>n) → 方向行省略, 归因段保留."""
+        inputs = _inputs(
+            [{"ts_code": "000001.SZ", "signal_date": 20260821,
+              "strength": 0.6, "gross_ret_t10": -0.0989}],
+            sessions=["20260821"], regime={"20260821": "normal"}, panel=["20260821"],
+        )
+        journal = [
+            _journal_buy("20260821", "000001"),
+            _journal_exit("20260821", "000001", "-6.42"),
+        ]
+        recon = reconcile(journal, inputs)
+        payload = summary_payload(recon, court_window=None)
+        payload["realization_gap"] = {
+            **payload["realization_gap"],
+            "direction_agree_n": 5, "direction_disagree_n": 0,
+        }
+        text = render_md(payload)
+        assert "实现缺口归因" in text
+        # 文档头注固有『双锚点方向对照』字样 — 用渲染行的唯一前缀断言
+        assert "方向对照: 一致" not in text

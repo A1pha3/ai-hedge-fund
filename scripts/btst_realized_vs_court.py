@@ -76,6 +76,10 @@ _REALIZED_RE = re.compile(r"realized=([+-]?\d+(?:\.\d+)?)%")
 # court 事件表可用的退出端点列 (与 gross_ret_t{3,5,8,10} 对应)
 _COURT_HORIZON_COLUMNS = {3: "gross_ret_t3", 5: "gross_ret_t5", 8: "gross_ret_t8", 10: "gross_ret_t10"}
 
+# 实现归因样本充分性门槛 (R122c): 与分解工具 MIN_CELL_N / panel_health_check
+# 同款判定纪律 — n<30 只披露不判定, 操作员面显形防小样本均值被当稳定读数。
+REALIZATION_GAP_MIN_CELL_N = 30
+
 
 @dataclass(frozen=True)
 class ClassificationInputs:
@@ -694,6 +698,26 @@ def render_md(payload: Mapping[str, Any]) -> str:
                 "court 侧证据 (selection); 实现差混含平仓锚点 (close vs open) 与",
                 "费用/滑点, 只作粗读 — 缺口主体判读看两项量级对比。",
             ]
+            # R122c: 方向对照行 — agree/disagree 为非 bool 非负 int 且和 ≤ n
+            # 才渲染 (畸形/越界 → 整行省略不渲染垃圾, R119 P1 家族);
+            # court 缺向笔显形 (agree+disagree 可 < n, 分母歧义防患)。
+            ga = gap.get("direction_agree_n")
+            gd = gap.get("direction_disagree_n")
+            if (
+                isinstance(ga, int) and not isinstance(ga, bool) and ga >= 0
+                and isinstance(gd, int) and not isinstance(gd, bool) and gd >= 0
+                and ga + gd <= gn
+            ):
+                unknown = gn - ga - gd
+                direction_text = f"方向对照: 一致 {ga} · 相反 {gd}"
+                if unknown:
+                    direction_text += f" · court 缺向 {unknown}"
+                lines.append(direction_text)
+            if gn < REALIZATION_GAP_MIN_CELL_N:
+                lines.append(
+                    f"样本不足 n={gn} < {REALIZATION_GAP_MIN_CELL_N}"
+                    "（只披露不判定 — 分解工具 MIN_CELL_N 同款纪律）"
+                )
     matched = payload.get("matched_records") or []
     if matched:
         lines += [

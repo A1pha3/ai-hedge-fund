@@ -325,6 +325,7 @@ def test_alignment_line_realization_gap_absent_old_shape(tmp_path, monkeypatch):
     clause = (
         " · 实现归因（matched 已平仓 15）: court 同票假想期望 -8.34%"
         " · 逐笔实现差 +0.48pp（含锚点差）"
+        " · 方向一致 15 · 相反 0（样本不足 n=15 < 30，只披露不判定）"
     )
     assert clause in line_new
     assert line_new.replace(clause, "") == line_old
@@ -375,3 +376,68 @@ def test_alignment_line_realization_gap_count_contradiction_omitted(
     assert line is not None
     assert "实现归因" not in line
     assert "matched 已平仓 999" not in line
+
+
+def test_alignment_line_realization_gap_direction_and_sample_tail(
+    tmp_path, monkeypatch
+):
+    """R122c: 归因子句可信度读数 — 方向一致/相反计数 + n<30 样本不足显形."""
+    from src.screening.offensive import daily_action as da
+
+    monkeypatch.setattr(
+        da, "_ALIGNMENT_SUMMARY_PATH",
+        _write_alignment(tmp_path, _alignment_summary_with_gap()),
+    )
+    line = da._render_universe_alignment_line()
+    assert line is not None
+    assert "方向一致 15 · 相反 0" in line
+    assert "样本不足 n=15 < 30" in line and "只披露不判定" in line
+
+
+def test_alignment_line_realization_gap_sufficient_sample_no_tail(
+    tmp_path, monkeypatch
+):
+    """n≥MIN_CELL_N → 无样本不足尾注 (零噪声)."""
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary_with_gap(
+        total_buys=40,
+        class_counts={
+            "outside_window": 0, "day_excluded_regime_gap": 0,
+            "day_missing_panel_data": 0, "day_missing_from_court": 0,
+            "ticker_not_in_court_day": 0, "matched": 40,
+        },
+    )
+    payload["realization_gap"] = {
+        **payload["realization_gap"],
+        "n": 30, "direction_agree_n": 29, "direction_disagree_n": 1,
+        "horizons": {"10": 30},
+    }
+    monkeypatch.setattr(
+        da, "_ALIGNMENT_SUMMARY_PATH", _write_alignment(tmp_path, payload)
+    )
+    line = da._render_universe_alignment_line()
+    assert line is not None
+    assert "方向一致 29 · 相反 1" in line
+    assert "样本不足" not in line
+
+
+def test_alignment_line_realization_gap_direction_malformed_omits_direction_only(
+    tmp_path, monkeypatch
+):
+    """方向计数畸形 → 仅方向子句省略, 数值归因保留 (不渲染垃圾)."""
+    from src.screening.offensive import daily_action as da
+
+    for bad_direction in ({"direction_agree_n": -1, "direction_disagree_n": 0},
+                          {"direction_agree_n": True, "direction_disagree_n": 0},
+                          {"direction_agree_n": "15", "direction_disagree_n": 0},
+                          {"direction_agree_n": 20, "direction_disagree_n": 0}):
+        payload = _alignment_summary_with_gap()
+        payload["realization_gap"] = {**payload["realization_gap"], **bad_direction}
+        monkeypatch.setattr(
+            da, "_ALIGNMENT_SUMMARY_PATH", _write_alignment(tmp_path, payload)
+        )
+        line = da._render_universe_alignment_line()
+        assert line is not None, f"line must survive: {bad_direction!r}"
+        assert "court 同票假想期望 -8.34%" in line, f"numbers must stay: {bad_direction!r}"
+        assert "方向一致" not in line, f"direction must be omitted: {bad_direction!r}"
