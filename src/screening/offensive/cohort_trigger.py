@@ -21,7 +21,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.screening.offensive.threshold_trigger import load_trigger_ledger
+from src.screening.offensive.threshold_trigger import (
+    condition_lit,
+    load_trigger_ledger,
+)
 
 COHORT_TRIGGER_LEDGER_PATH = Path(
     "data/reports/signal_day_cohort_trigger_ledger.jsonl"
@@ -54,7 +57,8 @@ def cohort_trigger_stability(records: list[dict]) -> dict[str, object]:
     (strong_bucket/mid_buckets) 非 dict 形态 (手编账本/损坏写入/形态演化)
     与缺键同语义 — 断链 + last_lit None (advisory), 绝不让毒化行以裸
     AttributeError 炸掉消费面 (R115 Op1 家族纪律: 证据面损坏不得阻断
-    披露/生产面)。只计数不判定 — 『稳定』阈值属 owner。
+    披露/生产面); R127 Op2 起守卫经 ``condition_lit`` 单一实现委托。
+    只计数不判定 — 『稳定』阈值属 owner。
     """
     dates = [str(r.get("date")) for r in records]
     out: dict[str, object] = {
@@ -72,21 +76,16 @@ def cohort_trigger_stability(records: list[dict]) -> dict[str, object]:
     if not records:
         return out
 
-    def _lit(rec: dict, key: str) -> bool | None:
-        """条件值必须恰为 dict 且 lit 键可读 — 否则按缺键 (None, 断链)。"""
-        cond = rec.get(key)
-        if not isinstance(cond, dict):
-            return None
-        return cond.get("lit")
-
     latest = records[-1]
-    out["strong_bucket_last_lit"] = _lit(latest, "strong_bucket")
-    out["mid_buckets_last_lit"] = _lit(latest, "mid_buckets")
+    # R127 Op2: 形状守卫委托 threshold_trigger.condition_lit 单一实现
+    # (R126 Op2 本模块私有 _lit 的语义逐字节保留, 双实现收敛)。
+    out["strong_bucket_last_lit"] = condition_lit(latest, "strong_bucket")
+    out["mid_buckets_last_lit"] = condition_lit(latest, "mid_buckets")
     out["conjunction_last_armed"] = latest.get("conjunction_armed")
     run_c1 = run_c2 = run_and = True
     for rec in reversed(records):
-        lit1 = _lit(rec, "strong_bucket") is True
-        lit2 = _lit(rec, "mid_buckets") is True
+        lit1 = condition_lit(rec, "strong_bucket") is True
+        lit2 = condition_lit(rec, "mid_buckets") is True
         armed = rec.get("conjunction_armed") is True
         if run_c1 and lit1:
             out["strong_bucket_streak"] = int(out["strong_bucket_streak"]) + 1

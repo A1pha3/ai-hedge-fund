@@ -597,3 +597,35 @@ def test_k_disclosure_survives_polluted_observation_log(tmp_path, monkeypatch):
     disc = tt.k_qualification_disclosure(records)
     assert disc["state"] == "registered"
     assert "自 20260901 起计" in disc["line_070"]
+
+
+# ---------- R127 Op2: 强度族行内条件值形状毒化守卫 ----------
+
+def test_stability_poisoned_condition_shapes_break_conservatively():
+    """R127 Op2 (R126 Op2 强度族镜像, AGENTS.md R126 开放项②): 行内条件值
+    truthy 非 dict (非空 str/非空 list/非零 int/True) — 修复前
+    `latest.get("condition_1") or {}` 对 truthy 非 dict 不兜底, `.get("lit")`
+    裸 AttributeError 炸消费面 (daily_action 触发器状态行 = 日度命令)。
+    修复后与缺键同语义: 断链 + last_lit None (advisory 不假装), 不抛异常。"""
+    latest = _rec("20260831")
+    prev = _rec("20260830")
+    for poisoned in ("lit", ["lit"], 7, True):
+        latest["condition_1"] = poisoned
+        st = tt.trigger_stability([prev, latest])
+        assert st["condition_1_streak"] == 0
+        assert st["condition_1_last_lit"] is None
+        # 非毒化字段判定照常 (latest c2 默认 lit=False)
+        assert st["condition_2_last_lit"] is False
+        assert st["condition_2_streak"] == 0
+
+
+def test_stability_poisoned_condition_in_history_breaks_without_crash():
+    """毒化行在全历史循环内同样按缺键断链 — 不炸、其余字段连亮不受牵连。"""
+    latest = _rec("20260831", c1_lit=True, c2_lit=True, armed=True)
+    poisoned_mid = _rec("20260830", c1_lit=True, c2_lit=True, armed=True)
+    poisoned_mid["condition_2"] = [{"lit": True}]
+    st = tt.trigger_stability([_rec("20260829"), poisoned_mid, latest])
+    assert st["condition_2_streak"] == 1  # 0829 未亮 + 0830 毒化断链, 只有 0831 计入
+    assert st["condition_1_streak"] == 3  # 未毒化字段三行皆亮, 不受牵连 (_rec 默认 c1 亮)
+    assert st["conjunction_streak"] == 2  # armed 与条件毒化独立 (0830+0831 皆武装)
+    assert st["max_conjunction_streak"] == 2  # 0830+0831 连续武装如实
