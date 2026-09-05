@@ -771,7 +771,9 @@ def test_freshness_line_renders_when_refresh_failed_even_if_fresh(tmp_path, monk
         _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
     )
     assert line is not None
-    assert "昨夜 court 刷新失败" in line
+    # G2: 不推断『昨夜』— 措辞携带 status 真实日期
+    assert "court 夜刷状态 失败" in line
+    assert "status 20260830" in line
     assert "fetch_failed" in line
 
 
@@ -825,3 +827,38 @@ def test_freshness_line_renders_in_daily_action_when_stale(case, tmp_path, monke
     view = DailyActionV2Run(run, (), run.open_positions, (), ())
     text = render_daily_action_v2(view)
     assert "证据新鲜度告警" in text
+
+
+def test_freshness_line_flags_future_dated_report(tmp_path, monkeypatch):
+    """G1 (修复前 RED = line None 伪最新不可见): 合法 8 位未来日文件名过形状
+    守卫成为『最新』— 报告日期在今日之后比陈旧更值得显形 (R109 Op2 反劫持残端)."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, date="20260910")
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, tmp_path / "no-ledger.jsonl")
+    monkeypatch.setattr(da, "_COURT_REFRESH_STATUS_PATH", tmp_path / "no-status.json")
+    sessions = tuple(_date(2026, 9, d) for d in (1, 2, 3, 4, 5, 8, 9, 10, 11))
+    line = da._render_evidence_freshness_line(
+        _date(2026, 9, 5), calendar_sessions=sessions
+    )
+    assert line is not None
+    assert "报告日期在今日之后（文件名或时钟异常）" in line
+    assert "20260910" in line
+
+
+def test_freshness_line_future_dated_report_natural_day_fallback(tmp_path, monkeypatch):
+    """G1 自然日兜底分支同语义: days<0 → 异常文案而非『陈旧 -N 个自然日』."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, date="20260910")
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, tmp_path / "no-ledger.jsonl")
+    monkeypatch.setattr(da, "_COURT_REFRESH_STATUS_PATH", tmp_path / "no-status.json")
+    line = da._render_evidence_freshness_line(
+        _date(2026, 9, 5), calendar_sessions=()
+    )
+    assert line is not None
+    assert "报告日期在今日之后（文件名或时钟异常）" in line

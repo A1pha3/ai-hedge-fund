@@ -1755,6 +1755,10 @@ def _render_evidence_freshness_line(
     面未建立是稳态); 账本缺失 → 对应子句省略; 状态缺失/损坏 → 刷新子句
     省略 (advisory, 不假装有归因)。本行是披露不是行为改变 — 不进入任何
     计划/评分/仓位/退出决策路径。
+
+    R115b Op3 对抗收口: 报告日期在今日之后 (合法 8 位未来日文件名过得了
+    形状守卫 — 伪最新/时钟异常) → 异常文案出行, 不渲染『陈旧 -N』也不
+    静默; 刷新失败子句携带 status 自报日期, 不推断『昨夜』。
     """
     try:
         from src.screening.offensive.gap_disclosure import latest_decomposition_report
@@ -1807,13 +1811,23 @@ def _render_evidence_freshness_line(
                 dist = calendar.session_distance(report_date, as_of)
             except ValueError:
                 dist = None
-            if dist is not None:
+            if dist is not None and dist < 0:
+                # R115b Op3 (G1): 报告日期在今日之后 — 文件名伪最新/时钟异常,
+                # 合法 8 位未来日过得了形状守卫, 比陈旧更值得显形 (渲染荒谬
+                # 『陈旧 -N』不如明语异常)。
+                stale = True
+                dist_text = "报告日期在今日之后（文件名或时钟异常）"
+            elif dist is not None:
                 stale = dist >= _FRESHNESS_STALE_SESSIONS
                 dist_text = f"陈旧 {dist} 个交易日"
         if dist_text is None:
             days = (as_of - report_date).days
-            stale = days >= _FRESHNESS_STALE_DAYS_FALLBACK
-            dist_text = f"陈旧 {days} 个自然日（交易日折算不可用）"
+            if days < 0:
+                stale = True
+                dist_text = "报告日期在今日之后（文件名或时钟异常）"
+            else:
+                stale = days >= _FRESHNESS_STALE_DAYS_FALLBACK
+                dist_text = f"陈旧 {days} 个自然日（交易日折算不可用）"
 
         refresh_clause = ""
         if status is not None and status.get("ok") is False:
@@ -1824,8 +1838,18 @@ def _render_evidence_freshness_line(
             fetch = status.get("fetch")
             if not detail and isinstance(fetch, dict):
                 detail = fetch.get("error")
-            detail_text = f"（{str(detail)[:120]}）" if detail else ""
-            refresh_clause = f" · 昨夜 court 刷新失败{detail_text}"
+            # R115b Op3 (G2): 不推断『昨夜』— 落盘失败/断跑残留的陈旧失败
+            # status 会被谎报; 措辞携带 status 自报日期, 缺失则明语未知。
+            status_day = status.get("date")
+            day_text = (
+                str(status_day)
+                if isinstance(status_day, str) and status_day
+                else "日期未知"
+            )
+            inner = (
+                f"status {day_text}: {detail}" if detail else f"status {day_text}"
+            )
+            refresh_clause = f" · court 夜刷状态 失败（{inner[:160]}）"
         if not stale and not refresh_clause:
             return None
         parts = [f"分解报告 {report_day}（{dist_text}）"]
