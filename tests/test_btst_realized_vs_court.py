@@ -12,11 +12,13 @@ import pytest
 
 from scripts.btst_realized_vs_court import (
     CLASSES,
+    SignalRecord,
     build_alignment_summary,
     build_classification_inputs,
     classify_buy,
     extract_realized,
     normalize_day,
+    realization_gap_summary,
     realized_map_from_journal,
     realized_stats,
     reconcile,
@@ -514,3 +516,136 @@ class TestR121cRework:
         recon = reconcile([_journal_buy("20260821", "000001")], inputs)
         stores = stores_block(recon)
         assert "post_ledger_start_buys" not in stores[STORE_LEGACY_JOURNAL]
+
+
+class TestR122RealizationGap:
+    """实现缺口归因 (R122 Op1): 恒等分解 E[realized]=E[court|matched]+E[realized−court]."""
+
+    @staticmethod
+    def _record(realized, court, agree=True, horizon=10):
+        return SignalRecord(
+            signal_date="20260821",
+            ticker="000001",
+            horizon=horizon,
+            paper_strength=0.6,
+            classification="matched",
+            realized_pct=realized,
+            court_gross_ret_horizon=court,
+            direction_agree=agree,
+            store=STORE_LEDGER_V2,
+        )
+
+    def test_identity_holds_end_to_end(self):
+        records = [
+            self._record(-8.0, -10.0),
+            self._record(1.0, 0.0),
+            self._record(12.0, 10.0, agree=False),
+        ]
+        gap = realization_gap_summary(records)
+        assert gap is not None
+        assert gap["n"] == 3
+        assert gap["court_conditional_expectancy_pct"] == pytest.approx(0.0, abs=1e-6)
+        assert gap["realized_expectancy_pct"] == pytest.approx(5.0 / 3.0, abs=1e-3)
+        # 恒等式: court 同票假想 + 逐笔实现差 == realized (无残差)
+        assert (
+            gap["court_conditional_expectancy_pct"] + gap["realization_gap_pp"]
+            == pytest.approx(gap["realized_expectancy_pct"], abs=1e-3)
+        )
+        assert gap["direction_agree_n"] == 2 and gap["direction_disagree_n"] == 1
+        assert gap["horizons"] == {"10": 3}
+
+    def test_malformed_and_open_records_excluded(self):
+        """两端点不齐备/畸形 (None/bool/str/NaN/inf) 全部排除; 全排除 → None."""
+        records = [
+            self._record(None, -5.0),          # 未平仓 → realized 端缺失
+            self._record(3.0, None),           # court 缺值
+            self._record(True, -5.0),          # bool 显式排除 (True 当 1.0 是形状欺骗)
+            self._record("3.0", -5.0),         # str
+            self._record(float("nan"), -5.0),  # NaN
+            self._record(float("inf"), -5.0),  # inf
+        ]
+        assert realization_gap_summary(records) is None
+
+    def test_empty_gives_none(self):
+        assert realization_gap_summary([]) is None
+        assert realization_gap_summary([self._record(None, None)]) is None
+
+    def test_horizon_composition_mixed(self):
+        records = [
+            self._record(-8.0, -10.0, horizon=8),
+            self._record(1.0, 0.0, horizon=10),
+        ]
+        gap = realization_gap_summary(records)
+        assert gap is not None
+        assert gap["horizons"] == {"8": 1, "10": 1}
+
+    def test_selection_dominates_real_data_shape(self):
+        """真实数据形态回归锚: selection 项量级 ≫ 实现差 (20260905 实证 -8.34% vs +0.48pp)."""
+        court = [-8.91, 1.52, -4.85, -35.43, -7.09, 10.02, 11.29, -10.61,
+                 -13.74, -7.62, 1.24, -4.71]
+        realized = [-6.42, 6.62, -4.41, -35.47, -8.56, 16.07, 10.56, -11.19,
+                    -14.29, -8.22, 0.58, -5.33]
+        records = [
+            self._record(r, c, agree=(r >= 0) == (c >= 0),
+                         horizon=8 if i < 5 else 10)
+            for i, (r, c) in enumerate(zip(realized, court))
+        ]
+        gap = realization_gap_summary(records)
+        assert gap is not None
+        assert abs(gap["court_conditional_expectancy_pct"]) > abs(
+            gap["realization_gap_pp"]
+        )
+
+    def test_alignment_summary_carries_block(self):
+        inputs = _inputs(
+            [{"ts_code": "000001.SZ", "signal_date": 20260821,
+              "strength": 0.6, "gross_ret_t10": -0.0989}],
+            sessions=["20260821"], regime={"20260821": "normal"}, panel=["20260821"],
+        )
+        journal = [
+            _journal_buy("20260821", "000001"),
+            _journal_exit("20260821", "000001", "-6.42"),
+        ]
+        recon = reconcile(journal, inputs)
+        summary = build_alignment_summary(
+            recon, court_window=("20250701", "20260901"), summary_date="20260905"
+        )
+        gap = summary.get("realization_gap")
+        assert isinstance(gap, dict)
+        assert gap["n"] == 1
+        assert gap["court_conditional_expectancy_pct"] == pytest.approx(-9.89, abs=1e-3)
+        assert gap["realized_expectancy_pct"] == pytest.approx(-6.42, abs=1e-3)
+
+    def test_alignment_summary_omits_key_when_no_closed_matched(self):
+        """全部 matched 未平仓 → realization_gap 键省略 (旧消费者按缺键回退)."""
+        inputs = _inputs(
+            [{"ts_code": "000001.SZ", "signal_date": 20260821,
+              "strength": 0.6, "gross_ret_t10": -0.0989}],
+            sessions=["20260821"], regime={"20260821": "normal"}, panel=["20260821"],
+        )
+        recon = reconcile([_journal_buy("20260821", "000001")], inputs)
+        summary = build_alignment_summary(
+            recon, court_window=None, summary_date="20260905"
+        )
+        assert "realization_gap" not in summary
+
+    def test_render_md_attribution_section(self):
+        inputs = _inputs(
+            [{"ts_code": "000001.SZ", "signal_date": 20260821,
+              "strength": 0.6, "gross_ret_t10": -0.0989}],
+            sessions=["20260821"], regime={"20260821": "normal"}, panel=["20260821"],
+        )
+        journal = [
+            _journal_buy("20260821", "000001"),
+            _journal_exit("20260821", "000001", "-6.42"),
+        ]
+        recon = reconcile(journal, inputs)
+        payload = summary_payload(recon, court_window=None)
+        text = render_md(payload)
+        assert "实现缺口归因" in text
+        assert "court 同票假想期望" in text and "逐笔实现差" in text
+        # 键省略 (全 open) → 段落省略
+        recon_open = reconcile([_journal_buy("20260821", "000001")], inputs)
+        assert "实现缺口归因" not in render_md(
+            summary_payload(recon_open, court_window=None)
+        )

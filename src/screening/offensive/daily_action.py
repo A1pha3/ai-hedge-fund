@@ -1686,6 +1686,24 @@ def _render_universe_alignment_line(
                     and _is_finite_number(lwr) and _is_finite_number(le)
                 ):
                     body += f" · 台账已平仓 {ln} 胜率 {lwr}% 期望 {le:+.2f}%"
+    # R122 Op1: 实现归因子句 — matched 已平仓两端点齐备子集的恒等分解
+    # (court 同票假想期望 = selection 侧证据; 逐笔实现差 = 执行+锚点差)。
+    # realized vs court 期望的缺口自此有归因: 缺口主体判读看两项量级对比,
+    # 本行只披露数字不做解释性判定。缺键 (旧 summary)/畸形/None → 整子句
+    # 省略 (R119 P1 家族 fail-open, 旧 summary 逐字节回退旧行)。
+    gap_block = data.get("realization_gap")
+    if isinstance(gap_block, dict):
+        gn = gap_block.get("n")
+        gc = gap_block.get("court_conditional_expectancy_pct")
+        gp = gap_block.get("realization_gap_pp")
+        if (
+            isinstance(gn, int) and not isinstance(gn, bool) and gn > 0
+            and _is_finite_number(gc) and _is_finite_number(gp)
+        ):
+            body += (
+                f" · 实现归因（matched 已平仓 {gn}）: court 同票假想期望 {gc:+.2f}%"
+                f" · 逐笔实现差 {gp:+.2f}pp（含锚点差）"
+            )
     if has_ledger:
         body += (
             " — realized 为 legacy journal+v2 台账合并已平仓口径（含分裂信号日"

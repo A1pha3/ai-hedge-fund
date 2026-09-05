@@ -231,3 +231,126 @@ def test_extra_excluded_tickers_rendered_when_active(case, monkeypatch):
     monkeypatch.delenv("EXTRA_EXCLUDED_TICKERS", raising=False)
     text = render_daily_action_v2(view)
     assert "EXTRA_EXCLUDED_TICKERS" not in text
+
+
+# ---------------------------------------------------------------------------
+# R122 Op1: 宇宙对齐行实现归因子句 (realization gap attribution)
+# ---------------------------------------------------------------------------
+
+def _alignment_summary_with_gap(**overrides):
+    import json
+
+    payload = {
+        "date": "20260905",
+        "total_buys": 33,
+        "class_counts": {
+            "outside_window": 0,
+            "day_excluded_regime_gap": 0,
+            "day_missing_panel_data": 0,
+            "day_missing_from_court": 6,
+            "ticker_not_in_court_day": 3,
+            "matched": 24,
+        },
+        "realized_only": {
+            "n": 24, "win_rate_pct": 20.83, "avg_win_pct": 6.0,
+            "avg_loss_pct": -11.0, "payoff": 0.55, "expectancy_pct": -7.34,
+        },
+        "stores": {
+            "legacy_journal": {"buys": 18, "open_buys": 3,
+                               "realized_only": {"n": 15, "win_rate_pct": 20.0,
+                                                 "expectancy_pct": -6.04}},
+            "ledger_v2": {"buys": 15, "open_buys": 6,
+                          "realized_only": {"n": 9, "win_rate_pct": 22.22,
+                                            "expectancy_pct": -9.52}},
+        },
+        "latest_split_signal_date": "20260813",
+        "latest_matched_signal_date": "20260821",
+        "court_window": {"start": "20250701", "end": "20260904"},
+        "realization_gap": {
+            "n": 15,
+            "court_conditional_expectancy_pct": -8.34,
+            "realized_expectancy_pct": -7.85,
+            "realization_gap_pp": 0.48,
+            "direction_agree_n": 15,
+            "direction_disagree_n": 0,
+            "horizons": {"8": 5, "10": 10},
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _write_alignment(base, payload):
+    import json
+
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "realized_vs_court_alignment.json"
+    p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return p
+
+
+def test_alignment_line_realization_gap_clause(tmp_path, monkeypatch):
+    """归因块在场 → 子句出行, selection/实现差两项齐备."""
+    from src.screening.offensive import daily_action as da
+
+    monkeypatch.setattr(
+        da, "_ALIGNMENT_SUMMARY_PATH",
+        _write_alignment(tmp_path, _alignment_summary_with_gap()),
+    )
+    line = da._render_universe_alignment_line()
+    assert line is not None
+    assert "实现归因（matched 已平仓 15）" in line
+    assert "court 同票假想期望 -8.34%" in line
+    assert "逐笔实现差 +0.48pp" in line
+
+
+def test_alignment_line_realization_gap_absent_old_shape(tmp_path, monkeypatch):
+    """旧 summary (无 realization_gap 键) → 子句省略; 新形态 = 旧行 + 纯子句追加
+    (旧 summary 逐字节回退旧行, 行其余部分零变化)."""
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary_with_gap()
+    del payload["realization_gap"]
+    monkeypatch.setattr(
+        da, "_ALIGNMENT_SUMMARY_PATH", _write_alignment(tmp_path, payload)
+    )
+    line_old = da._render_universe_alignment_line()
+    assert "实现归因" not in line_old
+
+    monkeypatch.setattr(
+        da, "_ALIGNMENT_SUMMARY_PATH",
+        _write_alignment(tmp_path / "new", _alignment_summary_with_gap()),
+    )
+    line_new = da._render_universe_alignment_line()
+    clause = (
+        " · 实现归因（matched 已平仓 15）: court 同票假想期望 -8.34%"
+        " · 逐笔实现差 +0.48pp（含锚点差）"
+    )
+    assert clause in line_new
+    assert line_new.replace(clause, "") == line_old
+
+
+def test_alignment_line_realization_gap_malformed_omitted(tmp_path, monkeypatch):
+    """块畸形 (非 dict / n 非 int / 数值非有限) → 整子句省略不崩 (R119 P1 家族)."""
+    from src.screening.offensive import daily_action as da
+
+    for bad in (
+        "banana",
+        {"n": "15", "court_conditional_expectancy_pct": -8.34,
+         "realization_gap_pp": 0.48},
+        {"n": 15, "court_conditional_expectancy_pct": "banana",
+         "realization_gap_pp": 0.48},
+        {"n": 15, "court_conditional_expectancy_pct": float("nan"),
+         "realization_gap_pp": 0.48},
+        {"n": True, "court_conditional_expectancy_pct": -8.34,
+         "realization_gap_pp": 0.48},
+        {"n": 0, "court_conditional_expectancy_pct": -8.34,
+         "realization_gap_pp": 0.48},
+    ):
+        payload = _alignment_summary_with_gap(realization_gap=bad)
+        monkeypatch.setattr(
+            da, "_ALIGNMENT_SUMMARY_PATH", _write_alignment(tmp_path, payload)
+        )
+        line = da._render_universe_alignment_line()
+        assert line is not None, f"line must survive malformed block: {bad!r}"
+        assert "实现归因" not in line, f"clause must be omitted: {bad!r}"

@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sqlite3
@@ -439,6 +440,66 @@ def stores_block(recon: Reconciliation) -> dict[str, dict[str, Any]]:
     return stores
 
 
+def _finite(value: object) -> float | None:
+    """两端点判定面共用: 只认非 bool 有限数 (R119 P1 家族纪律 —
+    bool 是 int 子类, True 当 1.0 是形状欺骗; str/dict/NaN/inf 一律拒)。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def realization_gap_summary(
+    matched_records: Sequence[SignalRecord],
+) -> dict[str, Any] | None:
+    """实现缺口归因 (R122 Op1): matched 已平仓的恒等分解。
+
+    E[realized] = E[court 同票假想] + E[realized − court 假想] — 前者
+    (court_conditional_expectancy_pct) 是入选集合的 court 侧证据
+    (selection, 无锚点问题), 后者 (realization_gap_pp) 混含平仓锚点差
+    (realized = T+h close 净额 vs court gross = T+h open) 与费用/滑点,
+    只作粗读; 缺口主体判读看两项量级对比, 本函数不做解释性判定。
+
+    判定面只收 realized/court 两端点都为非 bool 有限数的记录; 一端缺失
+    (未平仓 / court 缺值) 不计入; 全部不齐备 → None。纯派生 — 零新数据
+    依赖, 不构成行为授权 (宪法 #2)。
+    """
+    pairs: list[tuple[float, float, bool | None, object]] = []
+    for record in matched_records:
+        realized = _finite(record.realized_pct)
+        court = _finite(record.court_gross_ret_horizon)
+        if realized is None or court is None:
+            continue
+        pairs.append((court, realized, record.direction_agree, record.horizon))
+    if not pairs:
+        return None
+    n = len(pairs)
+    court_mean = sum(c for c, _, _, _ in pairs) / n
+    realized_mean = sum(r for _, r, _, _ in pairs) / n
+    horizons: dict[str, int] = {}
+    agree = 0
+    disagree = 0
+    for _, _, direction, horizon in pairs:
+        if isinstance(horizon, int) and not isinstance(horizon, bool):
+            key = str(horizon)
+        else:
+            key = "?"
+        horizons[key] = horizons.get(key, 0) + 1
+        if direction is True:
+            agree += 1
+        elif direction is False:
+            disagree += 1
+    return {
+        "n": n,
+        "court_conditional_expectancy_pct": round(court_mean, 4),
+        "realized_expectancy_pct": round(realized_mean, 4),
+        "realization_gap_pp": round(realized_mean - court_mean, 4),
+        "direction_agree_n": agree,
+        "direction_disagree_n": disagree,
+        "horizons": dict(sorted(horizons.items())),
+    }
+
+
 def summary_payload(recon: Reconciliation, *, court_window: tuple[str, str] | None) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "class_counts": dict(recon.class_counts),
@@ -474,6 +535,9 @@ def summary_payload(recon: Reconciliation, *, court_window: tuple[str, str] | No
     }
     if court_window is not None:
         payload["court_window"] = {"start": court_window[0], "end": court_window[1]}
+    gap = realization_gap_summary(recon.matched_records)
+    if gap is not None:
+        payload["realization_gap"] = gap
     return payload
 
 
@@ -507,6 +571,9 @@ def build_alignment_summary(
     }
     if court_window is not None:
         summary["court_window"] = {"start": court_window[0], "end": court_window[1]}
+    gap = realization_gap_summary(recon.matched_records)
+    if gap is not None:
+        summary["realization_gap"] = gap
     return summary
 
 
@@ -593,6 +660,32 @@ def render_md(payload: Mapping[str, Any]) -> str:
             f"avg_win={realized['avg_win_pct']}% avg_loss={realized['avg_loss_pct']}% "
             f"payoff={realized['payoff']} E={realized['expectancy_pct']}%",
         ]
+    gap = payload.get("realization_gap")
+    if isinstance(gap, dict):
+        gn = gap.get("n")
+        gc = _finite(gap.get("court_conditional_expectancy_pct"))
+        gr = _finite(gap.get("realized_expectancy_pct"))
+        gp = _finite(gap.get("realization_gap_pp"))
+        if (
+            isinstance(gn, int) and not isinstance(gn, bool) and gn > 0
+            and gc is not None and gr is not None and gp is not None
+        ):
+            horizons = gap.get("horizons")
+            horizon_text = (
+                " · h 组成 " + json.dumps(horizons, ensure_ascii=False, sort_keys=True)
+                if isinstance(horizons, dict) and horizons
+                else ""
+            )
+            lines += [
+                "",
+                "## 实现缺口归因 (matched 已平仓, 两端点齐备)",
+                "",
+                f"n={gn} · court 同票假想期望={gc:+.2f}% · realized={gr:+.2f}% · "
+                f"逐笔实现差={gp:+.2f}pp{horizon_text}",
+                "恒等式: 假想 + 实现差 = realized (无残差)。假想项是入选集合的",
+                "court 侧证据 (selection); 实现差混含平仓锚点 (close vs open) 与",
+                "费用/滑点, 只作粗读 — 缺口主体判读看两项量级对比。",
+            ]
     matched = payload.get("matched_records") or []
     if matched:
         lines += [
