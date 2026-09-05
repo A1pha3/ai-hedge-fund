@@ -177,3 +177,240 @@ class TestInnerShapePoisoningR126Op2:
         st = ct.cohort_trigger_stability(records)
         assert st["conjunction_streak"] == 1  # is True 严格语义原样
         assert st["max_conjunction_streak"] == 1
+
+
+# ---------- R129 Op1: 日层族 K 预注册机制 (强度族 R112-R115 机器的镜像复用) ----------
+#
+# owner 注册文件形状 {"anchor", "registered_date", "k", "owner_ref"?}; 装载把 k
+# 翻译进 threshold_trigger 规范形状的 k_070 槽位 — 下游 hash/观测/反回溯/资格
+# 窗口全部单一实现复用, 本模块零复制第二套机器 (R128 开放项③纪律)。
+
+_K_REG = {
+    "anchor": "production_aligned/t10/cohort_size",
+    "registered_date": "20260906",
+    "k": 3,
+}
+
+
+def _write_k_file(tmp_path, payload):
+    path = tmp_path / "cohort_trigger_k.json"
+    if payload is None:
+        path.write_text("{corrupted", encoding="utf-8")
+    else:
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+_COHORT_ANCHOR = "production_aligned/t10/cohort_size"
+
+
+def _k_rows(*specs):
+    """(date, armed) → 带 anchor 的账本行 (真实账本行恒有 anchor)。"""
+    return [
+        {**_record(date, armed=armed), "anchor": _COHORT_ANCHOR}
+        for date, armed in specs
+    ]
+
+
+class TestCohortKRegistrationLoading:
+    def test_default_paths_are_cohort_family_files(self):
+        assert ct.COHORT_K_REGISTRATION_PATH == Path(
+            "data/reports/cohort_trigger_k.json"
+        )
+        assert ct.COHORT_K_OBSERVATION_LOG_PATH == Path(
+            "data/reports/cohort_trigger_k_observations.jsonl"
+        )
+
+    def test_missing_file_unregistered(self, tmp_path):
+        assert ct.load_cohort_k_registration(tmp_path / "nope.json") == (
+            "unregistered",
+            None,
+        )
+
+    def test_registered_translates_k_into_strength_shape(self, tmp_path):
+        state, reg = ct.load_cohort_k_registration(_write_k_file(tmp_path, _K_REG))
+        assert state == "registered"
+        assert reg == {
+            "anchor": "production_aligned/t10/cohort_size",
+            "registered_date": "20260906",
+            "k_070": 3,
+        }
+
+    def test_registered_with_owner_ref_kept(self, tmp_path):
+        payload = {**_K_REG, "owner_ref": "decision-memo-1"}
+        state, reg = ct.load_cohort_k_registration(_write_k_file(tmp_path, payload))
+        assert state == "registered"
+        assert reg["owner_ref"] == "decision-memo-1"
+
+    def test_registered_k_must_be_plain_positive_int(self, tmp_path):
+        for bad_k in (True, 0, -1, "3", 3.0, None):
+            payload = {**_K_REG, "k": bad_k}
+            state, reg = ct.load_cohort_k_registration(
+                _write_k_file(tmp_path, payload)
+            )
+            assert state == "malformed", f"k={bad_k!r} 必须判损坏"
+
+    def test_malformed_variants(self, tmp_path):
+        for payload in (
+            None,  # JSON 损坏
+            ["not", "a", "dict"],
+            {**_K_REG, "anchor": ""},
+            {**_K_REG, "anchor": 42},
+            {**_K_REG, "registered_date": "2026-9-6"},
+            {**_K_REG, "registered_date": "202609061"},
+            {**_K_REG, "registered_date": 20260906},
+            {**_K_REG, "owner_ref": 7},
+            {"anchor": "a", "registered_date": "20260906"},  # 缺 k
+        ):
+            state, reg = ct.load_cohort_k_registration(
+                _write_k_file(tmp_path, payload)
+            )
+            assert state == "malformed", f"payload={payload!r} 必须判损坏"
+            assert reg is None
+
+
+class TestCohortKQualification:
+    def _rows(self, *specs):
+        return _k_rows(*specs)
+
+    def _ledger(self, tmp_path, records):
+        path = tmp_path / "day_cohort_trigger_ledger.jsonl"
+        path.write_text(
+            "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def test_trailing_armed_streak_and_threshold(self, tmp_path):
+        records = _k_rows(
+            ("20260901", False), ("20260902", True),
+            ("20260903", True), ("20260904", True),
+        )
+        state, reg = ct.load_cohort_k_registration(
+            _write_k_file(tmp_path, {**_K_REG, "registered_date": "20260901"})
+        )
+        qual = ct.cohort_trigger_qualification(records, reg)
+        assert qual["q"] == 3
+        assert qual["qualified"] is True
+        state2, reg2 = ct.load_cohort_k_registration(
+            _write_k_file(tmp_path, {**_K_REG, "registered_date": "20260901", "k": 4})
+        )
+        qual2 = ct.cohort_trigger_qualification(records, reg2)
+        assert qual2["q"] == 3
+        assert qual2["qualified"] is False
+
+    def test_registration_date_window_excludes_earlier_lits(self, tmp_path):
+        """反前瞻: 注册日前的武装不追溯计数 (K 必须先于它资格化的亮存在)。"""
+        records = _k_rows(("20260901", True), ("20260902", True), ("20260903", True))
+        state, reg = ct.load_cohort_k_registration(
+            _write_k_file(tmp_path, {**_K_REG, "registered_date": "20260903"})
+        )
+        qual = ct.cohort_trigger_qualification(records, reg)
+        assert qual["q"] == 1
+
+    def test_anchor_filter_excludes_foreign_family_rows(self, tmp_path):
+        records = [
+            {**_record("20260902", armed=True), "anchor": "production_aligned/t10"},
+            {**_record("20260903", armed=True), "anchor": _COHORT_ANCHOR},
+        ]
+        state, reg = ct.load_cohort_k_registration(
+            _write_k_file(tmp_path, {**_K_REG, "registered_date": "20260901"})
+        )
+        qual = ct.cohort_trigger_qualification(records, reg)
+        assert qual["q"] == 1
+
+    def test_malformed_date_rows_excluded(self, tmp_path):
+        records = [
+            {**_record("2026-9-2", armed=True), "anchor": _COHORT_ANCHOR},
+            {**_record("20260903", armed=True), "anchor": _COHORT_ANCHOR},
+        ]
+        state, reg = ct.load_cohort_k_registration(
+            _write_k_file(tmp_path, {**_K_REG, "registered_date": "20260901"})
+        )
+        qual = ct.cohort_trigger_qualification(records, reg)
+        assert qual["q"] == 1
+
+    def test_shape_validation_fails_closed_on_raw_dict(self):
+        with pytest.raises(ValueError):
+            ct.cohort_trigger_qualification([], {"anchor": "a", "registered_date": "20260906"})
+        with pytest.raises(ValueError):
+            ct.cohort_trigger_qualification([], {
+                "anchor": "a", "registered_date": "20260906", "k_070": True
+            })
+
+
+class TestCohortKDisclosure:
+    def test_unregistered_line_matches_current_render_tail_bytes(self):
+        """未注册态文本 = daily_action 渲染行旧硬编码尾句 (逐字节, A2 钉死)。"""
+        disc = ct.cohort_k_qualification_disclosure([_record("20260905")])
+        assert disc["state"] == "unregistered"
+        assert disc["line"] == "稳定阈值 K 属 owner 预注册；披露不是行为改变"
+        assert disc["qualified"] is False
+
+    def test_malformed_discloses_owner_fix_path(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            ct, "COHORT_K_REGISTRATION_PATH", _write_k_file(tmp_path, None)
+        )
+        disc = ct.cohort_k_qualification_disclosure([_record("20260905")])
+        assert disc["state"] == "malformed"
+        assert "损坏" in disc["line"]
+        assert "cohort_trigger_k.json" in disc["line"]
+
+    def test_registered_line_reports_window_and_threshold(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            ct,
+            "COHORT_K_REGISTRATION_PATH",
+            _write_k_file(tmp_path, {**_K_REG, "registered_date": "20260901"}),
+        )
+        records = _k_rows(("20260902", True), ("20260903", True), ("20260904", True))
+        disc = ct.cohort_k_qualification_disclosure(records)
+        assert disc["state"] == "registered"
+        assert "预注册 K=3" in disc["line"]
+        assert "自 20260901 起计资格连亮 3/3" in disc["line"]
+        assert "资格达成" in disc["line"]
+        assert disc["qualified"] is True
+
+    def test_registered_backdated_note_from_observation_log(
+        self, tmp_path, monkeypatch
+    ):
+        reg_path = _write_k_file(tmp_path, _K_REG)  # 声明日 20260906
+        obs_path = tmp_path / "obs.jsonl"
+        obs_path.write_text(
+            json.dumps(
+                {
+                    "observed_date": "20260907",
+                    "declared_registered_date": "20260906",
+                    "anchor": _K_REG["anchor"],
+                    "k_070": 3,
+                    "k_hash": ct.k_registration_hash(
+                        {
+                            "anchor": _K_REG["anchor"],
+                            "registered_date": "20260906",
+                            "k_070": 3,
+                        }
+                    ),
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(ct, "COHORT_K_REGISTRATION_PATH", reg_path)
+        monkeypatch.setattr(ct, "COHORT_K_OBSERVATION_LOG_PATH", obs_path)
+        records = _k_rows(("20260908", True))
+        disc = ct.cohort_k_qualification_disclosure(records)
+        assert disc["state"] == "registered"
+        assert disc["backdated"] is True
+        assert disc["effective_registered_date"] == "20260907"
+        assert "以观测日起算" in disc["line"]
+
+    def test_observe_via_strength_single_implementation(self, tmp_path):
+        """观测机器 = threshold_trigger.observe_k_registration 单一实现 (零复制)。"""
+        obs_path = tmp_path / "obs.jsonl"
+        state, reg = ct.load_cohort_k_registration(_write_k_file(tmp_path, _K_REG))
+        first = ct.observe_cohort_k_registration(reg, "20260906", path=obs_path)
+        second = ct.observe_cohort_k_registration(reg, "20260906", path=obs_path)
+        assert first == second
+        lines = [l for l in obs_path.read_text(encoding="utf-8").splitlines() if l]
+        assert len(lines) == 1

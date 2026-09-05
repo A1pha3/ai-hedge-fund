@@ -50,9 +50,15 @@ import pandas as pd
 
 from src.screening.offensive.cohort_trigger import (
     COHORT_TRIGGER_LEDGER_PATH,
+    COHORT_K_REGISTRATION_PATH,
+    COHORT_K_OBSERVATION_LOG_PATH,
+    cohort_k_qualification_disclosure,
     cohort_trigger_stability,
+    load_cohort_k_registration,
     load_cohort_trigger_ledger,
+    observe_cohort_k_registration,
 )
+from src.screening.offensive.threshold_trigger import load_k_observations
 from src.screening.offensive.gap_disclosure import (
     COHORT_BUCKET_EDGES,
     COHORT_BUCKET_LABELS,
@@ -768,7 +774,17 @@ def render_md(payload: Mapping[str, Any], date_str: str) -> str:
                 f"(历史最多合取连亮 {stab.get('max_conjunction_streak', 0)}; "
                 f"记录 {stab.get('first_date')}→{stab.get('last_date')})"
             )
-        L.append("- 稳定阈值 K 未预注册（连亮达标数属 owner 预注册动作）")
+        # R129 Op1: 注册/损坏/达标态取单一事实源; 未注册缺席句保持本 MD
+        # 历史措辞逐字节 (K 子系统建立前两面已有各自的诚实缺席句, 统一措辞
+        # 超出本 op 冻结范围 — 见 cohort_trigger 模块注)。
+        k_disc = payload.get("cohort_threshold_k")
+        if isinstance(k_disc, dict) and k_disc.get("state") in (
+            "registered",
+            "malformed",
+        ):
+            L.append(f"- {k_disc['line']}")
+        else:
+            L.append("- 稳定阈值 K 未预注册（连亮达标数属 owner 预注册动作）")
         L.append("")
     return "\n".join(L)
 
@@ -782,6 +798,18 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=COHORT_TRIGGER_LEDGER_PATH,
         help="日层 cohort 触发器稳定账本路径 (诊断面, 同日替换幂等)",
+    )
+    parser.add_argument(
+        "--cohort-k-registration",
+        type=Path,
+        default=COHORT_K_REGISTRATION_PATH,
+        help="日层族 K 预注册文件 (owner 预注册动作; 缺失=未注册态)",
+    )
+    parser.add_argument(
+        "--cohort-k-observation-log",
+        type=Path,
+        default=COHORT_K_OBSERVATION_LOG_PATH,
+        help="日层族 K 反回溯观测日志 (append-only)",
     )
     args = parser.parse_args(argv)
     if not args.court_table.exists():
@@ -809,9 +837,40 @@ def main(argv: list[str] | None = None) -> int:
     )
     payload["cohort_trigger_record"] = trigger_record
     if isinstance(payload["cohort_trigger"], dict):
+        ledger_records = load_cohort_trigger_ledger(args.cohort_trigger_ledger)
         payload["cohort_trigger_stability"] = cohort_trigger_stability(
-            load_cohort_trigger_ledger(args.cohort_trigger_ledger)
+            ledger_records
         )
+        # K 预注册消费面 + 反回溯观测 (R129 Op1; 镜像强度族 R112-R115):
+        # **先观测后披露** — 本 build 见到的注册内容先落 append-only 观测
+        # 日志, 披露窗口再按 max(声明, 首次观测) 起算。观测写入失败
+        # advisory 不阻断 build (诊断面家族纪律); 观测缺席时披露以声明日
+        # 暂态生效, 最迟下一次成功观测修正。
+        k_state, k_reg = load_cohort_k_registration(args.cohort_k_registration)
+        observation_meta: dict[str, object] | None = None
+        if k_state == "registered" and k_reg is not None:
+            try:
+                observed = observe_cohort_k_registration(
+                    k_reg, date_str, path=args.cohort_k_observation_log
+                )
+                observation_meta = {
+                    "observed": True,
+                    "observed_date": observed["observed_date"],
+                    "k_hash": observed["k_hash"],
+                }
+            except OSError as exc:
+                print(f"K 注册观测日志写入失败 (advisory, 不阻断): {exc}")
+        payload["cohort_threshold_k"] = cohort_k_qualification_disclosure(
+            ledger_records,
+            registration=(k_state, k_reg),
+            observation_log=(
+                load_k_observations(args.cohort_k_observation_log)
+                if k_state == "registered"
+                else None
+            ),
+        )
+        if observation_meta is not None:
+            payload["cohort_threshold_k_observation"] = observation_meta
     args.report_dir.mkdir(parents=True, exist_ok=True)
     out_json = args.report_dir / f"signal_day_cohort_{date_str}.json"
     out_md = args.report_dir / f"signal_day_cohort_{date_str}.md"

@@ -1439,6 +1439,112 @@ def test_day_cohort_trigger_line_survives_poisoned_condition_values(case, tmp_pa
     assert "日层合取未武装" in text
 
 
+# ---------- R129 Op1: 日层族 K 预注册子句 (单一事实源接入渲染行) ----------
+
+def _patch_cohort_k_files(monkeypatch, reg_payload, tmp_path):
+    import json as _json
+
+    from src.screening.offensive import cohort_trigger as ct
+
+    reg_path = tmp_path / "cohort_trigger_k.json"
+    if reg_payload is None:
+        reg_path.write_text("{corrupted", encoding="utf-8")
+    elif reg_payload is not False:
+        reg_path.write_text(
+            _json.dumps(reg_payload, ensure_ascii=False), encoding="utf-8"
+        )
+    obs_path = tmp_path / "cohort_trigger_k_observations.jsonl"
+    monkeypatch.setattr(ct, "COHORT_K_REGISTRATION_PATH", reg_path)
+    monkeypatch.setattr(ct, "COHORT_K_OBSERVATION_LOG_PATH", obs_path)
+
+
+def test_day_cohort_trigger_line_unregistered_k_byte_identical(case, tmp_path, monkeypatch):
+    """未注册态 (现默认) 渲染行与修复前逐字节一致 — K 子句单一事实源的
+    缺席句就是本行旧硬编码尾句 (A2 钉死, 零现行为变化)。"""
+    _patch_day_cohort_ledger(monkeypatch, _day_cohort_ledger(tmp_path, [
+        _day_cohort_rec("20260905", c1_lit=False, c2_lit=True),
+    ]))
+    _patch_cohort_k_files(monkeypatch, False, tmp_path)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    line = next(
+        l for l in text.splitlines() if l.startswith("日层 cohort 触发器")
+    )
+    assert line.endswith(" · 稳定阈值 K 属 owner 预注册；披露不是行为改变")
+
+
+def test_day_cohort_trigger_line_registered_k_reports_window(case, tmp_path, monkeypatch):
+    _patch_day_cohort_ledger(monkeypatch, _day_cohort_ledger(tmp_path, [
+        _day_cohort_rec("20260903", c1_lit=True, c2_lit=True, armed=True),
+        _day_cohort_rec("20260904", c1_lit=True, c2_lit=True, armed=True),
+    ]))
+    _patch_cohort_k_files(monkeypatch, {
+        "anchor": "production_aligned/t10/cohort_size",
+        "registered_date": "20260901",
+        "k": 2,
+    }, tmp_path)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "预注册 K=2（自 20260901 起计资格连亮 2/2）" in text
+    assert "资格达成" in text
+    assert "稳定阈值 K 属 owner 预注册；披露不是行为改变" not in text
+
+
+def test_day_cohort_trigger_line_registered_k_below_threshold(case, tmp_path, monkeypatch):
+    _patch_day_cohort_ledger(monkeypatch, _day_cohort_ledger(tmp_path, [
+        _day_cohort_rec("20260904", c1_lit=False, c2_lit=True, armed=False),
+    ]))
+    _patch_cohort_k_files(monkeypatch, {
+        "anchor": "production_aligned/t10/cohort_size",
+        "registered_date": "20260901",
+        "k": 3,
+    }, tmp_path)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "预注册 K=3（自 20260901 起计资格连亮 0/3）" in text
+    assert "资格达成" not in text
+
+
+def test_day_cohort_trigger_line_malformed_k_discloses_fix_path(case, tmp_path, monkeypatch):
+    _patch_day_cohort_ledger(monkeypatch, _day_cohort_ledger(tmp_path, [
+        _day_cohort_rec("20260904", c1_lit=False, c2_lit=True),
+    ]))
+    _patch_cohort_k_files(monkeypatch, None, tmp_path)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "稳定阈值 K 预注册文件损坏" in text
+    assert "cohort_trigger_k.json" in text
+
+
+def test_day_cohort_trigger_line_k_survives_disclosure_failure(case, tmp_path, monkeypatch):
+    """K 注册面损坏为不可恢复形态 (非 OSError 家族) 也不炸渲染 — 行内
+    fail-open 只覆盖文件读取, disclosure 自身异常由本行 try 家族兜底省略
+    全行是既有语义; 本测试钉毒化注册文件 (list 形态) 走 malformed 句。"""
+    _patch_day_cohort_ledger(monkeypatch, _day_cohort_ledger(tmp_path, [
+        _day_cohort_rec("20260904", c1_lit=False, c2_lit=True),
+    ]))
+    _patch_cohort_k_files(monkeypatch, ["not", "a", "dict"], tmp_path)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "日层 cohort 触发器" in text
+    assert "预注册文件损坏" in text
+
+
 # ---------- R128 Op1: 强度触发器状态行渲染毒化守卫 ----------
 
 def test_trigger_state_line_poisoned_condition_renders_unjudged(case, tmp_path, monkeypatch):

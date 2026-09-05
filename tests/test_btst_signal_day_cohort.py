@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -791,3 +792,164 @@ class TestCohortTriggerRenderAndMain:
                 "--report-dir", str(tmp_path / "r"),
                 "--cohort-trigger-ledger", str(tmp_path / "l.jsonl"),
             ])
+
+
+class TestCohortKBuildWiring:
+    """R129 Op1: build 侧 K 预注册消费面 (镜像强度族 R112-R115 接线)。
+
+    先观测后披露; 观测失败 advisory 不阻断; payload["cohort_threshold_k"]
+    是渲染与 MD 共用的单一事实源快照。"""
+
+    @staticmethod
+    def _argv(tmp_path, extra=()):
+        table = tmp_path / "event_table_v1.csv.gz"
+        _frame([
+            ("600001", 20260701, 0.05, 0.75), ("600002", 20260701, -0.03, 0.55),
+            ("600003", 20260702, 0.02, 0.52), ("600004", 20260702, 0.04, 0.80),
+            ("600005", 20260703, -0.01, 0.63), ("600006", 20260703, 0.03, 0.71),
+        ]).to_csv(table, index=False)
+        return [
+            "--court-table", str(table),
+            "--report-dir", str(tmp_path / "reports"),
+            "--cohort-trigger-ledger", str(tmp_path / "cohort_ledger.jsonl"),
+            "--cohort-k-registration", str(tmp_path / "cohort_k.json"),
+            "--cohort-k-observation-log", str(tmp_path / "cohort_k_obs.jsonl"),
+            *extra,
+        ]
+
+    @staticmethod
+    def _write_reg(tmp_path, payload):
+        import json as _json
+
+        path = tmp_path / "cohort_k.json"
+        path.write_text(_json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return path
+
+    @staticmethod
+    def _payload_with_trigger() -> dict:
+        from src.screening.offensive.cohort_trigger import (
+            cohort_trigger_stability,
+        )
+
+        payload = decompose_cohort(_frame([
+            ("600001", 20260701, 0.05, 0.75), ("600002", 20260701, -0.03, 0.55),
+            ("600003", 20260702, 0.02, 0.52), ("600004", 20260702, 0.04, 0.80),
+            ("600005", 20260703, -0.01, 0.63), ("600006", 20260703, 0.03, 0.71),
+        ]))
+        payload["cohort_trigger"] = cohort_trigger_status(
+            payload["cohort_buckets"], min_n=MIN_CELL_N
+        )
+        payload["cohort_trigger_stability"] = cohort_trigger_stability([
+            {"date": "20260904", "conjunction_armed": True,
+             "strong_bucket": {"lit": True}, "mid_buckets": {"lit": True}},
+            {"date": "20260905", "conjunction_armed": False,
+             "strong_bucket": {"lit": True}, "mid_buckets": {"lit": False}},
+        ])
+        return payload
+
+    def test_main_unregistered_state_disclosed(self, tmp_path, capsys):
+        from scripts.btst_signal_day_cohort import main as cohort_main
+
+        rc = cohort_main(self._argv(tmp_path))
+        assert rc == 0
+        reports = tmp_path / "reports"
+        json_path = next(reports.glob("signal_day_cohort_*.json"))
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+        assert payload["cohort_threshold_k"]["state"] == "unregistered"
+        assert payload["cohort_threshold_k"]["line"] == (
+            "稳定阈值 K 属 owner 预注册；披露不是行为改变"
+        )
+        assert not (tmp_path / "cohort_k_obs.jsonl").exists()
+
+    def test_main_registered_observes_then_discloses(self, tmp_path):
+        from scripts.btst_signal_day_cohort import main as cohort_main
+        from src.screening.offensive.cohort_trigger import (
+            cohort_trigger_stability,
+            load_cohort_trigger_ledger,
+        )
+
+        self._write_reg(tmp_path, {
+            "anchor": "production_aligned/t10/cohort_size",
+            "registered_date": "20260901",
+            "k": 5,
+        })
+        rc = cohort_main(self._argv(tmp_path))
+        assert rc == 0
+        reports = tmp_path / "reports"
+        json_path = next(reports.glob("signal_day_cohort_*.json"))
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+        k = payload["cohort_threshold_k"]
+        assert k["state"] == "registered"
+        assert "预注册 K=5" in k["line"]
+        assert k["qualified"] is False
+        # 反回溯观测已落 append-only 日志
+        obs = tmp_path / "cohort_k_obs.jsonl"
+        assert obs.exists()
+        rec = json.loads(obs.read_text(encoding="utf-8").strip().splitlines()[0])
+        assert rec["observed_date"] == date.today().strftime("%Y%m%d")
+        assert rec["anchor"] == "production_aligned/t10/cohort_size"
+        # MD 尾行取单一事实源 (注册态)
+        md_path = next(reports.glob("signal_day_cohort_*.md"))
+        assert "预注册 K=5" in md_path.read_text(encoding="utf-8")
+
+    def test_main_registered_stability_reads_ledger_true_state(self, tmp_path):
+        """资格连亮读账本现状真话 — 未武装账本 + K=1 也不给资格达标。"""
+        from scripts.btst_signal_day_cohort import main as cohort_main
+
+        self._write_reg(tmp_path, {
+            "anchor": "production_aligned/t10/cohort_size",
+            "registered_date": "20260901",
+            "k": 1,
+        })
+        assert cohort_main(self._argv(tmp_path)) == 0
+        reports = tmp_path / "reports"
+        json_path = next(reports.glob("signal_day_cohort_*.json"))
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+        k = payload["cohort_threshold_k"]
+        # 首次 build 的账本行 conjunction_armed 由数据决定; 本表 6 行小样本
+        # 触发器格判 unjudged → 合取未武装 → q=0 未达标
+        assert k["qualified"] is False
+        assert k["line"].startswith("预注册 K=1")
+
+    def test_main_malformed_registration_disclosed_not_crash(self, tmp_path):
+        from scripts.btst_signal_day_cohort import main as cohort_main
+
+        path = tmp_path / "cohort_k.json"
+        path.write_text("{corrupted", encoding="utf-8")
+        assert cohort_main(self._argv(tmp_path)) == 0
+        reports = tmp_path / "reports"
+        json_path = next(reports.glob("signal_day_cohort_*.json"))
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+        k = payload["cohort_threshold_k"]
+        assert k["state"] == "malformed"
+        assert "损坏" in k["line"]
+
+    def test_md_registered_line_replaces_default_sentence(self):
+        from scripts.btst_signal_day_cohort import render_md
+
+        payload = self._payload_with_trigger()
+        payload["cohort_threshold_k"] = {
+            "state": "registered",
+            "line": "预注册 K=3（自 20260901 起计资格连亮 1/3）",
+            "qualified": False,
+            "effective_registered_date": "20260901",
+            "backdated": False,
+        }
+        md = render_md(payload, "20260905")
+        assert "- 预注册 K=3（自 20260901 起计资格连亮 1/3）" in md
+        assert "稳定阈值 K 未预注册" not in md
+
+    def test_md_unregistered_keeps_legacy_default_sentence(self):
+        """未注册态 MD 行保持既有句子逐字节 (既有断言钉死, 不改写)。"""
+        from scripts.btst_signal_day_cohort import render_md
+
+        payload = self._payload_with_trigger()
+        payload["cohort_threshold_k"] = {
+            "state": "unregistered",
+            "line": "稳定阈值 K 属 owner 预注册；披露不是行为改变",
+            "qualified": False,
+            "effective_registered_date": None,
+            "backdated": False,
+        }
+        md = render_md(payload, "20260905")
+        assert "稳定阈值 K 未预注册" in md

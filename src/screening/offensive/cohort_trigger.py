@@ -19,15 +19,25 @@ mid_buckets) 独立演化, 读取侧互不解读对方记录。
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from src.screening.offensive.threshold_trigger import (
     condition_lit,
+    effective_k_registration,
+    k_registration_hash,
+    load_k_observations,
     load_trigger_ledger,
+    observe_k_registration,
+    trigger_qualification,
 )
 
 COHORT_TRIGGER_LEDGER_PATH = Path(
     "data/reports/signal_day_cohort_trigger_ledger.jsonl"
+)
+COHORT_K_REGISTRATION_PATH = Path("data/reports/cohort_trigger_k.json")
+COHORT_K_OBSERVATION_LOG_PATH = Path(
+    "data/reports/cohort_trigger_k_observations.jsonl"
 )
 
 
@@ -112,8 +122,165 @@ def cohort_trigger_stability(records: list[dict]) -> dict[str, object]:
     return out
 
 
+# --------------------------------------------------------------------------
+# R129 Op1: 日层族 K 预注册机制 (强度族 R112-R115 机器的镜像复用)。
+#
+# owner 注册文件形状 (数据/词法独立于强度族): {"anchor": 非空 str,
+# "registered_date": YYYYMMDD str, "k": >=1 int, "owner_ref"?: str}。
+# 装载把 k 翻译进 threshold_trigger 规范形状的 k_070 槽位 — 之后 hash /
+# 观测 / 反回溯起算 / 资格窗口判定全部是 threshold_trigger 单一实现
+# (k_060 缺失 → 日层族天然单锚, 060 分支恒 None), 本模块零复制第二套
+# 机器 (R128 开放项③复用纪律)。未注册缺席句按消费面历史措辞保留
+# (渲染行/MD 两面在 K 子系统建立前已有各自的诚实缺席句, 统一措辞超出
+# 本 op 冻结范围); 注册/损坏/达标三态判定文本经 cohort_k_qualification_
+# disclosure 单一事实源供两面消费 (R112 同纪律)。
+
+
+def load_cohort_k_registration(
+    path: Path | str | None = None,
+) -> tuple[str, dict[str, object] | None]:
+    """日层族 K 注册 tri-state 装载 (unregistered / malformed / registered)。
+
+    registered 返回值已是 threshold_trigger 规范形状 (k 落在 k_070 槽位),
+    可直接交给 observe_k_registration / effective_k_registration /
+    trigger_qualification。形状存疑一律 malformed — K 参与正式评估资格
+    语义, 与强度族 load_k_registration 同纪律 (fail-open 于渲染行整体
+    存在性, fail-closed 于资格判定)。
+    """
+    file_path = (
+        Path(path) if path is not None else COHORT_K_REGISTRATION_PATH
+    )
+    try:
+        text = file_path.read_text(encoding="utf-8")
+    except OSError:
+        return ("unregistered", None)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return ("malformed", None)
+    if not isinstance(data, dict):
+        return ("malformed", None)
+    anchor = data.get("anchor")
+    registered_date = data.get("registered_date")
+    k = data.get("k")
+    owner_ref = data.get("owner_ref")
+    if not isinstance(anchor, str) or not anchor:
+        return ("malformed", None)
+    if (
+        not isinstance(registered_date, str)
+        or not registered_date.isdigit()
+        or len(registered_date) != 8
+    ):
+        return ("malformed", None)
+    if not isinstance(k, int) or isinstance(k, bool) or k < 1:
+        return ("malformed", None)
+    if owner_ref is not None and not isinstance(owner_ref, str):
+        return ("malformed", None)
+    reg: dict[str, object] = {
+        "anchor": anchor,
+        "registered_date": registered_date,
+        "k_070": k,
+    }
+    if owner_ref is not None:
+        reg["owner_ref"] = owner_ref
+    return ("registered", reg)
+
+
+def cohort_trigger_qualification(
+    records: list[dict], registration: dict[str, object]
+) -> dict[str, object]:
+    """日层族资格连亮 — threshold_trigger.trigger_qualification 单一实现的
+    单锚投影 (q_070 槽位即日层合取资格; 反前瞻窗口/anchor 过滤/日期形状
+    防御全部单一实现语义, 本函数零判定逻辑)。"""
+    qual = trigger_qualification(records, registration)
+    return {"q": qual["q_070"], "qualified": qual["qualified_070"]}
+
+
+def observe_cohort_k_registration(
+    registration: dict[str, object],
+    observed_date: str,
+    path: Path | str | None = None,
+) -> dict[str, object]:
+    """日层族 K 观测落账 — threshold_trigger.observe_k_registration 单一
+    实现, 独立默认日志路径 (两族观测历史互不混写)。幂等语义同源。"""
+    return observe_k_registration(
+        registration,
+        observed_date,
+        path=Path(path) if path is not None else COHORT_K_OBSERVATION_LOG_PATH,
+    )
+
+
+_COHORT_K_UNREGISTERED_LINE = "稳定阈值 K 属 owner 预注册；披露不是行为改变"
+_COHORT_K_MALFORMED_LINE = (
+    "稳定阈值 K 预注册文件损坏（不可判定 — owner 修正 "
+    "data/reports/cohort_trigger_k.json 后生效）"
+)
+
+
+def cohort_k_qualification_disclosure(
+    records: list[dict],
+    registration: tuple[str, dict[str, object] | None] | None = None,
+    observation_log: list[dict] | None = None,
+) -> dict[str, object]:
+    """日层族 K 子句单一事实源 (镜像 threshold_trigger.k_qualification_
+    disclosure, 单锚无 060 分支): 渲染行与分解报告 MD 的注册/损坏/达标
+    文本都从这里取。反回溯起算 (max(声明, 首次观测)) 与资格窗口判定
+    全部单一实现; 未注册态缺席句为渲染行历史措辞 (逐字节 = 旧硬编码尾句,
+    见上注)。返回 JSON 可序列化 dict。"""
+    state, reg = (
+        registration if registration is not None else load_cohort_k_registration()
+    )
+    if state == "registered" and reg is not None:
+        log_records = (
+            observation_log
+            if observation_log is not None
+            else load_k_observations(COHORT_K_OBSERVATION_LOG_PATH)
+        )
+        effective_date, backdated = effective_k_registration(reg, log_records)
+        reg_effective = {**reg, "registered_date": effective_date}
+        qual = cohort_trigger_qualification(records, reg_effective)
+        k = int(reg["k_070"])  # type: ignore[arg-type]
+        q = int(qual["q"])  # type: ignore[arg-type]
+        line = f"预注册 K={k}（自 {effective_date} 起计资格连亮 {q}/{k}）"
+        if backdated:
+            line += (
+                f"— 声明日期 {reg['registered_date']} 早于首次观测，以观测日起算"
+            )
+        if qual["qualified"]:
+            line += " → 日层 cohort 规模条件化正式评估资格达成（owner 预注册动作）"
+        return {
+            "state": "registered",
+            "line": line,
+            "qualified": bool(qual["qualified"]),
+            "effective_registered_date": effective_date,
+            "backdated": bool(backdated),
+        }
+    if state == "malformed":
+        return {
+            "state": "malformed",
+            "line": _COHORT_K_MALFORMED_LINE,
+            "qualified": False,
+            "effective_registered_date": None,
+            "backdated": False,
+        }
+    return {
+        "state": "unregistered",
+        "line": _COHORT_K_UNREGISTERED_LINE,
+        "qualified": False,
+        "effective_registered_date": None,
+        "backdated": False,
+    }
+
+
 __all__ = [
     "COHORT_TRIGGER_LEDGER_PATH",
+    "COHORT_K_REGISTRATION_PATH",
+    "COHORT_K_OBSERVATION_LOG_PATH",
     "load_cohort_trigger_ledger",
     "cohort_trigger_stability",
+    "load_cohort_k_registration",
+    "cohort_trigger_qualification",
+    "observe_cohort_k_registration",
+    "cohort_k_qualification_disclosure",
+    "k_registration_hash",
 ]

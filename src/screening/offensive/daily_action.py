@@ -2077,10 +2077,14 @@ def _render_day_cohort_trigger_line() -> str | None:
             else ""
         )
         anchor = latest.get("anchor") or "production_aligned/t10/cohort_size"
+        # R129 Op1: K 子句经 cohort_k_qualification_disclosure 单一事实源 —
+        # 未注册态缺席句即本行旧硬编码尾句 (逐字节, 零现行为变化);
+        # 注册/损坏/达标态披露 K/起算日/资格连亮 (owner 预注册动作)。
+        k_note = str(_ct.cohort_k_qualification_disclosure(records)["line"])
         return (
             f"日层 cohort 触发器（{anchor} · 账本 {stab['records']} 条）："
             f"{c1} · {c2} · {conj} · 历史最多日层合取连亮 {max_streak}{coverage}"
-            " · 稳定阈值 K 属 owner 预注册；披露不是行为改变"
+            f" · {k_note}"
         )
     except (OSError, ValueError, KeyError, TypeError):
         return None
