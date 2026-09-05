@@ -401,3 +401,70 @@ class TestStrongShareCorrelation:
     def test_zero_variance_returns_none(self):
         out = strong_share_correlation([0.01, 0.01], ["20260701", "20260702"], [True, True])
         assert out["pearson"] is None
+
+
+class TestAdversarialReworkR124:
+    """Op2 对抗审查 PoC 回归 — 三裸逃逸形态 typed 化 + 真中位."""
+
+    def _base(self, **overrides):
+        cols = {
+            "ts_code": ["1.SZ", "2.SZ"],
+            "signal_date": [20260701, 20260702],
+            "gross_ret_t10": [0.01, 0.02],
+            "trigger_strength": [0.7, 0.4],
+            "fillable": True,
+            "gate_blocked": False,
+            "price_ge_3": True,
+            "degraded": False,
+            "st_name": "",
+            "industry_missing": False,
+            "excluded_ticker": False,
+        }
+        cols.update(overrides)
+        return pd.DataFrame(cols)
+
+    def test_missing_trigger_strength_typed(self):
+        # PoC-A 复现: 缺列曾是裸 KeyError 'trigger_strength'
+        ev = self._base().drop(columns=["trigger_strength"])
+        with pytest.raises(SystemExit, match="trigger_strength"):
+            decompose_cohort(ev)
+
+    def test_missing_signal_date_typed(self):
+        ev = self._base().drop(columns=["signal_date"])
+        with pytest.raises(SystemExit, match="signal_date"):
+            decompose_cohort(ev)
+
+    def test_nan_date_typed_and_counted(self):
+        # PoC-B 复现: 单 NaN 曾使整列上转型 → 合法行报 '20260701.0' ValueError。
+        # 现契约: 预检类型化拒绝 + 畸形计数, 消息不再误导到合法值。
+        ev = self._base()
+        ev.loc[1, "signal_date"] = float("nan")
+        with pytest.raises(SystemExit, match="signal_date 畸形 1 行"):
+            decompose_cohort(ev)
+
+    def test_whole_float_dates_accepted(self):
+        # dtype 上转型的合法表 (全整值 float64 日期) 必须照常工作
+        ev = self._base()
+        ev["signal_date"] = ev["signal_date"].astype("float64")
+        payload = decompose_cohort(ev)
+        assert payload["n_events"] == 2
+        assert payload["n_days"] == 2
+
+    def test_non_numeric_strength_typed(self):
+        ev = self._base()
+        # float64 列塞不进字符串 (pandas LossySetitemError) — object 列构造垃圾输入
+        ev["trigger_strength"] = pd.Series(["abc", 0.4], dtype=object)
+        with pytest.raises(SystemExit, match="trigger_strength 非数值 1 行"):
+            decompose_cohort(ev)
+
+    def test_even_day_count_true_median(self):
+        # PoC-C 复现: 日均值 [1,2,3,4]% 曾返回上元素 0.03 → 真中位 0.025
+        net = [0.01, 0.02, 0.03, 0.04]
+        days = ["d1", "d2", "d3", "d4"]
+        strong = [False] * 4
+        rows = cohort_bucket_table(net, days, strong)
+        assert rows[0]["bucket"] == "1"
+        assert rows[0]["day_e_median"] == pytest.approx(0.025)
+        # 奇数日数语义不变
+        rows_odd = cohort_bucket_table(net[:3], days[:3], strong[:3])
+        assert rows_odd[0]["day_e_median"] == pytest.approx(0.02)
