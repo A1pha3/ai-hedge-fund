@@ -1304,3 +1304,99 @@ def test_day_cohort_line_absent_when_report_corrupt(case, tmp_path, monkeypatch)
         plan_details=(_detail("111.SZ", 0.72),),
     )
     assert "今日同振语境" not in render_daily_action_v2(view)
+
+
+# ---------- R126 Op3: 日层 cohort 触发器状态行 (第二判定面日度可见性) ----------
+
+def _day_cohort_ledger(tmp_path, records):
+    import json
+    path = tmp_path / "day_cohort_trigger_ledger.jsonl"
+    path.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _day_cohort_rec(day, c1_lit, c2_lit, c1_judged=True, c2_judged=True,
+                    armed=False, window_end="20260905"):
+    rec = {
+        "date": day,
+        "anchor": "production_aligned/t10/cohort_size",
+        "min_n": 30,
+        "conjunction_armed": armed,
+        "court": {"window_end": window_end, "rows": 1627},
+    }
+    if c1_judged:
+        rec["strong_bucket"] = {"lit": c1_lit, "judged": True, "n": 864, "stat": -0.017}
+    if c2_judged:
+        rec["mid_buckets"] = {"lit": c2_lit, "judged": True, "n": 293, "stat": -0.011}
+    return rec
+
+
+def _patch_day_cohort_ledger(monkeypatch, path):
+    from src.screening.offensive import cohort_trigger as ct
+
+    monkeypatch.setattr(ct, "COHORT_TRIGGER_LEDGER_PATH", path)
+
+
+def test_day_cohort_trigger_line_renders_conditions(case, tmp_path, monkeypatch):
+    _patch_day_cohort_ledger(monkeypatch, _day_cohort_ledger(tmp_path, [
+        _day_cohort_rec("20260904", c1_lit=False, c2_lit=True),
+        _day_cohort_rec("20260905", c1_lit=False, c2_lit=True),
+    ]))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "日层 cohort 触发器" in text
+    assert "条件C1 20+ 桶 CI>0 未亮（连亮 0）" in text
+    assert "条件C2 中间桶(4-9/10-19)转负 已亮（连亮 2）" in text
+    assert "日层合取未武装（连亮 0）" in text
+    assert "历史最多日层合取连亮 0" in text
+    assert "court 覆盖至 20260905" in text
+    assert "账本 2 条" in text
+    assert "披露不是行为改变" in text
+
+
+def test_day_cohort_trigger_line_omitted_when_ledger_missing(case, tmp_path, monkeypatch):
+    _patch_day_cohort_ledger(monkeypatch, tmp_path / "nope.jsonl")
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "日层 cohort 触发器" not in render_daily_action_v2(view)
+
+
+def test_day_cohort_trigger_line_armed_and_unjudged(case, tmp_path, monkeypatch):
+    """武装态显示 owner 评估就绪; 未判定条件按格披露样本不足 — 不假装知道."""
+    _patch_day_cohort_ledger(monkeypatch, _day_cohort_ledger(tmp_path, [
+        _day_cohort_rec("20260905", c1_lit=True, c2_lit=True,
+                        c1_judged=False, c2_judged=False, armed=True),
+    ]))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "条件C1 20+ 桶 CI>0 样本不足未判定" in text
+    assert "条件C2 中间桶(4-9/10-19)转负 样本不足未判定" in text
+    assert "日层合取已武装 → cohort 规模条件化正式评估就绪" in text
+
+
+def test_day_cohort_trigger_line_survives_poisoned_condition_values(case, tmp_path, monkeypatch):
+    """行内条件值非 dict (手编账本/损坏写入) → 该格未判定, 渲染不炸 (R119 双层)."""
+    _patch_day_cohort_ledger(monkeypatch, _day_cohort_ledger(tmp_path, [
+        {"date": "20260905", "anchor": "production_aligned/t10/cohort_size",
+         "strong_bucket": "corrupted", "mid_buckets": 42,
+         "conjunction_armed": False, "court": {"window_end": "20260905"}},
+    ]))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "日层 cohort 触发器" in text
+    assert "样本不足未判定" in text
+    assert "日层合取未武装" in text

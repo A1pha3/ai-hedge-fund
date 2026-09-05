@@ -2021,6 +2021,68 @@ def _render_trigger_state_line() -> str | None:
     )
 
 
+def _render_day_cohort_trigger_line() -> str | None:
+    """日层 cohort 触发器的操作员状态行 (R126 Op3; R85 强度触发器行同构)。
+
+    R126 Op1+Op2 建成日层 cohort 触发器的判定/账本/夜刷机械耦合/读取面
+    形状守卫, 但状态只活在 scripts 报告与 data/ 账本里 — 与强度触发器行
+    (R85 Op1) 同构的可见性缺口。本行读
+    ``src.screening.offensive.cohort_trigger`` 单一实现 (装载+连亮计数,
+    不复制逻辑), 披露条件C1/C2 判定、连亮、合取武装态、历史最多合取连亮
+    与 court 覆盖。
+
+    fail-open 家族纪律 (R85/R87/R92/R109/R115 同族): 账本缺失/空 → 整行
+    省略 (判定面未建立是稳态); 行内条件值非 dict (Op2 守卫后的剩余形态)
+    或统计缺失 → 该格按未判定披露 (不假装知道, R119 双层形状守卫);
+    court 缺失 → 覆盖子句省略。本行是披露不是行为改变 — 武装与否不改变
+    任何当日决策路径 (配置不是权限, 日层条件化评估是 owner 预注册动作)。
+    """
+    try:
+        from src.screening.offensive import cohort_trigger as _ct
+
+        records = _ct.load_cohort_trigger_ledger()
+        if not records:
+            return None
+        latest = records[-1]
+        stab = _ct.cohort_trigger_stability(records)
+
+        def _cond_clause(key: str, label: str, streak_key: str) -> str:
+            raw = latest.get(key)
+            if not isinstance(raw, dict) or not raw.get("judged"):
+                return f"{label} 样本不足未判定"
+            lit = raw.get("lit") is True
+            streak = int(stab.get(streak_key) or 0)
+            return f"{label} {'已亮' if lit else '未亮'}（连亮 {streak}）"
+
+        c1 = _cond_clause(
+            "strong_bucket", "条件C1 20+ 桶 CI>0", "strong_bucket_streak"
+        )
+        c2 = _cond_clause(
+            "mid_buckets", "条件C2 中间桶(4-9/10-19)转负", "mid_buckets_streak"
+        )
+        armed = latest.get("conjunction_armed") is True
+        conj = (
+            "日层合取已武装 → cohort 规模条件化正式评估就绪（owner 预注册动作）"
+            if armed
+            else f"日层合取未武装（连亮 {int(stab.get('conjunction_streak') or 0)}）"
+        )
+        max_streak = int(stab.get("max_conjunction_streak") or 0)
+        court = latest.get("court")
+        coverage = (
+            f" · court 覆盖至 {court.get('window_end')}"
+            if isinstance(court, dict) and court.get("window_end")
+            else ""
+        )
+        anchor = latest.get("anchor") or "production_aligned/t10/cohort_size"
+        return (
+            f"日层 cohort 触发器（{anchor} · 账本 {stab['records']} 条）："
+            f"{c1} · {c2} · {conj} · 历史最多日层合取连亮 {max_streak}{coverage}"
+            " · 稳定阈值 K 属 owner 预注册；披露不是行为改变"
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def _render_evidence_freshness_line(
     as_of,
     reports_dir: str | Path | None = None,
@@ -2287,6 +2349,12 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     trigger_line = _render_trigger_state_line()
     if trigger_line:
         lines.append(trigger_line)
+        lines.append("")
+    # 日层 cohort 触发器状态行 (R126 Op3): 强度族之外的另一预注册判定面 —
+    # 账本缺失/空时整行省略 (fail-open), 与上方状态行同族省略语义.
+    day_cohort_trigger_line = _render_day_cohort_trigger_line()
+    if day_cohort_trigger_line:
+        lines.append(day_cohort_trigger_line)
         lines.append("")
     # 证据新鲜度告警行 (R115 Op2): 判定面夜刷静默冻结的显式告警 — 异常
     # (陈旧 ≥2 交易日 / 昨夜刷新失败) 时出行, 正常日省略零噪声.
