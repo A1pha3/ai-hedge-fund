@@ -1648,6 +1648,14 @@ def _render_universe_alignment_line(
         if store_parts:
             head += "（" + " · ".join(store_parts) + "）"
             has_store_clause = True
+        # R121c F2: journal 尾部结构异常显形 — journal BUY signal_date ≥ 台账首
+        # 信号日 = 时代重叠, 而 v2 启用后 journal 无生产写入者 (R121a 取证:
+        # 重叠笔即测试产物)。计数缺失/非正整数 → 子句省略不渲染垃圾。
+        journal_block = stores.get("legacy_journal")
+        if isinstance(journal_block, dict):
+            post = journal_block.get("post_ledger_start_buys")
+            if isinstance(post, int) and not isinstance(post, bool) and post > 0:
+                head += f"，其中台账启用后 journal 尾部 {post} 笔（结构异常）"
     if split == 0:
         head += " — 全部生产信号在 court 宇宙内"
     body = head

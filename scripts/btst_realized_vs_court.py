@@ -183,9 +183,24 @@ def load_ledger_buys(path: Path | str = LEDGER_PATH) -> list[dict[str, Any]]:
             ):
                 if not isinstance(value, (int, float)) or value is None:
                     raise ValueError(f"ledger closed trade missing {name}: {row!r}")
-            costs = lambda *xs: float(sum(x or 0.0 for x in xs))  # noqa: E731
-            basis = float(entry_px) * float(qty) + costs(entry_comm, entry_tax, entry_slip)
-            proceeds = float(exit_px) * float(qty) - costs(exit_comm, exit_tax, exit_slip)
+            # R121c F1: 六成本列在 trades 表是 NOT NULL (PRAGMA 实证) — NULL =
+            # INSERT 直写/损坏, 静默按 0 会虚高 proceeds/basis (PoC: exit_tax=NULL
+            # → realized 10.0% 照常产出)。fail-closed, 镜像 journal 坏行纪律。
+            for name, value in (
+                ("entry_commission", entry_comm), ("entry_tax", entry_tax),
+                ("entry_slippage", entry_slip), ("exit_commission", exit_comm),
+                ("exit_tax", exit_tax), ("exit_slippage", exit_slip),
+            ):
+                if not isinstance(value, (int, float)) or value is None:
+                    raise ValueError(f"ledger closed trade NULL cost {name}: {row!r}")
+            basis = (
+                float(entry_px) * float(qty)
+                + float(entry_comm) + float(entry_tax) + float(entry_slip)
+            )
+            proceeds = (
+                float(exit_px) * float(qty)
+                - float(exit_comm) - float(exit_tax) - float(exit_slip)
+            )
             if basis <= 0:
                 raise ValueError(f"ledger non-positive cost basis: {row!r}")
             realized = (proceeds / basis - 1.0) * 100.0
@@ -405,6 +420,22 @@ def stores_block(recon: Reconciliation) -> dict[str, dict[str, Any]]:
             ),
             "realized_only": realized,
         }
+    # R121c F2: journal 尾部结构异常纯派生计数 — journal BUY signal_date ≥
+    # 台账首信号日 = 两 store 时代重叠, 而 2026-08-14 后 journal 无生产写入者
+    # (R121a 取证: 重叠笔即测试产物)。不硬编码日期, 台账缺席时不判定。
+    journal_block = stores.get(STORE_LEGACY_JOURNAL)
+    if journal_block is not None:
+        ledger_records = [r for r in recon.records if r.store == STORE_LEDGER_V2]
+        if ledger_records:
+            ledger_start = min(r.signal_date for r in ledger_records)
+            journal_block["post_ledger_start_buys"] = len(
+                [
+                    r
+                    for r in recon.records
+                    if r.store == STORE_LEGACY_JOURNAL
+                    and r.signal_date >= ledger_start
+                ]
+            )
     return stores
 
 

@@ -477,3 +477,40 @@ class TestLedgerUnion:
         text = render_md(payload)
         assert "ledger_v2" in text and "legacy_journal" in text
         assert json.loads(json.dumps(payload))["stores"][STORE_LEDGER_V2]["buys"] == 1
+
+
+class TestR121cRework:
+    def test_ledger_null_cost_fails_closed(self, tmp_path):
+        """F1 (修复前 RED: realized 10.0% 虚高产出) — NULL 成本列 = 损坏, fail-closed."""
+        p = _make_ledger(tmp_path, [
+            ("2026-08-14", "600487", "closed", 100.0, 10, 0.0, 0.0, 0.0, 110.0, 0.0, None, 0.0),
+        ])
+        with pytest.raises(ValueError, match="NULL cost"):
+            load_ledger_buys(p)
+
+    def test_post_ledger_start_buys_derived_count(self):
+        """F2: journal BUY ≥ 台账首信号日 = 时代重叠, 纯派生不硬编码日期."""
+        inputs = _inputs(
+            [{"ts_code": "000001.SZ", "signal_date": 20260821}],
+            sessions=["20260821"], regime={"20260821": "normal"}, panel=["20260821"],
+        )
+        journal = [
+            _journal_buy("20260810", "000001"),  # 台账前纪元
+            _journal_buy("20260821", "000002"),  # ≥ 台账首日 → 结构异常笔
+        ]
+        ledger_buys = [{"date": "20260814", "ticker": "600487", "horizon": 10,
+                        "trigger_strength": None, "realized_pct": None,
+                        "store": STORE_LEDGER_V2}]
+        recon = reconcile(journal, inputs, extra_buys=ledger_buys)
+        stores = stores_block(recon)
+        assert stores[STORE_LEGACY_JOURNAL]["post_ledger_start_buys"] == 1
+
+    def test_post_ledger_count_absent_without_ledger(self):
+        """台账缺席 → 不判定 (键不存在, legacy-only 渲染不受影响)."""
+        inputs = _inputs(
+            [{"ts_code": "000001.SZ", "signal_date": 20260821}],
+            sessions=["20260821"], regime={"20260821": "normal"}, panel=["20260821"],
+        )
+        recon = reconcile([_journal_buy("20260821", "000001")], inputs)
+        stores = stores_block(recon)
+        assert "post_ledger_start_buys" not in stores[STORE_LEGACY_JOURNAL]

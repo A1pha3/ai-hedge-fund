@@ -1169,3 +1169,38 @@ def test_alignment_line_ledger_realized_non_finite_omits_subclause(tmp_path):
     assert line is not None
     assert "（legacy journal 18 · v2 台账 15）" in line
     assert "· 台账已平仓" not in line
+
+
+def test_alignment_line_post_ledger_anomaly_annotation(tmp_path):
+    """R121c F2: post_ledger_start_buys>0 → 结构异常子句显形 (测试污染笔不冒充历史生产)."""
+    from src.screening.offensive import daily_action as da
+
+    stores = _stores_block()
+    stores["legacy_journal"]["post_ledger_start_buys"] = 3
+    counts = {**_alignment_summary()["class_counts"],
+              "matched": 27, "day_missing_from_court": 3, "ticker_not_in_court_day": 3}
+    payload = _alignment_summary(total_buys=33, class_counts=counts, stores=stores)
+    line = da._render_universe_alignment_line(_write_alignment(tmp_path, payload))
+    assert line is not None
+    assert "（legacy journal 18 · v2 台账 15），其中台账启用后 journal 尾部 3 笔（结构异常）" in line
+
+
+def test_alignment_line_no_anomaly_clause_when_clean_or_absent(tmp_path):
+    """post 计数缺失或为 0 → 异常子句省略 (legacy-only 旧世界零噪声)."""
+    from src.screening.offensive import daily_action as da
+
+    stores = _stores_block()
+    stores["legacy_journal"]["post_ledger_start_buys"] = 0
+    counts = {**_alignment_summary()["class_counts"],
+              "matched": 27, "day_missing_from_court": 3, "ticker_not_in_court_day": 3}
+    payload = _alignment_summary(total_buys=33, class_counts=counts, stores=stores)
+    line = da._render_universe_alignment_line(_write_alignment(tmp_path, payload))
+    assert line is not None
+    assert "结构异常" not in line
+
+    legacy_only = _alignment_summary(stores={
+        "legacy_journal": {"buys": 18, "open_buys": 3, "realized_only": None},
+    })
+    line2 = da._render_universe_alignment_line(_write_alignment(tmp_path, legacy_only))
+    assert line2 is not None
+    assert "结构异常" not in line2

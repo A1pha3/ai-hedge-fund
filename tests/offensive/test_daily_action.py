@@ -1646,20 +1646,28 @@ def test_no_default_dir_paper_tracker_in_this_module():
     调用路径里, 测试运行会直写生产 journal/portfolio_state (R121a 沙箱 canary
     RED 实锤: 单次测试运行即追加 EXIT 并改写 portfolio_state)。任何新测试需要
     tracker 时必须显式注入 tmp_path journal 目录。
+
+    R121c F3: 同时匹配 Name 调用 ``PaperTracker()`` 与 Attribute 调用
+    ``pt.PaperTracker()`` — 后者此前的 Name-only 匹配零捕获 (PoC 实证盲区)。
     """
     import ast
     from pathlib import Path
 
     module = Path(__file__)
     tree = ast.parse(module.read_text(encoding="utf-8"))
+
+    def _is_paper_tracker_call(node: ast.AST) -> bool:
+        if not isinstance(node, ast.Call) or node.args or node.keywords:
+            return False
+        func = node.func
+        if isinstance(func, ast.Name):
+            return func.id == "PaperTracker"
+        if isinstance(func, ast.Attribute):
+            return func.attr == "PaperTracker"
+        return False
+
     offenders = [
-        node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "PaperTracker"
-        and not node.args
-        and not node.keywords
+        node.lineno for node in ast.walk(tree) if _is_paper_tracker_call(node)
     ]
     assert not offenders, (
         f"PaperTracker() 无参实例化会写生产 journal, 行号 {offenders}; "
