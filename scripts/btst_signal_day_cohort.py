@@ -1,0 +1,513 @@
+"""信号日 cohort 分解 — 组合胜率/赔率的日层证据 (纯诊断, 宪法 #2).
+
+第一性原理: per-trade 证据线 (winrate_payoff_decomposition / btst_realized_vs_court /
+btst_condition_replay) 已完备, 但同日入场共享同一 T+1..T+10 市场路径 — 组合实现
+的胜率/赔率由信号日 cohort 层决定, 该层此前无量化工具。Observe 期探针
+(production_aligned t10, 20260904 表): n=1627 中 35.7% 结果方差在信号日之间
+(between-day); cohort 中位 8 只/日 (max 60), 96.2% 事件在 ≥4 只 cohort 日;
+journal 0710 cohort 5 笔 4 负、0817 cohort 6 笔全损 — 日层共振在实现面直接可见。
+
+本工具把该层量化:
+
+  1. 方差分解: between-day + within-day = total (构造性恒等, residual 显形 ~0)
+  2. cohort 规模分桶 (1 / 2-3 / 4-9 / 10-19 / 20+): 日数/日E中位/事件面
+     win_loss_stats (聚类 CI90, MIN_CELL_N=30 披露纪律 — n<30 CI=None 只披露)
+  3. split-half 稳定性: signal_date 中点切分, 桶级符号跨半一致 + 桶序 Spearman
+     (R15 判据镜像: Spearman ≥0.5 且符号跨半一致才「具备资格」; 任一半
+     n<MIN_CELL_N 的桶不判定只披露)
+  4. worst-5 日解剖: 日期/规模/日E/strong 占比 — 日层灾难显形
+  5. strength 构成 × cohort: 日内 strong(≥0.70) 占比与日 E 的 Pearson 相关
+
+纪律 (先于数据写死):
+  - 纯诊断 (宪法 #2): 组合路径证据是唯一经济裁判, 本工具是诊断不是授权;
+    任何据此的生产参数变化 (日层风险预算/入场错峰等组合构造) = 新证据世代
+    owner 决策。
+  - 复用单一实现零口径 fork: production_aligned / net_returns / win_loss_stats /
+    MIN_CELL_N / BOOT_SEED (winrate_payoff_decomposition), strength_bucket
+    (src.screening.offensive.threshold_trigger), normalize_day
+    (btst_realized_vs_court)。
+  - 聚类 CI 经 win_loss_stats → cluster_boot_ci_low: per-call seeded RNG
+    (R13 纪律), 同输入逐字节同输出。
+  - fixture 断言必须非对称 (R13 教训: 对称 fixture 的数值断言无牙)。
+
+用法:
+    uv run python scripts/btst_signal_day_cohort.py
+    uv run python scripts/btst_signal_day_cohort.py --court-table PATH --report-dir PATH
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from datetime import date
+from pathlib import Path
+from typing import Any, Mapping, Sequence
+
+import pandas as pd
+
+from src.screening.offensive.threshold_trigger import strength_bucket
+
+COURT_TABLE = Path("data/research/btst_court/event_tables/event_table_v1.csv.gz")
+REPORTS_DIR = Path("data/reports")
+HORIZON = 10
+GROSS_COL = f"gross_ret_t{HORIZON}"
+
+# cohort 规模分桶 (左闭右闭日数边界; 显式边界不玩 cut 花活)
+COHORT_BUCKET_EDGES: tuple[tuple[int, int], ...] = (
+    (1, 1),
+    (2, 3),
+    (4, 9),
+    (10, 19),
+    (20, math.inf),
+)
+COHORT_BUCKET_LABELS: tuple[str, ...] = ("1", "2-3", "4-9", "10-19", "20+")
+STRONG_BUCKET = "≥0.70"
+SPEARMAN_MIN = 0.5  # R15 判据镜像
+WORST_DAYS_K = 5
+
+
+def _ensure_scripts_on_path() -> None:
+    """兄弟脚本单一实现的包模式导入面 (production_aligned 同款手法)。
+
+    测试经 ``scripts.btst_signal_day_cohort`` 导入时 scripts/ 不在 sys.path,
+    裸名 ``winrate_payoff_decomposition``/``btst_realized_vs_court`` 不可达 —
+    每个懒导入点先经此 helper (幂等)。
+    """
+    import sys
+
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+
+
+def cohort_size_bucket(n_days_members: int) -> str:
+    """cohort 规模 (当日事件数) → 分桶标签; 非正数 fail-closed。"""
+    if not isinstance(n_days_members, int) or isinstance(n_days_members, bool):
+        raise TypeError(f"cohort size must be int, got {type(n_days_members).__name__}")
+    if n_days_members <= 0:
+        raise ValueError(f"cohort size must be positive, got {n_days_members}")
+    for (lo, hi), label in zip(COHORT_BUCKET_EDGES, COHORT_BUCKET_LABELS):
+        if lo <= n_days_members <= hi:
+            return label
+    raise ValueError(f"cohort size {n_days_members} outside predefined edges")
+
+
+def variance_decomposition(net: Sequence[float], days: Sequence[str]) -> dict[str, Any]:
+    """日层方差分解: between + within = total (总体方差口径, ddof=0)。
+
+    between/within 各自独立计算, residual 显形 (浮点 ~1e-17, 恒等式由
+    构造保证); between_share = between/total。单一信号日 (total=0) →
+    shares None (不造 0/0 假读数)。
+    """
+    if len(net) != len(days):
+        raise ValueError(f"net/days length mismatch: {len(net)} vs {len(days)}")
+    if not net:
+        raise ValueError("empty net series")
+    values = [float(v) for v in net]
+    n = len(values)
+    grand = sum(values) / n
+    total = sum((v - grand) ** 2 for v in values) / n
+    by_day: dict[str, list[float]] = {}
+    for v, d in zip(values, days):
+        by_day.setdefault(d, []).append(v)
+    between = 0.0
+    within = 0.0
+    for members in by_day.values():
+        mean_d = sum(members) / len(members)
+        between += len(members) * (mean_d - grand) ** 2
+        within += sum((v - mean_d) ** 2 for v in members)
+    between /= n
+    within /= n
+    residual = total - between - within
+    return {
+        "n_events": n,
+        "n_days": len(by_day),
+        "grand_mean": grand,
+        "total": total,
+        "between": between,
+        "within": within,
+        "residual": residual,
+        "between_share": (between / total) if total > 0 else None,
+        "within_share": (within / total) if total > 0 else None,
+    }
+
+
+def _day_table(net: Sequence[float], days: Sequence[str], strong: Sequence[bool]):
+    by_day: dict[str, list[float]] = {}
+    strong_by_day: dict[str, list[bool]] = {}
+    for v, d, s in zip(net, days, strong):
+        by_day.setdefault(d, []).append(float(v))
+        strong_by_day.setdefault(d, []).append(bool(s))
+    day_e = {d: sum(v) / len(v) for d, v in by_day.items()}
+    day_n = {d: len(v) for d, v in by_day.items()}
+    strong_share = {
+        d: (sum(1 for s in strong_by_day[d] if s) / len(strong_by_day[d]))
+        for d in by_day
+    }
+    return by_day, day_e, day_n, strong_share
+
+
+def _bucket_stats(
+    label: str,
+    net: list[float],
+    days: list[str],
+) -> dict[str, Any]:
+    _ensure_scripts_on_path()
+    from winrate_payoff_decomposition import win_loss_stats
+
+    day_e: dict[str, float] = {}
+    for v, d in zip(net, days):
+        day_e.setdefault(d, []).append(v)
+    medians = sorted(sum(v) / len(v) for v in day_e.values())
+    # n<MIN_CELL_N → CI=None (披露纪律由 win_loss_stats 内建)
+    stats = win_loss_stats(net, days)
+    return {
+        "bucket": label,
+        "days": len(day_e),
+        "n": len(net),
+        "day_e_median": medians[len(medians) // 2] if medians else None,
+        "event_stats": stats,
+    }
+
+
+def cohort_bucket_table(
+    net: Sequence[float],
+    days: Sequence[str],
+    strong: Sequence[bool],
+) -> list[dict[str, Any]]:
+    """按当日 cohort 规模分桶的事件面统计 (复用 win_loss_stats 单一实现)。"""
+    if not (len(net) == len(days) == len(strong)):
+        raise ValueError("net/days/strong length mismatch")
+    size_of_day: dict[str, int] = {}
+    for d in days:
+        size_of_day[d] = size_of_day.get(d, 0) + 1
+    by_size: dict[str, dict[str, list[Any]]] = {}
+    for v, d in zip(net, days):
+        label = cohort_size_bucket(size_of_day[d])
+        acc = by_size.setdefault(label, {"net": [], "days": []})
+        acc["net"].append(float(v))
+        acc["days"].append(d)
+    return [
+        _bucket_stats(label, by_size[label]["net"], by_size[label]["days"])
+        for label in COHORT_BUCKET_LABELS
+        if label in by_size
+    ]
+
+
+def _mean(xs: Sequence[float]) -> float:
+    return sum(float(x) for x in xs) / len(xs)
+
+
+def _rank(xs: Sequence[float]) -> list[float]:
+    """平均秩 (ties 均分); Spearman 用。"""
+    order = sorted(range(len(xs)), key=lambda i: xs[i])
+    ranks = [0.0] * len(xs)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and xs[order[j + 1]] == xs[order[i]]:
+            j += 1
+        avg = (i + j) / 2 + 1
+        for k in range(i, j + 1):
+            ranks[order[k]] = avg
+        i = j + 1
+    return ranks
+
+
+def _spearman(a: Sequence[float], b: Sequence[float]) -> float:
+    if len(a) != len(b) or len(a) < 2:
+        raise ValueError("spearman needs equal-length series of length >= 2")
+    ra, rb = _rank(a), _rank(b)
+    ma, mb = _mean(ra), _mean(rb)
+    num = sum((x - ma) * (y - mb) for x, y in zip(ra, rb))
+    den = math.sqrt(sum((x - ma) ** 2 for x in ra) * sum((y - mb) ** 2 for y in rb))
+    return num / den if den > 0 else 0.0
+
+
+def split_half_stability(
+    net: Sequence[float],
+    days: Sequence[str],
+    buckets: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """桶级 split-half 符号稳定性 + 桶序 Spearman (R15 判据镜像)。
+
+    切分点 = 排序信号日的中点 (按日索引, 不按事件数 — 日是本层分析单元)。
+    任一半事件数 < MIN_CELL_N 的桶不判定 (judged=False, 只披露); 判定
+    verdict = 全部可判桶符号跨半一致 且 Spearman ≥ SPEARMAN_MIN。
+    """
+    _ensure_scripts_on_path()
+    from winrate_payoff_decomposition import MIN_CELL_N
+
+    uniq = sorted(set(days))
+    if len(uniq) < 2:
+        raise ValueError("split-half needs at least 2 distinct signal days")
+    mid = len(uniq) // 2
+    first_half = set(uniq[:mid])
+    sizes: dict[str, int] = {}
+    for d in days:
+        sizes[d] = sizes.get(d, 0) + 1
+    per_bucket: list[dict[str, Any]] = []
+    for row in buckets:
+        label = row["bucket"]
+        # 本桶成员: 该日 cohort 规模落在本桶 (与 cohort_bucket_table 同口径)
+        in_bucket = {
+            d for d, s in sizes.items() if cohort_size_bucket(s) == label
+        }
+        h1 = [v for v, d in zip(net, days) if d in in_bucket and d in first_half]
+        h2 = [v for v, d in zip(net, days) if d in in_bucket and d not in first_half]
+        if not h1 or not h2:
+            per_bucket.append({
+                "bucket": label, "e_first": None, "e_second": None,
+                "n_first": len(h1), "n_second": len(h2), "judged": False,
+                "sign_consistent": None,
+            })
+            continue
+        m1, m2 = _mean(h1), _mean(h2)
+        judged = len(h1) >= MIN_CELL_N and len(h2) >= MIN_CELL_N
+        per_bucket.append({
+            "bucket": label,
+            "e_first": m1,
+            "e_second": m2,
+            "n_first": len(h1),
+            "n_second": len(h2),
+            "judged": judged,
+            "sign_consistent": (m1 > 0) == (m2 > 0) if judged else None,
+        })
+    judged_rows = [r for r in per_bucket if r["judged"]]
+    spearman: float | None = None
+    if len(judged_rows) >= 2:
+        spearman = _spearman(
+            [r["e_first"] for r in judged_rows],
+            [r["e_second"] for r in judged_rows],
+        )
+    all_consistent = bool(judged_rows) and all(r["sign_consistent"] for r in judged_rows)
+    if not judged_rows:
+        verdict = "证据不足 — 无桶在两半各达 MIN_CELL_N, 不判定"
+    elif len(judged_rows) < 2:
+        verdict = "证据不足 — 可判桶不足 2 个, 桶序稳定性不可估 (R15 判据需排序面)"
+    elif all_consistent and spearman is not None and spearman >= SPEARMAN_MIN:
+        verdict = "具备资格 — 可判桶符号跨半一致且桶序 Spearman ≥ 0.5"
+    else:
+        flips = [r["bucket"] for r in judged_rows if not r["sign_consistent"]]
+        why = f"符号翻转桶: {flips}" if flips else f"桶序 Spearman {spearman:.2f} < 0.5"
+        verdict = f"不具备资格 — {why}"
+    return {
+        "mid_date": uniq[mid - 1],
+        "first_date": uniq[0],
+        "last_date": uniq[-1],
+        "per_bucket": per_bucket,
+        "spearman": spearman,
+        "verdict": verdict,
+    }
+
+
+def worst_days(
+    net: Sequence[float],
+    days: Sequence[str],
+    strong: Sequence[bool],
+    k: int = WORST_DAYS_K,
+) -> list[dict[str, Any]]:
+    """日 E 最差 k 日解剖: 日期/规模/日E/strong 占比。"""
+    _, day_e, day_n, strong_share = _day_table(net, days, strong)
+    ranked = sorted(day_e.items(), key=lambda kv: (kv[1], kv[0]))[:k]
+    return [
+        {
+            "signal_date": d,
+            "n": day_n[d],
+            "day_e": e,
+            "strong_share": strong_share[d],
+        }
+        for d, e in ranked
+    ]
+
+
+def strong_share_correlation(
+    net: Sequence[float],
+    days: Sequence[str],
+    strong: Sequence[bool],
+) -> dict[str, Any]:
+    """日内 strong 占比与日 E 的 Pearson 相关 (n_days<2 或零方差 → None)。"""
+    by_day, day_e, _, strong_share = _day_table(net, days, strong)
+    xs = [strong_share[d] for d in sorted(day_e)]
+    ys = [day_e[d] for d in sorted(day_e)]
+    if len(xs) < 2:
+        return {"pearson": None, "n_days": len(xs)}
+    mx, my = _mean(xs), _mean(ys)
+    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    den = math.sqrt(sum((x - mx) ** 2 for x in xs) * sum((y - my) ** 2 for y in ys))
+    return {"pearson": (num / den if den > 0 else None), "n_days": len(xs)}
+
+
+def decompose_cohort(ev: "pd.DataFrame") -> dict[str, Any]:
+    """court 事件表 → production_aligned t10 的日层分解 payload (纯函数)。"""
+    _ensure_scripts_on_path()
+    from btst_realized_vs_court import normalize_day
+    from winrate_payoff_decomposition import net_returns, production_aligned
+
+    universe = production_aligned(ev)
+    if GROSS_COL not in universe.columns:
+        raise SystemExit(f"court 事件表缺列 {GROSS_COL}")
+    # (net, day, strong) 三元组逐位对齐 — net_returns 对 NaN gross 产 None,
+    # 跳过即对齐, 绝不按位置猜 (strength_bucket unknown 不伪装 strong)。
+    pairs = [
+        (v, d, strength_bucket(None if pd.isna(s) else float(s)) == STRONG_BUCKET)
+        for v, d, s in zip(
+            net_returns(universe[GROSS_COL].tolist()),
+            universe["signal_date"].map(normalize_day).tolist(),
+            universe["trigger_strength"].tolist(),
+        )
+        if v is not None
+    ]
+    if not pairs:
+        raise SystemExit("production_aligned t10 净收益为空 — 无可分解事件")
+    net = [p[0] for p in pairs]
+    days = [p[1] for p in pairs]
+    strong = [p[2] for p in pairs]
+    if len(set(days)) < 2:
+        raise SystemExit("单一信号日 — 日层分解无定义, fail-closed")
+    payload: dict[str, Any] = {
+        "universe": "production_aligned",
+        "horizon": HORIZON,
+        "n_events": len(net),
+        "n_days": len(set(days)),
+        "variance": variance_decomposition(net, days),
+        "cohort_buckets": cohort_bucket_table(net, days, strong),
+        "worst_days": worst_days(net, days, strong),
+        "strong_share_corr": strong_share_correlation(net, days, strong),
+    }
+    payload["split_half"] = split_half_stability(net, days, payload["cohort_buckets"])
+    return payload
+
+
+def render_md(payload: Mapping[str, Any], date_str: str) -> str:
+    """payload → 操作员可读 MD (n<MIN_CELL_N 桶显式披露尾注)。"""
+    _ensure_scripts_on_path()
+    from winrate_payoff_decomposition import MIN_CELL_N
+
+    L: list[str] = []
+    L.append(f"# 信号日 cohort 分解 ({date_str})")
+    L.append("")
+    L.append(
+        "纯诊断 (宪法 #2)。同日入场共享同一 T+1..T+10 市场路径 — 日层共振是 "
+        "per-trade E 与组合路径之间的主导楔子; 任何据此的组合构造变化 = "
+        "新证据世代 owner 决策。"
+    )
+    L.append("")
+    L.append(
+        f"宇宙: {payload['universe']} t{payload['horizon']} · "
+        f"事件 n={payload['n_events']} · 信号日 n={payload['n_days']}"
+    )
+    L.append("")
+    var = payload["variance"]
+    share = var["between_share"]
+    share_txt = f"{share:.1%}" if share is not None else "N/A (单一信号日)"
+    L.append(
+        f"方差分解: between-day {var['between']:.5f} ({share_txt}) + within-day "
+        f"{var['within']:.5f} = total {var['total']:.5f} "
+        f"(residual {var['residual']:.2e}, 恒等式无残差)"
+    )
+    L.append("")
+    L.append("## cohort 规模分桶")
+    L.append("")
+    L.append("| 当日规模 | 日数 | 事件 n | 日E中位 | 事件E | 胜率 | payoff | CI90下界 |")
+    L.append("|---|---|---|---|---|---|---|---|")
+    for row in payload["cohort_buckets"]:
+        st = row["event_stats"]
+        ci = st["cluster_ci_low_90"]
+        ci_txt = f"{ci:+.2%}" if ci is not None else "—"
+        payoff = st["payoff"]
+        payoff_txt = f"{payoff:.2f}" if payoff is not None else "—"
+        L.append(
+            f"| {row['bucket']} | {row['days']} | {st['n']} | "
+            f"{row['day_e_median']:+.2%} | {st['expectancy']:+.2%} | "
+            f"{st['winrate']:.1%} | "
+            f"{payoff_txt} | {ci_txt} |"
+        )
+    small = [
+        r["bucket"] for r in payload["cohort_buckets"]
+        if r["event_stats"]["n"] < MIN_CELL_N
+    ]
+    if small:
+        L.append("")
+        L.append(
+            f"注: 桶 {','.join(small)} 事件 n < {MIN_CELL_N} — CI 不产出, "
+            "只披露不判定。"
+        )
+    L.append("")
+    sh = payload["split_half"]
+    L.append("## split-half 稳定性 (signal_date 中点切分)")
+    L.append("")
+    L.append(
+        f"切分点 {sh['mid_date']} ({sh['first_date']}..{sh['last_date']}) · "
+        f"Spearman {sh['spearman'] if sh['spearman'] is not None else '—'} · "
+        f"verdict: {sh['verdict']}"
+    )
+    L.append("")
+    L.append("| 桶 | 前半 E (n) | 后半 E (n) | 判定 | 符号一致 |")
+    L.append("|---|---|---|---|---|")
+    for row in sh["per_bucket"]:
+        e1 = f"{row['e_first']:+.2%} ({row['n_first']})" if row["e_first"] is not None else f"— ({row['n_first']})"
+        e2 = f"{row['e_second']:+.2%} ({row['n_second']})" if row["e_second"] is not None else f"— ({row['n_second']})"
+        L.append(
+            f"| {row['bucket']} | {e1} | {e2} | "
+            f"{'判定' if row['judged'] else '只披露'} | "
+            f"{row['sign_consistent'] if row['sign_consistent'] is not None else '—'} |"
+        )
+    L.append("")
+    L.append("## worst-5 信号日 (日层灾难显形)")
+    L.append("")
+    L.append("| 信号日 | cohort 规模 | 日E | strong 占比 |")
+    L.append("|---|---|---|---|")
+    for row in payload["worst_days"]:
+        L.append(
+            f"| {row['signal_date']} | {row['n']} | {row['day_e']:+.2%} | "
+            f"{row['strong_share']:.0%} |"
+        )
+    L.append("")
+    corr = payload["strong_share_corr"]
+    corr_txt = f"{corr['pearson']:+.3f}" if corr["pearson"] is not None else "—"
+    L.append(
+        f"strong(≥0.70) 占比 × 日E Pearson 相关: {corr_txt} "
+        f"(n_days={corr['n_days']}) — 相关弱 ≠ strong 无保护, 日层共同因子主导。"
+    )
+    L.append("")
+    return "\n".join(L)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--court-table", type=Path, default=COURT_TABLE)
+    parser.add_argument("--report-dir", type=Path, default=REPORTS_DIR)
+    args = parser.parse_args(argv)
+    if not args.court_table.exists():
+        raise SystemExit(f"court 事件表缺失: {args.court_table}")
+    ev = pd.read_csv(args.court_table)
+    payload = decompose_cohort(ev)
+    date_str = date.today().strftime("%Y%m%d")
+    args.report_dir.mkdir(parents=True, exist_ok=True)
+    out_json = args.report_dir / f"signal_day_cohort_{date_str}.json"
+    out_md = args.report_dir / f"signal_day_cohort_{date_str}.md"
+    out_json.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=True),
+        encoding="utf-8",
+    )
+    out_md.write_text(render_md(payload, date_str), encoding="utf-8")
+    var = payload["variance"]
+    print(
+        json.dumps(
+            {
+                "n_events": payload["n_events"],
+                "n_days": payload["n_days"],
+                "between_share": var["between_share"],
+                "split_half_verdict": payload["split_half"]["verdict"],
+            },
+            ensure_ascii=False,
+        )
+    )
+    print(f"written: {out_json} / {out_md}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
