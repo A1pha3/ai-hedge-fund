@@ -48,6 +48,11 @@ from typing import Any, Mapping, Sequence
 
 import pandas as pd
 
+from src.screening.offensive.cohort_trigger import (
+    COHORT_TRIGGER_LEDGER_PATH,
+    cohort_trigger_stability,
+    load_cohort_trigger_ledger,
+)
 from src.screening.offensive.gap_disclosure import (
     COHORT_BUCKET_EDGES,
     COHORT_BUCKET_LABELS,
@@ -66,6 +71,9 @@ GROSS_COL = f"gross_ret_t{HORIZON}"
 STRONG_BUCKET = "≥0.70"
 SPEARMAN_MIN = 0.5  # R15 判据镜像
 WORST_DAYS_K = 5
+# 日层 cohort 触发器锚 (R126 Op1): 与强度族 (production_aligned/t10) 同宇宙,
+# 分组维度换成信号日 cohort 规模桶; 账本路径单一事实源在 src 读取面模块。
+COHORT_TRIGGER_ANCHOR = "production_aligned/t10/cohort_size"
 
 
 def _ensure_scripts_on_path() -> None:
@@ -333,6 +341,234 @@ def strong_share_correlation(
     return {"pearson": (num / den if den > 0 else None), "n_days": len(xs)}
 
 
+def cohort_trigger_status(
+    bucket_rows: Sequence[Mapping[str, Any]],
+    *,
+    min_n: int,
+) -> dict[str, Any]:
+    """预注册日层 cohort 规模条件化触发器的机械判定面 (R126 Op1; 强度族
+    threshold_trigger_status 同构, 只判定不提案)。
+
+    锚定 production_aligned / T+10 净口径 cohort 规模桶行 (本工具
+    ``cohort_bucket_table`` 输出, anchor=production_aligned/t10/cohort_size):
+
+      条件C1  cohort=20+           n≥min_n 且净口径聚类 CI90 下界 > 0
+      条件C2  cohort=4-9 与 10-19  两桶各自 n≥min_n 且净期望均 < 0
+                                   (stat = max(两桶期望) — lit ⟺ max<0;
+                                    n = min(两桶 n))
+
+    证据基础 = 20260905 split-half 判定『具备资格』(20+ 桶两半期皆正
+    +2.20%/+1.02%、4-9/10-19 桶两半期皆负、桶序 Spearman 1.0 — R15 合取
+    判据通过)。2-3 与单票桶 split-half 未判定 → 不入选 (预注册只锚定已
+    具备资格的分组, 不借未判定桶扩面)。C2 的保护语义镜像强度族条件②:
+    合取要求中间桶真正转负, 防止中间桶实为正时误获评估资格 (砍掉正期望
+    分组会伤害期望本身)。
+
+    合取 (C1且C2) 点亮 = 具备启动『日层 cohort 规模条件化』(如中间桶
+    信号日降权/抑制的正式评估) 的资格 — owner 决策 + 预注册; 本工具只
+    判定不提案。桶行缺失 / n<min_n / 统计缺失 = 未判定 = 恒不点亮
+    (保守: 未知不驱动参数变更)。『稳定越零』是跨刷新性质 — 单次刷新只
+    报告本次状态, 稳定性由连续多次刷新的逐次账本记录累积。
+    """
+    by_bucket = {str(r.get("bucket")): r for r in bucket_rows}
+
+    def _row(label: str) -> tuple[object, Mapping[str, Any] | None, str | None]:
+        row = by_bucket.get(label)
+        if row is None:
+            return None, None, f"桶行缺失 ({label}) — 未判定, 恒不点亮"
+        stats = row.get("event_stats")
+        if not isinstance(stats, Mapping):
+            return row.get("n"), None, f"event_stats 缺失 ({label}) — 未判定, 恒不点亮"
+        return row.get("n"), stats, None
+
+    def _unjudged(n: object, reason: str) -> dict[str, Any]:
+        return {"lit": False, "judged": False, "n": n, "stat": None, "reason": reason}
+
+    def _short_n(n: object, label: str) -> str | None:
+        if not isinstance(n, int) or isinstance(n, bool) or n < min_n:
+            return f"n={n} < {min_n} — 只披露不判定 ({label})"
+        return None
+
+    # C1: 20+ 桶净口径 CI90 下界 > 0
+    n1, st1, why = _row("20+")
+    if why is not None:
+        c1 = _unjudged(n1, why)
+    elif (short := _short_n(n1, "20+")) is not None:
+        c1 = {
+            "lit": False, "judged": False, "n": n1,
+            "stat": st1.get("cluster_ci_low_90"), "reason": short,
+        }
+    else:
+        ci = st1.get("cluster_ci_low_90")
+        if not isinstance(ci, (int, float)) or isinstance(ci, bool):
+            c1 = _unjudged(
+                n1,
+                "cluster_ci_low_90 缺失 (样本不足) — 未判定, 恒不点亮",
+            )
+            c1["n"] = n1
+            c1["stat"] = ci
+        else:
+            lit = float(ci) > 0
+            c1 = {
+                "lit": lit, "judged": True, "n": n1, "stat": ci,
+                "reason": f"cluster_ci_low_90={float(ci):+.4f} — {'点亮' if lit else '未点亮'}",
+            }
+
+    # C2: 4-9 与 10-19 两桶净期望均 < 0 (stat = max, lit ⟺ max < 0)
+    n_a, st_a, why_a = _row("4-9")
+    n_b, st_b, why_b = _row("10-19")
+    e_a = st_a.get("expectancy") if isinstance(st_a, Mapping) else None
+    e_b = st_b.get("expectancy") if isinstance(st_b, Mapping) else None
+    missing = [w for w in (why_a, why_b) if w]
+    shorts = [s for s in (_short_n(n_a, "4-9"), _short_n(n_b, "10-19")) if s]
+    bad_stat = [
+        label
+        for label, e in (("4-9", e_a), ("10-19", e_b))
+        if not isinstance(e, (int, float)) or isinstance(e, bool)
+    ]
+    if missing or shorts or bad_stat:
+        if missing:
+            reason = missing[0]
+        elif shorts:
+            reason = shorts[0]
+        else:
+            reason = (
+                f"expectancy 缺失 ({','.join(bad_stat)}) — 未判定, 恒不点亮"
+            )
+        c2 = _unjudged(None, reason)
+    else:
+        stat = max(float(e_a), float(e_b))  # type: ignore[arg-type]
+        lit = stat < 0
+        c2 = {
+            "lit": lit, "judged": True,
+            "n": min(int(n_a), int(n_b)),  # type: ignore[arg-type]
+            "stat": stat,
+            "reason": (
+                f"4-9 E={float(e_a):+.4f} / 10-19 E={float(e_b):+.4f} "
+                f"(max={stat:+.4f}) — {'点亮' if lit else '未点亮'}"
+            ),
+        }
+
+    armed = bool(c1["lit"]) and bool(c2["lit"])
+    if armed:
+        verdict = (
+            "合取点亮 — 满足启动『日层 cohort 规模条件化』正式评估的资格 "
+            "(owner 决策 + 预注册; 本工具不提案)"
+        )
+    elif c1["lit"]:
+        verdict = "条件C1点亮, 条件C2未点亮 — 合取不成立 (强 cohort 桶站稳但中间桶未全转负)"
+    elif c2["lit"]:
+        verdict = "条件C2点亮, 条件C1未点亮 — 合取不成立 (中间桶转负但强 cohort 桶未站稳)"
+    else:
+        verdict = "两条件均未点亮 — 日层 cohort 规模条件化维持不评估"
+    return {
+        "rule": (
+            "预注册日层 cohort 触发器 (R126 Op1, 2026-09-05; 证据基础 = "
+            "20260905 split_half『具备资格』: 20+ 桶两半期皆正, 4-9/10-19 "
+            "两半期皆负, 桶序 Spearman 1.0): C1=20+ 桶净口径 CI90 下界>0 且 "
+            "C2=4-9 与 10-19 桶净期望均<0 (各自需 n≥min_n) — 合取点亮才启动"
+            "日层 cohort 规模条件化正式评估; 稳定性由连续多次刷新的逐次记录"
+            "累积, 单次刷新只报告本次状态"
+        ),
+        "anchor": COHORT_TRIGGER_ANCHOR,
+        "min_n": min_n,
+        "condition_strong_bucket_ci_above_zero": c1,
+        "condition_mid_buckets_expectancy_negative": c2,
+        "conjunction_armed": armed,
+        "verdict": verdict,
+    }
+
+
+def record_cohort_trigger_status(
+    payload: Mapping[str, Any],
+    date_str: str,
+    ledger_path: Path | str = COHORT_TRIGGER_LEDGER_PATH,
+    court_binding: dict[str, Any] | None = None,
+    require_advance: bool = False,
+) -> dict[str, Any]:
+    """把本次刷新的日层触发器判定快照按日期落账本 (R126 Op1; 强度族
+    record_trigger_status 同构)。
+
+    同日刷新替换同日记录: court 表不变则判定数值恒等, 替换即幂等收敛;
+    court 表变了则同日晚刷新就是最新事实 (append-only 跨日, 原地更新同日)。
+    payload 无 cohort_trigger (如调用方未接判定) → 不写。
+    诊断面 fail-open: 写失败打印警告, 不阻断报告生成。
+
+    court_binding = winrate_payoff_decomposition.court_binding() 的数据状态
+    身份 (单一实现复用), 随快照落盘。require_advance=True (数据增长耦合
+    路径) 时, 绑定与账本**任一**历史记录相同 → skip (R84 Op2-B 同款:
+    判定是 (数据状态, 规则) 的确定性纯函数, 同一份数据反复判定不产生新
+    证据 — 单点 (最新) 比对会被数据状态回退 (备份恢复旧 court, A→B→A)
+    绕过)。旧形态记录无 court 字段 → 门放行。已知边界 (成文): 触发规则/
+    锚/min_n 语义变化 = 新证据世代, 须启用新账本文件 (记录内 anchor/min_n
+    仅供审计比对)。
+    """
+    trigger = payload.get("cohort_trigger")
+    if not isinstance(trigger, dict):
+        return {"recorded": False, "reason": "no_cohort_trigger"}
+    snapshot = {
+        "date": str(date_str),
+        "anchor": trigger.get("anchor"),
+        "min_n": trigger.get("min_n"),
+        "strong_bucket": {
+            k: trigger.get("condition_strong_bucket_ci_above_zero", {}).get(k)
+            for k in ("lit", "judged", "n", "stat")
+        },
+        "mid_buckets": {
+            k: trigger.get("condition_mid_buckets_expectancy_negative", {}).get(k)
+            for k in ("lit", "judged", "n", "stat")
+        },
+        "conjunction_armed": bool(trigger.get("conjunction_armed")),
+    }
+    if court_binding is not None:
+        # 无绑定不写字段: 不假装知道数据身份 (强度族同语义)
+        snapshot["court"] = dict(court_binding)
+    records = load_cohort_trigger_ledger(ledger_path)
+    if require_advance and court_binding is not None:
+        for previous in records:
+            if (
+                isinstance(previous.get("court"), dict)
+                and previous["court"] == court_binding
+            ):
+                return {
+                    "recorded": False,
+                    "reason": "court_not_advanced",
+                    "records": len(records),
+                }
+    records = [r for r in records if r.get("date") != snapshot["date"]]
+    records.append(snapshot)
+    body = "\n".join(
+        json.dumps(r, ensure_ascii=False, sort_keys=True) for r in records
+    )
+    if body:
+        body += "\n"
+    import os
+    import tempfile
+
+    path = Path(ledger_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd, tmp = tempfile.mkstemp(
+            dir=str(path.parent), prefix=".cohort_trigger_ledger_", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(body)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except OSError as exc:
+        print(f"WARNING: 日层触发器账本写入失败 (诊断面 fail-open): {exc}")
+        return {"recorded": False, "reason": "write_failed"}
+    return {"recorded": True, "records": len(records)}
+
+
 def _normalize_day_strict(value: object) -> str:
     """normalize_day 的整型化外壳: 整值 float (NaN 污染导致的 dtype 上转型)
     安全归一, 非 NaN 值语义不变 — 合法 float64 日期列不再被 '20260701.0' 拒绝。"""
@@ -503,6 +739,37 @@ def render_md(payload: Mapping[str, Any], date_str: str) -> str:
         f"(n_days={corr['n_days']}) — 相关弱 ≠ strong 无保护, 日层共同因子主导。"
     )
     L.append("")
+    trigger = payload.get("cohort_trigger")
+    if isinstance(trigger, dict):
+        c1 = trigger.get("condition_strong_bucket_ci_above_zero") or {}
+        c2 = trigger.get("condition_mid_buckets_expectancy_negative") or {}
+        L.append("## 日层 cohort 触发器状态 (预注册, 只判定不提案)")
+        L.append("")
+        c1_stat = c1.get("stat")
+        if isinstance(c1_stat, (int, float)) and not isinstance(c1_stat, bool):
+            c1_txt = f"{float(c1_stat):+.2%} (n={c1.get('n')})"
+        else:
+            c1_txt = "—"
+        L.append(f"- 条件C1 20+ 桶净口径 CI90 下界>0: "
+                 f"{'**点亮**' if c1.get('lit') else '**未点亮**'} ({c1_txt})")
+        L.append(f"- 条件C2 中间桶 (4-9 与 10-19) 净期望均<0: "
+                 f"{'**点亮**' if c2.get('lit') else '**未点亮**'} ({c2.get('reason', '—')})")
+        L.append(
+            f"- **合取: {'点亮' if trigger.get('conjunction_armed') else '未点亮'}** "
+            f"— {trigger.get('verdict', '')}"
+        )
+        stab = payload.get("cohort_trigger_stability")
+        if isinstance(stab, dict) and stab.get("records"):
+            L.append(
+                f"- 稳定计数 (跨刷新逐次记录, 机械化累积): 条件C1 连亮 "
+                f"{stab.get('strong_bucket_streak', 0)}/{stab['records']} · "
+                f"条件C2 连亮 {stab.get('mid_buckets_streak', 0)}/{stab['records']} · "
+                f"合取连亮 {stab.get('conjunction_streak', 0)}/{stab['records']} "
+                f"(历史最多合取连亮 {stab.get('max_conjunction_streak', 0)}; "
+                f"记录 {stab.get('first_date')}→{stab.get('last_date')})"
+            )
+        L.append("- 稳定阈值 K 未预注册（连亮达标数属 owner 预注册动作）")
+        L.append("")
     return "\n".join(L)
 
 
@@ -510,12 +777,41 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--court-table", type=Path, default=COURT_TABLE)
     parser.add_argument("--report-dir", type=Path, default=REPORTS_DIR)
+    parser.add_argument(
+        "--cohort-trigger-ledger",
+        type=Path,
+        default=COHORT_TRIGGER_LEDGER_PATH,
+        help="日层 cohort 触发器稳定账本路径 (诊断面, 同日替换幂等)",
+    )
     args = parser.parse_args(argv)
     if not args.court_table.exists():
         raise SystemExit(f"court 事件表缺失: {args.court_table}")
     ev = pd.read_csv(args.court_table)
     payload = decompose_cohort(ev)
     date_str = date.today().strftime("%Y%m%d")
+    # 日层触发器判定 + 数据前进门落账 (R126 Op1; 镜像强度族 R84 路径):
+    # court_binding 单一实现复用, require_advance=True 下同数据重刷不追加
+    # (判定是 (数据状态, 规则) 的确定性纯函数)。诊断面 fail-open — 落账
+    # 失败只降级写面, 报告与稳定计数仍读账本现状真话。
+    _ensure_scripts_on_path()
+    from winrate_payoff_decomposition import MIN_CELL_N, court_binding
+
+    payload["cohort_trigger"] = cohort_trigger_status(
+        payload["cohort_buckets"], min_n=MIN_CELL_N
+    )
+    binding = court_binding(args.court_table, rows=len(ev))
+    trigger_record = record_cohort_trigger_status(
+        payload,
+        date_str,
+        ledger_path=args.cohort_trigger_ledger,
+        court_binding=binding,
+        require_advance=True,
+    )
+    payload["cohort_trigger_record"] = trigger_record
+    if isinstance(payload["cohort_trigger"], dict):
+        payload["cohort_trigger_stability"] = cohort_trigger_stability(
+            load_cohort_trigger_ledger(args.cohort_trigger_ledger)
+        )
     args.report_dir.mkdir(parents=True, exist_ok=True)
     out_json = args.report_dir / f"signal_day_cohort_{date_str}.json"
     out_md = args.report_dir / f"signal_day_cohort_{date_str}.md"
@@ -525,6 +821,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     out_md.write_text(render_md(payload, date_str), encoding="utf-8")
     var = payload["variance"]
+    trig = payload["cohort_trigger"]
     print(
         json.dumps(
             {
@@ -532,6 +829,10 @@ def main(argv: list[str] | None = None) -> int:
                 "n_days": payload["n_days"],
                 "between_share": var["between_share"],
                 "split_half_verdict": payload["split_half"]["verdict"],
+                "cohort_trigger_conjunction_armed": bool(
+                    trig.get("conjunction_armed")
+                ),
+                "cohort_trigger_record": trigger_record,
             },
             ensure_ascii=False,
         )

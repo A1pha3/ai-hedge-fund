@@ -274,21 +274,60 @@ class TestTriggerDecompositionRefresh:
         out = capsys.readouterr().out
         assert "fail-open" in out and "no interpreter" in out
 
-    def test_finalize_build_default_refreshes(self, monkeypatch):
+    # ---------- R126 Op1: 日层 cohort 触发器夜刷耦合 (镜像强度族三测) ----------
+
+    def test_cohort_refresh_invokes_tool_with_built_table(self, monkeypatch, capsys):
         import btst_court_build as bcb
-        seen = []
-        monkeypatch.setattr(bcb, "refresh_trigger_decomposition", lambda out: seen.append(out))
+        calls = self._fake_run(monkeypatch, stdout='{"cohort_trigger_record": {"recorded": true}}\nwritten: x\n')
+        bcb.refresh_cohort_trigger(Path("/tmp/fake/event_table_v1.csv.gz"))
+        assert len(calls) == 1
+        argv = calls[0]
+        assert argv[1].endswith("btst_signal_day_cohort.py")
+        assert "--court-table" in argv and "/tmp/fake/event_table_v1.csv.gz" in argv
+        assert "日层 cohort 触发器已刷新" in capsys.readouterr().out
+
+    def test_cohort_refresh_failure_is_fail_open_warning(self, monkeypatch, capsys):
+        import btst_court_build as bcb
+        self._fake_run(monkeypatch, rc=1, stderr="boom")
+        bcb.refresh_cohort_trigger(Path("/tmp/fake/event_table_v1.csv.gz"))
+        out = capsys.readouterr().out
+        assert "日层 cohort 触发器刷新失败" in out and "rc=1" in out and "boom" in out
+
+    def test_cohort_refresh_spawn_error_is_fail_open_warning(self, monkeypatch, capsys):
+        import btst_court_build as bcb
+        self._fake_run(monkeypatch, exc=OSError("no interpreter"))
+        bcb.refresh_cohort_trigger(Path("/tmp/fake/event_table_v1.csv.gz"))
+        out = capsys.readouterr().out
+        assert "fail-open" in out and "no interpreter" in out
+
+    def test_finalize_build_default_refreshes_both_families(self, monkeypatch):
+        """R126 Op1: build 收尾机械刷新强度族 + 日层 cohort 族两触发器。"""
+        import btst_court_build as bcb
+        seen_strength, seen_cohort = [], []
+        monkeypatch.setattr(bcb, "refresh_trigger_decomposition", lambda out: seen_strength.append(out))
+        monkeypatch.setattr(bcb, "refresh_cohort_trigger", lambda out: seen_cohort.append(out))
         # R88 守卫: 自动刷新只对生产 table-dir — 用生产 TABLE_DIR 路径测默认分支
         production = bcb.TABLE_DIR / "event_table_v1.csv.gz"
         bcb._finalize_build(self._args(skip=False), production)
-        assert seen == [production]
+        assert seen_strength == [production]
+        assert seen_cohort == [production]
 
     def test_finalize_build_flag_skips(self, monkeypatch):
         import btst_court_build as bcb
-        seen = []
-        monkeypatch.setattr(bcb, "refresh_trigger_decomposition", lambda out: seen.append(out))
+        seen_strength, seen_cohort = [], []
+        monkeypatch.setattr(bcb, "refresh_trigger_decomposition", lambda out: seen_strength.append(out))
+        monkeypatch.setattr(bcb, "refresh_cohort_trigger", lambda out: seen_cohort.append(out))
         bcb._finalize_build(self._args(skip=True), Path("/tmp/table.csv.gz"))
-        assert seen == []
+        assert seen_strength == [] and seen_cohort == []
+
+    def test_finalize_build_non_production_dir_skips_both(self, monkeypatch, capsys):
+        import btst_court_build as bcb
+        seen_strength, seen_cohort = [], []
+        monkeypatch.setattr(bcb, "refresh_trigger_decomposition", lambda out: seen_strength.append(out))
+        monkeypatch.setattr(bcb, "refresh_cohort_trigger", lambda out: seen_cohort.append(out))
+        bcb._finalize_build(self._args(skip=False), Path("/tmp/research/table.csv.gz"))
+        assert seen_strength == [] and seen_cohort == []
+        assert "非生产表目录" in capsys.readouterr().out
 
     def test_flag_parse_default_and_skip(self):
         import btst_court_build as bcb

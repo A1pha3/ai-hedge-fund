@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -479,3 +480,314 @@ def test_cohort_size_bucket_single_implementation_identity():
 
     assert mod.cohort_size_bucket is src_cohort_size_bucket
     assert mod.COHORT_BUCKET_LABELS == ("1", "2-3", "4-9", "10-19", "20+")
+
+
+# ---------------------------------------------------------------------------
+# 日层 cohort 触发器 (R126 Op1): 机械判定 + 数据前进门落账 + MD 披露
+# ---------------------------------------------------------------------------
+
+from scripts.btst_signal_day_cohort import (  # noqa: E402
+    COHORT_TRIGGER_ANCHOR,
+    cohort_trigger_status,
+    record_cohort_trigger_status,
+)
+
+
+def _bucket_row(label: str, n: int, expectancy: float, ci: float | None) -> dict:
+    """_bucket_stats 输出形状的桶行夹具 (event_stats 经 win_loss_stats 同形)。"""
+    return {
+        "bucket": label,
+        "days": max(1, n // 8),
+        "n": n,
+        "day_e_median": expectancy / 2,
+        "event_stats": {
+            "n": n,
+            "winrate": 0.45,
+            "expectancy": expectancy,
+            "payoff": 1.2,
+            "cluster_ci_low_90": ci,
+        },
+    }
+
+
+def _rows(
+    *,
+    n_strong=340, e_strong=0.0169, ci_strong=0.0007,
+    n_49=293, e_49=-0.0249,
+    n_1019=408, e_1019=-0.0111,
+    with_strong=True, with_49=True, with_1019=True,
+) -> list[dict]:
+    """production_aligned 20260905 实测结构的桶行组 (C1 点亮 / C2 点亮)。"""
+    rows: list[dict] = []
+    if with_strong:
+        rows.append(_bucket_row("20+", n_strong, e_strong, ci_strong))
+    if with_49:
+        rows.append(_bucket_row("4-9", n_49, e_49, None))
+    if with_1019:
+        rows.append(_bucket_row("10-19", n_1019, e_1019, None))
+    return rows
+
+
+class TestCohortTriggerStatus:
+    def test_both_conditions_lit_arms_conjunction(self):
+        t = cohort_trigger_status(_rows(), min_n=MIN_CELL_N)
+        assert t["anchor"] == COHORT_TRIGGER_ANCHOR
+        assert t["condition_strong_bucket_ci_above_zero"]["lit"] is True
+        assert t["condition_strong_bucket_ci_above_zero"]["judged"] is True
+        assert t["condition_mid_buckets_expectancy_negative"]["lit"] is True
+        # stat = max(两桶期望): -0.0111 > -0.0249
+        assert t["condition_mid_buckets_expectancy_negative"]["stat"] == pytest.approx(-0.0111)
+        assert t["condition_mid_buckets_expectancy_negative"]["n"] == 293
+        assert t["conjunction_armed"] is True
+        assert "合取点亮" in t["verdict"]
+
+    def test_c2_unlit_when_one_mid_bucket_positive(self):
+        t = cohort_trigger_status(_rows(e_1019=0.005), min_n=MIN_CELL_N)
+        c2 = t["condition_mid_buckets_expectancy_negative"]
+        assert c2["lit"] is False and c2["judged"] is True
+        assert c2["stat"] == pytest.approx(0.005)  # max 语义
+        assert t["conjunction_armed"] is False
+        assert "条件C1点亮" in t["verdict"] and "未点亮" in t["verdict"]
+
+    def test_missing_mid_bucket_row_unjudged(self):
+        t = cohort_trigger_status(_rows(with_1019=False), min_n=MIN_CELL_N)
+        c2 = t["condition_mid_buckets_expectancy_negative"]
+        assert c2["judged"] is False and c2["lit"] is False
+        assert "桶行缺失" in c2["reason"]
+        assert t["conjunction_armed"] is False
+
+    def test_small_n_disclosed_not_judged(self):
+        t = cohort_trigger_status(
+            _rows(n_strong=20, with_49=False, with_1019=False), min_n=MIN_CELL_N
+        )
+        c1 = t["condition_strong_bucket_ci_above_zero"]
+        assert c1["judged"] is False
+        assert "只披露不判定" in c1["reason"]
+        assert t["conjunction_armed"] is False
+        assert "两条件均未点亮" in t["verdict"]
+
+    def test_ci_none_unjudged_not_crash(self):
+        t = cohort_trigger_status(_rows(ci_strong=None), min_n=MIN_CELL_N)
+        c1 = t["condition_strong_bucket_ci_above_zero"]
+        assert c1["judged"] is False
+        assert "缺失" in c1["reason"]
+
+    def test_c2_only_lit_verdict(self):
+        t = cohort_trigger_status(_rows(ci_strong=-0.01), min_n=MIN_CELL_N)
+        assert t["condition_mid_buckets_expectancy_negative"]["lit"] is True
+        assert t["condition_strong_bucket_ci_above_zero"]["lit"] is False
+        assert t["conjunction_armed"] is False
+        assert "条件C2点亮" in t["verdict"]
+
+    def test_bool_stat_poisoning_unjudged(self):
+        """bool 是 int 子类 — True 当 stat 是形状欺骗, 未判定不点亮 (R113 同款)。"""
+        rows = _rows()
+        rows[0]["event_stats"]["cluster_ci_low_90"] = True
+        t = cohort_trigger_status(rows, min_n=MIN_CELL_N)
+        assert t["condition_strong_bucket_ci_above_zero"]["judged"] is False
+
+    def test_float_n_poisoning_unjudged(self):
+        rows = _rows(n_49=293.0)  # type: ignore[arg-type]
+        t = cohort_trigger_status(rows, min_n=MIN_CELL_N)
+        c2 = t["condition_mid_buckets_expectancy_negative"]
+        assert c2["judged"] is False
+        assert "只披露不判定" in c2["reason"]
+
+
+class TestRecordCohortTrigger:
+    @staticmethod
+    def _payload(**kw) -> dict:
+        return {"cohort_trigger": cohort_trigger_status(_rows(**kw), min_n=MIN_CELL_N)}
+
+    def test_missing_trigger_noop(self, tmp_path):
+        ledger = tmp_path / "ledger.jsonl"
+        meta = record_cohort_trigger_status({}, "20260905", ledger_path=ledger)
+        assert meta == {"recorded": False, "reason": "no_cohort_trigger"}
+        assert not ledger.exists()
+
+    def test_snapshot_shape_and_court_binding(self, tmp_path):
+        ledger = tmp_path / "ledger.jsonl"
+        binding = {"window_end": "20260904", "rows": 1884}
+        meta = record_cohort_trigger_status(
+            self._payload(), "20260905", ledger_path=ledger, court_binding=binding
+        )
+        assert meta["recorded"] is True and meta["records"] == 1
+        rec = json.loads(ledger.read_text(encoding="utf-8").splitlines()[0])
+        assert rec["date"] == "20260905"
+        assert rec["anchor"] == COHORT_TRIGGER_ANCHOR
+        assert rec["strong_bucket"]["lit"] is True
+        assert rec["mid_buckets"]["lit"] is True
+        assert rec["conjunction_armed"] is True
+        assert rec["court"] == binding
+
+    def test_same_date_refresh_replaces(self, tmp_path):
+        ledger = tmp_path / "ledger.jsonl"
+        record_cohort_trigger_status(self._payload(), "20260905", ledger_path=ledger)
+        record_cohort_trigger_status(
+            self._payload(e_1019=0.005), "20260905", ledger_path=ledger
+        )
+        from src.screening.offensive.cohort_trigger import (
+            load_cohort_trigger_ledger,
+        )
+
+        records = load_cohort_trigger_ledger(ledger)
+        assert len(records) == 1
+        assert records[0]["mid_buckets"]["lit"] is False
+
+    def test_require_advance_gate_skips_same_data(self, tmp_path):
+        """数据前进门: 绑定与任一历史记录相同 → skip 不追加 (R84 Op2-B 同款)。"""
+        from src.screening.offensive.cohort_trigger import (
+            load_cohort_trigger_ledger,
+        )
+
+        ledger = tmp_path / "ledger.jsonl"
+        binding = {"window_end": "20260904", "rows": 1884, "content_digest": "sha256:x"}
+        record_cohort_trigger_status(
+            self._payload(), "20260905", ledger_path=ledger, court_binding=binding
+        )
+        meta = record_cohort_trigger_status(
+            self._payload(), "20260906", ledger_path=ledger,
+            court_binding=dict(binding), require_advance=True,
+        )
+        assert meta == {"recorded": False, "reason": "court_not_advanced", "records": 1}
+        assert len(load_cohort_trigger_ledger(ledger)) == 1
+
+    def test_require_advance_new_data_appends(self, tmp_path):
+        from src.screening.offensive.cohort_trigger import (
+            load_cohort_trigger_ledger,
+        )
+
+        ledger = tmp_path / "ledger.jsonl"
+        old = {"window_end": "20260903", "rows": 1800, "content_digest": "sha256:old"}
+        new = {"window_end": "20260904", "rows": 1884, "content_digest": "sha256:new"}
+        record_cohort_trigger_status(
+            self._payload(), "20260904", ledger_path=ledger, court_binding=old
+        )
+        meta = record_cohort_trigger_status(
+            self._payload(), "20260905", ledger_path=ledger,
+            court_binding=new, require_advance=True,
+        )
+        assert meta["recorded"] is True
+        records = load_cohort_trigger_ledger(ledger)
+        assert [r["date"] for r in records] == ["20260904", "20260905"]
+
+    def test_gate_passes_legacy_record_without_court(self, tmp_path):
+        """旧形态记录无 court 字段 → 门放行 (不追溯拒绝, 绑定自本轮起积累)。"""
+        ledger = tmp_path / "ledger.jsonl"
+        record_cohort_trigger_status(self._payload(), "20260904", ledger_path=ledger)
+        meta = record_cohort_trigger_status(
+            self._payload(), "20260905", ledger_path=ledger,
+            court_binding={"rows": 1}, require_advance=True,
+        )
+        assert meta["recorded"] is True
+
+    def test_data_regression_across_history_rejected(self, tmp_path):
+        """A→B→A 回退: A 绑定在历史深处也命中前进门 (单点比对会被绕过)。"""
+        ledger = tmp_path / "ledger.jsonl"
+        a = {"content_digest": "sha256:a"}
+        b = {"content_digest": "sha256:b"}
+        record_cohort_trigger_status(
+            self._payload(), "20260903", ledger_path=ledger, court_binding=a
+        )
+        record_cohort_trigger_status(
+            self._payload(), "20260904", ledger_path=ledger, court_binding=b
+        )
+        meta = record_cohort_trigger_status(
+            self._payload(), "20260905", ledger_path=ledger,
+            court_binding=dict(a), require_advance=True,
+        )
+        assert meta["reason"] == "court_not_advanced"
+
+    def test_write_failure_fail_open(self, tmp_path, capsys):
+        ledger = tmp_path / "as_dir"  # 目录当账本 → os.replace 失败
+        ledger.mkdir()
+        meta = record_cohort_trigger_status(self._payload(), "20260905", ledger_path=ledger)
+        assert meta == {"recorded": False, "reason": "write_failed"}
+        assert "fail-open" in capsys.readouterr().out
+
+
+class TestCohortTriggerRenderAndMain:
+    def _payload_with_trigger(self) -> dict:
+        from src.screening.offensive.cohort_trigger import cohort_trigger_stability
+
+        payload = decompose_cohort(_frame([
+            ("600001", 20260701, 0.05, 0.75), ("600002", 20260701, -0.03, 0.55),
+            ("600003", 20260702, 0.02, 0.52), ("600004", 20260702, 0.04, 0.80),
+            ("600005", 20260703, -0.01, 0.63), ("600006", 20260703, 0.03, 0.71),
+        ]))
+        payload["cohort_trigger"] = cohort_trigger_status(
+            payload["cohort_buckets"], min_n=MIN_CELL_N
+        )
+        payload["cohort_trigger_stability"] = cohort_trigger_stability([
+            {"date": "20260904", "conjunction_armed": True,
+             "strong_bucket": {"lit": True}, "mid_buckets": {"lit": True}},
+            {"date": "20260905", "conjunction_armed": False,
+             "strong_bucket": {"lit": True}, "mid_buckets": {"lit": False}},
+        ])
+        return payload
+
+    def test_md_trigger_section(self):
+        md = render_md(self._payload_with_trigger(), "20260905")
+        assert "## 日层 cohort 触发器状态" in md
+        assert "条件C1" in md and "条件C2" in md
+        assert "**合取: 未点亮**" in md
+        assert "稳定计数" in md
+        assert "历史最多合取连亮 1" in md
+        assert "稳定阈值 K 未预注册" in md
+
+    def test_md_without_trigger_unchanged(self):
+        rows = [
+            ("600001", 20260701, 0.05, 0.75), ("600002", 20260701, -0.03, 0.55),
+            ("600003", 20260702, 0.02, 0.52), ("600004", 20260702, 0.04, 0.80),
+            ("600005", 20260703, -0.01, 0.63), ("600006", 20260703, 0.03, 0.71),
+        ]
+        plain = render_md(decompose_cohort(_frame(rows)), "20260905")
+        assert "日层 cohort 触发器状态" not in plain
+
+    def _write_table(self, tmp_path) -> Path:
+        table = tmp_path / "event_table_v1.csv.gz"
+        _frame([
+            ("600001", 20260701, 0.05, 0.75), ("600002", 20260701, -0.03, 0.55),
+            ("600003", 20260702, 0.02, 0.52), ("600004", 20260702, 0.04, 0.80),
+            ("600005", 20260703, -0.01, 0.63), ("600006", 20260703, 0.03, 0.71),
+        ]).to_csv(table, index=False)
+        return table
+
+    def test_main_records_and_second_run_gated(self, tmp_path, capsys):
+        """端到端: main 落账首条判定; 同表二次刷新被前进门 skip (R84 语义)。"""
+        from scripts.btst_signal_day_cohort import main as cohort_main
+        from src.screening.offensive.cohort_trigger import (
+            load_cohort_trigger_ledger,
+        )
+
+        table = self._write_table(tmp_path)
+        ledger = tmp_path / "cohort_ledger.jsonl"
+        reports = tmp_path / "reports"
+        argv = [
+            "--court-table", str(table),
+            "--report-dir", str(reports),
+            "--cohort-trigger-ledger", str(ledger),
+        ]
+        rc = cohort_main(argv)
+        assert rc == 0
+        first = json.loads(capsys.readouterr().out.strip().splitlines()[0])
+        assert first["cohort_trigger_record"]["recorded"] is True
+        records = load_cohort_trigger_ledger(ledger)
+        assert len(records) == 1
+        assert records[0]["court"]["content_digest"] is not None
+
+        rc2 = cohort_main(argv)
+        assert rc2 == 0
+        second = json.loads(capsys.readouterr().out.strip().splitlines()[0])
+        assert second["cohort_trigger_record"]["reason"] == "court_not_advanced"
+        assert len(load_cohort_trigger_ledger(ledger)) == 1
+
+    def test_main_missing_table_fails_closed(self, tmp_path):
+        from scripts.btst_signal_day_cohort import main as cohort_main
+
+        with pytest.raises(SystemExit, match="court 事件表缺失"):
+            cohort_main([
+                "--court-table", str(tmp_path / "missing.csv"),
+                "--report-dir", str(tmp_path / "r"),
+                "--cohort-trigger-ledger", str(tmp_path / "l.jsonl"),
+            ])
