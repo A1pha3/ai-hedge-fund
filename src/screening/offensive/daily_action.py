@@ -1820,7 +1820,8 @@ def _render_trigger_state_line() -> str | None:
         else ""
     )
     anchor = latest.get("anchor") or "production_aligned/t10"
-    # 历史最多连亮 + K 未预注册 (R109 Op1): threshold_trigger 已计算
+    # 历史最多合取连亮 + K 未预注册 (R109 Op1; R120 措辞加合取限定 — 与条件①连亮
+    # 是不同量纲, 无限定词时『已亮（连亮 3）… 历史最多连亮 0』被操作员判读为自相矛盾): threshold_trigger 已计算
     # max_conjunction_streak/max_conjunction_060_streak 但渲染行此前只显示
     # 最新锚定连亮 — 临近生效期 (①已亮) 时操作员缺「历史最多」半边读数;
     # 「连亮达标数」本身是 owner 预注册动作, 该事实不可见同样是观测缺口.
@@ -1836,7 +1837,7 @@ def _render_trigger_state_line() -> str | None:
         k_note += f"；0.60 锚 {k_disc['line_060']}"
     return (
         f"强度阈值触发器（{anchor} · 账本 {stab['records']} 条）：{c1} · {c2} · {conj}；"
-        f"{c3} · {conj_060} · 历史最多连亮 {max_streak}/060 锚 {max_streak_060}"
+        f"{c3} · {conj_060} · 历史最多合取连亮 {max_streak}/060 锚合取 {max_streak_060}"
         f"{coverage} · {k_note}"
     )
 

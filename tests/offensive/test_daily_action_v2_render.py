@@ -412,8 +412,10 @@ def test_trigger_state_line_discloses_max_streaks_and_k_pending(case, tmp_path, 
     run = service.complete_run(context, candidates=())
     view = DailyActionV2Run(run, (), run.open_positions, (), ())
     text = render_daily_action_v2(view)
-    assert "历史最多连亮 2" in text       # 0.70 锚合取全历史最大武装段
-    assert "060 锚 0" in text            # 0.60 锚历史最大武装段 (无 060 键)
+    # R120 措辞收口: 加合取限定, 与条件①连亮量纲区分 (防『连亮 3 vs 最多 0』误读)
+    assert "历史最多合取连亮 2" in text   # 0.70 锚合取全历史最大武装段
+    assert "060 锚合取 0" in text        # 0.60 锚历史最大武装段 (无 060 键)
+    assert "历史最多连亮 " not in text    # 旧的无限定措辞不得回归
     assert "K 未预注册" in text          # 稳定阈值 K 属 owner 预注册动作
 
 
