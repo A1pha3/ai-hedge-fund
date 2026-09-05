@@ -953,3 +953,46 @@ class TestCohortKBuildWiring:
         }
         md = render_md(payload, "20260905")
         assert "稳定阈值 K 未预注册" in md
+
+
+class TestRenderFoldDisclosure:
+    """R130 Op2: 日层 MD 稳定计数措辞收敛 + 折叠披露 (有/无双态)。"""
+
+    def _payload_with_stability(self, folded: int):
+        rows: list[tuple[str, int, float, float]] = [
+            ("900001", 20260701, 0.08, 0.75),
+            *[
+                (f"90030{i:02d}", 20260704, -0.05 - i * 0.001, 0.72)
+                for i in range(20)
+            ],
+            *[
+                (f"90040{i:02d}", 20260710, 0.005 + i * 0.0005, 0.30)
+                for i in range(16)
+            ],
+        ]
+        payload = dict(decompose_cohort(_frame(rows)))
+        payload["cohort_trigger"] = {
+            "anchor": "production_aligned/t10/cohort_size", "min_n": 30,
+            "condition_strong_bucket_ci_above_zero": {
+                "lit": True, "judged": True, "n": 864, "stat": -0.017},
+            "condition_mid_buckets_expectancy_negative": {
+                "lit": True, "judged": True, "n": 293, "stat": -0.011},
+            "conjunction_armed": False, "verdict": "夹具",
+        }
+        payload["cohort_trigger_stability"] = {
+            "records": 2, "first_date": "20260904", "last_date": "20260905",
+            "strong_bucket_streak": 1, "mid_buckets_streak": 1,
+            "conjunction_streak": 0, "max_conjunction_streak": 0,
+            "folded_duplicates": folded,
+        }
+        return payload
+
+    def test_md_fold_disclosed_when_present(self):
+        md = render_md(self._payload_with_stability(1), "20260905")
+        assert "连亮按不同数据状态计数" in md
+        assert "折叠同数据重复观测 1 条" in md
+        assert "跨刷新逐次记录" not in md
+
+    def test_md_clean_ledger_no_fold_clause(self):
+        md = render_md(self._payload_with_stability(0), "20260905")
+        assert "折叠" not in md
