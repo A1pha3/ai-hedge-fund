@@ -1480,6 +1480,9 @@ _PRIOR_DRIFT_REPORTS_DIR = Path("data/reports")
 _FRESHNESS_STALE_SESSIONS = 2
 _FRESHNESS_STALE_DAYS_FALLBACK = 4
 _COURT_REFRESH_STATUS_PATH = Path("data/reports/court_refresh_status.json")
+# 宇宙对齐 canonical summary (R118 Op1): 夜刷链 build 成功后单写者落盘,
+# 本模块 _render_universe_alignment_line 消费 (形状守卫 fail-open)。
+_ALIGNMENT_SUMMARY_PATH = Path("data/reports/realized_vs_court_alignment.json")
 
 
 def _render_prior_drift_line(reports_dir: str | Path | None = None) -> str | None:
@@ -1535,6 +1538,73 @@ def _render_prior_drift_line(reports_dir: str | Path | None = None) -> str | Non
         )
     except (OSError, ValueError, KeyError, TypeError, StopIteration):
         return None
+
+
+def _render_universe_alignment_line(
+    summary_path: str | Path | None = None,
+) -> str | None:
+    """宇宙对齐行 (R118 Op1): 证据宇宙 vs 生产宇宙的对账状态 + realized 兑现。
+
+    全部胜率/赔率证据建在 court 事件表上, 生产实际交易的是 paper journal —
+    两个宇宙若分裂, 一切度量都在错靶上。对账由夜刷链在 court build 成功后
+    经 ``btst_realized_vs_court --summary-json`` 单写者刷新 (undated 原子
+    落盘), 本行消费该工件并显式披露: 分裂笔数与最晚分裂信号日 (时代归因的
+    锚 — R118 Observe: 18 生产 BUY 9 笔分裂但全部早于 2026-08-14 regime
+    gate, gate 后信号日全 matched) + realized 已平仓胜率/期望 (journal
+    已平仓口径, 含分裂信号日交易, 与 court 期望锚点本异只作兑现参考)。
+
+    fail-open 家族纪律 (R85/R87/R92/R109/R115 同族): summary 缺失/损坏/
+    形状不符 → 整行省略, 不假装有对账; 子句数据缺失 (realized 未平仓/
+    窗口缺失) → 对应子句省略。本行是披露不是行为改变 — 不进入任何计划/
+    评分/仓位/退出决策路径。
+    """
+    path = Path(summary_path) if summary_path is not None else _ALIGNMENT_SUMMARY_PATH
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    total = data.get("total_buys")
+    counts = data.get("class_counts")
+    report_date = data.get("date")
+    if (
+        not isinstance(total, int) or isinstance(total, bool)
+        or not isinstance(counts, dict)
+        or not isinstance(report_date, str) or not report_date
+    ):
+        return None
+    matched = counts.get("matched")
+    if not isinstance(matched, int) or isinstance(matched, bool):
+        return None
+    split = sum(
+        value
+        for key, value in counts.items()
+        if key != "matched" and isinstance(value, int) and not isinstance(value, bool)
+    )
+    head = f"宇宙对齐（对账 {report_date}"
+    window = data.get("court_window")
+    if isinstance(window, dict) and window.get("start") and window.get("end"):
+        head += f" · court 窗口 {window['start']}..{window['end']}"
+    head += f"）：生产 BUY {total} · matched {matched} · 分裂 {split}"
+    latest_split = data.get("latest_split_signal_date")
+    if isinstance(latest_split, str) and latest_split:
+        head += f"（最晚分裂 {latest_split}）"
+    if split == 0:
+        head += " — 全部生产信号在 court 宇宙内"
+    body = head
+    realized = data.get("realized_only")
+    if isinstance(realized, dict):
+        n = realized.get("n")
+        wr = realized.get("win_rate_pct")
+        e = realized.get("expectancy_pct")
+        if isinstance(n, int) and not isinstance(n, bool) and n > 0:
+            body += f" · 已平仓 {n} 胜率 {wr}% 期望 {e:+.2f}%"
+    body += (
+        " — realized 为 paper journal 已平仓口径（含分裂信号日交易），"
+        "仅披露参考，不改变计划与执行决策"
+    )
+    return body
 
 
 def _render_gap_reference_line(
@@ -2024,6 +2094,12 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     drift_line = _render_prior_drift_line()
     if drift_line:
         lines.append(drift_line)
+        lines.append("")
+    # 宇宙对齐行 (R118 Op1): 证据宇宙 vs 生产宇宙对账 + realized 兑现 —
+    # summary 缺失/损坏整行省略 (fail-open 家族), 与上方五行省略语义一致.
+    alignment_line = _render_universe_alignment_line()
+    if alignment_line:
+        lines.append(alignment_line)
         lines.append("")
     # 入选质量构成行 (R114 Op3): 当日输出与 court 证据的并置 — 无 picks/
     # 证据缺失整行省略 (fail-open 家族), 与上方四行省略语义一致.

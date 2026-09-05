@@ -12,6 +12,7 @@ import pytest
 
 from scripts.btst_realized_vs_court import (
     CLASSES,
+    build_alignment_summary,
     build_classification_inputs,
     classify_buy,
     extract_realized,
@@ -20,6 +21,7 @@ from scripts.btst_realized_vs_court import (
     realized_stats,
     reconcile,
     render_md,
+    write_alignment_summary,
     summary_payload,
 )
 
@@ -243,3 +245,92 @@ class TestClassSet:
             "ticker_not_in_court_day",
             "matched",
         }
+
+
+class TestAlignmentSummary:
+    """R118 Op1: canonical 对齐摘要 (操作员宇宙对齐行唯一数据面)."""
+
+    def _world(self):
+        court_rows = [
+            {"ts_code": "301234.SZ", "signal_date": 20260807, "strength": 0.43, "gross_ret_t10": 0.1002},
+            {"ts_code": "601212.SH", "signal_date": 20260821, "strength": 0.655, "gross_ret_t10": None},
+        ]
+        journal = [
+            _journal_buy("20260807", "301234", strength=0.50),
+            _journal_buy("20260813", "300534", strength=0.63),
+            _journal_buy("20260821", "601212", strength=0.655),
+            _journal_exit("20260807", "301234", "-2.00"),
+            _journal_exit("20260813", "300534", "3.00"),
+            _journal_exit("20260821", "601212", "数据未成熟, 无 realized"),
+        ]
+        return court_rows, journal
+
+    def test_counts_latest_dates_window_and_realized(self):
+        court_rows, journal = self._world()
+        inputs = _inputs(
+            court_rows,
+            sessions=["20260807", "20260813", "20260821"],
+            regime={"20260807": "normal", "20260813": "crisis", "20260821": "normal"},
+            panel=["20260807", "20260813", "20260821"],
+        )
+        recon = reconcile(journal, inputs)
+        summary = build_alignment_summary(
+            recon, court_window=("20250701", "20260901"), summary_date="20260905"
+        )
+        assert summary["date"] == "20260905"
+        assert summary["total_buys"] == 3
+        assert summary["class_counts"]["matched"] == 2
+        assert summary["class_counts"]["day_missing_from_court"] == 1
+        assert summary["latest_matched_signal_date"] == "20260821"
+        assert summary["latest_split_signal_date"] == "20260813"
+        assert summary["court_window"] == {"start": "20250701", "end": "20260901"}
+        assert summary["realized_only"]["n"] == 2
+
+    def test_all_matched_reports_zero_split_with_none_latest(self):
+        court_rows, journal = self._world()
+        journal = [r for r in journal if r["ticker"] != "300534"]
+        journal = [
+            r for r in journal
+            if not (r["action"] == "EXIT" and r["ticker"] == "300534")
+        ]
+        inputs = _inputs(
+            court_rows,
+            sessions=["20260807", "20260813", "20260821"],
+            regime={"20260807": "normal", "20260813": "crisis", "20260821": "normal"},
+            panel=["20260807", "20260813", "20260821"],
+        )
+        recon = reconcile(journal, inputs)
+        summary = build_alignment_summary(
+            recon, court_window=None, summary_date="20260905"
+        )
+        assert summary["latest_split_signal_date"] is None
+        assert summary["class_counts"]["matched"] == 2
+        assert "court_window" not in summary
+
+    def test_empty_journal_gives_zero_shape(self):
+        inputs = _inputs([], sessions=[], regime={}, panel=[])
+        recon = reconcile([], inputs)
+        summary = build_alignment_summary(
+            recon, court_window=None, summary_date="20260905"
+        )
+        assert summary["total_buys"] == 0
+        assert summary["realized_only"] is None
+        assert summary["latest_split_signal_date"] is None
+        assert summary["latest_matched_signal_date"] is None
+        assert summary["class_counts"] == {c: 0 for c in CLASSES}
+
+    def test_write_alignment_summary_atomic_roundtrip(self, tmp_path):
+        target = tmp_path / "nested" / "realized_vs_court_alignment.json"
+        summary = build_alignment_summary(
+            reconcile([], _inputs([], sessions=[], regime={}, panel=[])),
+            court_window=None,
+            summary_date="20260905",
+        )
+        write_alignment_summary(target, summary)
+        assert json.loads(target.read_text(encoding="utf-8")) == summary
+        assert not list(target.parent.glob(".alignment_*"))
+        # 重写 (夜刷逐日覆盖) 收敛同一文件, 无 tmp 残留
+        summary2 = dict(summary, date="20260906")
+        write_alignment_summary(target, summary2)
+        assert json.loads(target.read_text(encoding="utf-8"))["date"] == "20260906"
+        assert not list(target.parent.glob(".alignment_*"))

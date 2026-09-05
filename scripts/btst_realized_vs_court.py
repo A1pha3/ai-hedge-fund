@@ -42,7 +42,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -312,6 +314,57 @@ def summary_payload(recon: Reconciliation, *, court_window: tuple[str, str] | No
     return payload
 
 
+def build_alignment_summary(
+    recon: Reconciliation,
+    *,
+    court_window: tuple[str, str] | None,
+    summary_date: str,
+) -> dict[str, Any]:
+    """操作员对齐行的 canonical 摘要 (R118 Op1)。
+
+    与 :func:`summary_payload` 的差异: 不携带 matched_records/discipline 大
+    载荷 — ``--daily-action`` 宇宙对齐行只消费计数与最晚分裂/匹配信号日;
+    split = 分类非 matched 的全部记录 (六类语义见 ``CLASSES``)。夜刷链在
+    court build 成功后单写者落盘 (undated, 原子替换), 渲染面按形状守卫
+    fail-open 消费。
+    """
+    split_dates = [
+        r.signal_date for r in recon.records if r.classification != "matched"
+    ]
+    matched_dates = [r.signal_date for r in recon.matched_records]
+    summary: dict[str, Any] = {
+        "date": summary_date,
+        "total_buys": len(recon.records),
+        "class_counts": dict(recon.class_counts),
+        "realized_only": realized_stats(recon.realized_records),
+        "latest_split_signal_date": max(split_dates) if split_dates else None,
+        "latest_matched_signal_date": max(matched_dates) if matched_dates else None,
+    }
+    if court_window is not None:
+        summary["court_window"] = {"start": court_window[0], "end": court_window[1]}
+    return summary
+
+
+def write_alignment_summary(path: Path, summary: dict[str, Any]) -> None:
+    """canonical summary 原子落盘 (tempfile + fsync + os.replace —
+    court_refresh_status._persist_status 同族纪律)。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".alignment_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(summary, fh, ensure_ascii=False, indent=1, sort_keys=True)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def render_md(payload: Mapping[str, Any]) -> str:
     counts = payload["class_counts"]
     lines = [
@@ -397,6 +450,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--panel-dir", type=Path, default=PANEL_DIR)
     parser.add_argument("--output-json", type=Path, default=None)
     parser.add_argument("--output-md", type=Path, default=None)
+    parser.add_argument(
+        "--summary-json", type=Path, default=None,
+        help="canonical 对齐摘要落盘路径 (undated 原子替换; 夜刷链单写者消费面)",
+    )
     args = parser.parse_args(argv)
 
     journal = load_journal(args.journal)
@@ -437,6 +494,12 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
     )
     out_md.write_text(render_md(payload), encoding="utf-8")
+    if args.summary_json is not None:
+        write_alignment_summary(
+            args.summary_json,
+            build_alignment_summary(recon, court_window=window, summary_date=stamp),
+        )
+        print(f"alignment summary: {args.summary_json}")
     print(json.dumps(payload["class_counts"], ensure_ascii=False))
     print(f"realized_only: {json.dumps(payload['realized_only'], ensure_ascii=False)}")
     print(f"written: {out_json} / {out_md}")

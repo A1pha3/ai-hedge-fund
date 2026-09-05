@@ -40,6 +40,14 @@ COURT_TABLE_DIR_REL = "data/research/btst_court/event_tables"
 # --daily-action 证据新鲜度告警行需要磁盘真话做 fetch/build 失败归因。
 COURT_REFRESH_STATUS_REL = "data/reports/court_refresh_status.json"
 
+# 宇宙对齐 canonical summary (R118 Op1): journal vs court 对账的 undated
+# 原子落盘 — build 成功 (表已重建) 后单写者刷新, --daily-action 宇宙对齐行
+# 唯一消费面。fetch 失败/窗口未建 (build skip) 时 court 表未变, 不重算
+# (fresh install 无表只会产生失败噪声; summary 保持上一次日期, 对齐行明示)。
+RECONCILE_SCRIPT_REL = "scripts/btst_realized_vs_court.py"
+ALIGNMENT_SUMMARY_REL = "data/reports/realized_vs_court_alignment.json"
+RECONCILE_TIMEOUT_S = 300
+
 FetchBuildRunner = Callable[[list[str], Path, int], tuple[int, str, str]]
 
 
@@ -138,6 +146,7 @@ def run_court_nightly_refresh(
          "fetch": {"rc": 0, "error": None} | {"rc": None, "error": "..."},
          "build": {"rc": 0, "window_start": "20250102", "error": None}
                   | {"skipped": "<reason>"},
+         "reconcile": {"rc": 0, "error": None},   # 仅 build 成功后存在 (R118)
          "ok": bool}
 
     ``ok`` = fetch 成功且 build 成功或合法 skip (判定面未建立是稳态, 不是错误)。
@@ -175,6 +184,19 @@ def run_court_nightly_refresh(
                 "error": build_err,
             }
             status["ok"] = build_rc == 0 and build_err is None
+
+    # 宇宙对齐刷新 (R118 Op1): 只在 build 成功后重算 — 对账消费的是刚重建的
+    # court 表与最新 journal; build skip/失败时表未变, summary 保持原日期由
+    # 对齐行明示。诊断面 fail-open: 失败只进 status["reconcile"], ok 语义不变。
+    build_status = status.get("build")
+    if isinstance(build_status, dict) and build_status.get("rc") == 0:
+        reconcile_rc, reconcile_err = _run_step(
+            runner,
+            [RECONCILE_SCRIPT_REL, "--summary-json", ALIGNMENT_SUMMARY_REL],
+            root,
+            RECONCILE_TIMEOUT_S,
+        )
+        status["reconcile"] = {"rc": reconcile_rc, "error": reconcile_err}
 
     _persist_status(root, status)
     print("court_nightly_refresh:", json.dumps(status, ensure_ascii=False))

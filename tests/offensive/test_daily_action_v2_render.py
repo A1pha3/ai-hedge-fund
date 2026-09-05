@@ -862,3 +862,120 @@ def test_freshness_line_future_dated_report_natural_day_fallback(tmp_path, monke
     )
     assert line is not None
     assert "报告日期在今日之后（文件名或时钟异常）" in line
+
+
+# ---------- R118 Op1: 宇宙对齐行 ----------
+
+def _alignment_summary(**overrides):
+    payload = {
+        "date": "20260905",
+        "total_buys": 18,
+        "class_counts": {
+            "outside_window": 0,
+            "day_excluded_regime_gap": 0,
+            "day_missing_panel_data": 0,
+            "day_missing_from_court": 6,
+            "ticker_not_in_court_day": 3,
+            "matched": 9,
+        },
+        "realized_only": {
+            "n": 15, "win_rate_pct": 20.0, "avg_win_pct": 8.52,
+            "avg_loss_pct": -9.68, "payoff": 0.88, "expectancy_pct": -6.04,
+        },
+        "latest_split_signal_date": "20260813",
+        "latest_matched_signal_date": "20260821",
+        "court_window": {"start": "20250701", "end": "20260901"},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _write_alignment(base, payload):
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "realized_vs_court_alignment.json"
+    p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return p
+
+
+def test_alignment_line_renders_counts_split_and_realized(tmp_path):
+    from src.screening.offensive import daily_action as da
+
+    path = _write_alignment(tmp_path, _alignment_summary())
+    line = da._render_universe_alignment_line(path)
+    assert line is not None
+    assert "宇宙对齐（对账 20260905 · court 窗口 20250701..20260901）" in line
+    assert "生产 BUY 18 · matched 9 · 分裂 9（最晚分裂 20260813）" in line
+    assert "已平仓 15 胜率 20.0% 期望 -6.04%" in line
+    assert "仅披露参考，不改变计划与执行决策" in line
+
+
+def test_alignment_line_all_matched_reports_zero_split(tmp_path):
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary(
+        class_counts={**_alignment_summary()["class_counts"],
+                      "day_missing_from_court": 0, "ticker_not_in_court_day": 0},
+        latest_split_signal_date=None,
+    )
+    line = da._render_universe_alignment_line(_write_alignment(tmp_path, payload))
+    assert "分裂 0 — 全部生产信号在 court 宇宙内" in line
+    assert "最晚分裂" not in line
+
+
+def test_alignment_line_omits_realized_clause_when_none_closed(tmp_path):
+    from src.screening.offensive import daily_action as da
+
+    line = da._render_universe_alignment_line(
+        _write_alignment(tmp_path, _alignment_summary(realized_only=None))
+    )
+    assert line is not None
+    assert "· 已平仓" not in line
+    assert "生产 BUY 18" in line
+
+
+def test_alignment_line_omitted_when_summary_missing_or_corrupt(tmp_path):
+    from src.screening.offensive import daily_action as da
+
+    assert da._render_universe_alignment_line(tmp_path / "nope.json") is None
+    corrupt = tmp_path / "corrupt.json"
+    corrupt.write_text("{not json", encoding="utf-8")
+    assert da._render_universe_alignment_line(corrupt) is None
+    garbage = tmp_path / "garbage.bin"
+    garbage.write_bytes(b"\xff\xfe\x00garbage")
+    assert da._render_universe_alignment_line(garbage) is None
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda p: p.pop("total_buys"),
+    lambda p: p["class_counts"].pop("matched"),
+    lambda p: p.pop("date"),
+    lambda p: p.update(date=""),
+    lambda p: p.update(total_buys="18"),
+    lambda p: p.update(class_counts=[1, 2]),
+])
+def test_alignment_line_omitted_on_shape_violation(tmp_path, mutate):
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary()
+    mutate(payload)
+    assert da._render_universe_alignment_line(_write_alignment(tmp_path, payload)) is None
+
+
+def test_alignment_line_wired_after_drift_line(case, tmp_path, monkeypatch):
+    """渲染面集成: summary 工件在场时, 完整 --daily-action 输出含宇宙对齐行;
+    缺失时整行省略 (fail-open 家族), 两次渲染 rc 均不受影响."""
+    from src.screening.offensive import daily_action as da
+
+    _write_alignment(tmp_path, _alignment_summary())
+    monkeypatch.setattr(da, "_ALIGNMENT_SUMMARY_PATH", tmp_path / "realized_vs_court_alignment.json")
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "宇宙对齐（对账 20260905" in text
+    assert "生产 BUY 18" in text
+
+    monkeypatch.setattr(da, "_ALIGNMENT_SUMMARY_PATH", tmp_path / "nope.json")
+    text_without = render_daily_action_v2(view)
+    assert "宇宙对齐" not in text_without

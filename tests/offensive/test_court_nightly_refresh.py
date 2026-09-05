@@ -28,7 +28,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from screening.offensive.court_nightly_refresh import (  # noqa: E402
+    ALIGNMENT_SUMMARY_REL,
     COURT_TABLE_DIR_REL,
+    RECONCILE_SCRIPT_REL,
     run_court_nightly_refresh,
 )
 
@@ -67,11 +69,13 @@ class TestCourtNightlyRefreshOrchestration:
         assert [c[0] for c in runner.calls] == [
             ["scripts/btst_court_fetch.py"],
             ["scripts/btst_court_build.py", "--start", "20250102"],
+            [RECONCILE_SCRIPT_REL, "--summary-json", ALIGNMENT_SUMMARY_REL],
         ]
         assert all(c[1] == tmp_path for c in runner.calls)
         assert status["ok"] is True
         assert status["build"]["window_start"] == "20250102"
         assert status["build"]["rc"] == 0
+        assert status["reconcile"] == {"rc": 0, "error": None}
 
     def test_manifest_missing_skips_build_but_fetch_still_runs(self, tmp_path):
         runner = _RecordingRunner()
@@ -221,3 +225,38 @@ class TestCourtNightlyRefreshStatusPersistence:
         runner = _RecordingRunner(rc_by_script={"scripts/btst_court_fetch.py": 1})
         status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
         assert status["ok"] is False
+
+
+class TestCourtNightlyReconcileStep:
+    """R118 Op1: 宇宙对齐刷新步 — 只在 build 成功后重算, fail-open 不改 ok 语义."""
+
+    def test_reconcile_failure_does_not_flip_ok(self, tmp_path):
+        _write_manifest(tmp_path, {"window": {"start": "20250102"}})
+        runner = _RecordingRunner(rc_by_script={RECONCILE_SCRIPT_REL: 1},
+                                  err_by_script={RECONCILE_SCRIPT_REL: "exit rc=1: alignment boom"})
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        assert status["ok"] is True  # ok 语义 = fetch+build, reconcile 是诊断面
+        assert status["reconcile"]["rc"] == 1
+        assert "alignment boom" in status["reconcile"]["error"]
+
+    def test_build_skip_runs_no_reconcile(self, tmp_path):
+        # manifest 缺失 → build skip → court 表未重建, 不重算 (fresh install 无表不加噪声)
+        runner = _RecordingRunner()
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        assert "reconcile" not in status
+        assert [c[0] for c in runner.calls] == [["scripts/btst_court_fetch.py"]]
+
+    def test_fetch_failure_runs_no_reconcile(self, tmp_path):
+        _write_manifest(tmp_path, {"window": {"start": "20250102"}})
+        runner = _RecordingRunner(rc_by_script={"scripts/btst_court_fetch.py": 1})
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        assert status["ok"] is False
+        assert "reconcile" not in status
+        assert [c[0] for c in runner.calls] == [["scripts/btst_court_fetch.py"]]
+
+    def test_build_failure_runs_no_reconcile(self, tmp_path):
+        _write_manifest(tmp_path, {"window": {"start": "20250102"}})
+        runner = _RecordingRunner(rc_by_script={"scripts/btst_court_build.py": 2})
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        assert status["ok"] is False
+        assert "reconcile" not in status
