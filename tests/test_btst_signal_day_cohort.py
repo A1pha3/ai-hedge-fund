@@ -468,3 +468,14 @@ class TestAdversarialReworkR124:
         # 奇数日数语义不变
         rows_odd = cohort_bucket_table(net[:3], days[:3], strong[:3])
         assert rows_odd[0]["day_e_median"] == pytest.approx(0.02)
+
+
+def test_cohort_size_bucket_single_implementation_identity():
+    """R125 Op3: bucket 函数上移 src — 脚本名字必须是同一对象 (零漂移构造保证)."""
+    from src.screening.offensive.gap_disclosure import (
+        cohort_size_bucket as src_cohort_size_bucket,
+    )
+    from scripts import btst_signal_day_cohort as mod
+
+    assert mod.cohort_size_bucket is src_cohort_size_bucket
+    assert mod.COHORT_BUCKET_LABELS == ("1", "2-3", "4-9", "10-19", "20+")
