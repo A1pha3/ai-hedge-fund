@@ -649,3 +649,20 @@ class TestR122RealizationGap:
         assert "实现缺口归因" not in render_md(
             summary_payload(recon_open, court_window=None)
         )
+
+    def test_render_md_count_contradiction_section_omitted(self):
+        """R122b 对抗收口: 块 n > class_counts.matched = 工件损坏 → 整段省略."""
+        inputs = _inputs(
+            [{"ts_code": "000001.SZ", "signal_date": 20260821,
+              "strength": 0.6, "gross_ret_t10": -0.0989}],
+            sessions=["20260821"], regime={"20260821": "normal"}, panel=["20260821"],
+        )
+        journal = [
+            _journal_buy("20260821", "000001"),
+            _journal_exit("20260821", "000001", "-6.42"),
+        ]
+        recon = reconcile(journal, inputs)
+        payload = summary_payload(recon, court_window=None)
+        payload["realization_gap"] = {**payload["realization_gap"], "n": 999}
+        text = render_md(payload)
+        assert "实现缺口归因" not in text

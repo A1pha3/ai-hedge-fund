@@ -354,3 +354,24 @@ def test_alignment_line_realization_gap_malformed_omitted(tmp_path, monkeypatch)
         line = da._render_universe_alignment_line()
         assert line is not None, f"line must survive malformed block: {bad!r}"
         assert "实现归因" not in line, f"clause must be omitted: {bad!r}"
+
+
+def test_alignment_line_realization_gap_count_contradiction_omitted(
+    tmp_path, monkeypatch
+):
+    """R122b 对抗收口: 块 n > matched = 工件损坏 (reconcile 全局去重保证结构性
+    n ≤ matched) — 整子句省略不渲染矛盾读数 (R119 P3 家族: 渲染矛盾比不渲染更有害)."""
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary_with_gap()
+    payload["realization_gap"] = {
+        **payload["realization_gap"],
+        "n": 999,  # matched=24
+    }
+    monkeypatch.setattr(
+        da, "_ALIGNMENT_SUMMARY_PATH", _write_alignment(tmp_path, payload)
+    )
+    line = da._render_universe_alignment_line()
+    assert line is not None
+    assert "实现归因" not in line
+    assert "matched 已平仓 999" not in line

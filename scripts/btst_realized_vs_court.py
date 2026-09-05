@@ -666,10 +666,18 @@ def render_md(payload: Mapping[str, Any]) -> str:
         gc = _finite(gap.get("court_conditional_expectancy_pct"))
         gr = _finite(gap.get("realized_expectancy_pct"))
         gp = _finite(gap.get("realization_gap_pp"))
-        if (
-            isinstance(gn, int) and not isinstance(gn, bool) and gn > 0
-            and gc is not None and gr is not None and gp is not None
-        ):
+        # R122b 对抗收口: gn > class_counts.matched = 工件损坏 (reconcile 全局
+        # (date,ticker) 去重保证块 n 结构性 ≤ matched) → 整段省略, 绝不渲染
+        # 矛盾读数 (R119 P3 家族: 渲染矛盾读数比不渲染更有害; PoC 999>24 实锤)。
+        matched_total = counts.get("matched")
+        count_consistent = (
+            isinstance(matched_total, int)
+            and not isinstance(matched_total, bool)
+            and isinstance(gn, int)
+            and not isinstance(gn, bool)
+            and 0 < gn <= matched_total
+        )
+        if count_consistent and gc is not None and gr is not None and gp is not None:
             horizons = gap.get("horizons")
             horizon_text = (
                 " · h 组成 " + json.dumps(horizons, ensure_ascii=False, sort_keys=True)
