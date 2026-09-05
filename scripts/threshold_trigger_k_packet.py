@@ -225,6 +225,23 @@ def _render_family(packet: Mapping[str, Any], candidates: Mapping[str, int], reg
     return lines
 
 
+def _validate_candidates(
+    candidates: Mapping[str, int], registered_date: str
+) -> str | None:
+    """候选形状校验 (F3); 返回 None = 合法, 否则为拒绝理由。"""
+    import re as _re
+
+    for name in sorted(candidates):
+        value = candidates[name]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            return f"{name} 必须 >=1 的整数 (得到 {value!r})"
+    if not _re.fullmatch(r"\d{8}", registered_date or ""):
+        return f"registered_date 必须 YYYYMMDD (得到 {registered_date!r})"
+    if "k_060" in candidates and "k_070" not in candidates:
+        return "强度族注册必须含 k_070 (k_060 是可选第二锚, 不能单独注册)"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--strength-ledger", type=Path, default=_tt.LEDGER_PATH)
@@ -259,6 +276,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.write and not candidates:
         print("--write 需要至少一个候选 K (--k070/--k060/--cohort-k) — 缺参拒绝")
+        return 2
+    # F3 (R129 Op3): 候选值形状前置校验, preview 与 write 双面 fail-closed —
+    # 负数/零/非整数 K 会让假想资格推演在 trigger_qualification 形状复验
+    # 直接 ValueError 裸逃逸; 畸形 registered_date 与仅 k_060 的强度注册
+    # 则会落成 loader 判 malformed 的文件 (工具知情写坏文件 = owner 认知陷阱)。
+    invalid_reason = _validate_candidates(candidates, args.registered_date)
+    if invalid_reason is not None:
+        print(f"候选参数非法: {invalid_reason}")
         return 2
 
     families: list[tuple[str, Path, Path, Path]] = [

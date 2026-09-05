@@ -1944,84 +1944,89 @@ def _render_trigger_state_line() -> str | None:
     k_qualification_disclosure 单一事实源: owner 预注册 K 后披露资格连亮
     与达标态, 未注册/损坏形态分别保持默认句/明语披露。
     """
-    from src.screening.offensive import threshold_trigger as _tt
+    try:
+        from src.screening.offensive import threshold_trigger as _tt
 
-    records = _tt.load_trigger_ledger()
-    if not records:
-        return None
-    latest = records[-1]
-    stab = _tt.trigger_stability(records)
+        records = _tt.load_trigger_ledger()
+        if not records:
+            return None
+        latest = records[-1]
+        stab = _tt.trigger_stability(records)
 
-    # R128 Op1: 条件值经 condition_dict 单一守卫读取 — truthy 非 dict 形态
-    # (手编账本/损坏写入) 不再裸 AttributeError 炸本行 (R115 fail-open 家族;
-    # None/空 dict 对 `or {}` 均安全收敛), 毒化格按未判定披露。
-    c1_raw = _tt.condition_dict(latest, "condition_1") or {}
-    c2_raw = _tt.condition_dict(latest, "condition_2") or {}
-    c3_raw = _tt.condition_dict(latest, "condition_3") or {}
-    c1_judged = bool(c1_raw.get("judged"))
-    c2_judged = bool(c2_raw.get("judged"))
-    c1 = (
-        f"条件① ≥0.70 桶 CI>0 {'已亮' if c1_raw.get('lit') else '未亮'}"
-        f"（连亮 {stab['condition_1_streak']}）"
-        if c1_judged
-        else "条件① ≥0.70 桶 CI>0 样本不足未判定"
-    )
-    c2 = (
-        f"条件② 0.50-0.60 转负 {'已亮' if c2_raw.get('lit') else '未亮'}"
-        f"（连亮 {stab['condition_2_streak']}）"
-        if c2_judged
-        else "条件② 0.50-0.60 转负 样本不足未判定"
-    )
-    # 0.60 锚子句 (R100 Op1 预注册): 旧记录无 condition_3 → 未判定形态
-    # (缺键 = 未知, 不点亮不计数 — 与 fail-open 整行省略同族但按格披露)。
-    if not c3_raw:
-        c3 = "0.60 锚条件③ 无记录（R100 前旧账本）"
-    elif not c3_raw.get("judged"):
-        c3 = "0.60 锚条件③ 0.60-0.70 桶 CI>0 样本不足未判定"
-    else:
-        c3 = (
-            f"0.60 锚条件③ 0.60-0.70 桶 CI>0 {'已亮' if c3_raw.get('lit') else '未亮'}"
-            f"（连亮 {stab.get('condition_3_streak', 0)}）"
+        # R128 Op1: 条件值经 condition_dict 单一守卫读取 — truthy 非 dict 形态
+        # (手编账本/损坏写入) 不再裸 AttributeError 炸本行 (R115 fail-open 家族;
+        # None/空 dict 对 `or {}` 均安全收敛), 毒化格按未判定披露。
+        c1_raw = _tt.condition_dict(latest, "condition_1") or {}
+        c2_raw = _tt.condition_dict(latest, "condition_2") or {}
+        c3_raw = _tt.condition_dict(latest, "condition_3") or {}
+        c1_judged = bool(c1_raw.get("judged"))
+        c2_judged = bool(c2_raw.get("judged"))
+        c1 = (
+            f"条件① ≥0.70 桶 CI>0 {'已亮' if c1_raw.get('lit') else '未亮'}"
+            f"（连亮 {stab['condition_1_streak']}）"
+            if c1_judged
+            else "条件① ≥0.70 桶 CI>0 样本不足未判定"
         )
-    armed = latest.get("conjunction_armed") is True
-    conj = (
-        "合取已武装 → 阈值上调正式评估就绪（owner 预注册动作）"
-        if armed
-        else "合取未武装"
-    )
-    armed_060 = latest.get("conjunction_060_armed") is True
-    conj_060 = (
-        "0.60 锚合取③∧②已武装 → 0.50→0.60 上调评估就绪（owner 预注册动作）"
-        if armed_060
-        else f"0.60 锚合取未武装（连亮 {stab.get('conjunction_060_streak', 0)}）"
-    )
-    court = latest.get("court")
-    coverage = (
-        f" · court 覆盖至 {court.get('window_end')}"
-        if isinstance(court, dict) and court.get("window_end")
-        else ""
-    )
-    anchor = latest.get("anchor") or "production_aligned/t10"
-    # 历史最多合取连亮 + K 未预注册 (R109 Op1; R120 措辞加合取限定 — 与条件①连亮
-    # 是不同量纲, 无限定词时『已亮（连亮 3）… 历史最多连亮 0』被操作员判读为自相矛盾): threshold_trigger 已计算
-    # max_conjunction_streak/max_conjunction_060_streak 但渲染行此前只显示
-    # 最新锚定连亮 — 临近生效期 (①已亮) 时操作员缺「历史最多」半边读数;
-    # 「连亮达标数」本身是 owner 预注册动作, 该事实不可见同样是观测缺口.
-    max_streak = int(stab.get("max_conjunction_streak") or 0)
-    max_streak_060 = int(stab.get("max_conjunction_060_streak") or 0)
-    # K 预注册消费面 (R112 Op1): 未注册保持默认句, 损坏明语披露, 注册后披露
-    # K/起算日/资格连亮/达标与否 — 文本全部来自 k_qualification_disclosure
-    # 单一事实源 (与分解报告 MD 同源, 不各自措辞). 资格达成只是披露:
-    # 正式评估仍是 owner 门, 本行不进入任何计划/评分/仓位/退出决策路径.
-    k_disc = _tt.k_qualification_disclosure(records)
-    k_note = str(k_disc["line_070"])
-    if k_disc.get("line_060"):
-        k_note += f"；0.60 锚 {k_disc['line_060']}"
-    return (
-        f"强度阈值触发器（{anchor} · 账本 {stab['records']} 条）：{c1} · {c2} · {conj}；"
-        f"{c3} · {conj_060} · 历史最多合取连亮 {max_streak}/060 锚合取 {max_streak_060}"
-        f"{coverage} · {k_note}"
-    )
+        c2 = (
+            f"条件② 0.50-0.60 转负 {'已亮' if c2_raw.get('lit') else '未亮'}"
+            f"（连亮 {stab['condition_2_streak']}）"
+            if c2_judged
+            else "条件② 0.50-0.60 转负 样本不足未判定"
+        )
+        # 0.60 锚子句 (R100 Op1 预注册): 旧记录无 condition_3 → 未判定形态
+        # (缺键 = 未知, 不点亮不计数 — 与 fail-open 整行省略同族但按格披露)。
+        if not c3_raw:
+            c3 = "0.60 锚条件③ 无记录（R100 前旧账本）"
+        elif not c3_raw.get("judged"):
+            c3 = "0.60 锚条件③ 0.60-0.70 桶 CI>0 样本不足未判定"
+        else:
+            c3 = (
+                f"0.60 锚条件③ 0.60-0.70 桶 CI>0 {'已亮' if c3_raw.get('lit') else '未亮'}"
+                f"（连亮 {stab.get('condition_3_streak', 0)}）"
+            )
+        armed = latest.get("conjunction_armed") is True
+        conj = (
+            "合取已武装 → 阈值上调正式评估就绪（owner 预注册动作）"
+            if armed
+            else "合取未武装"
+        )
+        armed_060 = latest.get("conjunction_060_armed") is True
+        conj_060 = (
+            "0.60 锚合取③∧②已武装 → 0.50→0.60 上调评估就绪（owner 预注册动作）"
+            if armed_060
+            else f"0.60 锚合取未武装（连亮 {stab.get('conjunction_060_streak', 0)}）"
+        )
+        court = latest.get("court")
+        coverage = (
+            f" · court 覆盖至 {court.get('window_end')}"
+            if isinstance(court, dict) and court.get("window_end")
+            else ""
+        )
+        anchor = latest.get("anchor") or "production_aligned/t10"
+        # 历史最多合取连亮 + K 未预注册 (R109 Op1; R120 措辞加合取限定 — 与条件①连亮
+        # 是不同量纲, 无限定词时『已亮（连亮 3）… 历史最多连亮 0』被操作员判读为自相矛盾): threshold_trigger 已计算
+        # max_conjunction_streak/max_conjunction_060_streak 但渲染行此前只显示
+        # 最新锚定连亮 — 临近生效期 (①已亮) 时操作员缺「历史最多」半边读数;
+        # 「连亮达标数」本身是 owner 预注册动作, 该事实不可见同样是观测缺口.
+        max_streak = int(stab.get("max_conjunction_streak") or 0)
+        max_streak_060 = int(stab.get("max_conjunction_060_streak") or 0)
+        # K 预注册消费面 (R112 Op1): 未注册保持默认句, 损坏明语披露, 注册后披露
+        # K/起算日/资格连亮/达标与否 — 文本全部来自 k_qualification_disclosure
+        # 单一事实源 (与分解报告 MD 同源, 不各自措辞). 资格达成只是披露:
+        # 正式评估仍是 owner 门, 本行不进入任何计划/评分/仓位/退出决策路径.
+        k_disc = _tt.k_qualification_disclosure(records)
+        k_note = str(k_disc["line_070"])
+        if k_disc.get("line_060"):
+            k_note += f"；0.60 锚 {k_disc['line_060']}"
+        return (
+            f"强度阈值触发器（{anchor} · 账本 {stab['records']} 条）：{c1} · {c2} · {conj}；"
+            f"{c3} · {conj_060} · 历史最多合取连亮 {max_streak} · 历史最多 060 锚合取连亮 {max_streak_060}"
+            f"{coverage} · {k_note}"
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        # R129 Op3 纵深防御 (R126 Op3 日层行同构, fail-open 家族):
+        # 证据面损坏不得阻断披露/生产面 — 整行省略, 不假装有判定。
+        return None
 
 
 def _render_day_cohort_trigger_line() -> str | None:

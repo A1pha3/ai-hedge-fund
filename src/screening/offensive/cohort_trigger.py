@@ -154,9 +154,17 @@ def load_cohort_k_registration(
         text = file_path.read_text(encoding="utf-8")
     except OSError:
         return ("unregistered", None)
+    except UnicodeDecodeError:
+        # R129 Op3: 文件存在但非 UTF-8 → 损坏态 (malformed 明语句), 不是
+        # 未注册 — UnicodeDecodeError 是 ValueError 非 OSError, 此前从读段
+        # 裸逃逸炸穿无守卫渲染行 (PoC 实锤)。
+        return ("malformed", None)
     try:
         data = json.loads(text)
-    except json.JSONDecodeError:
+    except ValueError:
+        # JSONDecodeError + UnicodeDecodeError 同收 (R129 Op3 家族修复,
+        # 镜像 threshold_trigger.load_k_registration 同款) — 非 UTF-8 损坏
+        # 文件 → malformed 明语句, 不再裸逃逸/整行省略。
         return ("malformed", None)
     if not isinstance(data, dict):
         return ("malformed", None)

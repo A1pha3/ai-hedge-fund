@@ -46,7 +46,10 @@ def load_trigger_ledger(ledger_path: Path | str | None = None) -> list[dict]:
     records: list[dict] = []
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
+        # R129 Op3: ValueError (UnicodeDecodeError) 与 OSError 同族 — 非 UTF-8
+        # 损坏文件此前裸逃逸炸穿无守卫的渲染行 (R115 纪律违例 PoC 实锤);
+        # 损坏账本 → advisory 空态 (整行省略), 与逐行损坏 advisory 跳过同语义。
         return records
     for line in text.splitlines():
         line = line.strip()
@@ -225,9 +228,17 @@ def load_k_registration(
         text = file_path.read_text(encoding="utf-8")
     except OSError:
         return ("unregistered", None)
+    except UnicodeDecodeError:
+        # R129 Op3: 文件存在但非 UTF-8 → 损坏态 (malformed 明语句), 不是
+        # 未注册 — UnicodeDecodeError 是 ValueError 非 OSError, 此前从读段
+        # 裸逃逸炸穿无守卫渲染行 (PoC 实锤)。
+        return ("malformed", None)
     try:
         data = json.loads(text)
-    except json.JSONDecodeError:
+    except ValueError:
+        # JSONDecodeError + UnicodeDecodeError 同收 — 非 UTF-8 损坏文件此前
+        # 裸逃逸 (UnicodeDecodeError 不是 JSONDecodeError), PoC 实锤炸穿
+        # 无 try 守卫的强度渲染行 (R129 Op3); 损坏 → owner 可见 malformed 态。
         return ("malformed", None)
     if not isinstance(data, dict):
         return ("malformed", None)
@@ -365,7 +376,8 @@ def load_k_observations(path: Path | str | None = None) -> list[dict]:
     log_path = Path(path) if path is not None else K_OBSERVATION_LOG_PATH
     try:
         text = log_path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, ValueError):
+        # R129 Op3: 非 UTF-8 损坏观测日志 → advisory 空态 (同 load_trigger_ledger)
         return []
     records: list[dict] = []
     for line in text.splitlines():

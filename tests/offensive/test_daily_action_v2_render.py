@@ -414,7 +414,7 @@ def test_trigger_state_line_discloses_max_streaks_and_k_pending(case, tmp_path, 
     text = render_daily_action_v2(view)
     # R120 措辞收口: 加合取限定, 与条件①连亮量纲区分 (防『连亮 3 vs 最多 0』误读)
     assert "历史最多合取连亮 2" in text   # 0.70 锚合取全历史最大武装段
-    assert "060 锚合取 0" in text        # 0.60 锚历史最大武装段 (无 060 键)
+    assert "历史最多 060 锚合取连亮 0" in text  # 0.60 锚历史最大武装段 (R129 Op3 斜杠歧义已除, 合取限定保留)
     assert "历史最多连亮 " not in text    # 旧的无限定措辞不得回归
     assert "K 未预注册" in text          # 稳定阈值 K 属 owner 预注册动作
 
@@ -1569,3 +1569,88 @@ def test_trigger_state_line_poisoned_condition_renders_unjudged(case, tmp_path, 
         assert "条件① ≥0.70 桶 CI>0 样本不足未判定" in text  # 毒化格降级未判定
         assert "条件② 0.50-0.60 转负 未亮（连亮 0）" in text  # 非毒化格照常
         assert "court 覆盖至 20260830" in text  # 覆盖子句不受牵连
+
+
+# ---------- R129 Op3: 二进制损坏文件 PoC (UnicodeDecodeError 家族收口) ----------
+
+def _patch_strength_k_files(monkeypatch, tmp_path, k_bytes: bytes):
+    from src.screening.offensive import threshold_trigger as _tt
+
+    k_path = tmp_path / "threshold_trigger_k.json"
+    k_path.write_bytes(k_bytes)
+    obs_path = tmp_path / "threshold_trigger_k_obs.jsonl"
+    obs_path.write_bytes(b"")
+    monkeypatch.setattr(_tt, "K_REGISTRATION_PATH", k_path)
+    monkeypatch.setattr(_tt, "K_OBSERVATION_LOG_PATH", obs_path)
+
+
+def test_binary_k_registration_file_malformed_not_crash(case, tmp_path, monkeypatch):
+    """非 UTF-8 损坏 K 注册文件: 修复前 UnicodeDecodeError (ValueError 子类)
+    从 load_k_registration 裸逃逸, 强度行无 try 守卫 → 炸穿 --daily-action
+    (R115 家族违例); 修复后按 loader malformed 契约披露明语句。"""
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260904", c1_lit=True, c2_lit=False),
+    ]))
+    _patch_strength_k_files(monkeypatch, tmp_path, b"\xff\xfe\x00binary")
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "强度阈值触发器" in text
+    assert "稳定阈值 K 预注册文件损坏" in text
+
+
+def test_binary_ledger_file_strength_line_omitted_not_crash(case, tmp_path, monkeypatch):
+    """非 UTF-8 损坏账本: 修复前 load_trigger_ledger 裸逃逸 → 炸; 修复后
+    advisory 空态 → 整行省略 (fail-open 家族既有语义)。"""
+    from src.screening.offensive import threshold_trigger as _tt
+
+    binary_ledger = tmp_path / "binary_ledger.jsonl"
+    binary_ledger.write_bytes(b"\xff\xfe\x00binary")
+    monkeypatch.setattr(_tt, "LEDGER_PATH", binary_ledger)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "强度阈值触发器" not in text
+
+
+def test_binary_cohort_k_file_shows_malformed_sentence(case, tmp_path, monkeypatch):
+    """日层行二进制 K 文件: 修复前 UnicodeDecodeError 穿过 loader 被整行
+    try 吞成整行省略 (与 loader malformed 明语句语义不一致); 修复后按
+    malformed 契约披露损坏句, 行内其它子句照常。"""
+    _patch_day_cohort_ledger(monkeypatch, _day_cohort_ledger(tmp_path, [
+        _day_cohort_rec("20260904", c1_lit=False, c2_lit=True),
+    ]))
+    from src.screening.offensive import cohort_trigger as ct
+
+    k_path = tmp_path / "cohort_trigger_k.json"
+    k_path.write_bytes(b"\xff\xfe\x00binary")
+    obs_path = tmp_path / "cohort_k_obs.jsonl"
+    obs_path.write_bytes(b"")
+    monkeypatch.setattr(ct, "COHORT_K_REGISTRATION_PATH", k_path)
+    monkeypatch.setattr(ct, "COHORT_K_OBSERVATION_LOG_PATH", obs_path)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "日层 cohort 触发器" in text
+    assert "稳定阈值 K 预注册文件损坏" in text
+
+
+def test_strength_line_max_streak_wording_disambiguated(case, tmp_path, monkeypatch):
+    """F2: 『历史最多合取连亮 0/060 锚合取 0』斜杠连读被操作员判读为
+    分数 (R129 冒烟实录) — 改为分隔符『·』措辞, 语义零变化。"""
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260904", c1_lit=True, c2_lit=False),
+    ]))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "历史最多合取连亮 0 · 历史最多 060 锚合取连亮 0" in text
+    assert "/060 锚合取" not in text

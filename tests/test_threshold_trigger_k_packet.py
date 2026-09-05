@@ -355,3 +355,53 @@ class TestBuildPacketPure:
         assert draft["k_070"] == 2
         assert draft["registered_date"] == "20260901"
         assert packet["candidate_070"]["qualified"] is True
+
+
+class TestCandidateValidation:
+    """F3 (R129 Op3): 候选形状前置校验 — preview/write 双面 fail-closed。"""
+
+    def _argv(self, tmp_path, paths, *extra):
+        return [
+            "--strength-ledger", str(tmp_path / "missing.jsonl"),
+            "--strength-k-registration", str(paths["strength_k_registration"]),
+            "--strength-k-observation-log", str(paths["strength_k_observation_log"]),
+            "--cohort-ledger", str(tmp_path / "missing_c.jsonl"),
+            "--cohort-k-registration", str(paths["cohort_k_registration"]),
+            "--cohort-k-observation-log", str(paths["cohort_k_observation_log"]),
+            *extra,
+        ]
+
+    def test_negative_k_preview_fails_closed_not_crash(self, tmp_path, capsys):
+        """负数 K 此前在假想推演处触发 trigger_qualification 形状复验
+        ValueError 裸逃逸 (preview 崩溃); 现在前置校验 exit 2。"""
+        paths = _paths(tmp_path)
+        rc = main(self._argv(tmp_path, paths, "--k070", "-3"))
+        assert rc == 2
+        assert "必须 >=1" in capsys.readouterr().out
+
+    def test_zero_k_rejected(self, tmp_path, capsys):
+        paths = _paths(tmp_path)
+        rc = main(self._argv(tmp_path, paths, "--cohort-k", "0"))
+        assert rc == 2
+
+    def test_malformed_registered_date_rejected(self, tmp_path, capsys):
+        paths = _paths(tmp_path)
+        rc = main(self._argv(tmp_path, paths, "--k070", "3", "--registered-date", "2026-9-6"))
+        assert rc == 2
+        assert "YYYYMMDD" in capsys.readouterr().out
+
+    def test_k060_only_write_rejected(self, tmp_path, capsys):
+        """仅 k_060 的强度注册会落成 loader malformed 文件 — 拒绝。"""
+        paths = _paths(tmp_path)
+        rc = main(self._argv(
+            tmp_path, paths, "--k060", "3", "--registered-date", "20260906", "--write"
+        ))
+        assert rc == 2
+        assert "k_070" in capsys.readouterr().out
+        assert not paths["strength_k_registration"].exists()
+
+    def test_k060_without_k070_preview_also_rejected(self, tmp_path, capsys):
+        """仅 k_060 即使 preview 也拒 — 推演无法构成合法假想注册。"""
+        paths = _paths(tmp_path)
+        rc = main(self._argv(tmp_path, paths, "--k060", "3"))
+        assert rc == 2
