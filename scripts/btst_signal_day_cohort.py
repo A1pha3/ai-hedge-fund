@@ -25,7 +25,9 @@ journal 0710 cohort 5 笔 4 负、0817 cohort 6 笔全损 — 日层共振在实
   - 复用单一实现零口径 fork: production_aligned / net_returns / win_loss_stats /
     MIN_CELL_N / BOOT_SEED (winrate_payoff_decomposition), strength_bucket
     (src.screening.offensive.threshold_trigger), normalize_day
-    (btst_realized_vs_court)。
+    (btst_realized_vs_court), cohort_size_bucket/COHORT_BUCKET_EDGES/LABELS
+    (src.screening.offensive.gap_disclosure — R125 Op3 上移, 与操作员渲染行
+    同源零漂移)。
   - 聚类 CI 经 win_loss_stats → cluster_boot_ci_low: per-call seeded RNG
     (R13 纪律), 同输入逐字节同输出。
   - fixture 断言必须非对称 (R13 教训: 对称 fixture 的数值断言无牙)。
@@ -46,6 +48,11 @@ from typing import Any, Mapping, Sequence
 
 import pandas as pd
 
+from src.screening.offensive.gap_disclosure import (
+    COHORT_BUCKET_EDGES,
+    COHORT_BUCKET_LABELS,
+    cohort_size_bucket,
+)
 from src.screening.offensive.threshold_trigger import strength_bucket
 
 COURT_TABLE = Path("data/research/btst_court/event_tables/event_table_v1.csv.gz")
@@ -54,14 +61,8 @@ HORIZON = 10
 GROSS_COL = f"gross_ret_t{HORIZON}"
 
 # cohort 规模分桶 (左闭右闭日数边界; 显式边界不玩 cut 花活)
-COHORT_BUCKET_EDGES: tuple[tuple[int, int], ...] = (
-    (1, 1),
-    (2, 3),
-    (4, 9),
-    (10, 19),
-    (20, math.inf),
-)
-COHORT_BUCKET_LABELS: tuple[str, ...] = ("1", "2-3", "4-9", "10-19", "20+")
+# COHORT_BUCKET_EDGES/LABELS/cohort_size_bucket 自 src.screening.offensive.
+# gap_disclosure 导入 (R125 Op3 单一实现上移) — 模块级名字保留供既有消费面。
 STRONG_BUCKET = "≥0.70"
 SPEARMAN_MIN = 0.5  # R15 判据镜像
 WORST_DAYS_K = 5
@@ -79,18 +80,6 @@ def _ensure_scripts_on_path() -> None:
     here = str(Path(__file__).resolve().parent)
     if here not in sys.path:
         sys.path.insert(0, here)
-
-
-def cohort_size_bucket(n_days_members: int) -> str:
-    """cohort 规模 (当日事件数) → 分桶标签; 非正数 fail-closed。"""
-    if not isinstance(n_days_members, int) or isinstance(n_days_members, bool):
-        raise TypeError(f"cohort size must be int, got {type(n_days_members).__name__}")
-    if n_days_members <= 0:
-        raise ValueError(f"cohort size must be positive, got {n_days_members}")
-    for (lo, hi), label in zip(COHORT_BUCKET_EDGES, COHORT_BUCKET_LABELS):
-        if lo <= n_days_members <= hi:
-            return label
-    raise ValueError(f"cohort size {n_days_members} outside predefined edges")
 
 
 def variance_decomposition(net: Sequence[float], days: Sequence[str]) -> dict[str, Any]:

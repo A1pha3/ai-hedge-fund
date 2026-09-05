@@ -1204,3 +1204,103 @@ def test_alignment_line_no_anomaly_clause_when_clean_or_absent(tmp_path):
     line2 = da._render_universe_alignment_line(_write_alignment(tmp_path, legacy_only))
     assert line2 is not None
     assert "结构异常" not in line2
+
+
+# ---------------------------------------------------------------------------
+# R125 Op3: 今日信号日 cohort 语境行 (fail-open 家族, 镜像入选质量行四面)
+# ---------------------------------------------------------------------------
+
+def _write_cohort_report(base, day="20260905"):
+    import json as _json
+    base.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "cohort_buckets": [
+            {"bucket": "1", "days": 9, "n": 9, "day_e_median": 0.0184,
+             "event_stats": {"n": 9, "winrate": 0.556, "expectancy": 0.1125,
+                             "cluster_ci_low_90": None}},
+            {"bucket": "4-9", "days": 45, "n": 293, "day_e_median": -0.0233,
+             "event_stats": {"n": 293, "winrate": 0.348, "expectancy": -0.0249,
+                             "cluster_ci_low_90": -0.0386}},
+            {"bucket": "20+", "days": 26, "n": 864, "day_e_median": 0.0064,
+             "event_stats": {"n": 864, "winrate": 0.503, "expectancy": 0.0126,
+                             "cluster_ci_low_90": -0.017}},
+        ],
+    }
+    (base / f"signal_day_cohort_{day}.json").write_text(
+        _json.dumps(payload), encoding="utf-8")
+    return base
+
+
+def test_day_cohort_line_bucket_stats_and_small_sample_note(case, tmp_path, monkeypatch):
+    """正常形态: 规模→桶映射 + 历史战绩并置; 小样本桶 CI 缺失显式尾注."""
+    _patch_quality_reports_dir(monkeypatch, _write_cohort_report(tmp_path))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    # 3 只 picks → cohort 规模 3 → 「2-3」桶无样本 → 只报只数形态
+    view = DailyActionV2Run(
+        run, (), run.open_positions, (), (),
+        plan_details=(
+            _detail("111.SZ", 0.72),
+            _detail("222.SZ", 0.72),
+            _detail("333.SZ", 0.55),
+        ),
+    )
+    text = render_daily_action_v2(view)
+    assert "今日同振语境" in text
+    assert "「2-3」桶无样本" in text
+    assert "不改变计划与执行" in text
+
+
+def test_day_cohort_line_hits_bucket_with_stats(case, tmp_path, monkeypatch):
+    """6 只 picks → 4-9 桶 (45 日 · 事件 E -2.49% · 胜率 34.8% · CI -3.86%)."""
+    _patch_quality_reports_dir(monkeypatch, _write_cohort_report(tmp_path))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(
+        run, (), run.open_positions, (), (),
+        plan_details=tuple(_detail(f"{i}.SZ", 0.72) for i in range(111, 117)),
+    )
+    text = render_daily_action_v2(view)
+    assert "今日计划 6 只 → 历史同规模「4-9」桶" in text
+    assert "45 日 · 事件 E -2.49% · 胜率 34.8% · CI90 下界 -3.86%" in text
+
+
+def test_day_cohort_line_small_sample_bucket_ci_note(case, tmp_path, monkeypatch):
+    """单票 cohort → 「1」桶 (n=9<30) → CI 不产出尾注."""
+    _patch_quality_reports_dir(monkeypatch, _write_cohort_report(tmp_path))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(
+        run, (), run.open_positions, (), (),
+        plan_details=(_detail("111.SZ", 0.72),),
+    )
+    text = render_daily_action_v2(view)
+    assert "今日计划 1 只 → 历史同规模「1」桶" in text
+    assert "CI 不产出（小样本只披露）" in text
+
+
+def test_day_cohort_line_absent_without_picks(case, tmp_path, monkeypatch):
+    _patch_quality_reports_dir(monkeypatch, _write_cohort_report(tmp_path))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "今日同振语境" not in render_daily_action_v2(view)
+
+
+def test_day_cohort_line_absent_when_report_corrupt(case, tmp_path, monkeypatch):
+    """最新报告损坏 → 整行省略, 不回退旧报告 (镜像质量行纪律)."""
+    base = _write_cohort_report(tmp_path, day="20260903")
+    (base / "signal_day_cohort_20260905.json").write_text("\x00 not json", encoding="utf-8")
+    _patch_quality_reports_dir(monkeypatch, base)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(
+        run, (), run.open_positions, (), (),
+        plan_details=(_detail("111.SZ", 0.72),),
+    )
+    assert "今日同振语境" not in render_daily_action_v2(view)

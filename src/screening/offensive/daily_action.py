@@ -1850,6 +1850,88 @@ def _render_picks_quality_line(
         return None
 
 
+def _render_day_cohort_line(
+    plan_details,
+    reports_dir: str | Path | None = None,
+) -> str | None:
+    """今日信号日 cohort 语境行 (R125 Op3): 日层共振证据的操作员面。
+
+    R123 信号日 cohort 分解实证 between-day 方差占比 35.7% — 同日入场共享
+    同一 T+1..T+10 市场路径, 今日计划的 cohort 规模所处历史同规模桶的战绩
+    是入选质量行 (强度维度) 之外的另一决策语境维度。本行读最新
+    signal_day_cohort 报告 (latest_signal_day_cohort_report 单一读取家),
+    规模→桶映射经 cohort_size_bucket 单一实现 (与分解脚本同口径)。
+
+    fail-open 家族纪律 (R85/R87/R92/R109/R114 同族): 无 picks/报告缺失/
+    损坏/结构不符 → 整行省略 (最新报告损坏不回退旧报告); 桶行缺失 → 只报
+    只数不出历史战绩; CI 缺失 (小样本桶) 显式尾注。本行是披露不是行为改变
+    — 不进入任何计划/评分/仓位/退出决策路径。
+    """
+    if not plan_details:
+        return None
+    try:
+        from src.screening.offensive.gap_disclosure import (
+            cohort_size_bucket,
+            latest_signal_day_cohort_report,
+        )
+
+        base = (
+            Path(reports_dir) if reports_dir is not None
+            else _PRIOR_DRIFT_REPORTS_DIR
+        )
+        found = latest_signal_day_cohort_report(base)
+        if found is None:
+            return None
+        report_path, payload = found
+        bucket_rows = payload.get("cohort_buckets")
+        if not isinstance(bucket_rows, list) or not bucket_rows:
+            return None
+        size = len({detail.ticker for detail in plan_details})
+        label = cohort_size_bucket(size)
+        row = next(
+            (
+                r for r in bucket_rows
+                if isinstance(r, dict) and r.get("bucket") == label
+            ),
+            None,
+        )
+        report_date = report_path.stem.rsplit("_", 1)[-1]
+        if row is None:
+            return (
+                f"今日同振语境（信号日 cohort · {report_date}）："
+                f"今日计划 {size} 只 → 历史同规模「{label}」桶无样本 — "
+                f"日层共振参考，不改变计划与执行"
+            )
+        stats = row.get("event_stats")
+        if not isinstance(stats, dict):
+            return None
+        expectancy = stats.get("expectancy")
+        winrate = stats.get("winrate")
+        ci = stats.get("cluster_ci_low_90")
+        if not (
+            isinstance(expectancy, (int, float))
+            and math.isfinite(float(expectancy))
+            and isinstance(winrate, (int, float))
+            and math.isfinite(float(winrate))
+        ):
+            return None
+        days = row.get("days")
+        days_txt = f"{days} 日 · " if isinstance(days, int) else ""
+        ci_txt = (
+            f"CI90 下界 {ci:+.2%}"
+            if isinstance(ci, (int, float)) and math.isfinite(float(ci))
+            else "CI 不产出（小样本只披露）"
+        )
+        return (
+            f"今日同振语境（信号日 cohort · {report_date}）："
+            f"今日计划 {size} 只 → 历史同规模「{label}」桶"
+            f"（{days_txt}事件 E {expectancy:+.2%} · 胜率 {winrate:.1%} · "
+            f"{ci_txt}） — 日层共振参考，不改变计划与执行"
+        )
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+        return None
+
+
 def _render_trigger_state_line() -> str | None:
     """预注册强度阈值触发器的操作员状态行 (R85 Op1)。
 
@@ -2240,6 +2322,10 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     quality_line = _render_picks_quality_line(run.plan_details)
     if quality_line:
         lines.append(quality_line)
+        lines.append("")
+    cohort_line = _render_day_cohort_line(run.plan_details)
+    if cohort_line:
+        lines.append(cohort_line)
         lines.append("")
     if summary is not None:
         lines.append(f"今日摘要：{summary}")

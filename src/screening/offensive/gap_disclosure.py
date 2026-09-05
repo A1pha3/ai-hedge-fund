@@ -53,11 +53,19 @@ def latest_decomposition_report(
     文件缺失/不可读/非法 JSON/顶层非对象 → None (fail-open, 不假装有证据);
     损坏的最新报告不回退旧报告 — 以 None 示警, 不以陈旧数字冒充当前证据。
     """
+    return _latest_dated_report(reports_dir, _REPORT_GLOB)
+
+
+def _latest_dated_report(
+    reports_dir: str | Path,
+    report_glob: str,
+) -> tuple[Path, dict] | None:
+    """按日期段形状守卫取字典序最新报告 (两读取家共享实现, 防漂移)。"""
     directory = Path(reports_dir)
     try:
         dated = sorted(
             path
-            for path in directory.glob(_REPORT_GLOB)
+            for path in directory.glob(report_glob)
             if _DATED_SUFFIX_RE.search(path.stem)
         )
     except OSError:
@@ -72,6 +80,49 @@ def latest_decomposition_report(
     if not isinstance(payload, dict):
         return None
     return path, payload
+
+
+_COHORT_REPORT_GLOB = "signal_day_cohort_*.json"
+
+# cohort 规模分桶 (R123 Op1 定义, R125 Op3 上移单一实现家): 左闭右闭日数
+# 边界, 显式边界不玩 cut 花活。脚本 (scripts/btst_signal_day_cohort) 与
+# 操作员渲染行共用 — 两侧口径不可漂移。
+COHORT_BUCKET_EDGES: tuple[tuple[int, int], ...] = (
+    (1, 1),
+    (2, 3),
+    (4, 9),
+    (10, 19),
+    (20, math.inf),
+)
+COHORT_BUCKET_LABELS: tuple[str, ...] = ("1", "2-3", "4-9", "10-19", "20+")
+
+
+def cohort_size_bucket(n_days_members: int) -> str:
+    """cohort 规模 (当日事件数) → 分桶标签。
+
+    非整数/非正数 fail-closed (bool 是 int 子类, 显式拒) — 分桶口径由
+    构造保证, 绝不静默归桶。
+    """
+    if not isinstance(n_days_members, int) or isinstance(n_days_members, bool):
+        raise TypeError(f"cohort size must be int, got {type(n_days_members).__name__}")
+    if n_days_members <= 0:
+        raise ValueError(f"cohort size must be positive, got {n_days_members}")
+    for (lo, hi), label in zip(COHORT_BUCKET_EDGES, COHORT_BUCKET_LABELS):
+        if lo <= n_days_members <= hi:
+            return label
+    raise ValueError(f"cohort size {n_days_members} outside predefined edges")
+
+
+def latest_signal_day_cohort_report(
+    reports_dir: str | Path = Path("data/reports"),
+) -> tuple[Path, dict] | None:
+    """最新信号日 cohort 分解报告的唯一读取家 (R125 Op3)。
+
+    与 latest_decomposition_report 同构 (形状守卫/字典序新鲜/损坏 None
+    不回退旧报告 — 不以陈旧数字冒充当前证据), 经 _latest_dated_report
+    单一实现只换 glob。
+    """
+    return _latest_dated_report(reports_dir, _COHORT_REPORT_GLOB)
 
 
 def gap_bucket(gap: float | None) -> str:
