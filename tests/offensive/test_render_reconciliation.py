@@ -24,6 +24,16 @@ from src.screening.offensive.daily_action_service import (
     PlanCandidate,
 )
 from src.screening.offensive.execution_adjuster import ExecutionCosts
+
+
+@pytest.fixture(autouse=True)
+def _isolate_alignment_summary(tmp_path, monkeypatch):
+    """R120b: 宿主真实 realized_vs_court_alignment.json 在场时, 宇宙对齐行会渲染进
+    本文件全部渲染输出 (『宇宙 not in text』等全文断言误中) — 默认隔离保持 hermetic;
+    显式对齐行测试 (test_daily_action_v2_render 内) 自行 monkeypatch 覆盖此默认值。"""
+    from src.screening.offensive import daily_action as _da
+
+    monkeypatch.setattr(_da, "_ALIGNMENT_SUMMARY_PATH", tmp_path / "no-alignment.json")
 from src.screening.offensive.ledger_repository import LedgerRepository
 from src.screening.offensive.trade_lifecycle import TradeState
 
