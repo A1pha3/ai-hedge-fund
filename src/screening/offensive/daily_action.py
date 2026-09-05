@@ -17,6 +17,7 @@ import json
 import logging
 import math
 import os
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
@@ -1483,6 +1484,7 @@ _COURT_REFRESH_STATUS_PATH = Path("data/reports/court_refresh_status.json")
 # 宇宙对齐 canonical summary (R118 Op1): 夜刷链 build 成功后单写者落盘,
 # 本模块 _render_universe_alignment_line 消费 (形状守卫 fail-open)。
 _ALIGNMENT_SUMMARY_PATH = Path("data/reports/realized_vs_court_alignment.json")
+_DATE_8_RE = re.compile(r"[0-9]{8}")
 
 
 def _render_prior_drift_line(reports_dir: str | Path | None = None) -> str | None:
@@ -1540,8 +1542,23 @@ def _render_prior_drift_line(reports_dir: str | Path | None = None) -> str | Non
         return None
 
 
+def _is_finite_number(value: object) -> bool:
+    """有限数值 (bool 是 int 子类显式排除; NaN/inf 是 float 合法值同样排除)。
+
+    R119 Op1: 对齐行数值子句的单一守卫 — 修复前字符串 expectancy_pct 经
+    ``f"{e:+.2f}"`` ValueError 裸逃逸炸掉整个 --daily-action 渲染 (PoC 实锤,
+    R115 Op1 P1 fail-open 家族纪律的同族违例)。
+    """
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
 def _render_universe_alignment_line(
     summary_path: str | Path | None = None,
+    as_of=None,
 ) -> str | None:
     """宇宙对齐行 (R118 Op1): 证据宇宙 vs 生产宇宙的对账状态 + realized 兑现。
 
@@ -1571,7 +1588,7 @@ def _render_universe_alignment_line(
     if (
         not isinstance(total, int) or isinstance(total, bool)
         or not isinstance(counts, dict)
-        or not isinstance(report_date, str) or not report_date
+        or not isinstance(report_date, str) or not _DATE_8_RE.fullmatch(report_date)
     ):
         return None
     matched = counts.get("matched")
@@ -1582,9 +1599,23 @@ def _render_universe_alignment_line(
         for key, value in counts.items()
         if key != "matched" and isinstance(value, int) and not isinstance(value, bool)
     )
-    head = f"宇宙对齐（对账 {report_date}"
+    if matched > total or matched + split != total:
+        # R119 Op1 P3: 计数内部矛盾 (matched>total / 分类和≠总数) = 工件损坏,
+        # 整行省略不假装 — 渲染矛盾读数比不渲染更有害 (PoC: matched 27>total 18 照常出行)。
+        return None
+    today_str = (date.today() if as_of is None else as_of).strftime("%Y%m%d")
+    future = report_date > today_str
+    head = (
+        f"宇宙对齐（⚠ 对账日期 {report_date} 在今日之后（工件异常）"
+        if future
+        else f"宇宙对齐（对账 {report_date}"
+    )
     window = data.get("court_window")
-    if isinstance(window, dict) and window.get("start") and window.get("end"):
+    if (
+        isinstance(window, dict)
+        and isinstance(window.get("start"), str) and window.get("start")
+        and isinstance(window.get("end"), str) and window.get("end")
+    ):
         head += f" · court 窗口 {window['start']}..{window['end']}"
     head += f"）：生产 BUY {total} · matched {matched} · 分裂 {split}"
     latest_split = data.get("latest_split_signal_date")
@@ -1598,7 +1629,12 @@ def _render_universe_alignment_line(
         n = realized.get("n")
         wr = realized.get("win_rate_pct")
         e = realized.get("expectancy_pct")
-        if isinstance(n, int) and not isinstance(n, bool) and n > 0:
+        # R119 Op1 P1: 数值子句全守卫 — 任一值非有限数值 (str/dict/NaN/inf/bool)
+        # → realized 子句整体省略, 绝不渲染部分垃圾 (PoC: 『胜率 {}%』/『期望 +nan%』)。
+        if (
+            isinstance(n, int) and not isinstance(n, bool) and n > 0
+            and _is_finite_number(wr) and _is_finite_number(e)
+        ):
             body += f" · 已平仓 {n} 胜率 {wr}% 期望 {e:+.2f}%"
     body += (
         " — realized 为 paper journal 已平仓口径（含分裂信号日交易），"

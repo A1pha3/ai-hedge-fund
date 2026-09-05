@@ -912,10 +912,12 @@ def test_alignment_line_renders_counts_split_and_realized(tmp_path):
 def test_alignment_line_all_matched_reports_zero_split(tmp_path):
     from src.screening.offensive import daily_action as da
 
+    # R119 P3 一致性守卫: 夹具必须是自洽世界 (total = matched + split);
+    # 旧夹具清零分裂类但 total 仍 18, 守卫正确拒绝 → 夹具修正为 total=9。
+    counts = {**_alignment_summary()["class_counts"],
+              "day_missing_from_court": 0, "ticker_not_in_court_day": 0}
     payload = _alignment_summary(
-        class_counts={**_alignment_summary()["class_counts"],
-                      "day_missing_from_court": 0, "ticker_not_in_court_day": 0},
-        latest_split_signal_date=None,
+        total_buys=9, class_counts=counts, latest_split_signal_date=None,
     )
     line = da._render_universe_alignment_line(_write_alignment(tmp_path, payload))
     assert "分裂 0 — 全部生产信号在 court 宇宙内" in line
@@ -979,3 +981,76 @@ def test_alignment_line_wired_after_drift_line(case, tmp_path, monkeypatch):
     monkeypatch.setattr(da, "_ALIGNMENT_SUMMARY_PATH", tmp_path / "nope.json")
     text_without = render_daily_action_v2(view)
     assert "宇宙对齐" not in text_without
+
+
+# ---------- R119 Op2: 对齐行对抗审查收口 (R118 交付面 PoC 六连) ----------
+
+def test_alignment_line_realized_clause_crash_on_string_expectancy(tmp_path):
+    """G1 (修复前 RED = ValueError 裸逃逸炸掉整个渲染): expectancy_pct 字符串 →
+    数值子句整体省略, 行照常渲染 (R115 Op1 P1 fail-open 家族纪律同族)."""
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary(
+        realized_only={**_alignment_summary()["realized_only"],
+                       "expectancy_pct": "-6.04"}
+    )
+    line = da._render_universe_alignment_line(_write_alignment(tmp_path, payload))
+    assert line is not None
+    assert "· 已平仓" not in line
+    assert "生产 BUY 18" in line
+
+
+@pytest.mark.parametrize("bad", [{}, "20%", float("nan"), float("inf"), True])
+def test_alignment_line_realized_clause_omitted_on_non_finite(tmp_path, bad):
+    """G1 族: wr 非有限数值 (dict/str/NaN/inf/bool) → realized 子句省略, 不渲染垃圾."""
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary(
+        realized_only={**_alignment_summary()["realized_only"], "win_rate_pct": bad}
+    )
+    line = da._render_universe_alignment_line(_write_alignment(tmp_path, payload))
+    assert line is not None
+    assert "· 已平仓" not in line
+
+
+def test_alignment_line_date_shape_guard(tmp_path):
+    """G2a (修复前 RED = 『对账 banana』照常渲染): date 非八位 → 整行 None."""
+    from src.screening.offensive import daily_action as da
+
+    line = da._render_universe_alignment_line(
+        _write_alignment(tmp_path, _alignment_summary(date="banana"))
+    )
+    assert line is None
+    assert da._render_universe_alignment_line(
+        _write_alignment(tmp_path / "b", _alignment_summary(date="202609051"))
+    ) is None
+
+
+def test_alignment_line_future_date_renders_anomaly_explicitly(tmp_path):
+    """G2b (修复前 RED = 未来日期静默照常渲染): 合法 8 位未来日 → 异常显形出行
+    (R115b G1 文案先例), 其余统计照常."""
+    from datetime import date as _date
+
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary(date="20260910")
+    line = da._render_universe_alignment_line(
+        _write_alignment(tmp_path, payload), as_of=_date(2026, 9, 5)
+    )
+    assert line is not None
+    assert "⚠ 对账日期 20260910 在今日之后（工件异常）" in line
+    assert "生产 BUY 18 · matched 9 · 分裂 9" in line
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda p: p["class_counts"].update(matched=27),
+    lambda p: p["class_counts"].update(matched=5),
+    lambda p: p.update(total_buys=36),
+])
+def test_alignment_line_count_inconsistency_omits_line(tmp_path, mutate):
+    """G3 (修复前 RED = matched 27 > total 18 照常渲染): 计数内部矛盾 → 整行 None."""
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary()
+    mutate(payload)
+    assert da._render_universe_alignment_line(_write_alignment(tmp_path, payload)) is None
