@@ -263,7 +263,12 @@ def _load_log_strengths(path: Path) -> dict[str, float]:
             continue
         ticker = str(row.get("ticker") or "")
         value = row.get("trigger_strength")
-        if ticker and isinstance(value, (int, float)) and not isinstance(value, bool):
+        if (
+            ticker
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and 0.0 <= float(value) <= 1.0
+        ):
             out[ticker] = float(value)
     return out
 
@@ -381,6 +386,13 @@ def build_payload(
     return {
         "report_date": report_date,
         "horizon": f"t{PRIMARY_HORIZON}",
+        "caliber": {
+            "returns": "gross",
+            "net_conversion": "净 = 毛 − 往返 0.65% (与 winrate 分解报告同式; "
+            "两报告直比须先换算同口径)",
+            "universe_note": "production_aligned 宇宙含 <0.50 强度行 (与分解报告 "
+            "ALL 逐字对齐)",
+        },
         "total_buys": len(recon.records),
         "matched_n": len(recon.matched_records),
         "split_n": split_n,
@@ -425,6 +437,10 @@ def render_md(payload: Mapping[str, Any]) -> str:
         "来自哪里 — 日选择 / 日内合格选择 / 不合格买入 (PIT 漂移面)。三个分量",
         "都是格子均值的差 (恒等零残差, 无 RNG); 本报告不构成任何行为授权 —",
         "参数变化 = 新证据世代 owner 决策。",
+        "",
+        f"口径: 毛收益口径 (court gross_ret_t10) — 净 = 毛 − 往返 0.65% "
+        "(与 winrate 分解报告同式, 跨报告直比须先同口径); "
+        "宇宙含 <0.50 强度行",
         "",
         f"生产 BUY {payload['total_buys']} · matched {payload['matched_n']} · "
         f"split {payload['split_n']} · 主面 n={payload['faces']['b_all_n']} "

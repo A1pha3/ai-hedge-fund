@@ -18,6 +18,7 @@ from scripts.btst_realized_vs_court import (
     reconcile,
 )
 from scripts.realized_selection_wedge import (
+    _load_log_strengths,
     classify_ineligible_reasons,
     decompose_wedge,
     eligible_universe_cells,
@@ -320,3 +321,71 @@ def test_split_bought_cells_membership() -> None:
     assert [c["key"] for c in b_inelig] == [("20260702", "000006")]
     assert b_inelig[0]["reasons"] == ["gate_blocked"]
     assert universe[("20260701", "000001")] == pytest.approx(3.0)
+
+
+def test_caliber_disclosure() -> None:
+    """口径可比性 (Op2): payload+MD 显式披露毛口径与净换算, 防跨报告误读。"""
+    world = _fixture_world()
+    payload = build_payload(
+        world["recon"], world["ev"], world["inputs"], log_dir=None, report_date="20260906"
+    )
+    assert payload["caliber"]["returns"] == "gross"
+    assert "0.65" in payload["caliber"]["net_conversion"]
+    md = render_md(payload)
+    assert "毛收益口径" in md
+    assert "0.65" in md
+
+
+def test_poisoned_log_strength_forms(tmp_path) -> None:
+    """毒化形态 (Op2): str/bool/越界强度与非 dict JSON 行全部跳过不崩不入 map。
+
+    毒化票必须是 matched v2 记录才真正打中装载路径 (否则日志行根本不被读) —
+    接受毒化值 = 假漂移 (R122 纪律: 假漂移比无漂移更有害)。
+    """
+    log_dir = tmp_path / "setup_output_log"
+    log_dir.mkdir()
+    rows = [
+        ["a", "list"],                      # 非 dict 行
+        42,                                 # 非 dict 行 (数字)
+        {"ticker": "000010", "plan_eligible": True, "trigger_strength": "0.6"},  # str
+        {"ticker": "000011", "plan_eligible": True, "trigger_strength": True},   # bool
+        {"ticker": "000012", "plan_eligible": True, "trigger_strength": -0.3},   # 越界负值
+        {"ticker": "000013", "plan_eligible": True, "trigger_strength": 1.5},    # 越界 >1
+        {"ticker": "000014", "plan_eligible": True, "trigger_strength": 0.62},   # 合法
+    ]
+    (log_dir / "20260701.jsonl").write_text(
+        "\n".join(json.dumps(r) if not isinstance(r, str) else r for r in rows) + "\n",
+        encoding="utf-8",
+    )
+    world = _fixture_world()
+    from scripts.btst_realized_vs_court import SignalRecord
+
+    def _v2(ticker: str, court: float) -> SignalRecord:
+        return SignalRecord(
+            signal_date="20260701", ticker=ticker, horizon=10,
+            paper_strength=None, classification="matched", court_strength=court,
+            strength_drift=None, realized_pct=None, court_gross_ret_horizon=1.0,
+            direction_agree=None, store=STORE_LEDGER_V2,
+        )
+
+    records = world["recon"].matched_records + [
+        _v2("000010", 0.6), _v2("000011", 0.6), _v2("000012", 0.6),
+        _v2("000013", 0.6), _v2("000014", 0.62),
+    ]
+    mapping, missing = recover_paper_strengths(records, log_dir)
+    assert mapping[("20260701", "000014")] == pytest.approx(0.62)
+    assert [k for k in mapping if k[1] in ("000010", "000011", "000012", "000013")] == []
+    assert missing == 4  # 毒化值不入 map → 如实记缺失 (绝不以毒值冒充决策时强度)
+
+
+def test_matched_coverage_identity() -> None:
+    """覆盖恒等 (Op2): matched == b_all + 未成熟 + 其他 horizon, fixture 上恒成立。"""
+    world = _fixture_world()
+    payload = build_payload(
+        world["recon"], world["ev"], world["inputs"], log_dir=None, report_date="20260906"
+    )
+    others_n = sum(o["n"] for o in payload["other_horizons"])
+    assert (
+        payload["matched_n"]
+        == payload["faces"]["b_all_n"] + payload["unmatured_primary_n"] + others_n
+    )
