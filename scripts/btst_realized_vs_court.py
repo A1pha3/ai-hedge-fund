@@ -409,13 +409,17 @@ def replay_divergence_diagnosis(
             raw = replay_fn(record.ticker, record.signal_date)
             if raw is None:
                 error = "replay_no_outcome"
+            elif not isinstance(raw, Mapping):
+                error = f"replay_bad_outcome: {type(raw).__name__}"
+            elif not isinstance(raw.get("hit"), bool):
+                # R138 Op3 对抗审查: bool('no')==True 强转会把畸形结局冒充成
+                # replay_hit_now; 缺 hit 键则按 miss_stage 冒充 miss 分类 —
+                # 畸形结局是证据损坏, typed 不冒充分类 (镜像 loader 纪律)。
+                error = f"replay_bad_outcome: non-bool hit {raw.get('hit')!r}"
             else:
                 outcome = raw
         except Exception as exc:  # noqa: BLE001 — 失败本身进诊断面, typed 不吞
             error = f"{type(exc).__name__}: {exc}"
-        if outcome is not None and not isinstance(outcome, Mapping):
-            error = f"replay_bad_outcome: {type(outcome).__name__}"
-            outcome = None
         classification = classify_replay_divergence(
             hit=bool(outcome.get("hit")) if outcome is not None else False,
             miss_stage=outcome.get("miss_stage") if outcome is not None else None,
@@ -963,6 +967,32 @@ def _court_window_from_manifest(manifest_path: Path) -> tuple[str, str] | None:
     return (start, end)
 
 
+def attach_divergence_diagnosis(
+    payload: dict[str, Any],
+    recon: Reconciliation,
+    *,
+    raw_dir: Path | str,
+    regime_labels: Mapping[str, Any],
+) -> None:
+    """R138 Op1: 未匹配 BUY 的 typed 重放分歧诊断 — 纯读取, 构造失败 typed
+    披露不阻断 (fail-open, 镜像六类报告的既有形态)。
+
+    R138 Op3 对抗审查: 构造链含 fail-loud 的 ``SystemExit`` (load_panel 对
+    缺 daily 子目录抛 'panel empty') — SystemExit 是 BaseException 非
+    Exception, except Exception 接不住会让六类报告整体崩溃而非本函数承诺
+    的单行披露; 显式并入 catch。
+    """
+    if not any(r.classification in DIVERGENCE_CLASSES for r in recon.records):
+        return
+    try:
+        replay_fn = build_court_replay_fn(raw_dir, regime_map=regime_labels)
+        payload["divergence_diagnosis"] = replay_divergence_diagnosis(
+            recon.records, replay_fn
+        )
+    except (Exception, SystemExit) as exc:  # noqa: BLE001 — 诊断不可用显形, 报告照常
+        payload["divergence_diagnosis_unavailable"] = f"{type(exc).__name__}: {exc}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--journal", type=Path, default=JOURNAL_PATH)
@@ -1016,19 +1046,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     recon = reconcile(journal, inputs, extra_buys=extra_buys)
     payload = summary_payload(recon, court_window=window)
-
-    # R138 Op1: 未匹配 BUY 的 typed 重放分歧诊断 — 纯读取, 构造失败 typed
-    # 披露不阻断 (fail-open, 镜像六类报告的既有形态)。
-    if any(r.classification in DIVERGENCE_CLASSES for r in recon.records):
-        try:
-            replay_fn = build_court_replay_fn(
-                args.panel_dir.parent, regime_map=regime_labels
-            )
-            payload["divergence_diagnosis"] = replay_divergence_diagnosis(
-                recon.records, replay_fn
-            )
-        except Exception as exc:  # noqa: BLE001 — 诊断不可用显形, 报告照常
-            payload["divergence_diagnosis_unavailable"] = f"{type(exc).__name__}: {exc}"
+    attach_divergence_diagnosis(
+        payload, recon, raw_dir=args.panel_dir.parent, regime_labels=regime_labels
+    )
 
     from datetime import date
 

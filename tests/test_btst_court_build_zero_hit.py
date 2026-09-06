@@ -80,3 +80,22 @@ def test_record_day_outcome_accumulates():
         "20260811": {"candidates": 78, "hits": 0},
         "20260812": {"candidates": 63, "hits": 8},
     }
+
+
+# ---------------------------------------------------------------------------
+# R138 Op3 对抗审查: 审计写入/读取面 typed 硬化.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", [2.7, 2.0, "3", True, None])
+def test_record_day_outcome_rejects_non_int_typed(bad):
+    with pytest.raises(TypeError):
+        record_day_outcome({}, "20260811", bad, 0)
+    with pytest.raises(TypeError):
+        record_day_outcome({}, "20260811", 1, bad)
+
+
+@pytest.mark.parametrize("bad_row", [None, 42, "x", ["candidates", "hits"]])
+def test_zero_hit_day_audit_non_mapping_row_typed(bad_row):
+    with pytest.raises(ValueError):
+        zero_hit_day_audit({"20260811": bad_row})
