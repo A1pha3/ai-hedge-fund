@@ -12,6 +12,7 @@ import pytest
 
 from scripts.btst_realized_vs_court import (
     CLASSES,
+    Reconciliation,
     SignalRecord,
     build_alignment_summary,
     build_classification_inputs,
@@ -23,6 +24,7 @@ from scripts.btst_realized_vs_court import (
     realized_stats,
     reconcile,
     render_md,
+    replay_divergence_diagnosis,
     write_alignment_summary,
     summary_payload,
 )
@@ -709,3 +711,163 @@ class TestR122RealizationGap:
         assert "实现缺口归因" in text
         # 文档头注固有『双锚点方向对照』字样 — 用渲染行的唯一前缀断言
         assert "方向对照: 一致" not in text
+
+
+# ---------------------------------------------------------------------------
+# R138 Op1: 重放分歧 typed 诊断 — 未匹配 BUY 经现行公式重放, 根因自解释.
+# 纯注入 (replay_fn) fixture: 零网络/零 gitignored 资产 (R10 slot 自足纪律).
+# ---------------------------------------------------------------------------
+
+
+def _divergent_rec(cls: str, day: str = "20260811", ticker: str = "603284") -> SignalRecord:
+    return SignalRecord(
+        signal_date=day, ticker=ticker, horizon=10, paper_strength=0.83,
+        classification=cls,
+    )
+
+
+def _replay_outcome(hit: bool, miss_stage: str | None, strength: float = 0.0):
+    return {"hit": hit, "miss_stage": miss_stage, "trigger_strength": strength}
+
+
+class TestClassifyReplayDivergence:
+    """重放结局 → typed 根因 (优先级: error > hit > stage 前缀)."""
+
+    def test_six_outcomes_map_to_typed_classes(self):
+        from scripts.btst_realized_vs_court import classify_replay_divergence
+
+        assert classify_replay_divergence(hit=True, miss_stage=None, error=None) == "replay_hit_now"
+        assert classify_replay_divergence(hit=False, miss_stage="c2_flow_below_mean", error=None) == "flow_input_divergence"
+        assert classify_replay_divergence(hit=False, miss_stage="c2_flow_missing", error=None) == "flow_input_divergence"
+        assert classify_replay_divergence(hit=False, miss_stage="c3_industry_weak", error=None) == "industry_condition_divergence"
+        assert classify_replay_divergence(hit=False, miss_stage="c0_trigger_row_missing", error=None) == "universe_panel_divergence"
+        assert classify_replay_divergence(hit=False, miss_stage="c1_limit_up_pct", error=None) == "universe_panel_divergence"
+        assert classify_replay_divergence(hit=False, miss_stage="c5_bonus_insufficient", error=None) == "condition_divergence"
+        assert classify_replay_divergence(hit=False, miss_stage=None, error="ValueError: boom") == "replay_error"
+
+
+class TestReplayDivergenceDiagnosis:
+    def test_no_divergent_records_returns_none(self):
+        records = [
+            _divergent_rec("matched"),
+            _divergent_rec("outside_window", day="20250101"),
+        ]
+        assert replay_divergence_diagnosis(
+            records, lambda t, d: _replay_outcome(False, "c3_industry_weak")
+        ) is None
+
+    def test_six_divergent_records_typed_and_deterministic(self):
+        outcomes = {
+            "20260811": _replay_outcome(False, "c3_industry_weak"),
+            "20260813": _replay_outcome(False, "c2_flow_below_mean"),
+            "20260814": _replay_outcome(True, None, strength=0.72),
+            "20260815": _replay_outcome(False, "c0_trigger_row_missing"),
+            "20260817": _replay_outcome(False, "c4_insufficient_history"),
+        }
+
+        def fn(ticker: str, day: str):
+            return outcomes[day]
+
+        records = [
+            _divergent_rec("day_missing_from_court", day="20260811", ticker="603284"),
+            _divergent_rec("day_missing_from_court", day="20260813", ticker="002066"),
+            _divergent_rec("ticker_not_in_court_day", day="20260814", ticker="600487"),
+            _divergent_rec("ticker_not_in_court_day", day="20260815", ticker="600488"),
+            _divergent_rec("day_missing_from_court", day="20260817", ticker="600489"),
+            _divergent_rec("matched", day="20260820", ticker="600491"),
+        ]
+        payload = replay_divergence_diagnosis(records, fn)
+        assert payload is not None
+        assert payload["diagnosable"] == 5
+        assert payload["by_class"]["industry_condition_divergence"] == 1
+        assert payload["by_class"]["flow_input_divergence"] == 1
+        assert payload["by_class"]["replay_hit_now"] == 1
+        assert payload["by_class"]["universe_panel_divergence"] == 1
+        assert payload["by_class"]["condition_divergence"] == 1
+        assert payload["by_class"]["replay_error"] == 0
+        # matched 不进诊断面
+        assert all(d["ticker"] != "600491" for d in payload["details"])
+        # 确定性: details 按 (signal_date, ticker) 排序
+        keys = [(d["signal_date"], d["ticker"]) for d in payload["details"]]
+        assert keys == sorted(keys)
+        hit_row = next(
+            d for d in payload["details"] if d["classification"] == "replay_hit_now"
+        )
+        assert hit_row["replay_trigger_strength"] == pytest.approx(0.72)
+        assert hit_row["miss_stage"] is None
+
+    def test_replay_exception_typed_not_swallowed(self):
+        def fn(ticker: str, day: str):
+            raise RuntimeError("flow store corrupt")
+
+        payload = replay_divergence_diagnosis(
+            [_divergent_rec("day_missing_from_court")], fn
+        )
+        assert payload is not None
+        assert payload["by_class"]["replay_error"] == 1
+        detail = payload["details"][0]
+        assert detail["classification"] == "replay_error"
+        assert "RuntimeError" in detail["error"]
+
+    def test_replay_none_outcome_typed(self):
+        payload = replay_divergence_diagnosis(
+            [_divergent_rec("day_missing_from_court")], lambda t, d: None
+        )
+        assert payload is not None
+        assert payload["by_class"]["replay_error"] == 1
+        assert "no_outcome" in payload["details"][0]["error"]
+
+
+class TestRenderDivergenceDiagnosis:
+    def _payload_with_divergents(self) -> dict:
+        records = [
+            _divergent_rec("day_missing_from_court", day="20260811", ticker="603284"),
+            _divergent_rec("matched", day="20260820", ticker="600491"),
+        ]
+
+        def fn(ticker: str, day: str):
+            return _replay_outcome(False, "c3_industry_weak")
+
+        payload = summary_payload(
+            Reconciliation(
+                records=records,
+                matched_records=[records[1]],
+                class_counts={c: 0 for c in CLASSES}
+                | {"day_missing_from_court": 1, "matched": 1},
+            ),
+            court_window=None,
+        )
+        payload["divergence_diagnosis"] = replay_divergence_diagnosis(records, fn)
+        return payload
+
+    def test_without_diagnosis_key_render_unchanged(self):
+        """缺诊断键 → 无新节 (fail-open noop, 旧形态逐字保留)."""
+        inputs = _inputs(
+            [{"ts_code": "000001.SZ", "signal_date": 20260821,
+              "strength": 0.6, "gross_ret_t10": -0.0989}],
+            sessions=["20260821"], regime={"20260821": "normal"}, panel=["20260821"],
+        )
+        recon = reconcile([_journal_buy("20260821", "000001")], inputs)
+        text = render_md(summary_payload(recon, court_window=None))
+        assert "重放分歧诊断" not in text
+        assert "diagnosis_unavailable" not in text
+
+    def test_with_diagnosis_key_renders_typed_section(self):
+        text = render_md(self._payload_with_divergents())
+        assert "## 重放分歧诊断" in text
+        assert "industry_condition_divergence" in text
+        assert "603284" in text and "20260811" in text
+        assert "不构成任何行为授权" in text
+
+    def test_unavailable_key_renders_single_disclosure_line(self):
+        inputs = _inputs(
+            [{"ts_code": "000001.SZ", "signal_date": 20260821,
+              "strength": 0.6, "gross_ret_t10": -0.0989}],
+            sessions=["20260821"], regime={"20260821": "normal"}, panel=["20260821"],
+        )
+        recon = reconcile([_journal_buy("20260821", "000001")], inputs)
+        payload = summary_payload(recon, court_window=None)
+        payload["divergence_diagnosis_unavailable"] = "OSError: panel missing"
+        text = render_md(payload)
+        assert "诊断不可用" in text and "OSError: panel missing" in text
+        assert "## 重放分歧诊断" not in text

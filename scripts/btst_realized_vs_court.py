@@ -71,6 +71,29 @@ CLASSES = (
     "matched",
 )
 
+# 重放分歧诊断 (R138 Op1): 这两类 = 生产检出而 court 宇宙无此行 — 历史上
+# 只报计数与『detect 重放分歧』一句语义 (R132 登记), 根因要宿主侧手工取证
+# (0811/0813 整日空洞 = 生产时旧公式代际 + 现行数据 c2/c3 拒绝)。诊断把该
+# 取证固化为 typed 分类, 纯读取零判定 (宪法 #2)。
+DIVERGENCE_CLASSES = ("day_missing_from_court", "ticker_not_in_court_day")
+
+# 重放结局 → 根因类别 (检测序: error > hit > stage 前缀):
+#   replay_hit_now                现行公式+现行数据命中 — court 表滞后或当时数据修订
+#   flow_input_divergence         条件2 (主力净流入 vs 20 日均值) — flow 库历史修订
+#   industry_condition_divergence 条件3 (行业≥2%) — 2026-08-14 严格化代际 / 行业日涨幅修订
+#   universe_panel_divergence     条件0/1 (面板行/涨停价) — 面板或涨停原料分歧
+#   condition_divergence          其余条件 (c4+) — 公式代际演化
+#   replay_error                  重放本身失败 — typed 计数, 绝不冒充分类
+DIAGNOSIS_CLASSES = (
+    "replay_hit_now",
+    "flow_input_divergence",
+    "industry_condition_divergence",
+    "universe_panel_divergence",
+    "condition_divergence",
+    "replay_error",
+)
+
+
 _REALIZED_RE = re.compile(r"realized=([+-]?\d+(?:\.\d+)?)%")
 
 # court 事件表可用的退出端点列 (与 gross_ret_t{3,5,8,10} 对应)
@@ -342,6 +365,138 @@ def realized_map_from_journal(journal: Sequence[Mapping[str, Any]]) -> dict[tupl
             continue
         mapping[(normalize_day(record.get("date")), str(record.get("ticker") or ""))] = realized
     return mapping
+
+
+def classify_replay_divergence(*, hit: bool, miss_stage: str | None, error: str | None) -> str:
+    """单笔重放结局 → typed 根因类别 (检测序优先级: error > hit > stage 前缀).
+
+    ``error`` 形态 (重放抛错/无结局) 恒 ``replay_error`` — 失败是诊断结论
+    本身, 静默归入任何条件类都会把『证据不可证』冒充『证据已解释』。
+    """
+    if error is not None:
+        return "replay_error"
+    if hit:
+        return "replay_hit_now"
+    stage = str(miss_stage or "")
+    if stage.startswith("c2"):
+        return "flow_input_divergence"
+    if stage.startswith("c3"):
+        return "industry_condition_divergence"
+    if stage.startswith(("c0", "c1")):
+        return "universe_panel_divergence"
+    return "condition_divergence"
+
+
+def replay_divergence_diagnosis(
+    records: Sequence[SignalRecord],
+    replay_fn: Any,
+) -> dict[str, Any] | None:
+    """对未匹配 BUY 逐笔以现行公式重放, 输出 typed 根因诊断.
+
+    ``replay_fn(ticker, day) → {hit, miss_stage, trigger_strength}`` 注入式
+    (测试零数据资产依赖, R10 纪律); 抛错/返回 None → typed ``replay_error``
+    不吞。无未匹配记录 → None (payload 缺键, 渲染 fail-open 逐字不变)。
+    """
+    targets = [r for r in records if r.classification in DIVERGENCE_CLASSES]
+    if not targets:
+        return None
+    by_class: dict[str, int] = {c: 0 for c in DIAGNOSIS_CLASSES}
+    details: list[dict[str, Any]] = []
+    for record in sorted(targets, key=lambda r: (r.signal_date, r.ticker)):
+        error: str | None = None
+        outcome: Mapping[str, Any] | None = None
+        try:
+            raw = replay_fn(record.ticker, record.signal_date)
+            if raw is None:
+                error = "replay_no_outcome"
+            else:
+                outcome = raw
+        except Exception as exc:  # noqa: BLE001 — 失败本身进诊断面, typed 不吞
+            error = f"{type(exc).__name__}: {exc}"
+        if outcome is not None and not isinstance(outcome, Mapping):
+            error = f"replay_bad_outcome: {type(outcome).__name__}"
+            outcome = None
+        classification = classify_replay_divergence(
+            hit=bool(outcome.get("hit")) if outcome is not None else False,
+            miss_stage=outcome.get("miss_stage") if outcome is not None else None,
+            error=error,
+        )
+        by_class[classification] += 1
+        strength = outcome.get("trigger_strength") if outcome is not None else None
+        details.append(
+            {
+                "signal_date": record.signal_date,
+                "ticker": record.ticker,
+                "store": record.store,
+                "production_class": record.classification,
+                "classification": classification,
+                "miss_stage": outcome.get("miss_stage") if outcome is not None else None,
+                "replay_trigger_strength": (
+                    round(float(strength), 4)
+                    if isinstance(strength, (int, float)) and not isinstance(strength, bool)
+                    and math.isfinite(float(strength))
+                    else None
+                ),
+                "error": error,
+            }
+        )
+    return {"diagnosable": len(targets), "by_class": by_class, "details": details}
+
+
+def build_court_replay_fn(raw_dir: Path | str, *, regime_map: Mapping[str, Any]) -> Any:
+    """court build 单一实现同源的重放函数 — (ticker, day) → 重放结局 dict.
+
+    与 ``scripts/btst_court_build.py`` 逐组件同源 (load_panel/ticker_frame/
+    FundFlowStore/industry_day_pct/industry_of/BtstBreakoutSetup), 现行公式
+    现行数据; 检测条件 (c0..) 是唯一分类权威 — 本函数不复制任何条件语义。
+    重放与 regime 无关 (detect 不以 regime 分流) 但 strength 组成可能引用,
+    传同一 regime_history 与 court build 对齐。
+    """
+    from scripts.btst_court_build import (  # noqa: E402 — 延迟重导入 (court build 自身同款)
+        industry_of,
+        load_panel,
+        load_sw_industry,
+        ticker_frame,
+    )
+    from scripts.setup_research import load_industry_day_pct  # noqa: E402
+    from src.screening.offensive.data.fund_flow_store import FundFlowStore  # noqa: E402
+    from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup  # noqa: E402
+
+    panel = load_panel(raw_dir)
+    groups = dict(tuple(panel.groupby("ts_code")))
+    setup = BtstBreakoutSetup()
+    flow_store = FundFlowStore(cache_dir="data/fund_flow_cache/")
+    sw_frame = load_sw_industry(raw_dir)
+    sw_rows = {
+        symbol: list(zip(frame["l1_name"], frame["in"], frame["out"]))
+        for symbol, frame in sw_frame.groupby("symbol")
+    }
+    industry_day_pct = load_industry_day_pct()
+    regime = {normalize_day(k): str(v) for k, v in regime_map.items()}
+
+    def replay(ticker: str, day: str) -> dict[str, Any]:
+        ts_code = next(
+            (code for code in groups if str(code).split(".")[0] == ticker), None
+        )
+        group = groups.get(ts_code) if ts_code is not None else None
+        frame = ticker_frame(group, day) if group is not None else None
+        industry_name = industry_of(sw_rows, ticker, day) if group is not None else None
+        context = {
+            "prices": frame,
+            "fund_flow_records": flow_store.get_range(ticker, "20200101", day),
+            "industry_day_pct": (
+                industry_day_pct.get((industry_name, day)) if industry_name else None
+            ),
+            "regime": regime.get(day),
+        }
+        result = setup.detect(ticker, day, context)
+        return {
+            "hit": bool(result.hit),
+            "miss_stage": getattr(result, "miss_stage", None),
+            "trigger_strength": float(result.trigger_strength),
+        }
+
+    return replay
 
 
 def reconcile(
@@ -742,6 +897,54 @@ def render_md(payload: Mapping[str, Any]) -> str:
                 f"| {m['court_gross_ret_horizon_pct'] if m['court_gross_ret_horizon_pct'] is not None else '—'} "
                 f"| {m['direction_agree'] if m['direction_agree'] is not None else '—'} |"
             )
+    diagnosis = payload.get("divergence_diagnosis")
+    unavailable = payload.get("divergence_diagnosis_unavailable")
+    if unavailable:
+        # 诊断构造失败 (数据资产缺失等) → typed 单行披露, 既有报告面不受损.
+        lines += ["", f"重放分歧诊断不可用 (diagnosis_unavailable): {unavailable}"]
+    if isinstance(diagnosis, Mapping):
+        by_class = diagnosis.get("by_class")
+        details = diagnosis.get("details")
+        class_labels = {
+            "replay_hit_now": "现行公式命中 — court 表滞后/当时数据修订",
+            "flow_input_divergence": "条件2 资金流分歧 (flow 库历史修订)",
+            "industry_condition_divergence": "条件3 行业分歧 (2026-08-14 严格化代际/行业日涨幅修订)",
+            "universe_panel_divergence": "条件0/1 面板/涨停原料分歧",
+            "condition_divergence": "其余条件分歧 (公式代际演化)",
+            "replay_error": "重放失败 (typed, 不冒充分类)",
+        }
+        lines += [
+            "",
+            "## 重放分歧诊断 (typed 根因, 只披露不判定)",
+            "",
+            "现行公式+现行数据重放未匹配 BUY; 分歧类别是证据宇宙完整性显形,",
+            "不构成任何行为授权 — 阈值/先验/gate 变化 = 新证据世代 owner 决策。",
+            "",
+        ]
+        if isinstance(by_class, Mapping) and all(
+            isinstance(by_class.get(c), int) for c in DIAGNOSIS_CLASSES
+        ):
+            lines += ["| 根因类别 | 笔数 | 语义 |", "|---|---|---|"]
+            for cls in DIAGNOSIS_CLASSES:
+                lines.append(f"| {cls} | {by_class[cls]} | {class_labels[cls]} |")
+        if isinstance(details, list) and details:
+            lines += [
+                "",
+                "| 信号日 | 票 | store | 生产分类 | 根因 | miss_stage | 重放强度 | error |",
+                "|---|---|---|---|---|---|---|---|",
+            ]
+            for d in details:
+                if not isinstance(d, Mapping):
+                    continue
+                strength = d.get("replay_trigger_strength")
+                lines.append(
+                    f"| {d.get('signal_date')} | {d.get('ticker')} "
+                    f"| {d.get('store')} | {d.get('production_class')} "
+                    f"| {d.get('classification')} "
+                    f"| {d.get('miss_stage') if d.get('miss_stage') is not None else '—'} "
+                    f"| {strength if strength is not None else '—'} "
+                    f"| {d.get('error') if d.get('error') else '—'} |"
+                )
     lines += ["", "## 纪律", ""]
     lines += [f"- {d}" for d in payload.get("discipline", [])]
     lines.append("")
@@ -813,6 +1016,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     recon = reconcile(journal, inputs, extra_buys=extra_buys)
     payload = summary_payload(recon, court_window=window)
+
+    # R138 Op1: 未匹配 BUY 的 typed 重放分歧诊断 — 纯读取, 构造失败 typed
+    # 披露不阻断 (fail-open, 镜像六类报告的既有形态)。
+    if any(r.classification in DIVERGENCE_CLASSES for r in recon.records):
+        try:
+            replay_fn = build_court_replay_fn(
+                args.panel_dir.parent, regime_map=regime_labels
+            )
+            payload["divergence_diagnosis"] = replay_divergence_diagnosis(
+                recon.records, replay_fn
+            )
+        except Exception as exc:  # noqa: BLE001 — 诊断不可用显形, 报告照常
+            payload["divergence_diagnosis_unavailable"] = f"{type(exc).__name__}: {exc}"
 
     from datetime import date
 
