@@ -2599,3 +2599,154 @@ class TestCrossWindowValidation:
         buckets = payload["cross_window_validation"]["buckets"]
         assert buckets[0]["early"]["e"] is None  # ALL 行被跳过 → 缺席披露
         assert buckets[1]["sign_agree"] is False  # 其余桶正常对比
+
+
+class TestCrossWindowTripwires:
+    """R136 Op2 对抗审查 PoC 三连 RED→GREEN — Op1 读取-拼装面的三族同源
+    缺陷 (R115b 未来日期 / R80 兄弟工件混入 / R135 重复不去重 的镜像),
+    每条绊线 typed reason fail-closed 到 available=False, 证据真实性优先。
+    """
+
+    def _early_dir_with(self, tmp_path, files: dict):
+        early_dir = tmp_path / "early_window"
+        early_dir.mkdir(exist_ok=True)
+        for name, payload in files.items():
+            (early_dir / name).write_text(json.dumps(payload), encoding="utf-8")
+        return early_dir
+
+    def _manifests(self, tmp_path, *, early_rows=4161, early_rows_present=True):
+        em = tmp_path / "em.json"
+        mm = tmp_path / "mm.json"
+        early = {
+            "formula_fingerprint": {"btst_breakout_sha256": "a" * 64},
+            "window": {"start": "20220104", "end": "20241231", "sessions": 726},
+        }
+        if early_rows_present:
+            early["rows"] = early_rows
+        em.write_text(json.dumps(early))
+        mm.write_text(json.dumps({
+            "formula_fingerprint": {"btst_breakout_sha256": "a" * 64},
+            "window": {"start": "20250701", "end": "20260906", "sessions": 290},
+        }))
+        return em, mm
+
+    def _attach(self, payload, early_dir, em, mm):
+        from scripts.winrate_payoff_decomposition import (
+            attach_cross_window_validation,
+        )
+        return attach_cross_window_validation(
+            payload,
+            early_report_dir=early_dir,
+            early_manifest_path=em,
+            main_manifest_path=mm,
+        )
+
+    def test_poc_a_future_dated_report_rejected(self, tmp_path):
+        """RED 实锤: 字典序『最新』选择被 20990101 毒值报告劫持 (E=0.99 入
+        对比表)。修复后 = available=False typed reason, 不以未来证据披露。"""
+        from scripts.winrate_payoff_decomposition import render_md
+        good = TestCrossWindowValidation._early_payload()
+        poison = TestCrossWindowValidation._early_payload()
+        poison["universes"]["production_aligned"]["horizons"]["t10"][0][
+            "expectancy"
+        ] = 0.99
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20260901.json": good,
+            "winrate_payoff_decomposition_20990101.json": poison,
+        })
+        em, mm = self._manifests(tmp_path)
+        payload = TestCrossWindowValidation()._current_payload()
+        self._attach(payload, early_dir, em, mm)
+        cw = payload["cross_window_validation"]
+        assert cw == {"available": False, "reason": "early_report_future_dated"}
+        md = render_md(payload, "20260906")
+        assert "跨窗口外部验证不可用 (early_report_future_dated)" in md
+
+    def test_poc_a_future_precedes_malformed(self, tmp_path):
+        """绊线顺序: 未来日期优先于畸形判定 (日期面在最外层)。"""
+        poison = {"universes": "not-a-dict"}
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20990101.json": poison,
+        })
+        em, mm = self._manifests(tmp_path)
+        payload = TestCrossWindowValidation()._current_payload()
+        self._attach(payload, early_dir, em, mm)
+        assert payload["cross_window_validation"]["reason"] == (
+            "early_report_future_dated"
+        )
+
+    def test_poc_b_foreign_window_tripwire(self, tmp_path):
+        """RED 实锤: 当前窗口 payload 混入 early 目录 → 双窗自比全『一致』
+        假安心。修复后 = manifest rows↔court_rows 不等即 typed 拒绝。"""
+        from scripts.winrate_payoff_decomposition import render_md
+        foreign = TestCrossWindowValidation()._current_payload()  # court_rows=1950
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20260907.json": foreign,
+        })
+        em, mm = self._manifests(tmp_path, early_rows=4161)
+        payload = TestCrossWindowValidation()._current_payload()
+        self._attach(payload, early_dir, em, mm)
+        cw = payload["cross_window_validation"]
+        assert cw == {"available": False, "reason": "early_report_foreign_window"}
+        assert "跨窗口外部验证不可用 (early_report_foreign_window)" in render_md(
+            payload, "20260906"
+        )
+
+    def test_poc_b_rows_missing_unchecked(self, tmp_path):
+        """manifest 缺 rows 键 = 绊线未校验 (fail-open), 对比照常披露。"""
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20260901.json":
+                TestCrossWindowValidation._early_payload(),
+        })
+        em, mm = self._manifests(tmp_path, early_rows_present=False)
+        payload = TestCrossWindowValidation()._current_payload()
+        self._attach(payload, early_dir, em, mm)
+        assert payload["cross_window_validation"]["available"] is True
+
+    def test_poc_c_duplicate_groups_rejected(self, tmp_path):
+        """RED 实锤: 重复 ALL 行静默 last-wins 取毒值。修复后 = 选中组重复
+        一律冲突 (R135 Op2 merkle 纪律镜像), typed reason。"""
+        from scripts.winrate_payoff_decomposition import render_md
+        dup = TestCrossWindowValidation._early_payload()
+        dup["universes"]["production_aligned"]["horizons"]["t10"].append(
+            TestCrossWindowValidation._row("ALL", 3597, 0.99, 0.5)
+        )
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20260901.json": dup,
+        })
+        em, mm = self._manifests(tmp_path)
+        payload = TestCrossWindowValidation()._current_payload()
+        self._attach(payload, early_dir, em, mm)
+        cw = payload["cross_window_validation"]
+        assert cw == {"available": False, "reason": "early_report_duplicate_groups"}
+        assert "跨窗口外部验证不可用 (early_report_duplicate_groups)" in render_md(
+            payload, "20260906"
+        )
+
+    def test_poc_c_non_selected_group_duplicates_tolerated(self, tmp_path):
+        """选中组集合之外的重复组 (如 regime=normal) 不触发绊线 — 绊线只
+        保护进入对比表的组, 不越权管制整表。"""
+        dup = TestCrossWindowValidation._early_payload()
+        rows = dup["universes"]["production_aligned"]["horizons"]["t10"]
+        rows.append(TestCrossWindowValidation._row("regime=normal", 100, 0.01, 0.5))
+        rows.append(TestCrossWindowValidation._row("regime=normal", 100, 0.02, 0.5))
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20260901.json": dup,
+        })
+        em, mm = self._manifests(tmp_path)
+        payload = TestCrossWindowValidation()._current_payload()
+        self._attach(payload, early_dir, em, mm)
+        assert payload["cross_window_validation"]["available"] is True
+
+    def test_clean_early_report_still_passes_tripwires(self, tmp_path):
+        """界内数据零回归: 合法早报告 (rows=4161=manifest) 三绊线全过。"""
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20260901.json":
+                TestCrossWindowValidation._early_payload(),
+        })
+        em, mm = self._manifests(tmp_path, early_rows=4161)
+        payload = TestCrossWindowValidation()._current_payload()
+        self._attach(payload, early_dir, em, mm)
+        cw = payload["cross_window_validation"]
+        assert cw["available"] is True
+        assert cw["early_report_date"] == "20260901"

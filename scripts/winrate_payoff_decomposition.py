@@ -768,12 +768,16 @@ def attach_prior_alignment(payload: dict[str, object]) -> dict[str, object]:
 
 
 def _manifest_identity(path: Path) -> dict[str, object]:
-    """manifest 冷读: window 身份 + btst_breakout 公式指纹。
+    """manifest 冷读: window 身份 + btst_breakout 公式指纹 + 行数绊线源。
 
     文件缺失/损坏/顶层非对象 → 全 None 身份 (不假装知道); 部分形状缺失
     只影响对应字段。fail-open 家族纪律 — manifest 缺席不阻断对比披露。
     """
-    identity: dict[str, object] = {"window": None, "btst_breakout_sha256": None}
+    identity: dict[str, object] = {
+        "window": None,
+        "btst_breakout_sha256": None,
+        "rows": None,
+    }
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
@@ -792,6 +796,9 @@ def _manifest_identity(path: Path) -> dict[str, object]:
         sha = fingerprint.get("btst_breakout_sha256")
         if isinstance(sha, str) and sha:
             identity["btst_breakout_sha256"] = sha
+    rows = manifest.get("rows")
+    if isinstance(rows, int) and not isinstance(rows, bool):
+        identity["rows"] = rows
     return identity
 
 
@@ -865,6 +872,13 @@ def attach_cross_window_validation(
     - early 目录缺失/无报告文件 (未构建形态) → 不挂键, MD 零新增字节;
     - 报告在场但不可读/畸形 → available=False + reason (真相消失必有名);
     - manifest 缺失 → 指纹 match=None / window=None, 对比照常披露。
+
+    Op2 三绊线 (PoC 实锤后加防, 全部 typed reason):
+    - early_report_future_dated: 字典序『最新』被未来日期文件劫持 (R115b G1 同族);
+    - early_report_foreign_window: 当前窗口报告混入 early 目录 → 双窗自比
+      假『一致』(manifest rows ↔ 报告 court_rows 绊线, 必要非充分身份);
+    - early_report_duplicate_groups: 选中组重复行静默 last-wins 择毒
+      (R135 Op2 merkle『重复一律冲突不去重』镜像)。
     """
     early_dir = Path(early_report_dir)
     found = latest_decomposition_report(early_dir)
@@ -883,6 +897,16 @@ def attach_cross_window_validation(
         return payload
 
     _path, early = found
+    # 绊线一 (Op2 PoC A, R115b G1 同族): 字典序『最新』会把未来日期文件当
+    # 当前证据 — 报告日期晚于今日即拒绝 (clock 由本机 date.today 提供,
+    # 未来日期在合法管道中不可出现, 只能来自手工放置/时钟错乱)。
+    report_date = Path(_path).stem.rsplit("_", 1)[-1]
+    if report_date > date.today().strftime("%Y%m%d"):
+        payload["cross_window_validation"] = {
+            "available": False,
+            "reason": "early_report_future_dated",
+        }
+        return payload
     early_universes = early.get("universes")
     early_aligned = (
         early_universes.get("production_aligned")
@@ -913,6 +937,43 @@ def attach_cross_window_validation(
                 if not isinstance(early_rows, list)
                 else "current_universe_missing"
             ),
+        }
+        return payload
+
+    # 绊线三 (Op2 PoC C, R135 Op2 merkle『重复一律冲突不去重』镜像): 选中组
+    # 集合内重复组行 = 毒化/buggy build — 静默 last-wins 会择一冒充唯一
+    # 真相, 类型化拒绝让矛盾显形。
+    seen_groups: set[str] = set()
+    for row in early_rows:
+        if not isinstance(row, dict):
+            continue
+        group = row.get("group")
+        if isinstance(group, str) and group in CROSS_WINDOW_BUCKET_GROUPS:
+            if group in seen_groups:
+                payload["cross_window_validation"] = {
+                    "available": False,
+                    "reason": "early_report_duplicate_groups",
+                }
+                return payload
+            seen_groups.add(group)
+
+    early_manifest = _manifest_identity(Path(early_manifest_path))
+    main_manifest = _manifest_identity(Path(main_manifest_path))
+    # 绊线二 (Op2 PoC B, R80 兄弟工件混入同族): early 目录是手工维护面,
+    # 报告 payload 无窗口身份 — 当前窗口报告错放/混入时双窗对比退化为
+    # 自比 (全『一致』假安心)。manifest 行数 vs 报告 court_rows 双 int 且
+    # 不等 → 外来窗口拒绝; manifest 缺 rows 键 = 未校验 (fail-open)。
+    # 行数相等是必要非充分身份 (同形不保证同质, 指纹行已披露)。
+    manifest_rows = early_manifest.get("rows")
+    report_rows = early.get("court_rows")
+    if (
+        isinstance(manifest_rows, int)
+        and isinstance(report_rows, int)
+        and manifest_rows != report_rows
+    ):
+        payload["cross_window_validation"] = {
+            "available": False,
+            "reason": "early_report_foreign_window",
         }
         return payload
 
@@ -962,8 +1023,6 @@ def attach_cross_window_validation(
         },
     }
 
-    early_manifest = _manifest_identity(Path(early_manifest_path))
-    main_manifest = _manifest_identity(Path(main_manifest_path))
     early_sha = early_manifest["btst_breakout_sha256"]
     main_sha = main_manifest["btst_breakout_sha256"]
     fingerprint_match = (
@@ -974,7 +1033,7 @@ def attach_cross_window_validation(
 
     payload["cross_window_validation"] = {
         "available": True,
-        "early_report_date": Path(_path).stem.rsplit("_", 1)[-1],
+        "early_report_date": report_date,
         "early_court_rows": early.get("court_rows"),
         "current_court_rows": payload.get("court_rows"),
         "early_window": early_manifest["window"],
