@@ -116,6 +116,7 @@ from src.screening.offensive.gap_disclosure import (  # noqa: E402
     GAP_BUCKETS,
     GAP_HIGH_THRESHOLD,
     GAP_TOP_BUCKET,
+    DECOMPOSITION_REPORT_GLOB,
     gap_bucket,
     latest_decomposition_report,
     report_filename_date,
@@ -893,7 +894,7 @@ def attach_cross_window_validation(
         # 在场不可读形态退 unreadable; 目录无报告 = 未构建, 不挂键。
         try:
             report_files = (
-                list(early_dir.glob("winrate_payoff_decomposition_*.json"))
+                list(early_dir.glob(DECOMPOSITION_REPORT_GLOB))
                 if early_dir.is_dir()
                 else []
             )

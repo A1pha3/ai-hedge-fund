@@ -2101,25 +2101,32 @@ def _render_day_cohort_trigger_line() -> str | None:
         return None
 
 
-def _future_dated_report_day(reports_dir) -> str | None:
+def _future_dated_report_day(reports_dir, today: date | None = None) -> str | None:
     """目录内最新未来日期报告的文件名日期; 无则 None (R137 Op1 异常显形面)。
 
     未来日期守卫下沉共享读取体后, 证据消费者经 latest_decomposition_report
     不再读到未来日期报告 (None, 不回退)。本 helper 专供 freshness 行的异常
     探测 — 只看文件名日期不解析内容, 与读取体共用 report_filename_date
-    单一谓词防漂移; 比较锚 date.today() 与守卫同源。
+    单一谓词防漂移。``today`` 注入锚 (R137 Op2 对抗审查 F2): 探测与渲染
+    必须同一时钟 — freshness 行可注入 ``today`` (R127 测试确定性纪律),
+    探测若锚真实钟会在注入世界里把被守卫拒绝的文件名送进渲染 (两钟语义
+    分叉); 未注入时与渲染默认同锚 date.today()。
     """
-    from src.screening.offensive.gap_disclosure import report_filename_date
+    from src.screening.offensive.gap_disclosure import (
+        DECOMPOSITION_REPORT_GLOB,
+        report_filename_date,
+    )
 
     base = Path(reports_dir)
     try:
         dates = [
             report_filename_date(p)
-            for p in base.glob("winrate_payoff_decomposition_*.json")
+            for p in base.glob(DECOMPOSITION_REPORT_GLOB)
         ]
     except OSError:
         return None
-    today_text = date.today().strftime("%Y%m%d")
+    wall_today = today if today is not None else date.today()
+    today_text = wall_today.strftime("%Y%m%d")
     future = [d for d in dates if d is not None and d > today_text]
     return max(future) if future else None
 
@@ -2180,7 +2187,7 @@ def _render_evidence_freshness_line(
             # G1 异常文案 (文件名或时钟异常), 否则守卫的 fail-closed 会把
             # R115b 告警面静默吞掉; 其余 None 形态 (目录缺失/纯损坏) 维持
             # 整行省略。
-            future_day = _future_dated_report_day(base)
+            future_day = _future_dated_report_day(base, today=today)
             if future_day is None:
                 return None
             report_day = future_day

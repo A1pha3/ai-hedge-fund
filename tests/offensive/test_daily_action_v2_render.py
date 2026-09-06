@@ -1737,3 +1737,31 @@ def test_future_dated_poison_guarded_evidence_but_flagged_freshness(
     assert line is not None  # (b) 异常显形保留
     assert "报告日期在今日之后（文件名或时钟异常）" in line
     assert "20990101" in line
+
+
+def test_future_probe_uses_injected_today_one_clock(case, tmp_path, monkeypatch):
+    """R137 Op2 (F2): freshness 探测与渲染必须同一时钟 — 探测经 today 注入
+    锚定注入世界 (R127 测试确定性纪律的补全)。注入 today 晚于报告 (注入
+    世界=合法昨日) → 探测 None + 整行省略, 即使真实钟仍判未来; 注入 today
+    早于报告 → 异常照常 (单钟两方向钉死)。"""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, date="20990101")
+    _patch_drift_reports_dir(monkeypatch, base)
+
+    # 方向一: 注入 today (2099-12-31) 晚于报告 → 非未来, 探测 None, 行省略
+    assert da._future_dated_report_day(base, today=_date(2099, 12, 31)) is None
+    line = da._render_evidence_freshness_line(
+        _date(2099, 12, 30), reports_dir=base, today=_date(2099, 12, 31)
+    )
+    assert line is None
+
+    # 方向二: 注入 today (2026-09-01) 早于报告 → 异常探测与文案照常
+    assert da._future_dated_report_day(base, today=_date(2026, 9, 1)) == "20990101"
+    line = da._render_evidence_freshness_line(
+        _date(2026, 9, 1), reports_dir=base, today=_date(2026, 9, 1)
+    )
+    assert line is not None
+    assert "报告日期在今日之后（文件名或时钟异常）" in line
+    assert "20990101" in line

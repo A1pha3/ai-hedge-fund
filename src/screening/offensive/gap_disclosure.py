@@ -38,7 +38,11 @@ GAP_HIGH_THRESHOLD = 0.05
 # 高开侧 = 阈值之上的桶 (池化披露用); 低开侧 = 其余非空桶
 _HIGH_GAP_BUCKETS = ("5~10%", GAP_TOP_BUCKET)
 
-_REPORT_GLOB = "winrate_payoff_decomposition_*.json"
+# 公开单一常量 (R137 Op2 对抗审查 F1): 读取体 glob 与 freshness 异常探测面
+# (daily_action) / scripts 侧跨窗口分诊扫描共用 — 字面量三处并存时 glob
+# 演化会让探测面静默分叉 (一侧拒一侧看不见)。
+DECOMPOSITION_REPORT_GLOB = "winrate_payoff_decomposition_*.json"
+_REPORT_GLOB = DECOMPOSITION_REPORT_GLOB
 # 文件名日期段形状守卫 (R109 Op2): 『字典序 = 时间序』前提只对 YYYYMMDD
 # 命名成立 — glob 同前缀的 backup/editor 杂文件 ('b' > '2' 排在日期之后)
 # 会被 sorted[-1] 误当最新报告, PoC 实锤可劫持披露行渲染假证据。
