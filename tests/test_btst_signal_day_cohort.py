@@ -1148,3 +1148,45 @@ class TestRenderFoldDisclosure:
     def test_md_clean_ledger_no_fold_clause(self):
         md = render_md(self._payload_with_stability(0), "20260905")
         assert "折叠" not in md
+
+
+class TestAdversarialPinningR131Op3:
+    """Op3 对抗性审查钉死: 交叉表边际 == cohort_buckets 同桶 n (口径绑定)."""
+
+    def test_cross_table_marginals_match_cohort_buckets(self):
+        # 非对称 fixture: 每桶不同事件数; 两个视图的分组维度同源
+        # (cohort_size_bucket 单一实现) 但此前无双视图一致性绑定 — 口径
+        # 漂移 (如边界单侧改动) 会静默分叉, 本测试封死。
+        rows: list[tuple[str, int, float, float]] = [
+            ("900001", 20260701, 0.08, 0.75),  # 1×1
+            *[
+                (f"90020{i:02d}", 20260703, 0.01 + i * 0.001, 0.52)
+                for i in range(2)
+            ],  # 2-3 ×2
+            *[
+                (f"90030{i:02d}", 20260704, -0.05 - i * 0.001, 0.72)
+                for i in range(20)
+            ],  # 20+ ×20
+            *[
+                (f"90040{i:02d}", 20260710, 0.005 + i * 0.0005, 0.30)
+                for i in range(16)
+            ],  # 10-19 ×16
+            *[
+                (f"90050{i:02d}", 20260711, -0.02 - i * 0.001, 0.62)
+                for i in range(7)
+            ],  # 4-9 ×7
+        ]
+        payload = decompose_cohort(_frame(rows))
+        cross = payload["strength_cohort_cross"]
+        buckets = payload["cohort_buckets"]
+        for b in buckets:
+            marginal = sum(
+                c["n"] for r in cross if r["cohort_bucket"] == b["bucket"]
+                for c in r["cells"]
+            )
+            assert marginal == b["event_stats"]["n"], (
+                f"交叉表 {b['bucket']} 桶边际 n={marginal} != "
+                f"cohort_buckets n={b['event_stats']['n']} — 分组口径漂移"
+            )
+        # 全表事件合计恒等
+        assert sum(c["n"] for r in cross for c in r["cells"]) == payload["n_events"]

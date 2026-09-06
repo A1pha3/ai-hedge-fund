@@ -531,3 +531,81 @@ class TestAnchorReconciliationR131:
         assert rc == 0
         assert "零匹配" not in out
         assert "⚠ 警示" not in out
+
+
+class TestAdversarialPinningR131Op3:
+    """Op3 对抗性审查钉死: 判定数值面与折叠视图判定值恒等 / 空账本警示静默."""
+
+    def test_stat_face_direction_matches_last_lit(self, tmp_path):
+        """写入面一致记录 (lit 恒由 stat 派生 — threshold_trigger_status
+        构造) 的两面孔必须同判: stat 面 (CI>0/E<0) 与 stability last_lit。
+        读取面按设计不重推导 (账本是什么就披露什么), 故本钉死对象是
+        『一致输入 → 两面恒等』; 手编矛盾记录 (lit∧stat 背离) 属毒化
+        形态, 两面如实各显其值不属本不变式。"""
+        from src.screening.offensive.threshold_trigger import (
+            load_trigger_ledger,
+        )
+        from scripts.threshold_trigger_k_packet import build_packet
+
+        def _row(date: str, *, ci, e) -> dict:
+            # 写入面一致的构造: lit == (stat 过门槛) — 镜像
+            # threshold_trigger_status 的 lit_when
+            return {
+                "date": date,
+                "anchor": "production_aligned/t10",
+                "min_n": 30,
+                "condition_1": {
+                    "lit": ci > 0, "judged": True, "n": 340, "stat": ci,
+                },
+                "condition_2": {
+                    "lit": e < 0, "judged": True, "n": 341, "stat": e,
+                },
+                "conjunction_armed": (ci > 0) and (e < 0),
+                "court": {"window_end": date, "rows": 1627},
+            }
+
+        paths = _paths(tmp_path)
+        ledger = _strength_ledger(tmp_path, [
+            _row("20260904", ci=0.0007, e=0.0014),   # ①亮 ②未亮
+            _row("20260905", ci=-0.0035, e=-0.0002),  # ①未亮 ②亮
+        ])
+        records = load_trigger_ledger(ledger)
+        packet = build_packet(
+            family="strength",
+            records=records,
+            ledger_path=ledger,
+            k_registration_path=paths["strength_k_registration"],
+            k_observation_log_path=paths["strength_k_observation_log"],
+            candidates={},
+            registered_date="20260906",
+        )
+        stab = packet["stability"]
+        latest = packet["latest_record"]
+        c1 = latest["conditions"]["condition_1"]
+        assert c1["stat"] == -0.0035 and stab["condition_1_last_lit"] is False
+        assert (c1["stat"] > 0) is (stab["condition_1_last_lit"] is True)
+        c2 = latest["conditions"]["condition_2"]
+        assert c2["stat"] == -0.0002 and stab["condition_2_last_lit"] is True
+        assert (c2["stat"] < 0) is (stab["condition_2_last_lit"] is True)
+        # 历史记录不参与 last_lit (最新锚定): 首条 ①亮 不抬高末条
+        assert stab["condition_1_streak"] == 0
+
+    def test_empty_ledger_anchor_warning_silent(self, tmp_path, capsys):
+        """空账本 (0 条记录) 时 anchors 集合为空 → 警示条件不触发 —
+        无账本记录时『零匹配』是必然而非异常, 警示即噪声。"""
+        paths = _paths(tmp_path)
+        ledger = tmp_path / "empty_ledger.jsonl"
+        ledger.write_text("", encoding="utf-8")
+        rc = main([
+            "--strength-ledger", str(ledger),
+            "--strength-k-registration", str(paths["strength_k_registration"]),
+            "--strength-k-observation-log", str(paths["strength_k_observation_log"]),
+            "--cohort-ledger", str(tmp_path / "missing.jsonl"),
+            "--cohort-k-registration", str(paths["cohort_k_registration"]),
+            "--cohort-k-observation-log", str(paths["cohort_k_observation_log"]),
+            "--k070", "3",
+        ])
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "零匹配" not in out
+        assert "⚠ 警示" not in out
