@@ -779,6 +779,7 @@ def _manifest_identity(path: Path) -> dict[str, object]:
         "window": None,
         "btst_breakout_sha256": None,
         "rows": None,
+        "pinned_report_digests": None,
     }
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -801,6 +802,19 @@ def _manifest_identity(path: Path) -> dict[str, object]:
     rows = manifest.get("rows")
     if isinstance(rows, int) and not isinstance(rows, bool):
         identity["rows"] = rows
+    # 可选 pin 集 (R137 Op3): 文件名 → "sha256:<hex>"。非法形态 → 未绑定
+    # (fail-open, 与 rows 缺键同纪律 — pin 是 owner 一次性冻结动作, 缺席
+    # 不阻断对比, 只是不享受字节级身份校验)。
+    pinned = manifest.get("pinned_report_digests")
+    if isinstance(pinned, dict) and pinned:
+        identity["pinned_report_digests"] = {
+            name: digest
+            for name, digest in pinned.items()
+            if isinstance(name, str)
+            and name
+            and isinstance(digest, str)
+            and digest
+        }
     return identity
 
 
@@ -875,14 +889,16 @@ def attach_cross_window_validation(
     - 报告在场但不可读/畸形 → available=False + reason (真相消失必有名);
     - manifest 缺失 → 指纹 match=None / window=None, 对比照常披露。
 
-    Op2 三绊线 (PoC 实锤后加防, 全部 typed reason):
+    Op2 三绊线 + Op3 内容身份绊线 (PoC 实锤后加防, 全部 typed reason):
     - early_report_future_dated: 字典序『最新』被未来日期文件劫持 (R115b G1
       同族; R137 Op1 起守卫本体在共享读取体 gap_disclosure._latest_dated_report,
       本函数在读取体返回 None 后分诊目录内未来日期文件保住披露粒度);
     - early_report_foreign_window: 当前窗口报告混入 early 目录 → 双窗自比
       假『一致』(manifest rows ↔ 报告 court_rows 绊线, 必要非充分身份);
     - early_report_duplicate_groups: 选中组重复行静默 last-wins 择毒
-      (R135 Op2 merkle『重复一律冲突不去重』镜像)。
+      (R135 Op2 merkle『重复一律冲突不去重』镜像);
+    - early_report_digest_mismatch: manifest pin 的报告字节 digest 不匹配
+      (R137 Op3 — 行数绊线必要非充分, 字节级替换毒化在此显形)。
     """
     early_dir = Path(early_report_dir)
     found = latest_decomposition_report(early_dir)
@@ -988,6 +1004,39 @@ def attach_cross_window_validation(
         }
         return payload
 
+    # 绊线四 (R137 Op3, R136 登记第二开放项收口): 早期报告 content_digest
+    # 身份绑定 — 行数相等是必要非充分身份 (同形不保证同质), 字节级替换
+    # (同行数毒化重写) 此前不可检测。选中报告文件字节 sha256 计算 (与
+    # court_binding content_digest 同约定); 二读失败 = 状态已变, fail-closed
+    # 不拿残缺身份拼对比。manifest 可选 pinned_report_digests pin 该文件
+    # 名 → 不匹配即 typed 拒绝 (owner 一次性冻结, 此后任何字节级替换显形);
+    # 未 pin → pinned_digest_match=None 如实披露 (fail-open)。
+    try:
+        report_bytes = Path(_path).read_bytes()
+    except OSError:
+        payload["cross_window_validation"] = {
+            "available": False,
+            "reason": "early_report_unreadable",
+        }
+        return payload
+    content_digest = "sha256:" + hashlib.sha256(report_bytes).hexdigest()
+    pinned_digests = early_manifest.get("pinned_report_digests") or {}
+    selected_name = Path(_path).name
+    pinned_digest = (
+        pinned_digests.get(selected_name)
+        if isinstance(pinned_digests, dict)
+        else None
+    )
+    pinned_digest_match: bool | None = None
+    if isinstance(pinned_digest, str) and pinned_digest:
+        if pinned_digest != content_digest:
+            payload["cross_window_validation"] = {
+                "available": False,
+                "reason": "early_report_digest_mismatch",
+            }
+            return payload
+        pinned_digest_match = True
+
     early_by_group = _rows_by_group(early_rows)
     current_by_group = _rows_by_group(current_rows)
     buckets = []
@@ -1045,6 +1094,8 @@ def attach_cross_window_validation(
     payload["cross_window_validation"] = {
         "available": True,
         "early_report_date": report_date,
+        "early_report_content_digest": content_digest,
+        "pinned_digest_match": pinned_digest_match,
         "early_court_rows": early.get("court_rows"),
         "current_court_rows": payload.get("court_rows"),
         "early_window": early_manifest["window"],
@@ -1571,6 +1622,19 @@ def _render_cross_window_validation(payload: dict[str, object], L: list[str]) ->
         f" {_n_cell_text(cw.get('early_report_date'))}) vs 当前窗口"
         f" ({_n_cell(cw.get('current_court_rows'))} 行) · 公式指纹: {fingerprint_txt}"
     )
+    L.append("")
+    # 内容身份行 (R137 Op3): digest 使对比可复现可审计, pin 状态披露字节级
+    # 身份校验是否生效 (owner 一次性向 early manifest 写 pinned_report_digests
+    # 即冻结; 未 pin = fail-open 对比照常, 只是不享受字节级校验)。
+    digest = cw.get("early_report_content_digest")
+    digest_txt = (
+        digest.removeprefix("sha256:")[:12]
+        if isinstance(digest, str) and digest.startswith("sha256:")
+        else "—"
+    )
+    pin = cw.get("pinned_digest_match")
+    pin_txt = {True: "已 pin·匹配"}.get(pin, "未 pin (行数绊线 only)")
+    L.append(f"- 早期报告内容身份: `{digest_txt}…` · manifest pin: {pin_txt}")
     L.append("")
     L.append("| 强度桶 | 当前 E (净) | 当前 n | 早期 E (净) | 早期 n | 符号一致 |")
     L.append("|---|---|---|---|---|---|")

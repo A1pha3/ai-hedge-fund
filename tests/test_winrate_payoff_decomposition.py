@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 
 import pytest
 
@@ -2614,7 +2615,14 @@ class TestCrossWindowTripwires:
             (early_dir / name).write_text(json.dumps(payload), encoding="utf-8")
         return early_dir
 
-    def _manifests(self, tmp_path, *, early_rows=4161, early_rows_present=True):
+    def _manifests(
+        self,
+        tmp_path,
+        *,
+        early_rows=4161,
+        early_rows_present=True,
+        early_pinned=None,
+    ):
         em = tmp_path / "em.json"
         mm = tmp_path / "mm.json"
         early = {
@@ -2623,6 +2631,8 @@ class TestCrossWindowTripwires:
         }
         if early_rows_present:
             early["rows"] = early_rows
+        if early_pinned is not None:
+            early["pinned_report_digests"] = early_pinned
         em.write_text(json.dumps(early))
         mm.write_text(json.dumps({
             "formula_fingerprint": {"btst_breakout_sha256": "a" * 64},
@@ -2788,3 +2798,186 @@ class TestCrossWindowTripwires:
         assert payload["cross_window_validation"]["reason"] == (
             "early_report_unreadable"
         )
+
+
+class TestEarlyReportContentDigestBinding:
+    """R137 Op3 (R136 登记第二开放项收口): 早期报告 content_digest 身份绑定。
+
+    行数绊线 (foreign_window) 是必要非充分身份 — 同形不保证同质, 字节级
+    替换 (同行数毒化重写) 此前不可检测。manifest 可选 pinned_report_digests
+    (文件名 → sha256) 使 owner 可一次性冻结报告身份, 此后任何字节级替换
+    typed 拒绝; 未 pin → fail-open 如实披露 (与 rows 缺键同纪律)。
+    """
+
+    def _early_dir_with(self, tmp_path, files: dict):
+        early_dir = tmp_path / "early_window"
+        early_dir.mkdir(exist_ok=True)
+        for name, payload in files.items():
+            (early_dir / name).write_text(json.dumps(payload), encoding="utf-8")
+        return early_dir
+
+    def _manifests(self, tmp_path, *, early_pinned=None):
+        em = tmp_path / "em.json"
+        mm = tmp_path / "mm.json"
+        early = {
+            "formula_fingerprint": {"btst_breakout_sha256": "a" * 64},
+            "window": {"start": "20220104", "end": "20241231", "sessions": 726},
+            "rows": 4161,
+        }
+        if early_pinned is not None:
+            early["pinned_report_digests"] = early_pinned
+        em.write_text(json.dumps(early))
+        mm.write_text(json.dumps({
+            "formula_fingerprint": {"btst_breakout_sha256": "a" * 64},
+            "window": {"start": "20250701", "end": "20260906", "sessions": 290},
+        }))
+        return em, mm
+
+    def _attach(self, payload, early_dir, em, mm):
+        from scripts.winrate_payoff_decomposition import (
+            attach_cross_window_validation,
+        )
+        return attach_cross_window_validation(
+            payload,
+            early_report_dir=early_dir,
+            early_manifest_path=em,
+            main_manifest_path=mm,
+        )
+
+    @staticmethod
+    def _digest(path) -> str:
+        import hashlib
+        return "sha256:" + hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+    def test_tampered_report_rejected_when_pinned(self, tmp_path):
+        """篡改 PoC RED→GREEN: pin 后字节级替换 (同行数毒值 E=0.99) → typed
+        拒绝。修复前 = 行数绊线通过, 对比表静默采用毒值。"""
+        from scripts.winrate_payoff_decomposition import render_md
+        good = TestCrossWindowValidation._early_payload()
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20260901.json": good,
+        })
+        target = early_dir / "winrate_payoff_decomposition_20260901.json"
+        real_digest = self._digest(target)
+        em, mm = self._manifests(
+            tmp_path,
+            early_pinned={"winrate_payoff_decomposition_20260901.json": real_digest},
+        )
+        payload = TestCrossWindowValidation()._current_payload()
+        self._attach(payload, early_dir, em, mm)
+        assert payload["cross_window_validation"]["available"] is True
+
+        # 字节级替换: 同文件名同行数, ALL 行 E 换毒值 (重写不改 JSON 行数)
+        poisoned = TestCrossWindowValidation._early_payload()
+        for row in poisoned["universes"]["production_aligned"]["horizons"]["t10"]:
+            if row["group"] == "ALL":
+                row["expectancy"] = 0.99
+        target.write_text(json.dumps(poisoned), encoding="utf-8")
+        payload2 = TestCrossWindowValidation()._current_payload()
+        self._attach(payload2, early_dir, em, mm)
+        cw = payload2["cross_window_validation"]
+        assert cw == {"available": False, "reason": "early_report_digest_mismatch"}
+        assert "跨窗口外部验证不可用 (early_report_digest_mismatch)" in render_md(
+            payload2, "20260906"
+        )
+
+    def test_pinned_match_discloses_digest_and_state(self, tmp_path):
+        """pin 匹配 → available=true + pinned_digest_match=true + digest 与
+        文件字节 sha256 逐位一致 (sha256: 前缀, court_binding 同约定)。"""
+        good = TestCrossWindowValidation._early_payload()
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20260901.json": good,
+        })
+        real_digest = self._digest(early_dir / "winrate_payoff_decomposition_20260901.json")
+        em, mm = self._manifests(
+            tmp_path,
+            early_pinned={"winrate_payoff_decomposition_20260901.json": real_digest},
+        )
+        payload = TestCrossWindowValidation()._current_payload()
+        self._attach(payload, early_dir, em, mm)
+        cw = payload["cross_window_validation"]
+        assert cw["available"] is True
+        assert cw["pinned_digest_match"] is True
+        assert cw["early_report_content_digest"] == real_digest
+
+    def test_unpinned_fail_open_disclosed(self, tmp_path):
+        """未 pin → pinned_digest_match=None 对比照常披露 (fail-open), digest
+        仍落 payload (可复现/供 owner 后续 pin)。"""
+        good = TestCrossWindowValidation._early_payload()
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20260901.json": good,
+        })
+        em, mm = self._manifests(tmp_path)
+        payload = TestCrossWindowValidation()._current_payload()
+        self._attach(payload, early_dir, em, mm)
+        cw = payload["cross_window_validation"]
+        assert cw["available"] is True
+        assert cw["pinned_digest_match"] is None
+        assert cw["early_report_content_digest"].startswith("sha256:")
+        assert len(cw["early_report_content_digest"]) == len("sha256:") + 64
+
+    def test_reread_failure_fail_closed(self, tmp_path):
+        """选中报告二读失败 (race 形态) → early_report_unreadable, 不假装。"""
+        import unittest.mock as mock
+        good = TestCrossWindowValidation._early_payload()
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20260901.json": good,
+        })
+        em, mm = self._manifests(tmp_path)
+        payload = TestCrossWindowValidation()._current_payload()
+        import scripts.winrate_payoff_decomposition as mod
+        real_read = Path.read_bytes
+
+        def flaky_read(self):
+            if self.name == "winrate_payoff_decomposition_20260901.json" \
+                    and self.parent.name == "early_window":
+                raise OSError("race: file vanished")
+            return real_read(self)
+
+        with mock.patch.object(Path, "read_bytes", flaky_read):
+            self._attach(payload, early_dir, em, mm)
+        assert payload["cross_window_validation"] == {
+            "available": False,
+            "reason": "early_report_unreadable",
+        }
+
+    def test_malformed_pin_treated_as_unpinned(self, tmp_path):
+        """非法 pin 形态 (非 str/空) → 视为未绑定 (fail-open 同 rows 缺键),
+        对比照常, 不因 owner 手误砖死对比面。"""
+        good = TestCrossWindowValidation._early_payload()
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20260901.json": good,
+        })
+        em, mm = self._manifests(
+            tmp_path,
+            early_pinned={"winrate_payoff_decomposition_20260901.json": 12345},
+        )
+        payload = TestCrossWindowValidation()._current_payload()
+        self._attach(payload, early_dir, em, mm)
+        cw = payload["cross_window_validation"]
+        assert cw["available"] is True
+        assert cw["pinned_digest_match"] is None
+
+    def test_render_identity_line(self, tmp_path):
+        """MD 身份行: digest 前 12 hex + pin 状态 (匹配/未绑定两形态)。"""
+        from scripts.winrate_payoff_decomposition import render_md
+        good = TestCrossWindowValidation._early_payload()
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20260901.json": good,
+        })
+        real_digest = self._digest(early_dir / "winrate_payoff_decomposition_20260901.json")
+        em, mm = self._manifests(
+            tmp_path,
+            early_pinned={"winrate_payoff_decomposition_20260901.json": real_digest},
+        )
+        payload = TestCrossWindowValidation()._current_payload()
+        self._attach(payload, early_dir, em, mm)
+        md = render_md(payload, "20260906")
+        assert real_digest.removeprefix("sha256:")[:12] in md
+        assert "已 pin·匹配" in md
+
+        em2, mm2 = self._manifests(tmp_path)
+        payload2 = TestCrossWindowValidation()._current_payload()
+        self._attach(payload2, early_dir, em2, mm2)
+        md2 = render_md(payload2, "20260906")
+        assert "未 pin (行数绊线 only)" in md2
