@@ -175,6 +175,36 @@ def missing_panel_days(sessions: list[str], panel_dates: set[str]) -> list[str]:
     return sorted(s for s in sessions if s not in panel_dates)
 
 
+def record_day_outcome(
+    day_audit: dict[str, dict[str, int]], day: str, candidates: int, hits: int
+) -> None:
+    """R138 Op2: 重放循环逐日结局累计 (candidates / hits), 纯累计无判定."""
+    row = day_audit.setdefault(day, {"candidates": 0, "hits": 0})
+    row["candidates"] += int(candidates)
+    row["hits"] += int(hits)
+
+
+def zero_hit_day_audit(day_audit: dict[str, dict[str, int]]) -> list[dict[str, int]]:
+    """R138 Op2: candidates>0 而 hits=0 的整天 (升序) — 事件表该日静默归零的
+    build 侧可见性 (0811/0813 整日空洞曾沉默三周, 6 笔生产买入落入, 直至
+    realized_vs_court 重放分歧诊断消费侧才显形; 本审计与之互补)。
+
+    candidates=0 是合法空涨停日 (universe_audit.empty_days 会计) 不混入;
+    行形状损坏 (负值/bool/缺键) typed ValueError fail-closed — 与 loader
+    纪律同族, 静默跳过会让审计自身变成新的静默面。
+    """
+    out: list[dict[str, int]] = []
+    for day in sorted(day_audit):
+        row = day_audit[day]
+        candidates, hits = row.get("candidates"), row.get("hits")
+        for name, value in (("candidates", candidates), ("hits", hits)):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"day audit row malformed for {day}: {name}={value!r}")
+        if candidates > 0 and hits == 0:
+            out.append({"day": day, "candidates": candidates})
+    return out
+
+
 def ratchet_replay(frame: pd.DataFrame, entry_idx: int, entry_price: float) -> tuple[int, str] | None:
     """逐字复用生产 evaluate_shadow_exit → (exit_row_idx, reason); exit = 该行次日语义由调用方按开盘执行.
 
@@ -398,6 +428,7 @@ def main() -> None:
 
     events: list[dict] = []
     funnel = {"sessions": 0, "prefilter": 0, "history_short": 0, "hits": 0, "misses": 0}
+    day_audit: dict[str, dict[str, int]] = {}
     universe_audit = {
         "days_checked": 0,
         "empty_days": 0,
@@ -413,6 +444,7 @@ def main() -> None:
         cand = day[(day["pct_chg"] >= 9.5) & day["ts_code"].notna()]
         cand = cand[~cand["ts_code"].map(is_beijing_exchange_ts_code)]
         funnel["prefilter"] += len(cand)
+        day_hits = 0
 
         auth = limit_up.get(s)
         auth_names: dict[str, str] = {}
@@ -469,9 +501,11 @@ def main() -> None:
                 funnel["misses"] += 1
                 continue
             funnel["hits"] += 1
+            day_hits += 1
             events.append(
                 _build_event(groups, by_day, sessions_cal, symbol, ts_code, s, float(row.close), result, regime[s], auth_names, ind_name, frame)
             )
+        record_day_outcome(day_audit, s, len(cand), day_hits)
         if si % 40 == 0:
             print(f"  {s} 累计 hits={funnel['hits']}")
 
@@ -521,6 +555,7 @@ def main() -> None:
         "regime_input_fingerprint": regime_input_fingerprint,
         "funnel": funnel,
         "universe_audit": universe_audit,
+        "zero_hit_days": zero_hit_day_audit(day_audit),
         "cross_check_vs_panel": xcheck,
         "rebuild_count": rebuild_count,
         **_manifest_forced_overwrite_fields(prior_fp, new_fp),
@@ -529,7 +564,7 @@ def main() -> None:
     }
     (table_dir / "manifest_v1.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print("[6/6] manifest 写入完成")
-    print(json.dumps({k: manifest[k] for k in ("window", "funnel", "universe_audit", "cross_check_vs_panel", "rows")}, ensure_ascii=False, indent=2))
+    print(json.dumps({k: manifest[k] for k in ("window", "funnel", "universe_audit", "zero_hit_days", "cross_check_vs_panel", "rows")}, ensure_ascii=False, indent=2))
     _finalize_build(args, out)
 
 
@@ -623,7 +658,7 @@ def _cross_check_vs_panel(table: pd.DataFrame) -> dict:
     panel_path = Path("data/reports/setup_output_panel.jsonl")
     if not panel_path.exists():
         return {"status": "panel_missing"}
-    recs = [json.loads(l) for l in panel_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    recs = [json.loads(line) for line in panel_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     new_gen = [r for r in recs if str(r.get("logged_at", ""))[:10] >= "2026-08-09"]
     # R88 零重叠降级: 早期窗口表 (2022-24) 与生产 panel (2025+) 无任何重叠
     # 记录时, 全部记录会被误报 not_in_replay — 诚实降级 no_overlap。
