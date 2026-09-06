@@ -30,6 +30,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from screening.offensive.court_nightly_refresh import (  # noqa: E402
     ALIGNMENT_SUMMARY_REL,
     COURT_TABLE_DIR_REL,
+    DIAGNOSTIC_SCRIPTS,
+    DIAGNOSTIC_TIMEOUT_S,
     RECONCILE_SCRIPT_REL,
     run_court_nightly_refresh,
 )
@@ -70,6 +72,7 @@ class TestCourtNightlyRefreshOrchestration:
             ["scripts/btst_court_fetch.py"],
             ["scripts/btst_court_build.py", "--start", "20250102"],
             [RECONCILE_SCRIPT_REL, "--summary-json", ALIGNMENT_SUMMARY_REL],
+            *([[script] for script in DIAGNOSTIC_SCRIPTS]),
         ]
         assert all(c[1] == tmp_path for c in runner.calls)
         assert status["ok"] is True
@@ -146,6 +149,65 @@ class TestConstantsDriftGuard:
         assert bcb.TABLE_DIR == Path(COURT_TABLE_DIR_REL) or bcb.TABLE_DIR.resolve() == Path(
             COURT_TABLE_DIR_REL
         ).resolve()
+
+
+class TestNightlyDiagnosticsRefresh:
+    """R133 Op3: 证据链诊断报告保鲜步 — build 成功后与 reconcile 同门,
+    逐脚本独立 fail-open (一个失败不阻断其余, ok 语义不变)。
+    """
+
+    def test_build_success_runs_diagnostics_in_order(self, tmp_path):
+        _write_manifest(tmp_path, {"window": {"start": "20250102"}})
+        runner = _RecordingRunner()
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        diag_calls = runner.calls[-len(DIAGNOSTIC_SCRIPTS):]
+        assert [c[0] for c in diag_calls] == [[s] for s in DIAGNOSTIC_SCRIPTS]
+        assert all(c[1] == tmp_path for c in diag_calls)
+        assert all(c[2] == DIAGNOSTIC_TIMEOUT_S for c in diag_calls)
+        assert status["diagnostics"] == {
+            s: {"rc": 0, "error": None} for s in DIAGNOSTIC_SCRIPTS
+        }
+        assert status["ok"] is True
+
+    def test_build_skip_runs_no_diagnostics(self, tmp_path):
+        # 与 reconcile 同门: 只在表真正重建后刷新, skip/fetch 失败零诊断调用
+        runner = _RecordingRunner()
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        assert "diagnostics" not in status
+        assert len(runner.calls) == 1  # 仅 fetch
+
+    def test_diagnostics_fail_open_one_failure_does_not_block_rest(self, tmp_path):
+        _write_manifest(tmp_path, {"window": {"start": "20250102"}})
+        runner = _RecordingRunner(
+            rc_by_script={
+                DIAGNOSTIC_SCRIPTS[0]: 5,
+                DIAGNOSTIC_SCRIPTS[-1]: 6,
+            },
+            err_by_script={DIAGNOSTIC_SCRIPTS[0]: "boom"},
+        )
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        assert status["diagnostics"][DIAGNOSTIC_SCRIPTS[0]]["rc"] == 5
+        assert "boom" in status["diagnostics"][DIAGNOSTIC_SCRIPTS[0]]["error"]
+        assert status["diagnostics"][DIAGNOSTIC_SCRIPTS[-1]]["rc"] == 6
+        assert status["diagnostics"][DIAGNOSTIC_SCRIPTS[1]] == {"rc": 0, "error": None}
+        # 诊断面失败绝不改变 ok 语义 (build 成功即 True), reconcile 照跑
+        assert status["ok"] is True
+        assert status["reconcile"]["rc"] == 0
+        assert len(runner.calls) == 3 + len(DIAGNOSTIC_SCRIPTS)
+
+    def test_diagnostics_runner_exception_fail_open_never_raises(self, tmp_path):
+        _write_manifest(tmp_path, {"window": {"start": "20250102"}})
+
+        def _flaky_runner(args, cwd, timeout_s):
+            if args[0] == DIAGNOSTIC_SCRIPTS[1]:
+                raise OSError("interpreter vanished")
+            return 0, "out", ""
+
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=_flaky_runner)
+        assert "vanished" in str(status["diagnostics"][DIAGNOSTIC_SCRIPTS[1]]["error"])
+        assert status["diagnostics"][DIAGNOSTIC_SCRIPTS[0]] == {"rc": 0, "error": None}
+        assert status["diagnostics"][DIAGNOSTIC_SCRIPTS[2]] == {"rc": 0, "error": None}
+        assert status["ok"] is True
 
 
 class TestFailureDiagnosability:

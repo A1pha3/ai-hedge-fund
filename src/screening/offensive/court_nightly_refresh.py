@@ -48,6 +48,18 @@ RECONCILE_SCRIPT_REL = "scripts/btst_realized_vs_court.py"
 ALIGNMENT_SUMMARY_REL = "data/reports/realized_vs_court_alignment.json"
 RECONCILE_TIMEOUT_S = 300
 
+# 胜率/赔率证据链诊断报告 (R133 Op3): build 成功后逐个 fail-open 刷新 —
+# 这些报告此前只靠手动运行, 静默陈旧在最后手动日 (项 8『活文档随 court
+# 重建刷新』的实现面)。每脚本独立超时独立容错, 一个失败不阻断其余,
+# 失败只进 status["diagnostics"], ok 语义不变。
+DIAGNOSTIC_SCRIPTS: tuple[str, ...] = (
+    "scripts/winrate_payoff_decomposition.py",
+    "scripts/btst_signal_day_cohort.py",
+    "scripts/realized_selection_wedge.py",
+    "scripts/day_feature_attribution.py",
+)
+DIAGNOSTIC_TIMEOUT_S = 600
+
 FetchBuildRunner = Callable[[list[str], Path, int], tuple[int, str, str]]
 
 
@@ -147,6 +159,8 @@ def run_court_nightly_refresh(
          "build": {"rc": 0, "window_start": "20250102", "error": None}
                   | {"skipped": "<reason>"},
          "reconcile": {"rc": 0, "error": None},   # 仅 build 成功后存在 (R118)
+         "diagnostics": {script: {"rc": 0, "error": None}, …},
+                                                   # 仅 build 成功后存在 (R133 Op3)
          "ok": bool}
 
     ``ok`` = fetch 成功且 build 成功或合法 skip (判定面未建立是稳态, 不是错误)。
@@ -197,6 +211,16 @@ def run_court_nightly_refresh(
             RECONCILE_TIMEOUT_S,
         )
         status["reconcile"] = {"rc": reconcile_rc, "error": reconcile_err}
+
+        # 证据链诊断报告保鲜 (R133 Op3): 与 reconcile 同门 (只在表重建后),
+        # 逐脚本独立 fail-open — 一个失败不阻断其余, ok 语义不变。
+        diagnostics: dict[str, object] = {}
+        for script_rel in DIAGNOSTIC_SCRIPTS:
+            diag_rc, diag_err = _run_step(
+                runner, [script_rel], root, DIAGNOSTIC_TIMEOUT_S
+            )
+            diagnostics[script_rel] = {"rc": diag_rc, "error": diag_err}
+        status["diagnostics"] = diagnostics
 
     _persist_status(root, status)
     print("court_nightly_refresh:", json.dumps(status, ensure_ascii=False))
