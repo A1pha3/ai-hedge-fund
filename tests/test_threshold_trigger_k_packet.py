@@ -430,3 +430,104 @@ class TestFoldDisclosure:
         assert rc == 0
         assert "折叠同数据重复观测 1 条" in out
         assert "合取连亮 1" in out  # 同状态重复观测不膨胀连亮
+
+
+class TestStatFaceR131:
+    """R131 Op2: 判定数值面 — 最新记录逐条件 stat/n/距门槛距离."""
+
+    def _run(self, tmp_path, capsys, *, strength_rows, cohort_rows=None):
+        paths = _paths(tmp_path)
+        _strength_ledger(tmp_path, strength_rows)
+        if cohort_rows is not None:
+            cohort_path = tmp_path / "cohort.jsonl"
+            cohort_path.write_text(
+                "\n".join(json.dumps(r, ensure_ascii=False) for r in cohort_rows) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            cohort_path = tmp_path / "missing.jsonl"
+        rc = main([
+            "--strength-ledger", str(paths["strength_ledger"]),
+            "--strength-k-registration", str(paths["strength_k_registration"]),
+            "--strength-k-observation-log", str(paths["strength_k_observation_log"]),
+            "--cohort-ledger", str(cohort_path),
+            "--cohort-k-registration", str(paths["cohort_k_registration"]),
+            "--cohort-k-observation-log", str(paths["cohort_k_observation_log"]),
+        ])
+        return rc, capsys.readouterr().out
+
+    def test_strength_stat_face_distances(self, tmp_path, capsys):
+        # _srow: c1 stat 0.0007 (CI>0 已越零), c2 stat 0.0014 (E>0 距转负)
+        rc, out = self._run(tmp_path, capsys, strength_rows=[_srow("20260905")])
+        assert rc == 0
+        assert "判定数值 (最新记录 20260905)" in out
+        assert "① ≥0.70 CI90下界 +0.07% (n=340, 已越零)" in out
+        assert "② 0.50-0.60 净期望 +0.14% (n=341, 距转负 0.14%)" in out
+        # 旧形态行无 condition_3 键 → 诚实未判定
+        assert "③ 0.60-0.70 CI90下界: 未判定" in out
+
+    def test_cohort_stat_face(self, tmp_path, capsys):
+        rc, out = self._run(
+            tmp_path, capsys,
+            strength_rows=[_srow("20260905")],
+            cohort_rows=[_crow("20260905")],
+        )
+        assert rc == 0
+        # _crow: strong_bucket stat 0.001 (已越零), mid_buckets stat -0.001 (已转负)
+        assert "C1 20+ CI90下界 +0.10% (n=864, 已越零)" in out
+        assert "C2 中间桶最大净期望 -0.10% (n=293, 已转负)" in out
+
+    def test_unjudged_and_missing_stat_honest(self, tmp_path, capsys):
+        row = _srow("20260905")
+        row["condition_2"] = {"lit": False, "judged": False, "n": 12, "stat": None}
+        row["condition_3"] = {"lit": False, "judged": True, "n": 5, "stat": None}
+        rc, out = self._run(tmp_path, capsys, strength_rows=[row])
+        assert rc == 0
+        assert "② 0.50-0.60 净期望: 未判定" in out
+        assert "③ 0.60-0.70 CI90下界: 统计缺失 (n=5)" in out
+
+    def test_poisoned_condition_shape_renders_unjudged(self, tmp_path, capsys):
+        # R128 家族纪律: truthy 非 dict 毒化形态 → 未判定, 不炸 preview
+        row = _srow("20260905")
+        row["condition_1"] = "poisoned"
+        rc, out = self._run(tmp_path, capsys, strength_rows=[row])
+        assert rc == 0
+        assert "① ≥0.70 CI90下界: 未判定" in out
+
+
+class TestAnchorReconciliationR131:
+    """R131 Op2: 草案 anchor × 账本实际 anchors 零匹配警示."""
+
+    def _run(self, tmp_path, capsys, *, strength_anchor):
+        paths = _paths(tmp_path)
+        row = _srow("20260905")
+        row["anchor"] = strength_anchor
+        _strength_ledger(tmp_path, [row])
+        rc = main([
+            "--strength-ledger", str(paths["strength_ledger"]),
+            "--strength-k-registration", str(paths["strength_k_registration"]),
+            "--strength-k-observation-log", str(paths["strength_k_observation_log"]),
+            "--cohort-ledger", str(tmp_path / "missing.jsonl"),
+            "--cohort-k-registration", str(paths["cohort_k_registration"]),
+            "--cohort-k-observation-log", str(paths["cohort_k_observation_log"]),
+            "--k070", "3",
+        ])
+        return rc, capsys.readouterr().out
+
+    def test_anchor_mismatch_warns_and_lists_ledger_anchors(self, tmp_path, capsys):
+        rc, out = self._run(
+            tmp_path, capsys, strength_anchor="production_aligned /t10"  # typo
+        )
+        assert rc == 0
+        assert "⚠ 警示" in out
+        assert "零匹配" in out
+        assert "production_aligned /t10" in out  # 账本实际 anchors 显形
+        assert "永久 0/K" in out
+
+    def test_anchor_match_no_warning_zero_noise(self, tmp_path, capsys):
+        rc, out = self._run(
+            tmp_path, capsys, strength_anchor="production_aligned/t10"
+        )
+        assert rc == 0
+        assert "零匹配" not in out
+        assert "⚠ 警示" not in out

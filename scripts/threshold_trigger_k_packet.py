@@ -43,6 +43,48 @@ STRENGTH_ANCHOR = "production_aligned/t10"
 COHORT_ANCHOR = "production_aligned/t10/cohort_size"
 
 
+def _fmt_latest_stats(packet: Mapping[str, Any]) -> str | None:
+    """判定数值行 (R131 Op2): 最新记录逐条件 stat/n/距门槛距离。
+
+    距离语义: CI 类 (门槛 >0) 已越零或距越零 |stat|; E 类 (门槛 <0) 已转
+    负或距转负 stat。未判定/统计缺失/毒化形态各有诚实措辞 — 披露缺数值
+    不假装 (与连亮计数『未知不延长』同纪律)。
+    """
+    latest = packet.get("latest_record")
+    if not isinstance(latest, Mapping):
+        return None
+    if packet["family"] == "strength":
+        specs = [
+            ("①", "condition_1", "ci", "≥0.70 CI90下界"),
+            ("②", "condition_2", "e", "0.50-0.60 净期望"),
+            ("③", "condition_3", "ci", "0.60-0.70 CI90下界"),
+        ]
+    else:
+        specs = [
+            ("C1", "strong_bucket", "ci", "20+ CI90下界"),
+            ("C2", "mid_buckets", "e", "中间桶最大净期望"),
+        ]
+    parts: list[str] = []
+    conditions = latest.get("conditions") or {}
+    for tag, key, kind, label in specs:
+        cond = conditions.get(key)
+        if not isinstance(cond, Mapping) or not cond.get("judged"):
+            parts.append(f"{tag} {label}: 未判定")
+            continue
+        stat = cond.get("stat")
+        n = cond.get("n")
+        if not isinstance(stat, (int, float)) or isinstance(stat, bool):
+            parts.append(f"{tag} {label}: 统计缺失 (n={n})")
+            continue
+        value = float(stat)
+        if kind == "ci":
+            distance = "已越零" if value > 0 else f"距越零 {-value:.2%}"
+        else:
+            distance = "已转负" if value < 0 else f"距转负 {value:.2%}"
+        parts.append(f"{tag} {label} {value:+.2%} (n={n}, {distance})")
+    return f"  判定数值 (最新记录 {latest.get('date')}): " + " · ".join(parts)
+
+
 def _fmt_stability(stab: Mapping[str, Any], family: str) -> list[str]:
     records = int(stab.get("records") or 0)
     folded = int(stab.get("folded_duplicates") or 0)
@@ -114,6 +156,26 @@ def build_packet(
         else _ct.cohort_trigger_stability(records)
     )
     out["stability"] = stab
+    # R131 Op2 判定数值面: 最新记录逐条件 stat/n — owner 看得到各条件距
+    # 门槛多远 (如条件③ CI -0.35% 距越零), K 取值才有知情依据。读取经
+    # condition_dict 单一守卫 (R127/R128): truthy 非 dict 毒化形态与缺键
+    # 同语义 None, 渲染面按未判定披露, 绝不裸 AttributeError 炸 preview。
+    latest = records[-1] if records else None
+    if latest is not None:
+        cond_keys = (
+            ("condition_1", "condition_2", "condition_3")
+            if family == "strength"
+            else ("strong_bucket", "mid_buckets")
+        )
+        out["latest_record"] = {
+            "date": str(latest.get("date")),
+            "conditions": {
+                key: _tt.condition_dict(latest, key) for key in cond_keys
+            },
+        }
+    # R131 Op2 anchor 对账: 草案 anchor 与账本实际 anchors 集合 — 零匹配
+    # (typo 注册) 的资格连亮会静默 0/K 永不推进, preview 显式警示指路。
+    out["ledger_anchors"] = sorted({str(r.get("anchor")) for r in records})
     if family == "strength":
         state, reg = _tt.load_k_registration(k_registration_path)
         if state == "registered" and reg is not None:
@@ -194,6 +256,9 @@ def _render_family(packet: Mapping[str, Any], candidates: Mapping[str, int], reg
         lines.append("  账本缺失/空 — 判定面未建立, 无 K 预注册对象 (先积累判定快照)")
         return lines
     lines.extend(_fmt_stability(packet["stability"], packet["family"]))
+    stats_line = _fmt_latest_stats(packet)
+    if stats_line:
+        lines.append(stats_line)
 
     reg = packet["registration"]
     state = reg.get("state")
@@ -220,6 +285,17 @@ def _render_family(packet: Mapping[str, Any], candidates: Mapping[str, int], reg
 
     lines.append("  注册草案（--write 落盘 或 owner 手写; 落盘后夜刷 build 先观测后披露）:")
     lines.append("  " + json.dumps(packet["draft"], ensure_ascii=False, sort_keys=True))
+    # R131 Op2 anchor 对账: 草案 anchor 零匹配账本 → 显式警示 (typo 注册
+    # 经 loader 形状校验后是合法 registered 态, 但资格连亮静默 0/K 永不
+    # 推进 — owner 可见的失败优于静默空转; 匹配时零输出 = 零噪声)。
+    draft_anchor = packet["draft"].get("anchor")
+    ledger_anchors = packet.get("ledger_anchors") or []
+    if draft_anchor and ledger_anchors and draft_anchor not in ledger_anchors:
+        lines.append(
+            f"  ⚠ 警示: 注册草案 anchor「{draft_anchor}」与账本实际 anchors "
+            f"零匹配 (账本: {', '.join(ledger_anchors)}) — 零匹配注册的资格"
+            "连亮将永久 0/K, 请核对拼写"
+        )
     lines.append(
         "  机制: 注册生效起算日 = max(声明日, 夜刷首次观测日) — 回溯改写声明日期"
         "不获追溯计数; 资格达成 ≠ 行为改变, 正式评估始终是 owner 门"
