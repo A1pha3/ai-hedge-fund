@@ -169,6 +169,26 @@ def test_within_day_vs_pooled_confound_contrast() -> None:
     assert a["days_zero_within_variance"] == 0
 
 
+def test_pooled_on_same_reduced_set_as_within() -> None:
+    # R134 Op2 (b): 『同有效集』承诺 — r_pooled 必须与 r_within 同一剔除后
+    # 有效集 (对照 = 纯去均值差); 零方差日的 2 事件不得只进 pooled 侧
+    ev = pd.DataFrame(
+        [
+            _row(20260701, "000001", strength=0.50, ret=0.00),
+            _row(20260701, "000002", strength=0.70, ret=0.02),
+            _row(20260702, "000003", strength=0.60, ret=0.10),  # 零方差日
+            _row(20260702, "000004", strength=0.60, ret=0.30),
+        ]
+    )
+    a = within_day_pearson(stock_feature_table(ev), "trigger_strength")
+    assert a["n_events"] == 2
+    assert a["days_zero_within_variance"] == 1
+    assert a["pooled_n"] == a["n_events"]  # RED (修复前 pooled_n=4)
+    # 同集对照: 2 点完美同向 → pooled 与 within 同为 +1
+    assert a["pearson_r_pooled"] == pytest.approx(1.0)
+    assert a["pearson_r_within"] == pytest.approx(1.0)
+
+
 def test_single_stock_day_excluded_and_counted() -> None:
     ev = pd.DataFrame(
         [
@@ -241,8 +261,8 @@ def test_feature_missing_events_counted() -> None:
 # within-day 秩三分位
 # ---------------------------------------------------------------------------
 
-def test_tercile_face_monotone_and_small_day_excluded() -> None:
-    ev = pd.DataFrame(
+def _monotone_tercile_world() -> pd.DataFrame:
+    return pd.DataFrame(
         [
             _row(20260701, "000001", strength=0.50, ret=0.30),
             _row(20260701, "000002", strength=0.60, ret=0.20),
@@ -251,7 +271,10 @@ def test_tercile_face_monotone_and_small_day_excluded() -> None:
             _row(20260702, "000005", strength=0.90, ret=-0.05),
         ]
     )
-    table = stock_feature_table(ev)
+
+
+def test_tercile_face_monotone_and_small_day_excluded() -> None:
+    table = stock_feature_table(_monotone_tercile_world())
     t = within_day_terciles(table, "trigger_strength")
     assert t is not None
     assert t["days_used"] == 1 and t["days_excluded_small"] == 1
@@ -266,6 +289,19 @@ def test_tercile_face_monotone_and_small_day_excluded() -> None:
     # 输入行序扰动 → 逐字节同输出 (边界不依赖行序)
     t_rev = within_day_terciles(table[::-1], "trigger_strength")
     assert json.dumps(t_rev, sort_keys=True) == json.dumps(t, sort_keys=True)
+
+
+def test_tercile_within_day_demeaned_e_disclosed() -> None:
+    # R134 Op2 (c): 格 E 混入日层构成效应 — 必须并排披露组内去均值 E
+    # (日构成 vs 日内结构可区分), 单日世界去均值 E 有精确 oracle
+    table = stock_feature_table(_monotone_tercile_world())
+    t = within_day_terciles(table, "trigger_strength")
+    dm = [c["mean_demeaned_e"] for c in t["cells"]]
+    # 日均 0.20−RT; T1/T2/T3 去均值 = +0.10/0/−0.10 (净口径平移不变)
+    assert dm[0] == pytest.approx(0.10)
+    assert dm[1] == pytest.approx(0.0)
+    assert dm[2] == pytest.approx(-0.10)
+    assert t["spread_t3_t1_within"] == pytest.approx(-0.20)
 
 
 def test_tercile_tie_broken_by_ts_code_not_row_order() -> None:
@@ -312,8 +348,9 @@ def test_split_half_qualified() -> None:
 
 def test_split_half_sign_flip_disclosure_only() -> None:
     # 前半 +1 / 后半 −1 → 同号判据拒 (不能因样本大而资格化)
-    s = split_half_within(stock_feature_table(_paired_days(32, flip_second_half=True)),
-                          "trigger_strength")
+    s = split_half_within(
+        stock_feature_table(_paired_days(32, flip_second_half=True)),
+        "trigger_strength")
     assert s is not None and s["verdict"] == "只披露"
 
 
@@ -364,11 +401,43 @@ def test_payload_md_json_deterministic_and_disclosures(tmp_path) -> None:
     assert "T0 可观测性" in md1
     assert "gap_t1_open" in md1  # T+1 列显式排除的披露在 MD 可见
     assert "日固定效应" in md1
+    assert "日构成" in md1  # R134 Op2 (c): 格 E 含日构成效应的披露可见
     assert "content_digest=" in md1
     assert p1["court_binding"]["rows"] == 4
     assert p1["court_binding"]["content_digest"] is not None
     # 恒等面: stock_features 表在 JSON 且逐格可复算
     assert len(p1["stock_features"]) == 4
+
+
+def test_ci_rendered_on_r_scale_not_pct() -> None:
+    # R134 Op2 (a): CI 是 r 尺度 bootstrap 分位数, 不得按收益率渲染 —
+    # CI=1.0 曾渲染成 +100.00% 与 r 列 (+1.000) 并列, 纲量误导
+    rows = []
+    for i in range(20):
+        rows.append(_row(20260101 + i, f"A{i:02d}", strength=0.50,
+                         ret=0.01, industry="电子"))
+        rows.append(_row(20260101 + i, f"B{i:02d}", strength=0.60,
+                         ret=0.03, industry="机械"))
+    a = within_day_pearson(stock_feature_table(pd.DataFrame(rows)),
+                           "trigger_strength")
+    assert a["cluster_ci_low_90"] == pytest.approx(1.0)
+    payload_min = {
+        "title": "t", "report_date": "20260906",
+        "court_binding": {"rows": 40, "content_digest": "sha256:x"},
+        "caliber": {
+            "universe": "production_aligned/t10", "universe_rows": 40,
+            "days": 20, "caliber_note": "净=毛−0.65%",
+            "t0_note": "n", "fixed_effect_note": "n",
+        },
+        "within_day_pearson": [a],
+        "within_day_rank_terciles": [],
+        "split_half_stability": [],
+        "discipline": {"constitution_2": "c", "min_cell_n": 30,
+                       "split_half_min_r": 0.10, "disclosure_only": "d"},
+    }
+    md = render_md(payload_min)
+    assert "+1.000" in md  # CI 列 r 尺度渲染 (修复前 +100.00%)
+    assert "+100.00%" not in md
 
 
 def test_date_str_rejects_non_8digit(tmp_path) -> None:

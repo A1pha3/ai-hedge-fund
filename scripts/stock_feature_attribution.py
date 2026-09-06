@@ -187,12 +187,18 @@ def stock_feature_table(
 
 def _feature_points(
     table: Sequence[Mapping[str, Any]], feature: str
-) -> tuple[dict[str, list[tuple[float, float]]], int, int, int]:
-    """按日收集 (feature, net_ret) 有效点对。
+) -> tuple[
+    dict[str, list[tuple[float, float]]],
+    dict[str, list[tuple[float, float]]],
+    int, int, int,
+]:
+    """按日收集 (feature, net_ret) 有效点对 (去均值 + 原始 双份).
 
-    返回 (逐日点对, 特征缺失事件数, 低于配对下限日数, 零组内方差日数)。
-    低于配对下限 = 有效观测 <2 的日 (无组内信息); 零组内方差 = 特征当日
-    恒定 — 去均值后全 0, 计入会把 r 拉向 0 (伪稀释), 剔除且显形。
+    返回 (逐日去均值点对, 逐日原始点对, 特征缺失事件数, 低于配对下限日数,
+    零组内方差日数)。低于配对下限 = 有效观测 <2 的日 (无组内信息); 零组内
+    方差 = 特征当日恒定 — 去均值后全 0, 计入会把 r 拉向 0 (伪稀释), 剔除
+    且显形。两份点对恒同有效集: r_within 与 r_pooled 的差 = 纯去均值差
+    (R134 Op2 (b) 同有效集纪律)。
     """
     by_day: dict[str, list[tuple[float | None, float]]] = {}
     for row in table:
@@ -203,6 +209,7 @@ def _feature_points(
     below_floor = 0
     zero_var = 0
     pairs: dict[str, list[tuple[float, float]]] = {}
+    pairs_raw: dict[str, list[tuple[float, float]]] = {}
     for day, items in sorted(by_day.items()):
         valid = [(x, y) for x, y in items if _finite(x)]
         missing += len(items) - len(valid)
@@ -216,22 +223,9 @@ def _feature_points(
         if all(x == mx for x in xs):
             zero_var += 1
             continue
+        pairs_raw[day] = valid
         pairs[day] = [(x - mx, y - my) for x, y in valid]
-    return pairs, missing, below_floor, zero_var
-
-
-def _pooled_r_raw(
-    table: Sequence[Mapping[str, Any]], feature: str
-) -> tuple[float | None, int]:
-    """pooled Pearson (原始值, 同有效集) — 与 r_within 对照暴露日层混淆."""
-    xs: list[float] = []
-    ys: list[float] = []
-    for row in table:
-        v = row.get(feature)
-        if _finite(v):
-            xs.append(float(v))
-            ys.append(float(row["net_ret_t10"]))
-    return pearson_r(xs, ys), len(xs)
+    return pairs, pairs_raw, missing, below_floor, zero_var
 
 
 def within_day_pearson(
@@ -242,7 +236,9 @@ def within_day_pearson(
     CI: day-cluster bootstrap (整日重采样, 组内结构保持), per-call seeded
     RNG; n_events < MIN_CELL_N 或 n_days < 2 → None + 原因 (不冒充).
     """
-    pairs, missing, below_floor, zero_var = _feature_points(table, feature)
+    pairs, pairs_raw, missing, below_floor, zero_var = _feature_points(
+        table, feature
+    )
     xs: list[float] = []
     ys: list[float] = []
     days_used: list[str] = []
@@ -252,7 +248,15 @@ def within_day_pearson(
             ys.append(y)
             days_used.append(day)
     r_within = pearson_r(xs, ys)
-    r_pooled, n_raw = _pooled_r_raw(table, feature)
+    # 同有效集对照 (R134 Op2 (b)): pooled 与 within 恒同一点集, 两列之差
+    # = 纯去均值差 (日层混淆), 不再混入剔除集差异
+    raw_xs: list[float] = []
+    raw_ys: list[float] = []
+    for day in sorted(pairs_raw):
+        for x, y in pairs_raw[day]:
+            raw_xs.append(x)
+            raw_ys.append(y)
+    r_pooled = pearson_r(raw_xs, raw_ys)
     n_events = len(xs)
     n_days = len(pairs)
     ci_low: float | None = None
@@ -272,7 +276,7 @@ def within_day_pearson(
         "days_zero_within_variance": zero_var,
         "pearson_r_within": r_within,
         "pearson_r_pooled": r_pooled,
-        "pooled_n": n_raw,
+        "pooled_n": n_events,  # 恒 == n_events (同有效集, R134 Op2 (b))
         "cluster_ci_low_90": ci_low,
         "ci_reason": ci_reason,
     }
@@ -324,7 +328,7 @@ def within_day_terciles(
         by_day.setdefault(str(row["signal_date"]), []).append(
             (row.get(feature), float(row["net_ret_t10"]), str(row["ts_code"]))
         )
-    cells: list[list[tuple[float, str]]] = [[], [], []]
+    cells: list[list[tuple[float, float, str]]] = [[], [], []]  # (y, y_dm, day)
     days_excluded = 0
     events_excluded = 0
     days_used = 0
@@ -336,25 +340,43 @@ def within_day_terciles(
             events_excluded += nv
             continue
         days_used += 1
+        ybar = sum(y for _, _, y in valid) / nv
         ordered = sorted(valid, key=lambda t: (t[0], t[2]))
         cut1 = nv // 3
         cut2 = nv - nv // 3
         for rank, (lo, hi) in enumerate(((0, cut1), (cut1, cut2), (cut2, nv))):
-            cells[rank].extend((y, day) for _, _, y in ordered[lo:hi])
+            cells[rank].extend(
+                (y, y - ybar, day) for _, _, y in ordered[lo:hi]
+            )
     if days_used == 0:
         return None
     labels = ("T1(日内低)", "T2", "T3(日内高)")
+
+    def _dm_mean(i: int) -> float | None:
+        dm = [y_dm for _, y_dm, _ in cells[i]]
+        return sum(dm) / len(dm) if dm else None
+
+    dm_means = [_dm_mean(i) for i in range(3)]
+    spread_within = (
+        dm_means[2] - dm_means[0]
+        if dm_means[0] is not None and dm_means[2] is not None
+        else None
+    )
     return {
         "feature": feature,
         "days_total": days_used + days_excluded,
         "days_used": days_used,
         "days_excluded_small": days_excluded,
         "events_excluded": events_excluded,
+        # R134 Op2 (c): 格 E 是原始事件池化 (含日层构成效应); 组内去均值
+        # E 并排披露 — 前者回答"这些票赚多少", 后者回答"同日内高低差多少"
+        "spread_t3_t1_within": spread_within,
         "cells": [
             {
                 "tercile": labels[i],
-                "event_stats": win_loss_stats([y for y, _ in cells[i]],
-                                              [d for _, d in cells[i]]),
+                "mean_demeaned_e": dm_means[i],
+                "event_stats": win_loss_stats([y for y, _, _ in cells[i]],
+                                              [d for _, _, d in cells[i]]),
             }
             for i in range(3)
         ],
@@ -487,7 +509,9 @@ def render_md(payload: Mapping[str, Any]) -> str:
     L.append("|---|---|---|---|---|---|---|---|---|")
     for a in payload["within_day_pearson"]:
         ci = a["cluster_ci_low_90"]
-        ci_text = "—" if ci is None else _fmt(ci)
+        # CI 是 r 尺度 bootstrap 分位数 — 与 r 列同纲量渲染, 绝不按收益率
+        # (R134 Op2 (a): +0.021 曾渲染成 +2.06% 与期望收益混纲)
+        ci_text = "—" if ci is None else _fmt(ci, pct=False)
         if ci is None and a["ci_reason"]:
             ci_text = f"— ({a['ci_reason']})"
         L.append(
@@ -498,24 +522,30 @@ def render_md(payload: Mapping[str, Any]) -> str:
             f"| {a['days_zero_within_variance']} |"
         )
     L.append("")
-    L.append("注: r_within 与 r_pooled 同有效集 — 两列之差即日层混淆显形; "
-             "CI=日聚类 bootstrap (per-call seeded, n>=30 且日数>=2 才产出); "
-             "r=— 为组内零方差全剔除后退化, 如实 None 不冒充 0。")
+    L.append("注: r_within 与 r_pooled 恒同一剔除后有效集 — 两列之差 = 纯去均值差 "
+             "(日层混淆显形, 不混入剔除集差异); CI=r 尺度日聚类 bootstrap "
+             "(per-call seeded, n>=30 且日数>=2 才产出); r=— 为组内零方差全剔除后 "
+             "退化, 如实 None 不冒充 0。")
     L.append("")
 
-    L.append("## within-day 秩三分位事件面 (净口径)")
+    L.append("## within-day 秩三分位事件面 (净口径 + 组内去均值)")
     L.append("")
     for t in payload["within_day_rank_terciles"]:
         cells = t["cells"]
         head = " | ".join(
-            f"{c['tercile']} E={_fmt(c['event_stats']['expectancy'])} (n={c['event_stats']['n']})"
+            f"{c['tercile']} E={_fmt(c['event_stats']['expectancy'])} "
+            f"组内={_fmt(c['mean_demeaned_e'])} (n={c['event_stats']['n']})"
             for c in cells
         )
-        L.append(f"- **{t['feature']}**: {head}"
+        spread = t["spread_t3_t1_within"]
+        spread_text = "—" if spread is None else _fmt(spread)
+        L.append(f"- **{t['feature']}**: {head} · 组内 T3−T1 {spread_text}"
                  + (f" · 小日剔除 {t['days_excluded_small']} 日/{t['events_excluded']} 事件"
                     if t["days_excluded_small"] else ""))
     L.append("")
-    L.append(f"注: 有效观测 <3 的日整日剔除 (组内 thirds 退化); 格内事件 "
+    L.append(f"注: 格 E 是原始事件池化 — 含日构成效应 (日层构成效应未剔除: 好日的票整日偏高), "
+             "『组内』列才是同日内高低差 (逐日去均值, 全体均值为 0); 有效观测 <3 的日整日剔除 "
+             "(组内 thirds 退化); 格内事件 "
              f"n<{payload['discipline']['min_cell_n']} 的聚类 CI 不产出 (只披露); "
              "组内排序键 (特征值, ts_code) 双稳定, 不依赖输入行序。")
     L.append("")
