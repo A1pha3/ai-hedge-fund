@@ -59,6 +59,34 @@ COURT_TABLE = Path("data/research/btst_court/event_tables/event_table_v1.csv.gz"
 TABLE_DIR = COURT_TABLE.parent  # manifest_v1.json 同目录 — 判定绑定的身份源
 REPORT_DIR = Path("data/reports")
 
+# 跨窗口外部验证 (R136 Op1): 早期窗口 (2022-2024 交集宇宙重建) 的分解报告
+# 目录与双 manifest 身份源 — 早期报告由本工具以 --court-table/--report-dir
+# 指向早期路径产出, 结构化 payload 与主报告同构, 是对比披露的唯一事实源。
+EARLY_REPORT_DIR = Path("data/reports/early_window")
+EARLY_MANIFEST_PATH = Path(
+    "data/research/btst_court/event_tables_early/manifest_v1.json"
+)
+MAIN_MANIFEST_PATH = TABLE_DIR / "manifest_v1.json"
+# 对比锚定分组: 触发器锚桶 + 全体 (production_aligned/t10)。
+CROSS_WINDOW_BUCKET_GROUPS: tuple[str, ...] = (
+    "ALL",
+    "strength=<0.50",
+    "strength=0.50-0.60",
+    "strength=0.60-0.70",
+    "strength=≥0.70",
+)
+# 固定 caveat (来源钉死, 不随数据变化): 幸存者偏差语录 = AGENTS.md 项 7
+# (2026-08-22 可行性评估结论); 纪律 = 宪法 #2 + 触发器账本单窗驱动。
+CROSS_WINDOW_CAVEATS: tuple[str, ...] = (
+    "早期窗口宇宙为价格×资金流交集重建 (幸存者偏差不可消除: 退市票缺席 →"
+    " 危机期表现系统性乐观) — 仅作方向性外部验证, 不作 regime 差异的定量"
+    "授权证据 (项 7, 2026-08-22)。",
+    "本对比只披露不判定 — 触发器账本仍只由当前窗口驱动; 阈值/参数变化 ="
+    " 新证据世代 owner 决策 (宪法 #2)。",
+    "跨窗口结构分歧可能是窗口/市况特异性 (regime 构成不同) 而非策略失效"
+    "的证明 — 判读属 owner 评估门。",
+)
+
 SLIPPAGE_BPS = 30.0
 SELL_STAMP_BPS = 5.0
 ROUNDTRIP_COST = (2 * SLIPPAGE_BPS + SELL_STAMP_BPS) / 1e4  # 0.65%
@@ -89,6 +117,7 @@ from src.screening.offensive.gap_disclosure import (  # noqa: E402
     GAP_HIGH_THRESHOLD,
     GAP_TOP_BUCKET,
     gap_bucket,
+    latest_decomposition_report,
 )
 
 
@@ -735,6 +764,228 @@ def attach_prior_alignment(payload: dict[str, object]) -> dict[str, object]:
     return payload
 
 
+# ---- 跨窗口外部验证披露 (R136 Op1) ----
+
+
+def _manifest_identity(path: Path) -> dict[str, object]:
+    """manifest 冷读: window 身份 + btst_breakout 公式指纹。
+
+    文件缺失/损坏/顶层非对象 → 全 None 身份 (不假装知道); 部分形状缺失
+    只影响对应字段。fail-open 家族纪律 — manifest 缺席不阻断对比披露。
+    """
+    identity: dict[str, object] = {"window": None, "btst_breakout_sha256": None}
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return identity
+    if not isinstance(manifest, dict):
+        return identity
+    window = manifest.get("window")
+    if isinstance(window, dict):
+        identity["window"] = {
+            "start": window.get("start"),
+            "end": window.get("end"),
+            "sessions": window.get("sessions"),
+        }
+    fingerprint = manifest.get("formula_fingerprint")
+    if isinstance(fingerprint, dict):
+        sha = fingerprint.get("btst_breakout_sha256")
+        if isinstance(sha, str) and sha:
+            identity["btst_breakout_sha256"] = sha
+    return identity
+
+
+def _finite_number_or_none(value: object) -> float | None:
+    """bool/str/NaN/inf 一律 None — 披露缺数值不假装 (R119 P1 家族纪律)。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def _stat_cell(row: object) -> dict[str, object]:
+    """分组统计行 → {e, n} 披露格; 行缺席/畸形 → 双 None。"""
+    valid = row if isinstance(row, dict) else {}
+    e = _finite_number_or_none(valid.get("expectancy"))
+    n = valid.get("n")
+    return {
+        "e": e,
+        "n": n if isinstance(n, int) and not isinstance(n, bool) else None,
+    }
+
+
+def _rows_by_group(rows: object) -> dict[str, dict[str, object]]:
+    """t10 分组行列表 → group→row; 非法行静默跳过 (畸形由上层形状判定)。"""
+    if not isinstance(rows, list):
+        return {}
+    out: dict[str, dict[str, object]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        group = row.get("group")
+        if isinstance(group, str) and group:
+            out[group] = row
+    return out
+
+
+def _sign_agree(a: float | None, b: float | None) -> bool | None:
+    """双侧有限且非零才比符号; 任一侧缺失/恰零 → None (不假装一致)。"""
+    if a is None or b is None or a == 0 or b == 0:
+        return None
+    return (a > 0) == (b > 0)
+
+
+def _trigger_condition(trigger: object, key: str) -> dict[str, object]:
+    cond = trigger.get(key) if isinstance(trigger, dict) else None
+    cond = cond if isinstance(cond, dict) else {}
+    lit = cond.get("lit")
+    return {
+        "lit": lit if isinstance(lit, bool) else None,
+        "stat": _finite_number_or_none(cond.get("stat")),
+        "n": cond.get("n")
+        if isinstance(cond.get("n"), int) and not isinstance(cond.get("n"), bool)
+        else None,
+    }
+
+
+def attach_cross_window_validation(
+    payload: dict[str, object],
+    *,
+    early_report_dir: Path = EARLY_REPORT_DIR,
+    early_manifest_path: Path = EARLY_MANIFEST_PATH,
+    main_manifest_path: Path = MAIN_MANIFEST_PATH,
+) -> dict[str, object]:
+    """把早期窗口 (2022-2024) 外部验证对比挂到 payload (R136 Op1)。
+
+    回答 owner 决策面的一个盲区: 当前窗口点亮中的强度触发器, 在早期窗口
+    的同公式重放里是否复现? 早期分解报告 (同一工具产出, 结构化 payload
+    与主报告同构) 是唯一事实源 — 本函数只读取拼装对比, 零重算零判定
+    (宪法 #2), 触发器账本仍只由当前窗口驱动。
+
+    fail-open 家族纪律:
+    - early 目录缺失/无报告文件 (未构建形态) → 不挂键, MD 零新增字节;
+    - 报告在场但不可读/畸形 → available=False + reason (真相消失必有名);
+    - manifest 缺失 → 指纹 match=None / window=None, 对比照常披露。
+    """
+    early_dir = Path(early_report_dir)
+    found = latest_decomposition_report(early_dir)
+    if found is None:
+        try:
+            has_files = early_dir.is_dir() and any(
+                early_dir.glob("winrate_payoff_decomposition_*.json")
+            )
+        except OSError:
+            has_files = False
+        if has_files:
+            payload["cross_window_validation"] = {
+                "available": False,
+                "reason": "early_report_unreadable",
+            }
+        return payload
+
+    _path, early = found
+    early_universes = early.get("universes")
+    early_aligned = (
+        early_universes.get("production_aligned")
+        if isinstance(early_universes, dict)
+        else None
+    )
+    early_rows = (
+        early_aligned.get("horizons", {}).get("t10")
+        if isinstance(early_aligned, dict)
+        else None
+    )
+    current_universes = payload.get("universes")
+    current_aligned = (
+        current_universes.get("production_aligned")
+        if isinstance(current_universes, dict)
+        else None
+    )
+    current_rows = (
+        current_aligned.get("horizons", {}).get("t10")
+        if isinstance(current_aligned, dict)
+        else None
+    )
+    if not isinstance(early_rows, list) or not isinstance(current_rows, list):
+        payload["cross_window_validation"] = {
+            "available": False,
+            "reason": (
+                "early_report_malformed"
+                if not isinstance(early_rows, list)
+                else "current_universe_missing"
+            ),
+        }
+        return payload
+
+    early_by_group = _rows_by_group(early_rows)
+    current_by_group = _rows_by_group(current_rows)
+    buckets = []
+    for group in CROSS_WINDOW_BUCKET_GROUPS:
+        current_cell = _stat_cell(current_by_group.get(group))
+        early_cell = _stat_cell(early_by_group.get(group))
+        buckets.append(
+            {
+                "bucket": group,
+                "current": current_cell,
+                "early": early_cell,
+                "sign_agree": _sign_agree(current_cell["e"], early_cell["e"]),
+            }
+        )
+
+    early_trigger = early.get("threshold_trigger")
+    current_trigger = payload.get("threshold_trigger")
+    trigger_block = {
+        "condition_1": {
+            "current": _trigger_condition(
+                current_trigger, "condition_1_strong_bucket_ci_above_zero"
+            ),
+            "early": _trigger_condition(
+                early_trigger, "condition_1_strong_bucket_ci_above_zero"
+            ),
+        },
+        "condition_2": {
+            "current": _trigger_condition(
+                current_trigger, "condition_2_mid_bucket_expectancy_negative"
+            ),
+            "early": _trigger_condition(
+                early_trigger, "condition_2_mid_bucket_expectancy_negative"
+            ),
+        },
+        "conjunction_armed": {
+            "current": current_trigger.get("conjunction_armed")
+            if isinstance(current_trigger, dict)
+            and isinstance(current_trigger.get("conjunction_armed"), bool)
+            else None,
+            "early": early_trigger.get("conjunction_armed")
+            if isinstance(early_trigger, dict)
+            and isinstance(early_trigger.get("conjunction_armed"), bool)
+            else None,
+        },
+    }
+
+    early_manifest = _manifest_identity(Path(early_manifest_path))
+    main_manifest = _manifest_identity(Path(main_manifest_path))
+    early_sha = early_manifest["btst_breakout_sha256"]
+    main_sha = main_manifest["btst_breakout_sha256"]
+    fingerprint_match = (
+        early_sha == main_sha
+        if isinstance(early_sha, str) and isinstance(main_sha, str)
+        else None
+    )
+
+    payload["cross_window_validation"] = {
+        "available": True,
+        "early_report_date": Path(_path).stem.rsplit("_", 1)[-1],
+        "early_court_rows": early.get("court_rows"),
+        "current_court_rows": payload.get("court_rows"),
+        "early_window": early_manifest["window"],
+        "formula_fingerprint_match": fingerprint_match,
+        "buckets": buckets,
+        "trigger": trigger_block,
+        "caveats": list(CROSS_WINDOW_CAVEATS),
+    }
+    return payload
+
+
 def court_binding(court_table: Path, rows: int) -> dict[str, object]:
     """court 数据状态身份 (manifest 身份字段 + 事件表行数 + 内容摘要)。
 
@@ -1043,6 +1294,7 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
         else:
             L.append("- 稳定计数: 账本尚无记录 (首刷后逐次累积)")
         L.append("")
+    _render_cross_window_validation(payload, L)
     L.append("## 纪律")
     L.append("")
     L.append("- 本报告是诊断证据, 不是参数变更提案; 任何阈值/先验/仓位调整 =")
@@ -1188,6 +1440,120 @@ def _render_gap_anatomy(uni: dict, L: list[str]) -> None:
         L.append("")
 
 
+def _pct_cell(value: object) -> str:
+    cell = _finite_number_or_none(value)
+    return "—" if cell is None else _fmt(cell)
+
+
+def _n_cell(value: object) -> str:
+    return (
+        str(value)
+        if isinstance(value, int) and not isinstance(value, bool)
+        else "—"
+    )
+
+
+def _cond_dual_line(tag: str, dual: object, label: str) -> str:
+    sides = dual if isinstance(dual, dict) else {}
+
+    def side_txt(key: str) -> str:
+        cond = sides.get(key)
+        cond = cond if isinstance(cond, dict) else {}
+        lit = cond.get("lit")
+        state = "点亮" if lit is True else ("未点亮" if lit is False else "未判定")
+        stat = cond.get("stat")
+        stat_txt = _pct_cell(stat) if stat is not None else "—"
+        return f"{state} ({stat_txt})"
+
+    return f"- {tag} ({label}): 当前 {side_txt('current')} · 早期 {side_txt('early')}"
+
+
+def _render_cross_window_validation(payload: dict[str, object], L: list[str]) -> None:
+    """跨窗口外部验证节 (R136 Op1) — 早期窗口 vs 当前窗口方向性对比。
+
+    键缺席 (early 未构建形态) → 零字节新增; available=False → 单行显式
+    不可用 (真相消失必有名); 完整 → 桶对比表 + 触发器双窗 + 固定 caveat。
+    """
+    cw = payload.get("cross_window_validation")
+    if cw is None:
+        return
+    if not isinstance(cw, dict) or not cw.get("available"):
+        reason = cw.get("reason") if isinstance(cw, dict) else "unknown"
+        L.append(
+            f"- 跨窗口外部验证不可用 ({reason}) — 早期窗口报告在场但"
+            "不可读/畸形, 不以陈旧或残缺数字冒充对比证据。"
+        )
+        L.append("")
+        return
+    L.append("### 跨窗口外部验证 (方向性, 只披露不判定)")
+    L.append("")
+    window = cw.get("early_window")
+    window = window if isinstance(window, dict) else {}
+    start = window.get("start") if isinstance(window.get("start"), str) else "—"
+    end = window.get("end") if isinstance(window.get("end"), str) else "—"
+    fingerprint = cw.get("formula_fingerprint_match")
+    fingerprint_txt = {True: "一致", False: "**不一致** (对比仅同形, 不保证同质)"}.get(
+        fingerprint, "不可得"
+    )
+    L.append(
+        f"早期窗口 {start}..{end}"
+        f" ({_n_cell(cw.get('early_court_rows'))} 行, 报告"
+        f" {_n_cell_text(cw.get('early_report_date'))}) vs 当前窗口"
+        f" ({_n_cell(cw.get('current_court_rows'))} 行) · 公式指纹: {fingerprint_txt}"
+    )
+    L.append("")
+    L.append("| 强度桶 | 当前 E (净) | 当前 n | 早期 E (净) | 早期 n | 符号一致 |")
+    L.append("|---|---|---|---|---|---|")
+    buckets = cw.get("buckets")
+    for bucket in buckets if isinstance(buckets, list) else []:
+        if not isinstance(bucket, dict):
+            continue
+        current_cell = bucket.get("current")
+        early_cell = bucket.get("early")
+        current_cell = current_cell if isinstance(current_cell, dict) else {}
+        early_cell = early_cell if isinstance(early_cell, dict) else {}
+        agree = bucket.get("sign_agree")
+        agree_txt = {True: "一致", False: "**相反**"}.get(agree, "—")
+        L.append(
+            f"| {bucket.get('bucket', '—')} | {_pct_cell(current_cell.get('e'))}"
+            f" | {_n_cell(current_cell.get('n'))}"
+            f" | {_pct_cell(early_cell.get('e'))}"
+            f" | {_n_cell(early_cell.get('n'))} | {agree_txt} |"
+        )
+    L.append("")
+    trigger = cw.get("trigger")
+    trigger = trigger if isinstance(trigger, dict) else {}
+    L.append(
+        _cond_dual_line(
+            "条件①", trigger.get("condition_1"), "≥0.70 桶 CI90 下界>0"
+        )
+    )
+    L.append(
+        _cond_dual_line(
+            "条件②", trigger.get("condition_2"), "0.50-0.60 桶净期望<0"
+        )
+    )
+    conjunction = trigger.get("conjunction_armed")
+    conjunction = conjunction if isinstance(conjunction, dict) else {}
+
+    def armed_txt(key: str) -> str:
+        armed = conjunction.get(key)
+        return (
+            "点亮" if armed is True else ("未点亮" if armed is False else "未判定")
+        )
+
+    L.append(f"- 合取 (①∧②): 当前 {armed_txt('current')} · 早期 {armed_txt('early')}")
+    L.append("")
+    caveats = cw.get("caveats")
+    for caveat in caveats if isinstance(caveats, list) else []:
+        L.append(f"- {caveat}")
+    L.append("")
+
+
+def _n_cell_text(value: object) -> str:
+    return str(value) if isinstance(value, str) and value else "—"
+
+
 def _render_horizons(horizons: dict, L: list[str]) -> None:
     for key, rows in horizons.items():
         L.append(f"## {key}")
@@ -1234,6 +1600,12 @@ def main(argv: list[str] | None = None) -> int:
                         default=["all_candidates", "production_aligned"],
                         choices=["all_candidates", "production_aligned"],
                         help="报告口径 (默认双口径; 生产对齐需完整过滤列)")
+    parser.add_argument("--early-report-dir", default=str(EARLY_REPORT_DIR),
+                        help="早期窗口分解报告目录 (跨窗口外部验证披露; 缺失 = 节缺席)")
+    parser.add_argument("--early-manifest", default=str(EARLY_MANIFEST_PATH),
+                        help="早期窗口 court manifest (窗口身份 + 公式指纹)")
+    parser.add_argument("--main-manifest", default=str(MAIN_MANIFEST_PATH),
+                        help="当前窗口 court manifest (公式指纹对比侧)")
     args = parser.parse_args(argv)
 
     date_str = date.today().strftime("%Y%m%d")
@@ -1246,8 +1618,16 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"court 事件表缺失: {court_table}")
     ev = pd.read_csv(court_table)
     payload = decompose(ev, universes=tuple(args.universes))
+    payload["court_rows"] = len(ev)
+    payload["court_sessions"] = int(ev["signal_date"].nunique())
     attach_threshold_trigger(payload)
     attach_prior_alignment(payload)
+    attach_cross_window_validation(
+        payload,
+        early_report_dir=Path(args.early_report_dir),
+        early_manifest_path=Path(args.early_manifest),
+        main_manifest_path=Path(args.main_manifest),
+    )
     binding = court_binding(court_table, rows=len(ev))
     record_meta = record_trigger_status(
         payload, date_str, ledger_path=Path(args.trigger_ledger),
@@ -1295,8 +1675,6 @@ def main(argv: list[str] | None = None) -> int:
                 "court 未前进 (数据状态摘要与账本既有记录一致) — 触发器账本不追加"
                 " (同数据重判不产生新证据, R130 起按 content_digest 判定); 报告照常刷新"
             )
-    payload["court_rows"] = len(ev)
-    payload["court_sessions"] = int(ev["signal_date"].nunique())
     report_dir.mkdir(parents=True, exist_ok=True)
     json_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8"

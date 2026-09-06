@@ -2294,3 +2294,308 @@ def test_main_preserves_disclosure_when_ledger_write_failed(tmp_path):
         assert c_meta["recorded"] is False and c_meta["reason"] == "court_not_advanced"
         assert [r["date"] for r in load_trigger_ledger(strength_ledger)] == ["20260904"]
         assert [r["date"] for r in load_cohort_trigger_ledger(cohort_ledger)] == ["20260904"]
+
+
+class TestCrossWindowValidation:
+    """R136 Op1: 跨窗口外部验证披露 — 早期窗口 (2022-2024 交集宇宙) 与当前
+    窗口的强度结构方向相反 (当前 ≥0.70 最好 / 早期 ≥0.70 最差), 而触发器
+    账本只由当前窗口驱动 — owner K 预注册→正式评估的决策面必须看得见早期
+    反证。对比读自早期报告结构化 payload (同一工具产出), 零重算零判定;
+    fail-open: early 未构建形态零字节新增, 报告在场但畸形 → 显式不可用。
+    """
+
+    @staticmethod
+    def _row(group, n, expectancy, winrate):
+        return {
+            "group": group, "n": n, "wins": 0, "winrate": winrate,
+            "avg_win": None, "avg_loss": None, "payoff": None,
+            "expectancy": expectancy, "cluster_ci_low_90": None,
+            "attribution_vs_all": None,
+        }
+
+    CURRENT_ROWS = [
+        _row("ALL", 1627, 0.0055, 0.4456),
+        _row("strength=<0.50", 515, -0.0209, 0.4078),
+        _row("strength=0.50-0.60", 341, 0.0014, 0.4575),
+        _row("strength=0.60-0.70", 431, 0.0103, 0.4501),
+        _row("strength=≥0.70", 340, 0.0169, 0.4853),
+    ]
+    EARLY_ROWS = [
+        _row("ALL", 3597, 0.0251, 0.5402),
+        _row("strength=<0.50", 1259, 0.0353, 0.5624),
+        _row("strength=0.50-0.60", 847, 0.0378, 0.5915),
+        _row("strength=0.60-0.70", 942, 0.0191, 0.5446),
+        _row("strength=≥0.70", 549, -0.0075, 0.4026),
+    ]
+
+    @staticmethod
+    def _trigger(c1_stat, c1_lit, c2_stat, c2_lit, armed=False):
+        return {
+            "anchor": "production_aligned/t10",
+            "min_n": 30,
+            "condition_1_strong_bucket_ci_above_zero": {
+                "lit": c1_lit, "judged": True, "n": 340, "stat": c1_stat,
+            },
+            "condition_2_mid_bucket_expectancy_negative": {
+                "lit": c2_lit, "judged": True, "n": 341, "stat": c2_stat,
+            },
+            "conjunction_armed": armed,
+        }
+
+    def _current_payload(self):
+        return {
+            "court_rows": 1950,
+            "universes": {
+                "production_aligned": {"horizons": {"t10": [dict(r) for r in self.CURRENT_ROWS]}}
+            },
+            "threshold_trigger": self._trigger(0.0007, True, 0.0014, False),
+        }
+
+    @staticmethod
+    def _early_payload():
+        return {
+            "court_rows": 4161,
+            "universes": {
+                "production_aligned": {"horizons": {"t10": [
+                    dict(r) for r in TestCrossWindowValidation.EARLY_ROWS
+                ]}}
+            },
+            "threshold_trigger": TestCrossWindowValidation._trigger(
+                -0.0168, False, 0.0378, False
+            ),
+        }
+
+    @staticmethod
+    def _write_early_report(tmp_path, payload, date="20260901"):
+        early_dir = tmp_path / "early_window"
+        early_dir.mkdir(exist_ok=True)
+        (early_dir / f"winrate_payoff_decomposition_{date}.json").write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
+        return early_dir
+
+    @staticmethod
+    def _write_manifest(path, sha="a" * 64, window=None):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        manifest = {"formula_fingerprint": {"btst_breakout_sha256": sha}}
+        if window is not None:
+            manifest["window"] = window
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        return path
+
+    def _attach(self, payload, tmp_path, *, early_dir=True, early_manifest=True,
+                main_manifest=True, early_payload=None):
+        from scripts.winrate_payoff_decomposition import (
+            attach_cross_window_validation,
+        )
+        kw = {}
+        if early_dir:
+            kw["early_report_dir"] = self._write_early_report(
+                tmp_path, early_payload if early_payload is not None else self._early_payload()
+            )
+        else:
+            kw["early_report_dir"] = tmp_path / "absent_early_window"
+        kw["early_manifest_path"] = (
+            self._write_manifest(
+                tmp_path / "early_manifest" / "manifest_v1.json",
+                window={"start": "20220104", "end": "20241231", "sessions": 726},
+            )
+            if early_manifest
+            else tmp_path / "absent_early_manifest.json"
+        )
+        kw["main_manifest_path"] = (
+            self._write_manifest(tmp_path / "main_manifest" / "manifest_v1.json")
+            if main_manifest
+            else tmp_path / "absent_main_manifest.json"
+        )
+        return attach_cross_window_validation(payload, **kw)
+
+    def test_attach_builds_structured_key(self, tmp_path):
+        cw = self._attach(self._current_payload(), tmp_path)["cross_window_validation"]
+        assert cw["available"] is True
+        assert cw["early_report_date"] == "20260901"
+        assert cw["early_court_rows"] == 4161
+        assert cw["early_window"] == {
+            "start": "20220104", "end": "20241231", "sessions": 726,
+        }
+        assert cw["formula_fingerprint_match"] is True
+        buckets = {b["bucket"]: b for b in cw["buckets"]}
+        assert set(buckets) == {
+            "ALL", "strength=<0.50", "strength=0.50-0.60",
+            "strength=0.60-0.70", "strength=≥0.70",
+        }
+        # 方向相反实锤: ≥0.70 当前 +0.0169 vs 早期 -0.0075 → 相反
+        strong = buckets["strength=≥0.70"]
+        assert strong["current"]["e"] == 0.0169 and strong["early"]["e"] == -0.0075
+        assert strong["sign_agree"] is False
+        # <0.50 亦相反 (当前负 / 早期正)
+        assert buckets["strength=<0.50"]["sign_agree"] is False
+        assert buckets["ALL"]["sign_agree"] is True
+        assert buckets["strength=0.50-0.60"]["sign_agree"] is True
+        # 触发器双窗: 当前 ①亮 ②未亮 / 早期 ①②均未亮
+        assert cw["trigger"]["condition_1"]["current"] == {
+            "lit": True, "stat": 0.0007, "n": 340,
+        }
+        assert cw["trigger"]["condition_1"]["early"]["lit"] is False
+        assert cw["trigger"]["condition_2"]["early"]["stat"] == 0.0378
+        assert cw["trigger"]["conjunction_armed"] == {
+            "current": False, "early": False,
+        }
+        assert len(cw["caveats"]) == 3
+
+    def test_render_md_full_section(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import render_md
+        payload = self._attach(self._current_payload(), tmp_path)
+        md = render_md(payload, "20260906")
+        assert "### 跨窗口外部验证 (方向性, 只披露不判定)" in md
+        assert "20220104..20241231" in md
+        assert "公式指纹: 一致" in md
+        assert "| strength=≥0.70 | +1.69% | 340 | -0.75% | 549 | **相反** |" in md
+        assert "当前 点亮 (+0.07%) · 早期 未点亮 (-1.68%)" in md
+        assert "当前 未点亮 (+0.14%) · 早期 未点亮 (+3.78%)" in md
+        assert "合取 (①∧②): 当前 未点亮 · 早期 未点亮" in md
+        assert "幸存者偏差不可消除" in md
+        assert "只披露不判定" in md
+
+    def test_fingerprint_mismatch_disclosed(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import render_md
+        payload = self._current_payload()
+        early_dir = self._write_early_report(tmp_path, self._early_payload())
+        from scripts.winrate_payoff_decomposition import (
+            attach_cross_window_validation,
+        )
+        attach_cross_window_validation(
+            payload,
+            early_report_dir=early_dir,
+            early_manifest_path=self._write_manifest(
+                tmp_path / "em" / "m.json", sha="b" * 64
+            ),
+            main_manifest_path=self._write_manifest(
+                tmp_path / "mm" / "m.json", sha="a" * 64
+            ),
+        )
+        cw = payload["cross_window_validation"]
+        assert cw["formula_fingerprint_match"] is False
+        md = render_md(payload, "20260906")
+        assert "公式指纹: **不一致**" in md
+
+    def test_manifest_missing_fingerprint_none(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import render_md
+        payload = self._attach(
+            self._current_payload(), tmp_path,
+            early_manifest=False, main_manifest=False,
+        )
+        assert payload["cross_window_validation"]["formula_fingerprint_match"] is None
+        md = render_md(payload, "20260906")
+        assert "公式指纹: 不可得" in md
+
+    def test_missing_early_dir_zero_delta(self, tmp_path):
+        """未构建形态: 键缺席 + 渲染逐字节不变 (fail-open 零噪声)。"""
+        from scripts.winrate_payoff_decomposition import render_md
+        payload = self._current_payload()
+        md_before = render_md(payload, "20260906")
+        out = self._attach(payload, tmp_path, early_dir=False)
+        assert "cross_window_validation" not in out
+        assert render_md(out, "20260906") == md_before
+        assert "跨窗口外部验证" not in md_before
+
+    def test_empty_dir_no_key(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import (
+            attach_cross_window_validation,
+        )
+        payload = self._current_payload()
+        empty = tmp_path / "empty_early"
+        empty.mkdir()
+        attach_cross_window_validation(payload, early_report_dir=empty)
+        assert "cross_window_validation" not in payload
+
+    def test_corrupt_report_named_absence(self, tmp_path):
+        """报告在场但损坏 JSON → available=False 显式不可用 (不静默消失)。"""
+        from scripts.winrate_payoff_decomposition import render_md
+        early_dir = tmp_path / "early_window"
+        early_dir.mkdir()
+        (early_dir / "winrate_payoff_decomposition_20260901.json").write_text(
+            "{not json", encoding="utf-8"
+        )
+        payload = self._current_payload()
+        from scripts.winrate_payoff_decomposition import (
+            attach_cross_window_validation,
+        )
+        attach_cross_window_validation(
+            payload, early_report_dir=early_dir,
+            early_manifest_path=tmp_path / "x.json",
+            main_manifest_path=tmp_path / "y.json",
+        )
+        cw = payload["cross_window_validation"]
+        assert cw == {"available": False, "reason": "early_report_unreadable"}
+        md = render_md(payload, "20260906")
+        assert "跨窗口外部验证不可用 (early_report_unreadable)" in md
+
+    def test_malformed_early_payload_named(self, tmp_path):
+        """合法 JSON 但缺 production_aligned 宇宙 → 显式 malformed。"""
+        from scripts.winrate_payoff_decomposition import render_md
+        payload = self._attach(
+            self._current_payload(), tmp_path, early_payload={"court_rows": 1}
+        )
+        cw = payload["cross_window_validation"]
+        assert cw == {"available": False, "reason": "early_report_malformed"}
+        assert "跨窗口外部验证不可用 (early_report_malformed)" in render_md(
+            payload, "20260906"
+        )
+
+    def test_current_universe_missing_named(self, tmp_path):
+        payload = {"threshold_trigger": self._trigger(0.0, False, 0.0, False)}
+        cw = self._attach(payload, tmp_path)["cross_window_validation"]
+        assert cw == {"available": False, "reason": "current_universe_missing"}
+
+    def test_missing_bucket_group_honest_dash(self, tmp_path):
+        """早期报告缺某桶分组 → 该侧 '—' 且 sign_agree None (不假装一致)。"""
+        from scripts.winrate_payoff_decomposition import render_md
+        early = self._early_payload()
+        early["universes"]["production_aligned"]["horizons"]["t10"] = [
+            r for r in early["universes"]["production_aligned"]["horizons"]["t10"]
+            if r["group"] != "strength=≥0.70"
+        ]
+        payload = self._attach(self._current_payload(), tmp_path, early_payload=early)
+        buckets = {b["bucket"]: b for b in payload["cross_window_validation"]["buckets"]}
+        strong = buckets["strength=≥0.70"]
+        assert strong["early"] == {"e": None, "n": None}
+        assert strong["sign_agree"] is None
+        md = render_md(payload, "20260906")
+        assert "| strength=≥0.70 | +1.69% | 340 | — | — | — |" in md
+
+    def test_poisoned_cells_not_fake_values(self, tmp_path):
+        """NaN/字符串期望/bool n/字符串 n → 全 None (R119 P1 家族纪律)。"""
+        early = self._early_payload()
+        rows = early["universes"]["production_aligned"]["horizons"]["t10"]
+        for row in rows:
+            if row["group"] == "strength=≥0.70":
+                row["expectancy"] = float("nan")
+                row["n"] = True
+            if row["group"] == "ALL":
+                row["expectancy"] = "banana"
+                row["n"] = "3597"
+        payload = self._attach(self._current_payload(), tmp_path, early_payload=early)
+        buckets = {b["bucket"]: b for b in payload["cross_window_validation"]["buckets"]}
+        assert buckets["strength=≥0.70"]["early"] == {"e": None, "n": None}
+        assert buckets["strength=≥0.70"]["sign_agree"] is None
+        assert buckets["ALL"]["early"] == {"e": None, "n": None}
+
+    def test_zero_expectancy_sign_agree_none(self, tmp_path):
+        early = self._early_payload()
+        for row in early["universes"]["production_aligned"]["horizons"]["t10"]:
+            if row["group"] == "strength=0.60-0.70":
+                row["expectancy"] = 0.0
+        payload = self._attach(self._current_payload(), tmp_path, early_payload=early)
+        buckets = {b["bucket"]: b for b in payload["cross_window_validation"]["buckets"]}
+        assert buckets["strength=0.60-0.70"]["sign_agree"] is None
+
+    def test_non_dict_rows_and_buckets_skipped(self, tmp_path):
+        """畸形行/畸形桶静默跳过, 不炸不假装 (形状畸形由缺组形态披露)。"""
+        early = self._early_payload()
+        rows = early["universes"]["production_aligned"]["horizons"]["t10"]
+        rows[0] = "not-a-dict"
+        payload = self._attach(self._current_payload(), tmp_path, early_payload=early)
+        buckets = payload["cross_window_validation"]["buckets"]
+        assert buckets[0]["early"]["e"] is None  # ALL 行被跳过 → 缺席披露
+        assert buckets[1]["sign_agree"] is False  # 其余桶正常对比
