@@ -871,3 +871,60 @@ class TestRenderDivergenceDiagnosis:
         text = render_md(payload)
         assert "诊断不可用" in text and "OSError: panel missing" in text
         assert "## 重放分歧诊断" not in text
+
+
+# ---------------------------------------------------------------------------
+# R138 Op3 对抗审查: 畸形重放结局 typed 化 + SystemExit 逃逸收口.
+# ---------------------------------------------------------------------------
+
+
+class TestReplayBadOutcomeContract:
+    """重放结局严格契约: hit 必须恰为 bool, 畸形形态 typed replay_error 不冒充分类."""
+
+    def test_missing_hit_key_does_not_masquerade_as_miss(self):
+        records = [_divergent_rec("day_missing_from_court")]
+        outcome = {"miss_stage": "c3_industry_weak", "trigger_strength": 0.0}
+        payload = replay_divergence_diagnosis(records, lambda t, d: outcome)
+        assert payload["by_class"]["replay_error"] == 1
+        assert "replay_bad_outcome" in payload["details"][0]["error"]
+
+    def test_non_bool_hit_does_not_masquerade_as_hit_now(self):
+        records = [_divergent_rec("day_missing_from_court")]
+        outcome = {"hit": "no", "miss_stage": None, "trigger_strength": 0.0}
+        payload = replay_divergence_diagnosis(records, lambda t, d: outcome)
+        assert payload["by_class"]["replay_error"] == 1
+        assert "replay_bad_outcome" in payload["details"][0]["error"]
+
+    def test_well_formed_outcome_still_classified(self):
+        records = [_divergent_rec("day_missing_from_court")]
+        outcome = {"hit": True, "miss_stage": None, "trigger_strength": 0.9}
+        payload = replay_divergence_diagnosis(records, lambda t, d: outcome)
+        assert payload["by_class"]["replay_hit_now"] == 1
+
+
+class TestAttachDivergenceDiagnosisWiring:
+    """main 接线: 构造器 fail-loud (含 SystemExit) → typed 单行, 六类报告不受损."""
+
+    def test_systemexit_from_load_panel_typed_unavailable(self, tmp_path):
+        from scripts.btst_realized_vs_court import (
+            attach_divergence_diagnosis,
+        )
+
+        # 空 court 表 → BUY 分类为 day_missing_from_court (诊断面的触发形态)
+        inputs = _inputs(
+            [],
+            sessions=["20260811"], regime={"20260811": "normal"}, panel=["20260811"],
+        )
+        recon = reconcile([_journal_buy("20260811", "000001")], inputs)
+        assert recon.class_counts["day_missing_from_court"] == 1
+        payload = summary_payload(recon, court_window=None)
+        # 空目录 → load_panel SystemExit('panel empty') — 非 Exception 子类
+        (tmp_path / "daily").mkdir()
+        attach_divergence_diagnosis(
+            payload, recon, raw_dir=tmp_path, regime_labels={"20260811": "normal"}
+        )
+        assert "divergence_diagnosis_unavailable" in payload
+        assert "SystemExit" in payload["divergence_diagnosis_unavailable"]
+        assert "divergence_diagnosis" not in payload
+        # 六类报告面不受损
+        assert payload["class_counts"]["day_missing_from_court"] == 1

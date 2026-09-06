@@ -178,10 +178,17 @@ def missing_panel_days(sessions: list[str], panel_dates: set[str]) -> list[str]:
 def record_day_outcome(
     day_audit: dict[str, dict[str, int]], day: str, candidates: int, hits: int
 ) -> None:
-    """R138 Op2: 重放循环逐日结局累计 (candidates / hits), 纯累计无判定."""
+    """R138 Op2: 重放循环逐日结局累计 (candidates / hits), 纯累计无判定.
+
+    R138 Op3 对抗审查: int() 强转会把 float 2.7 静默截断为 2 — 审计计数
+    被静默腐蚀; 非 int (bool 亦拒) typed TypeError fail-closed。
+    """
+    for name, value in (("candidates", candidates), ("hits", hits)):
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise TypeError(f"day audit {name} must be int, got {value!r}")
     row = day_audit.setdefault(day, {"candidates": 0, "hits": 0})
-    row["candidates"] += int(candidates)
-    row["hits"] += int(hits)
+    row["candidates"] += candidates
+    row["hits"] += hits
 
 
 def zero_hit_day_audit(day_audit: dict[str, dict[str, int]]) -> list[dict[str, int]]:
@@ -190,12 +197,15 @@ def zero_hit_day_audit(day_audit: dict[str, dict[str, int]]) -> list[dict[str, i
     realized_vs_court 重放分歧诊断消费侧才显形; 本审计与之互补)。
 
     candidates=0 是合法空涨停日 (universe_audit.empty_days 会计) 不混入;
-    行形状损坏 (负值/bool/缺键) typed ValueError fail-closed — 与 loader
-    纪律同族, 静默跳过会让审计自身变成新的静默面。
+    行形状损坏 (非 Mapping 行/负值/bool/缺键) typed ValueError fail-closed
+    — 与 loader 纪律同族, 静默跳过会让审计自身变成新的静默面。R138 Op3
+    对抗审查补 None/标量行形态 (此前 AttributeError 未类型化)。
     """
     out: list[dict[str, int]] = []
     for day in sorted(day_audit):
         row = day_audit[day]
+        if not isinstance(row, dict):
+            raise ValueError(f"day audit row malformed for {day}: {row!r}")
         candidates, hits = row.get("candidates"), row.get("hits")
         for name, value in (("candidates", candidates), ("hits", hits)):
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
