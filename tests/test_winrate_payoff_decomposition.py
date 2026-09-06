@@ -142,9 +142,9 @@ class TestEndToEndFixture:
         rows = []
         for regime, rets in {
             "normal": [0.08, -0.05, 0.12, -0.03, 0.06, -0.02, 0.15, -0.08, 0.04, -0.06,
-                        0.10, -0.04, 0.09, -0.07, 0.03, -0.05, 0.11, -0.02, 0.07, -0.09,
-                        0.05, -0.04, 0.08, -0.06, 0.02, -0.03, 0.06, -0.05, 0.04, -0.02,
-                        0.09, -0.04],
+                       0.10, -0.04, 0.09, -0.07, 0.03, -0.05, 0.11, -0.02, 0.07, -0.09,
+                       0.05, -0.04, 0.08, -0.06, 0.02, -0.03, 0.06, -0.05, 0.04, -0.02,
+                       0.09, -0.04],
             "crisis": [-0.10, -0.15, 0.05, -0.08, -0.12, 0.03, -0.09, -0.11],
         }.items():
             for i, r in enumerate(rets):
@@ -387,6 +387,112 @@ class TestThresholdTriggerStatus:
         assert "阈值触发器状态" not in md
 
 
+class TestPriorAlignmentDisclosure:
+    """R135 Op2 对抗审查: 先验对齐披露双守卫 — review_btst_prior_court
+    同族对齐断言是双守卫 (E ±1pp 绝对带 + 先验胜率虚高<10pp 方向守卫),
+    MD 披露状态此前只实现 E 单守卫且在并列披露两项偏离后宣称『对齐
+    (±1pp 内)』——读者会把 ±1pp 误读为覆盖胜率 (R132 Op2 口径披露失真
+    同族); 先验胜率虚高 ≥10pp (回到旧「虚高」关系的信号) 时 MD 仍宣称
+    对齐。修复 = prior_alignment_status 纯函数 + payload 结构化键 +
+    渲染行逐守卫精确措辞 (镜像 review 语义, 不发明第三守卫)。
+    """
+
+    PRIOR_E = 0.0056
+    PRIOR_W = 0.4645  # known_distributions.BTST_BREAKOUT_T10
+
+    @staticmethod
+    def _aligned_payload(expectancy, winrate):
+        row = {
+            "group": "ALL", "n": 1627, "wins": 0, "winrate": winrate,
+            "avg_win": None, "avg_loss": None, "payoff": None,
+            "expectancy": expectancy, "cluster_ci_low_90": -0.0163,
+            "attribution_vs_all": None,
+        }
+        return {
+            "universes": {"production_aligned": {"horizons": {"t10": [row]}}},
+        }
+
+    def test_inflated_prior_winrate_never_claimed_aligned(self):
+        """RED 主牙: E ±1pp 内但先验胜率虚高 ≥10pp → 现行 MD 宣称『对齐
+        (±1pp 内)』(误导); 修复后必须不宣称对齐且显名虚高守卫。"""
+        from scripts.winrate_payoff_decomposition import (
+            attach_prior_alignment,
+            render_md,
+        )
+        # E 偏离 |0.0055-0.0056|=0.01pp ≤1 (过); 胜率虚高 0.4645-0.30=16.45pp ≥10 (败)
+        payload = attach_prior_alignment(self._aligned_payload(0.0055, 0.30))
+        md = render_md(payload, "20260906")
+        assert "对齐 (±1pp" not in md
+        assert "先验胜率虚高" in md
+
+    def test_alignment_status_wording_scopes_both_guards(self):
+        """RED 次牙: 双守卫均过时状态句必须逐守卫精确限定 — 含『E ±1pp』
+        与胜率守卫显式字样, 裸『对齐 (±1pp 内)』的歧义措辞不可再出现。"""
+        from scripts.winrate_payoff_decomposition import (
+            attach_prior_alignment,
+            render_md,
+        )
+        # 真实数据形态: E 偏离 0.57pp / 胜率偏离 -1.89pp — 双守卫过
+        payload = attach_prior_alignment(
+            self._aligned_payload(0.0056 - 0.0057, 0.4645 - 0.0189)
+        )
+        md = render_md(payload, "20260906")
+        line = next(ln for ln in md.splitlines() if "E 偏离" in ln)
+        assert "E ±1pp" in line
+        assert "胜率" in line
+
+    def test_prior_alignment_status_pure_function_quadrants(self):
+        from scripts.winrate_payoff_decomposition import prior_alignment_status
+
+        # 双过 (真实数据形态)
+        s = prior_alignment_status(0.0049, 0.4456, self.PRIOR_E, self.PRIOR_W)
+        assert s["aligned"] is True
+        assert s["e_within_1pp"] is True
+        assert s["prior_winrate_inflated"] is False
+        # E 败 / 胜率过
+        s = prior_alignment_status(
+            0.0056 + 0.02, 0.4456, self.PRIOR_E, self.PRIOR_W
+        )
+        assert s["aligned"] is False
+        assert s["e_within_1pp"] is False
+        assert s["prior_winrate_inflated"] is False
+        # E 过 / 胜率虚高 (方向守卫: prior - prod >= 10pp)
+        s = prior_alignment_status(0.0055, 0.30, self.PRIOR_E, self.PRIOR_W)
+        assert s["aligned"] is False
+        assert s["prior_winrate_inflated"] is True
+        # 双败
+        s = prior_alignment_status(
+            0.0056 + 0.02, 0.30, self.PRIOR_E, self.PRIOR_W
+        )
+        assert s["aligned"] is False
+        assert s["e_within_1pp"] is False
+        assert s["prior_winrate_inflated"] is True
+
+    def test_prior_alignment_status_non_finite_inputs_none(self):
+        """R119 P1 家族: 非有限输入不假装 — None 由调用方降级为不可用行。"""
+        from scripts.winrate_payoff_decomposition import prior_alignment_status
+        assert prior_alignment_status(
+            float("nan"), 0.44, self.PRIOR_E, self.PRIOR_W
+        ) is None
+        assert prior_alignment_status(
+            0.005, float("inf"), self.PRIOR_E, self.PRIOR_W
+        ) is None
+        assert prior_alignment_status(
+            0.005, 0.44, float("nan"), self.PRIOR_W
+        ) is None
+
+    def test_attach_prior_alignment_payload_key_and_noop(self):
+        from scripts.winrate_payoff_decomposition import attach_prior_alignment
+        payload = attach_prior_alignment(self._aligned_payload(0.0049, 0.4456))
+        pa = payload["prior_alignment"]
+        assert pa["aligned"] is True
+        assert pa["prior_expected_return"] == self.PRIOR_E
+        assert pa["prior_winrate"] == self.PRIOR_W
+        # 无生产对齐宇宙 → no-op (镜像 attach_threshold_trigger)
+        empty = {"universes": {"all_candidates": {"horizons": {"t10": []}}}}
+        assert "prior_alignment" not in attach_prior_alignment(empty)
+
+
 class TestDeterministicAcrossCalls:
     """R13 对抗审查 PoC: RNG 全局状态曾使同进程第二次调用 CI 漂移。"""
 
@@ -394,7 +500,7 @@ class TestDeterministicAcrossCalls:
         import numpy as np
         from scripts.winrate_payoff_decomposition import cluster_boot_ci_low
         rng_data = np.random.default_rng(42)
-        days = [f"d{i%10}" for i in range(60)]
+        days = [f"d{i % 10}" for i in range(60)]
         rets = list(rng_data.normal(0.001, 0.02, 60))
         ci1 = cluster_boot_ci_low(rets, days)
         ci2 = cluster_boot_ci_low(rets, days)
@@ -403,12 +509,13 @@ class TestDeterministicAcrossCalls:
 
     def test_decompose_repeated_byte_identical(self):
         from scripts.winrate_payoff_decomposition import decompose
-        import numpy as np, pandas as pd
+        import numpy as np
+        import pandas as pd
         rng = np.random.default_rng(7)
         ev = pd.DataFrame({
             "symbol": [f"s{i}" for i in range(80)],
-            "signal_date": [f"2026-01-{(i%15)+1:02d}" for i in range(80)],
-            "regime": ["normal" if i%4 else "crisis" for i in range(80)],
+            "signal_date": [f"2026-01-{(i % 15) + 1:02d}" for i in range(80)],
+            "regime": ["normal" if i % 4 else "crisis" for i in range(80)],
             "trigger_strength": list(rng.uniform(0.45, 0.95, 80)),
             "gross_ret_t10": list(rng.normal(0.005, 0.1, 80)),
             "gross_ret_t5": list(rng.normal(0.002, 0.05, 80)),
@@ -425,7 +532,7 @@ class TestDeterministicAcrossCalls:
         rng = np.random.default_rng(7)
         ev = pd.DataFrame({
             "symbol": [f"s{i}" for i in range(80)],
-            "signal_date": [f"2026-01-{(i%15)+1:02d}" for i in range(80)],
+            "signal_date": [f"2026-01-{(i % 15) + 1:02d}" for i in range(80)],
             "regime": ["normal"] * 80,
             "trigger_strength": list(rng.uniform(0.45, 0.95, 80)),
             "gross_ret_t10": list(rng.normal(0.005, 0.1, 80)),
@@ -433,7 +540,7 @@ class TestDeterministicAcrossCalls:
         })
         clean = decompose(ev, universes=("all_candidates",))
         # 预消耗模块 RNG (若实现仍依赖全局态, 此后结果会漂移)
-        junk_days = [f"j{i%5}" for i in range(50)]
+        junk_days = [f"j{i % 5}" for i in range(50)]
         cluster_boot_ci_low(list(np.random.default_rng(1).normal(0, 0.01, 50)), junk_days)
         after_noise = decompose(ev, universes=("all_candidates",))
         assert clean == after_noise

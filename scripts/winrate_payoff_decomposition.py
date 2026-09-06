@@ -653,6 +653,88 @@ def attach_threshold_trigger(
     return payload
 
 
+def prior_alignment_status(
+    prod_expectancy: object,
+    prod_winrate: object,
+    prior_expected_return: object,
+    prior_winrate: object,
+) -> dict[str, object] | None:
+    """先验对齐双守卫 (R135 Op2) — 镜像 review_btst_prior_court 对齐断言
+    语义, 不发明第三守卫:
+
+      守卫一 E ±1pp 绝对带: |prod_E - prior_E| <= 0.01 (覆盖 n_boot 种子抖动);
+      守卫二 方向守卫: prior_winrate - prod_winrate < 0.10 — 先验胜率不得
+      高于生产对齐宇宙 10pp (回到旧「虚高」关系的信号, R98 时代实测 ~37x
+      相对高估的家族面)。
+
+    旧 MD 状态只实现守卫一且在并列披露两项偏离后宣称『对齐 (±1pp 内)』—
+    读者会把 ±1pp 误读为覆盖胜率 (R132 Op2 口径披露失真同族)。任一输入
+    非有限 → None (R119 P1 家族: 不假装, 调用方降级为不可用行)。
+    """
+    import math
+
+    values = (prod_expectancy, prod_winrate, prior_expected_return, prior_winrate)
+    if any(
+        not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v)
+        for v in values
+    ):
+        return None
+    e_dev_pp = abs(float(prod_expectancy) - float(prior_expected_return)) * 100.0
+    w_dev_pp = (float(prod_winrate) - float(prior_winrate)) * 100.0
+    e_within_1pp = e_dev_pp <= 1.0
+    prior_winrate_inflated = -w_dev_pp >= 10.0
+    if e_within_1pp and not prior_winrate_inflated:
+        status = "对齐 (E ±1pp 内 ∧ 先验胜率未虚高≥10pp)"
+    elif not e_within_1pp and not prior_winrate_inflated:
+        status = "E 偏离 >1pp — 消费前回 Observe (胜率守卫过)"
+    elif e_within_1pp and prior_winrate_inflated:
+        status = "先验胜率虚高 ≥10pp — 回到旧「虚高」关系, 回 Observe (E ±1pp 内)"
+    else:
+        status = "E 偏离 >1pp ∧ 先验胜率虚高 ≥10pp — 消费前回 Observe"
+    return {
+        "e_dev_pp": e_dev_pp,
+        "w_dev_pp": w_dev_pp,
+        "e_within_1pp": e_within_1pp,
+        "prior_winrate_inflated": prior_winrate_inflated,
+        "aligned": e_within_1pp and not prior_winrate_inflated,
+        "status": status,
+    }
+
+
+def attach_prior_alignment(payload: dict[str, object]) -> dict[str, object]:
+    """把先验对齐双守卫判定挂到 payload (镜像 attach_threshold_trigger)。
+
+    production_aligned 缺席 / ALL 行缺席 / expectancy 或胜率非有限 /
+    known_distributions 导入失败 → no-op, 渲染面回退不可用行, 不假装对齐。
+    """
+    aligned = (payload.get("universes") or {}).get("production_aligned")
+    if not aligned:
+        return payload
+    rows = aligned["horizons"].get("t10", [])  # type: ignore[union-attr]
+    all_row = next((r for r in rows if r.get("group") == "ALL"), None)
+    if all_row is None or all_row.get("expectancy") is None:
+        return payload
+    try:
+        from src.screening.offensive.known_distributions import BTST_BREAKOUT_T10
+    except ImportError:
+        return payload
+    status = prior_alignment_status(
+        all_row.get("expectancy"),
+        all_row.get("winrate"),
+        BTST_BREAKOUT_T10.expected_return,
+        BTST_BREAKOUT_T10.winrate,
+    )
+    if status is None:
+        return payload
+    status["prior_expected_return"] = BTST_BREAKOUT_T10.expected_return
+    status["prior_winrate"] = BTST_BREAKOUT_T10.winrate
+    status["prod_expectancy"] = all_row.get("expectancy")
+    status["prod_winrate"] = all_row.get("winrate")
+    status["prod_n"] = all_row.get("n")
+    payload["prior_alignment"] = status
+    return payload
+
+
 def court_binding(court_table: Path, rows: int) -> dict[str, object]:
     """court 数据状态身份 (manifest 身份字段 + 事件表行数 + 内容摘要)。
 
@@ -840,7 +922,6 @@ def record_trigger_status(
     return {"recorded": True, "records": len(records)}
 
 
-
 def render_md(payload: dict[str, object], date_str: str) -> str:
     L: list[str] = []
     L.append(f"# court 全候选胜率×赔率分解 ({date_str})")
@@ -862,24 +943,29 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
     if aligned:
         _render_slice_bucket_stability(aligned, L)
         _render_gap_anatomy(aligned, L)
-        t10_all = aligned["horizons"].get("t10", [])
-        all_row = next((r for r in t10_all if r["group"] == "ALL"), None)
-        if all_row and all_row.get("expectancy") is not None:
-            try:
-                from src.screening.offensive.known_distributions import (
-                    BTST_BREAKOUT_T10,
+        # R135 Op2: 先验对齐判定经 attach_prior_alignment 挂载的双守卫结构化
+        # 键渲染 (镜像 review_btst_prior_court 对齐断言语义); 旧内联单守卫
+        # 计算已移除 — 『对齐 (±1pp 内)』歧义措辞 + 胜率守卫缺席不可回归。
+        pa = payload.get("prior_alignment")
+        if isinstance(pa, dict):
+            L.append(f"- **先验对齐披露**: 生产对齐 T+10 E={pa['prod_expectancy']:+.2%} /")
+            L.append(f"  胜率={pa['prod_winrate']:.2%} (n={pa['prod_n']}) vs")
+            L.append("  known_distributions.BTST_BREAKOUT_T10")
+            L.append(
+                f"  E={pa['prior_expected_return']:+.2%}/胜率={pa['prior_winrate']:.2%}:"
+            )
+            L.append(
+                f"  E 偏离 {pa['e_dev_pp']:.2f}pp / 胜率偏离 {pa['w_dev_pp']:+.2f}pp"
+                f" — {pa['status']}。"
+            )
+        else:
+            t10_all = aligned["horizons"].get("t10", [])
+            all_row = next((r for r in t10_all if r.get("group") == "ALL"), None)
+            if all_row is not None and all_row.get("expectancy") is not None:
+                L.append(
+                    "- 先验对齐披露不可用 (known_distributions 导入失败或"
+                    " 统计量非有限)。"
                 )
-                prior = BTST_BREAKOUT_T10
-                e_dev_pp = abs(all_row["expectancy"] - prior.expected_return) * 100
-                w_dev_pp = (all_row["winrate"] - prior.winrate) * 100
-                status = "对齐 (±1pp 内)" if e_dev_pp <= 1.0 else "偏离 >1pp — 消费前回 Observe"
-                L.append(f"- **先验对齐披露**: 生产对齐 T+10 E={all_row['expectancy']:+.2%} /")
-                L.append(f"  胜率={all_row['winrate']:.2%} (n={all_row['n']}) vs")
-                L.append(f"  known_distributions.BTST_BREAKOUT_T10")
-                L.append(f"  E={prior.expected_return:+.2%}/胜率={prior.winrate:.2%}:")
-                L.append(f"  E 偏离 {e_dev_pp:.2f}pp / 胜率偏离 {w_dev_pp:+.2f}pp — {status}。")
-            except ImportError:
-                L.append("- 先验对齐披露不可用 (known_distributions 导入失败)。")
     trigger = payload.get("threshold_trigger")
     if isinstance(trigger, dict):
         c1 = trigger["condition_1_strong_bucket_ci_above_zero"]
@@ -1054,6 +1140,7 @@ def _render_gap_anatomy(uni: dict, L: list[str]) -> None:
         L.append("|---|---|---|---|---|---|---|---|")
         for s in co:
             a, st = s["all"], s["strong"]
+
             def _share(v):
                 return f"{v:.1%}" if isinstance(v, (int, float)) else "—"
             L.append(
@@ -1160,6 +1247,7 @@ def main(argv: list[str] | None = None) -> int:
     ev = pd.read_csv(court_table)
     payload = decompose(ev, universes=tuple(args.universes))
     attach_threshold_trigger(payload)
+    attach_prior_alignment(payload)
     binding = court_binding(court_table, rows=len(ev))
     record_meta = record_trigger_status(
         payload, date_str, ledger_path=Path(args.trigger_ledger),
