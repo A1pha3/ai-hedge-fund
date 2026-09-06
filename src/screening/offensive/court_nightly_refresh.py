@@ -52,11 +52,14 @@ RECONCILE_TIMEOUT_S = 300
 # 这些报告此前只靠手动运行, 静默陈旧在最后手动日 (项 8『活文档随 court
 # 重建刷新』的实现面)。每脚本独立超时独立容错, 一个失败不阻断其余,
 # 失败只进 status["diagnostics"], ok 语义不变。
+# R135 Op1: stock_feature_attribution (R134 Op1) 提交晚于保鲜链建立曾静默
+# 缺席 — 成员全集由 test_diagnostic_scripts_pinned_set 钉死防再漏接。
 DIAGNOSTIC_SCRIPTS: tuple[str, ...] = (
     "scripts/winrate_payoff_decomposition.py",
     "scripts/btst_signal_day_cohort.py",
     "scripts/realized_selection_wedge.py",
     "scripts/day_feature_attribution.py",
+    "scripts/stock_feature_attribution.py",
 )
 DIAGNOSTIC_TIMEOUT_S = 600
 

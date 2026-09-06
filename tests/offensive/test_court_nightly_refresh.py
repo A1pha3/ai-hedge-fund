@@ -156,6 +156,19 @@ class TestNightlyDiagnosticsRefresh:
     逐脚本独立 fail-open (一个失败不阻断其余, ok 语义不变)。
     """
 
+    def test_diagnostic_scripts_pinned_set(self):
+        # R135 Op1 drift-guard: 保鲜链成员显式钉死全集 — R134 Op1 的
+        # stock_feature_attribution 提交晚于 R133 Op3 曾静默缺席, 陈旧诊断
+        # 面的 split-half 判定会被操作员当现状消费; 未来新增诊断脚本漏接
+        # 在此当场暴露 (顺序也是契约: status.diagnostics 键序可读性)。
+        assert DIAGNOSTIC_SCRIPTS == (
+            "scripts/winrate_payoff_decomposition.py",
+            "scripts/btst_signal_day_cohort.py",
+            "scripts/realized_selection_wedge.py",
+            "scripts/day_feature_attribution.py",
+            "scripts/stock_feature_attribution.py",
+        )
+
     def test_build_success_runs_diagnostics_in_order(self, tmp_path):
         _write_manifest(tmp_path, {"window": {"start": "20250102"}})
         runner = _RecordingRunner()
