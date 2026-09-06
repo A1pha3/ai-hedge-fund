@@ -21,6 +21,7 @@ from scripts.day_feature_attribution import (
     day_feature_table,
     feature_pearson,
     feature_terciles,
+    main,
     pearson_r,
     render_md,
     split_half_stability,
@@ -122,6 +123,43 @@ def test_strength_missing_disclosed_not_zero() -> None:
     # 均值只由 finite 行承载, 绝不以 0 冒充缺失
     assert row["strength_mean"] == pytest.approx(0.75)
     assert row["strong_share"] == pytest.approx(1.0)
+
+
+def test_out_of_range_strength_treated_as_missing() -> None:
+    # R132 Op2 同族纪律: 强度界内 [0,1], 越界毒值如实缺失不入均值
+    # (PoC 实锤: -0.30 曾使双行均值 0.175 而非界内 0.65 且 missing=0)
+    ev = pd.DataFrame(
+        [
+            _row(20260701, "000001", strength=-0.30, ret=0.03),
+            _row(20260701, "000002", strength=1.50, ret=-0.01),
+            _row(20260701, "000003", strength=0.65, ret=0.01),
+        ]
+    )
+    (row,) = day_feature_table(ev)
+    assert row["strength_missing"] == 2
+    assert row["strength_mean"] == pytest.approx(0.65)
+    assert row["strength_median"] == pytest.approx(0.65)
+    assert row["strong_share"] == pytest.approx(0.0)  # 0.65 < 0.70
+
+
+def test_date_str_rejects_non_8digit(tmp_path) -> None:
+    # R119 P2 同族纪律: 日期形状守卫, banana 不得产出工件 (PoC 实锤曾 rc=0)
+    ev = _two_day_world()
+    csv_path = tmp_path / "event_table_v1.csv"
+    ev.to_csv(csv_path, index=False)
+    report_dir = tmp_path / "reports"
+    with pytest.raises(SystemExit, match="8 位数字"):
+        main(["--court-table", str(csv_path), "--report-dir", str(report_dir),
+              "--date-str", "banana"])
+    assert not report_dir.exists()  # 拒绝路径零文件落盘
+    with pytest.raises(SystemExit, match="8 位数字"):
+        main(["--court-table", str(csv_path), "--report-dir", str(report_dir),
+              "--date-str", "202609061234"])
+    # 合法 8 位通过且落盘
+    rc = main(["--court-table", str(csv_path), "--report-dir", str(report_dir),
+               "--date-str", "20260906"])
+    assert rc == 0
+    assert (report_dir / "day_feature_attribution_20260906.md").exists()
 
 
 def test_industry_degenerate_all_missing() -> None:

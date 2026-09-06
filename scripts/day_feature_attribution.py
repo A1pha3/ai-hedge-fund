@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -178,7 +179,12 @@ def day_feature_table(
             "day_e_net_t10": _mean(rets),
             "n": n,
         }
-        strengths = [float(v) for v in group["trigger_strength"] if _finite(v)]
+        # R132 Op2 同族纪律: 强度界内 [0,1], 越界毒值如实计入缺失
+        # (假漂移比无漂移更有害 — 绝不让 -0.30 冒充合法观测进均值)
+        strengths = [
+            float(v) for v in group["trigger_strength"]
+            if _finite(v) and 0.0 <= float(v) <= 1.0
+        ]
         strength_missing = n - len(strengths)
         row["strength_missing"] = strength_missing
         row["strength_mean"] = _mean(strengths) if strengths else None
@@ -500,6 +506,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report-dir", default=str(REPORT_DIR))
     parser.add_argument("--date-str", default=date.today().strftime("%Y%m%d"))
     args = parser.parse_args(argv)
+    # R119 P2 同族纪律: 日期形状守卫 — 非法形状在零副作用前 fail-closed
+    # (banana 曾照常产出 day_feature_attribution_banana.md rc=0)
+    if not re.fullmatch(r"[0-9]{8}", str(args.date_str)):
+        raise SystemExit(
+            f"--date-str 必须是 8 位数字 YYYYMMDD, got: {args.date_str!r}"
+        )
 
     court_table = Path(args.court_table)
     ev = pd.read_csv(court_table)
