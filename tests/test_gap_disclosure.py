@@ -9,16 +9,22 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import math
+from pathlib import Path
 
 import pytest
 
+from src.screening.offensive import gap_disclosure
 from src.screening.offensive.gap_disclosure import (
     ALL_GAP_BUCKETS,
     GAP_HIGH_THRESHOLD,
     gap_bucket,
     gap_execution_reference,
+    latest_decomposition_report,
+    latest_signal_day_cohort_report,
+    report_filename_date,
 )
 
 
@@ -198,3 +204,100 @@ def test_gap_reference_ignores_non_dated_lookalike_files(tmp_path):
     ref = gap_execution_reference(base)
     assert ref is not None
     assert ref["evidence_date"] == "20260904"
+
+
+# --------------------- R137 Op1: 共享读取体未来日期守卫 ---------------------
+
+
+def _minimal_payload(expectancy=0.005):
+    """最小可读报告形态 (数值非对称, R13 教训)。"""
+    return {
+        "universes": {
+            "production_aligned": {
+                "horizons": {
+                    "t10": [{"group": "ALL", "expectancy": expectancy}],
+                }
+            }
+        },
+        "court_rows": 100,
+    }
+
+
+class TestReportFilenameDate:
+    """单一日期提取谓词 (R137 Op1): 读取体形状守卫与 scripts 侧 typed reason 共用。"""
+
+    def test_dated_suffix_extracted(self):
+        assert report_filename_date(
+            Path("winrate_payoff_decomposition_20260907.json")
+        ) == "20260907"
+
+    def test_non_dated_suffix_none(self):
+        assert report_filename_date(
+            Path("winrate_payoff_decomposition_backup.json")
+        ) is None
+        assert report_filename_date(Path("x_2026090.json")) is None  # 7 位不足
+
+    def test_embedded_date_not_suffix_no_match(self):
+        # 形状守卫要求 _\d{8} 在 stem 末尾; .bak 尾缀使 stem 不以 8 位结束
+        assert report_filename_date(Path("x_20260907.json.bak")) is None
+
+
+class TestSharedReaderFutureDateGuard:
+    """未来日期守卫下沉共享读取体 (R137 Op1, R136 Op2 登记开放项收口)。
+
+    RED 实锤 (修复前): 合法 20260901 报告 + 20990101 毒报告 (E=0.99) 同目录,
+    sorted[-1] 选中毒文件喂给 daily-action 先验漂移行/强度桶行/gap 参考行/
+    cohort 行与跨窗口对比 — 假证据冒充当前证据。合法管道只在当日写报告,
+    未来日期只能来自手工放置/时钟错乱; 拒绝且不回退次新 (镜像『损坏最新
+    报告不回退』纪律: 目录异常时静默展示旧证据 = 以陈旧数字冒充当前)。
+    """
+
+    def _patch_today(self, monkeypatch, y=2026, m=9, d=7):
+        monkeypatch.setattr(gap_disclosure, "_today", lambda: dt.date(y, m, d))
+
+    def test_future_dated_poison_rejected_without_fallback(self, tmp_path, monkeypatch):
+        self._patch_today(monkeypatch)
+        (tmp_path / "winrate_payoff_decomposition_20260901.json").write_text(
+            json.dumps(_minimal_payload(0.005)), encoding="utf-8"
+        )
+        (tmp_path / "winrate_payoff_decomposition_20990101.json").write_text(
+            json.dumps(_minimal_payload(0.99)), encoding="utf-8"
+        )
+        # 拒绝毒报告, 且不回退次新 — 行缺席示警, 不以旧报告冒充当前
+        assert latest_decomposition_report(tmp_path) is None
+        assert gap_execution_reference(tmp_path) is None
+
+    def test_future_dated_only_dir_returns_none(self, tmp_path, monkeypatch):
+        self._patch_today(monkeypatch)
+        (tmp_path / "winrate_payoff_decomposition_20990101.json").write_text(
+            json.dumps(_minimal_payload(0.99)), encoding="utf-8"
+        )
+        assert latest_decomposition_report(tmp_path) is None
+
+    def test_today_dated_report_selected_boundary_inclusive(self, tmp_path, monkeypatch):
+        self._patch_today(monkeypatch, 2026, 9, 7)
+        (tmp_path / "winrate_payoff_decomposition_20260907.json").write_text(
+            json.dumps(_minimal_payload()), encoding="utf-8"
+        )
+        found = latest_decomposition_report(tmp_path)
+        assert found is not None
+        assert found[0].name.endswith("20260907.json")
+
+    def test_cohort_reader_future_guard_same_body(self, tmp_path, monkeypatch):
+        self._patch_today(monkeypatch)
+        (tmp_path / "signal_day_cohort_20260901.json").write_text(
+            json.dumps({"any": "shape"}), encoding="utf-8"
+        )
+        (tmp_path / "signal_day_cohort_20990101.json").write_text(
+            json.dumps({"any": "shape"}), encoding="utf-8"
+        )
+        assert latest_signal_day_cohort_report(tmp_path) is None
+
+    def test_real_clock_past_reports_unaffected(self, tmp_path):
+        """不注入钟: 真实今日 (2026-09) 下历史报告选择行为不变 (零回归锚)。"""
+        (tmp_path / "winrate_payoff_decomposition_20260901.json").write_text(
+            json.dumps(_minimal_payload()), encoding="utf-8"
+        )
+        found = latest_decomposition_report(tmp_path)
+        assert found is not None
+        assert found[0].name.endswith("20260901.json")

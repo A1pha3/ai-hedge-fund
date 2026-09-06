@@ -16,6 +16,7 @@ R92 Op1/Op2 把 T+1 开盘缺口 (gap_t1_open) 的判别证据机制化进诊断
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import math
 import re
@@ -44,6 +45,21 @@ _REPORT_GLOB = "winrate_payoff_decomposition_*.json"
 _DATED_SUFFIX_RE = re.compile(r"_(\d{8})$")
 
 
+def report_filename_date(path: str | Path) -> str | None:
+    """报告文件名日期段 (YYYYMMDD) 的单一提取谓词 (R137 Op1)。
+
+    读取体形状守卫与 scripts 侧 typed reason 共用同一定义 — 日期提取逻辑
+    漂移会让两侧行为分叉 (一侧拒一侧收)。
+    """
+    matched = _DATED_SUFFIX_RE.search(Path(path).stem)
+    return matched.group(1) if matched else None
+
+
+def _today() -> "dt.date":
+    """本机今日 (可测试缝): 守卫只依赖它做未来判定, 测试可注入。"""
+    return dt.date.today()
+
+
 def latest_decomposition_report(
     reports_dir: str | Path = Path("data/reports"),
 ) -> tuple[Path, dict] | None:
@@ -52,6 +68,10 @@ def latest_decomposition_report(
     只接受文件名日期段为 \\d{8} 的报告 (形状守卫); 新鲜度 = 日期字典序最大者。
     文件缺失/不可读/非法 JSON/顶层非对象 → None (fail-open, 不假装有证据);
     损坏的最新报告不回退旧报告 — 以 None 示警, 不以陈旧数字冒充当前证据。
+
+    未来日期绊线 (R137 Op1, R136 Op2 登记开放项收口): 选中报告日期晚于今日
+    即拒绝 — 合法管道只在当日写报告, 未来日期只能来自手工放置/时钟错乱;
+    与损坏同款不回退次新 (目录处于异常状态时静默展示旧证据 = 假冒当前)。
     """
     return _latest_dated_report(reports_dir, _REPORT_GLOB)
 
@@ -66,13 +86,16 @@ def _latest_dated_report(
         dated = sorted(
             path
             for path in directory.glob(report_glob)
-            if _DATED_SUFFIX_RE.search(path.stem)
+            if report_filename_date(path) is not None
         )
     except OSError:
         return None
     if not dated:
         return None
     path = dated[-1]
+    report_date = report_filename_date(path) or ""
+    if report_date > _today().strftime("%Y%m%d"):
+        return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):

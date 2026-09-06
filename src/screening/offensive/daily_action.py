@@ -2101,6 +2101,29 @@ def _render_day_cohort_trigger_line() -> str | None:
         return None
 
 
+def _future_dated_report_day(reports_dir) -> str | None:
+    """目录内最新未来日期报告的文件名日期; 无则 None (R137 Op1 异常显形面)。
+
+    未来日期守卫下沉共享读取体后, 证据消费者经 latest_decomposition_report
+    不再读到未来日期报告 (None, 不回退)。本 helper 专供 freshness 行的异常
+    探测 — 只看文件名日期不解析内容, 与读取体共用 report_filename_date
+    单一谓词防漂移; 比较锚 date.today() 与守卫同源。
+    """
+    from src.screening.offensive.gap_disclosure import report_filename_date
+
+    base = Path(reports_dir)
+    try:
+        dates = [
+            report_filename_date(p)
+            for p in base.glob("winrate_payoff_decomposition_*.json")
+        ]
+    except OSError:
+        return None
+    today_text = date.today().strftime("%Y%m%d")
+    future = [d for d in dates if d is not None and d > today_text]
+    return max(future) if future else None
+
+
 def _render_evidence_freshness_line(
     as_of,
     reports_dir: str | Path | None = None,
@@ -2134,6 +2157,12 @@ def _render_evidence_freshness_line(
     负时区分: ``report_date <= 今日墙钟`` → 合法, 按 0 距离正常渲染
     (新鲜即零噪声); 仅 ``report_date > 今日墙钟`` (真未来日期) 维持 G1
     异常文案。
+
+    R137 Op1 (守卫交互): 未来日期守卫下沉共享读取体后, 未来日期报告不再
+    被选中 (None 不回退) — 本行经 ``_future_dated_report_day`` 独立探测
+    目录内未来日期文件名, 异常文案照常出行 (异常显形职责不因守卫失效);
+    其余报告缺失/纯损坏形态维持整行省略。证据消费面 (先验漂移行/强度桶
+    行/gap 参考行) 由守卫 fail-closed 保护, 与本行显形面互补。
     """
     try:
         from src.screening.offensive.gap_disclosure import latest_decomposition_report
@@ -2145,9 +2174,19 @@ def _render_evidence_freshness_line(
         )
         found = latest_decomposition_report(base)
         if found is None:
-            return None
-        report_path, _payload = found
-        report_day = report_path.stem.rsplit("_", 1)[-1]
+            # R137 Op1: 未来日期守卫下沉共享读取体后, 未来日期报告不再被
+            # 选中 (found=None, 且不回退次新)。本行职责是异常显形而非证据
+            # 消费 — 目录内存在未来日期报告文件时以该文件名日期继续走下方
+            # G1 异常文案 (文件名或时钟异常), 否则守卫的 fail-closed 会把
+            # R115b 告警面静默吞掉; 其余 None 形态 (目录缺失/纯损坏) 维持
+            # 整行省略。
+            future_day = _future_dated_report_day(base)
+            if future_day is None:
+                return None
+            report_day = future_day
+        else:
+            report_path, _payload = found
+            report_day = report_path.stem.rsplit("_", 1)[-1]
 
         ledger_last = None
         window_end = None

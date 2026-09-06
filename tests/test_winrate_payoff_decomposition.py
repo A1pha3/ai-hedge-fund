@@ -2750,3 +2750,41 @@ class TestCrossWindowTripwires:
         cw = payload["cross_window_validation"]
         assert cw["available"] is True
         assert cw["early_report_date"] == "20260901"
+
+    def test_future_mixed_corrupt_dir_future_dated_reason(self, tmp_path):
+        """R137 Op1 分诊: 未来日期文件在场 (哪怕本身损坏) → reason 指 name
+        未来日期劫持, 不退 unreadable — 守卫下沉共享读取体后 selected 面已
+        拒, 披露粒度由本分诊保住 (修复前: 损坏的未来文件被选中解析失败 →
+        found=None → has_files → 误报 unreadable)。"""
+        good = TestCrossWindowValidation._early_payload()
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20260901.json": good,
+            "winrate_payoff_decomposition_20990101.json": {"broken": True},
+        })
+        # 毒文件写坏 JSON 形态 (字符串非合法 JSON) 以覆盖解析失败形态
+        (early_dir / "winrate_payoff_decomposition_20990101.json").write_text(
+            "\x00 not json", encoding="utf-8"
+        )
+        em, mm = self._manifests(tmp_path)
+        payload = TestCrossWindowValidation()._current_payload()
+        self._attach(payload, early_dir, em, mm)
+        assert payload["cross_window_validation"]["reason"] == (
+            "early_report_future_dated"
+        )
+
+    def test_corrupt_newest_without_future_still_unreadable(self, tmp_path):
+        """R137 Op1 回归锚: 纯损坏 (无未来日期文件) 分诊不变 — typed reason
+        仍为 unreadable, 分诊不误伤既有异常命名。"""
+        good = TestCrossWindowValidation._early_payload()
+        early_dir = self._early_dir_with(tmp_path, {
+            "winrate_payoff_decomposition_20260901.json": good,
+        })
+        (early_dir / "winrate_payoff_decomposition_20260906.json").write_text(
+            "\x00 not json", encoding="utf-8"
+        )
+        em, mm = self._manifests(tmp_path)
+        payload = TestCrossWindowValidation()._current_payload()
+        self._attach(payload, early_dir, em, mm)
+        assert payload["cross_window_validation"]["reason"] == (
+            "early_report_unreadable"
+        )

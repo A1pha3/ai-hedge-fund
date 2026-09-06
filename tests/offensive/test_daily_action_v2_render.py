@@ -1471,7 +1471,7 @@ def test_day_cohort_trigger_line_unregistered_k_byte_identical(case, tmp_path, m
     view = DailyActionV2Run(run, (), run.open_positions, (), ())
     text = render_daily_action_v2(view)
     line = next(
-        l for l in text.splitlines() if l.startswith("日层 cohort 触发器")
+        ln for ln in text.splitlines() if ln.startswith("日层 cohort 触发器")
     )
     assert line.endswith(" · 稳定阈值 K 属 owner 预注册；披露不是行为改变")
 
@@ -1699,3 +1699,41 @@ def test_day_cohort_trigger_line_discloses_folded_duplicates(case, tmp_path, mon
     text = render_daily_action_v2(DailyActionV2Run(run, (), run.open_positions, (), ()))
     assert "账本 2 条 · 折叠同数据重复观测 1 条" in text
     assert "条件C2 中间桶(4-9/10-19)转负 已亮（连亮 1）" in text
+
+
+def test_future_dated_poison_guarded_evidence_but_flagged_freshness(
+    case, tmp_path, monkeypatch
+):
+    """R137 Op1 双面行为钉死: 未来日期毒报告在场时 —
+    (a) 证据消费面 (先验漂移行) fail-closed: 整行省略且不回退次新合法报告
+        (守卫下沉共享读取体, 修复前毒报告劫持『最新』被当作当前证据渲染);
+    (b) 异常显形面 (freshness 行) 照常出行: 报告日期在今日之后文案保留
+        (R115b G1 告警不因守卫失效)。"""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, expectancy=-0.0001, wr=0.4456)
+    poison = json.loads(
+        (base / "winrate_payoff_decomposition_20260904.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    poison["universes"]["production_aligned"]["horizons"]["t10"][0]["expectancy"] = 0.99
+    (base / "winrate_payoff_decomposition_20990101.json").write_text(
+        json.dumps(poison, ensure_ascii=False), encoding="utf-8"
+    )
+    _patch_drift_reports_dir(monkeypatch, base)
+
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "先验漂移披露" not in text  # (a) 毒报告不被当作证据, 也不回退次新
+
+    line = da._render_evidence_freshness_line(
+        _date(2026, 9, 4), today=_date(2026, 9, 5)
+    )
+    assert line is not None  # (b) 异常显形保留
+    assert "报告日期在今日之后（文件名或时钟异常）" in line
+    assert "20990101" in line

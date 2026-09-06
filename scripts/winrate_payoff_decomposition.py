@@ -118,6 +118,7 @@ from src.screening.offensive.gap_disclosure import (  # noqa: E402
     GAP_TOP_BUCKET,
     gap_bucket,
     latest_decomposition_report,
+    report_filename_date,
 )
 
 
@@ -874,7 +875,9 @@ def attach_cross_window_validation(
     - manifest 缺失 → 指纹 match=None / window=None, 对比照常披露。
 
     Op2 三绊线 (PoC 实锤后加防, 全部 typed reason):
-    - early_report_future_dated: 字典序『最新』被未来日期文件劫持 (R115b G1 同族);
+    - early_report_future_dated: 字典序『最新』被未来日期文件劫持 (R115b G1
+      同族; R137 Op1 起守卫本体在共享读取体 gap_disclosure._latest_dated_report,
+      本函数在读取体返回 None 后分诊目录内未来日期文件保住披露粒度);
     - early_report_foreign_window: 当前窗口报告混入 early 目录 → 双窗自比
       假『一致』(manifest rows ↔ 报告 court_rows 绊线, 必要非充分身份);
     - early_report_duplicate_groups: 选中组重复行静默 last-wins 择毒
@@ -883,13 +886,29 @@ def attach_cross_window_validation(
     early_dir = Path(early_report_dir)
     found = latest_decomposition_report(early_dir)
     if found is None:
+        # 读取体异常分诊 (R137 Op1, 守卫下沉共享读取体后的收口): 读取体对
+        # 未来日期选中面已拒绝并返回 None — 目录里存在未来日期报告文件时
+        # typed reason 指名劫持形态 (绊线一, Op2 PoC A, R115b G1 同族;
+        # 未来日期在合法管道中不可出现, 只能来自手工放置/时钟错乱), 其余
+        # 在场不可读形态退 unreadable; 目录无报告 = 未构建, 不挂键。
         try:
-            has_files = early_dir.is_dir() and any(
-                early_dir.glob("winrate_payoff_decomposition_*.json")
+            report_files = (
+                list(early_dir.glob("winrate_payoff_decomposition_*.json"))
+                if early_dir.is_dir()
+                else []
             )
         except OSError:
-            has_files = False
-        if has_files:
+            report_files = []
+        today_text = date.today().strftime("%Y%m%d")
+        dates = [report_filename_date(p) for p in report_files]
+        has_future = any(d is not None and d > today_text for d in dates)
+        if has_future:
+            payload["cross_window_validation"] = {
+                "available": False,
+                "reason": "early_report_future_dated",
+            }
+            return payload
+        if report_files:
             payload["cross_window_validation"] = {
                 "available": False,
                 "reason": "early_report_unreadable",
@@ -897,16 +916,7 @@ def attach_cross_window_validation(
         return payload
 
     _path, early = found
-    # 绊线一 (Op2 PoC A, R115b G1 同族): 字典序『最新』会把未来日期文件当
-    # 当前证据 — 报告日期晚于今日即拒绝 (clock 由本机 date.today 提供,
-    # 未来日期在合法管道中不可出现, 只能来自手工放置/时钟错乱)。
-    report_date = Path(_path).stem.rsplit("_", 1)[-1]
-    if report_date > date.today().strftime("%Y%m%d"):
-        payload["cross_window_validation"] = {
-            "available": False,
-            "reason": "early_report_future_dated",
-        }
-        return payload
+    report_date = report_filename_date(_path) or ""
     early_universes = early.get("universes")
     early_aligned = (
         early_universes.get("production_aligned")
