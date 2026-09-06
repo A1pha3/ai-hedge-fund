@@ -2131,6 +2131,52 @@ def _future_dated_report_day(reports_dir, today: date | None = None) -> str | No
     return max(future) if future else None
 
 
+def _diagnostic_failure_clause(status: dict | None) -> str:
+    """夜刷 reconcile/diagnostics 失败子句 (R139 Op1)。
+
+    R133 Op3 起 build 成功后的 reconcile + 五诊断 fail-open 逐脚本刷新, 失败只进
+    ``status["reconcile"]``/``status["diagnostics"]``, ok 语义不变 — 若某诊断脚本
+    持续失败, 对应报告/账本静默冻结, 而 ok=True、报告日期照样新鲜, 既有两个触发
+    条件 (报告陈旧 / ok=False) 均不触发。本子句把每夜步骤结果显形: rc≠0、error
+    非空或条目形态损坏的步骤逐个列名; 措辞携带 status 自报日期 (R115b G2: 落盘
+    失败/断跑残留的旧 status 不谎报为昨夜)。status 缺失/损坏或 diagnostics 键非
+    dict → 空串 fail-open (不假装有归因, R115 家族纪律)。
+    """
+    if not isinstance(status, dict):
+        return ""
+    candidates: list[tuple[str, object]] = []
+    if status.get("reconcile") is not None:
+        candidates.append(("reconcile", status["reconcile"]))
+    diagnostics = status.get("diagnostics")
+    if diagnostics is not None:
+        if not isinstance(diagnostics, dict):
+            return ""
+        candidates.extend(diagnostics.items())
+    failed: list[str] = []
+    for name, entry in candidates:
+        if isinstance(entry, dict) and entry.get("rc") == 0 and not entry.get("error"):
+            continue
+        detail = (
+            str(entry.get("error") or f"rc={entry.get('rc')}")
+            if isinstance(entry, dict)
+            else "malformed_entry"
+        )
+        failed.append(f"{name}: {detail}")
+    if not failed:
+        return ""
+    status_day = status.get("date")
+    day_text = (
+        str(status_day)
+        if isinstance(status_day, str) and status_day
+        else "日期未知"
+    )
+    return (
+        f" · 夜刷判定链 {len(failed)} 步失败（status {day_text}: "
+        + " · ".join(failed)[:160]
+        + "）"
+    )
+
+
 def _render_evidence_freshness_line(
     as_of,
     reports_dir: str | Path | None = None,
@@ -2280,16 +2326,23 @@ def _render_evidence_freshness_line(
                 f"status {day_text}: {detail}" if detail else f"status {day_text}"
             )
             refresh_clause = f" · court 夜刷状态 失败（{inner[:160]}）"
-        if not stale and not refresh_clause:
+        diag_clause = _diagnostic_failure_clause(status)
+        diag_only = not stale and not refresh_clause and bool(diag_clause)
+        if not stale and not refresh_clause and not diag_clause:
             return None
         parts = [f"分解报告 {report_day}（{dist_text}）"]
         if ledger_last:
             parts.append(f"触发器账本最后判定 {ledger_last}")
         if window_end:
             parts.append(f"court 覆盖至 {window_end}")
+        tail = (
+            " — 失败步骤的报告/账本停留在最后成功夜，其余判定面照常刷新；"
+            "仅披露不改变决策"
+            if diag_only
+            else " — 判定面夜刷可能中断，恢复前证据冻结在上述日期；仅披露不改变决策"
+        )
         return (
-            "证据新鲜度告警：" + " · ".join(parts) + refresh_clause
-            + " — 判定面夜刷可能中断，恢复前证据冻结在上述日期；仅披露不改变决策"
+            "证据新鲜度告警：" + " · ".join(parts) + refresh_clause + diag_clause + tail
         )
     except (OSError, ValueError, KeyError, TypeError, StopIteration):
         return None

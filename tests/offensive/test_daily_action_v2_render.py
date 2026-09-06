@@ -811,6 +811,184 @@ def test_freshness_line_tolerates_corrupt_status(tmp_path, monkeypatch):
     assert "昨夜 court 刷新失败" not in line
 
 
+# ---------- R139 Op1: 夜刷判定链诊断失败子句 ----------
+
+def _write_refresh_status_full(
+    base, *, ok=True, day="20260830", diagnostics=None, reconcile=None
+):
+    payload = {
+        "date": day,
+        "ok": ok,
+        "fetch": {"rc": 0, "error": None},
+        "build": {"rc": 0, "window_start": "20250701", "error": None},
+    }
+    if reconcile is not None:
+        payload["reconcile"] = reconcile
+    if diagnostics is not None:
+        payload["diagnostics"] = diagnostics
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "court_refresh_status.json"
+    p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return p
+
+
+def _freshness_env(tmp_path, monkeypatch, status_dir, report_day="20260828"):
+    from datetime import date as _date
+
+    base = _write_decomposition_report(tmp_path, date=report_day)
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec(report_day, c1_lit=True, c2_lit=False, window_end=report_day),
+    ]))
+    from src.screening.offensive import daily_action as _da
+
+    monkeypatch.setattr(
+        _da, "_COURT_REFRESH_STATUS_PATH", status_dir / "court_refresh_status.json"
+    )
+
+
+def test_freshness_line_renders_when_diagnostic_failed_even_if_fresh(tmp_path, monkeypatch):
+    """诊断一步 rc=2 而 ok=True、报告新鲜 → 出行: 脚本名 + error 尾 + status
+    日期 (G2); 尾句『其余判定面照常刷新』而非整体『证据冻结』."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    status_dir = tmp_path / "st"
+    _write_refresh_status_full(
+        status_dir,
+        diagnostics={
+            "scripts/winrate_payoff_decomposition.py": {
+                "rc": 0, "error": None,
+            },
+            "scripts/btst_signal_day_cohort.py": {
+                "rc": 2, "error": "exit rc=2: cohort boom",
+            },
+        },
+        reconcile={"rc": 0, "error": None},
+    )
+    _freshness_env(tmp_path, monkeypatch, status_dir)
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "夜刷判定链 1 步失败" in line
+    assert "scripts/btst_signal_day_cohort.py" in line
+    assert "exit rc=2: cohort boom" in line
+    assert "status 20260830" in line
+    assert "其余判定面照常刷新" in line
+    assert "证据冻结" not in line
+
+
+def test_freshness_line_omitted_when_diagnostics_all_ok(tmp_path, monkeypatch):
+    """诊断/对账全 rc=0 → 整行省略 (零噪声纪律, R109 先例)."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    status_dir = tmp_path / "st"
+    _write_refresh_status_full(
+        status_dir,
+        diagnostics={
+            f"scripts/script_{i}.py": {"rc": 0, "error": None} for i in range(5)
+        },
+        reconcile={"rc": 0, "error": None},
+    )
+    _freshness_env(tmp_path, monkeypatch, status_dir)
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is None
+
+
+def test_freshness_line_omitted_when_status_lacks_diagnostic_keys(tmp_path, monkeypatch):
+    """pre-R118 旧 status (无 reconcile/diagnostics 键) → 子句安静不虚构."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    status_dir = tmp_path / "st"
+    _write_refresh_status_full(status_dir)
+    _freshness_env(tmp_path, monkeypatch, status_dir)
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is None
+
+
+def test_freshness_line_tolerates_malformed_diagnostics_shape(tmp_path, monkeypatch):
+    """diagnostics 键非 dict (未知写入方/损坏落盘) → 子句空串不虚构清单."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    status_dir = tmp_path / "st"
+    _write_refresh_status_full(status_dir, diagnostics="poison")
+    _freshness_env(tmp_path, monkeypatch, status_dir)
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is None
+
+
+def test_freshness_line_counts_malformed_diagnostic_entry(tmp_path, monkeypatch):
+    """条目非 dict (记账损坏 = 步骤结果未知) → 按失败显形 malformed_entry."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    status_dir = tmp_path / "st"
+    _write_refresh_status_full(
+        status_dir,
+        diagnostics={"scripts/day_feature_attribution.py": "poison"},
+    )
+    _freshness_env(tmp_path, monkeypatch, status_dir)
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "scripts/day_feature_attribution.py: malformed_entry" in line
+
+
+def test_freshness_line_reconcile_failure_surfaces(tmp_path, monkeypatch):
+    """reconcile 步失败 (诊断全绿) → 单独显形 reconcile: error."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    status_dir = tmp_path / "st"
+    _write_refresh_status_full(
+        status_dir,
+        diagnostics={
+            f"scripts/script_{i}.py": {"rc": 0, "error": None} for i in range(5)
+        },
+        reconcile={"rc": 1, "error": "exit rc=1: reconcile boom"},
+    )
+    _freshness_env(tmp_path, monkeypatch, status_dir)
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "reconcile: exit rc=1: reconcile boom" in line
+    assert "夜刷判定链 1 步失败" in line
+
+
+def test_freshness_line_stale_and_diagnostic_failure_coexist(tmp_path, monkeypatch):
+    """报告陈旧与诊断失败同时成立 → 单行双事实, 既有陈旧文案不变."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    status_dir = tmp_path / "st"
+    _write_refresh_status_full(
+        status_dir,
+        diagnostics={"scripts/realized_selection_wedge.py": {
+            "rc": 1, "error": "exit rc=1: wedge boom",
+        }},
+    )
+    _freshness_env(tmp_path, monkeypatch, status_dir, report_day="20260827")
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "陈旧 2 个交易日" in line
+    assert "夜刷判定链 1 步失败" in line
+    assert "证据冻结" in line
+
+
 def test_freshness_line_renders_in_daily_action_when_stale(case, tmp_path, monkeypatch):
     """渲染面集成: 陈旧时 --daily-action 输出含告警行 (触发器行之后)."""
     from src.screening.offensive import daily_action as da
