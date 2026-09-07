@@ -688,3 +688,188 @@ class TestLedgerDateShapeGuard:
         assert meta == {"recorded": False, "reason": "invalid_date_str"}
         meta = zga.record_gate_pool_status({}, "20260908", ledger_path=tmp_path / "l.jsonl")
         assert meta == {"recorded": False, "reason": "no_gate_pool_summary"}
+
+
+class TestIndustryDayDemeaned:
+    """R145 Op1: 门挡池反事实行业读数日去均值对照 (day fixed effects)。
+
+    R141 行业分层的日混杂 confound (热行业日聚集强势市场期) 用同日截面
+    去均值做实: 去均值完全吸收同日共同效应, 只保留同日跨行业相对结构。
+    """
+
+    ROWS = [
+        # day1: 银行 +0.04 / 电子 +0.10 → 日均值 0.07 → 银行 −0.03, 电子 +0.03
+        _irow("20250701", "银行", 0.01, 0.04),
+        _irow("20250701", "电子", 0.02, 0.10),
+        # day2: 医药 −0.06 / 电子 +0.02 → 日均值 −0.02 → 医药 −0.04, 电子 +0.04
+        _irow("20250702", "医药", -0.01, -0.06),
+        _irow("20250702", "电子", 0.03, 0.02),
+        # day3: 只有银行成熟行 → 单行业日剔除并计数
+        _irow("20250703", "银行", 0.01, -0.05),
+        # day4: 跨两行业但电子行不成熟 → 参与的成熟行只有银行 → 剔除
+        _irow("20250706", "银行", 0.01, 0.01),
+        _irow("20250706", "医药", -0.01, None),
+        # day5: 全不成熟 → 完全不参与
+        _irow("20250707", "电子", 0.02, None),
+        _irow("20250707", "医药", 0.01, None),
+    ]
+
+    def _summary(self) -> dict:
+        return zga.summarize_gate_effectiveness(list(self.ROWS))
+
+    def test_demean_math_asymmetric_fixture(self):
+        dd = self._summary()["by_industry_day_demeaned"]
+        assert dd["days_participating"] == 2
+        assert dd["days_excluded_single_industry"] == 2
+        assert dd["events_excluded_single_industry"] == 2
+        by = dd["by_industry"]
+        assert by["银行"]["events"] == 1
+        assert by["银行"]["days"] == 1
+        assert by["银行"]["e"] == pytest.approx(-0.03)
+        assert by["电子"]["events"] == 2
+        assert by["电子"]["days"] == 2
+        assert by["电子"]["e"] == pytest.approx((0.03 + 0.04) / 2)
+        assert by["医药"]["events"] == 1
+        assert by["医药"]["e"] == pytest.approx(-0.04)
+        # 去均值池内跨行业 (事件加权) 合计恒 0 — 相对排序证据的构造性语义
+        total = sum(c["e"] * c["events"] for c in by.values())
+        assert total == pytest.approx(0.0, abs=1e-12)
+
+    def test_small_cells_ci_none_large_cell_ci_numeric(self):
+        dd = self._summary()["by_industry_day_demeaned"]
+        by = dd["by_industry"]
+        # 全部格 n < MIN_CELL_N → CI 诚实 None (只披露不判定)
+        assert all(c["ci90_low"] is None for c in by.values())
+        big_rows = []
+        for i in range(1, 36):  # 35 个跨两行业日 → 每行业 35 事件 ≥ MIN_CELL_N
+            day = f"2025{i:04d}"
+            big_rows.append(_irow(day, "电子", 0.01, 0.05))
+            big_rows.append(_irow(day, "银行", 0.01, -0.01))
+        dd_big = zga.summarize_gate_effectiveness(big_rows)[
+            "by_industry_day_demeaned"
+        ]
+        assert dd_big["by_industry"]["电子"]["events"] == 35
+        assert dd_big["by_industry"]["电子"]["ci90_low"] is not None
+
+    def test_none_industry_lands_in_sentinel_key(self):
+        rows = [
+            _irow("20250701", None, None, 0.08),
+            _irow("20250701", "银行", 0.01, -0.02),
+        ]
+        dd = zga.summarize_gate_effectiveness(rows)["by_industry_day_demeaned"]
+        # 日均值 0.03 → 哨兵桶 +0.05, 银行 −0.05
+        assert dd["days_participating"] == 1
+        assert dd["by_industry"][zga.UNKNOWN_INDUSTRY_KEY]["e"] == pytest.approx(0.05)
+        assert dd["by_industry"]["银行"]["e"] == pytest.approx(-0.05)
+
+    def test_row_order_independence(self):
+        first = self._summary()["by_industry_day_demeaned"]
+        second = zga.summarize_gate_effectiveness(list(reversed(self.ROWS)))[
+            "by_industry_day_demeaned"
+        ]
+        assert list(first["by_industry"].keys()) == list(
+            second["by_industry"].keys()
+        )
+        assert json.dumps(first, sort_keys=True) == json.dumps(
+            second, sort_keys=True
+        )
+
+    def test_empty_rows_honest_shape(self):
+        s = zga.summarize_gate_effectiveness([])
+        dd = s["by_industry_day_demeaned"]
+        assert dd == {
+            "days_participating": 0,
+            "days_excluded_single_industry": 0,
+            "events_excluded_single_industry": 0,
+            "by_industry": {},
+        }
+
+    def test_rows_without_industry_key_do_not_crash(self):
+        # 旧形态行 (无 industry 键) — .get 容纳落哨兵, 与 by_industry 同纪律
+        rows = [
+            _row("20250701", "normal", "c2_flow", 0.06),
+            _irow("20250701", "银行", 0.01, -0.02),
+        ]
+        dd = zga.summarize_gate_effectiveness(rows)["by_industry_day_demeaned"]
+        assert dd["days_participating"] == 1
+        assert dd["by_industry"][zga.UNKNOWN_INDUSTRY_KEY]["e"] == pytest.approx(0.04)
+
+
+class TestIndustryDayDemeanedRender:
+    def _payload(self) -> dict:
+        return {
+            "generated_at": "20260908",
+            "primary_horizon": 10,
+            "gate_blocked_stages": sorted(zga.NEAR_MISS_STAGES),
+            "strength_conditioning": "门挡集未强度条件化 (测试fixture)",
+            "attribution_caveat": "首失败归因低估后续门贡献 (测试fixture)",
+            "zero_hit_days_n": 1,
+            "replay_hit_days": ["20250701"],
+            "court_binding": {
+                "window_start": "20250701",
+                "window_end": "20260904",
+                "rows": 1950,
+                "content_digest": "sha256:abc",
+            },
+            "days": [
+                {
+                    "day": "20250701",
+                    "regime": "normal",
+                    "dominant_family": "c3_industry",
+                    "candidates": 81,
+                    "gate_blocked_n": 3,
+                    "mature_n": 2,
+                    "counterfactual_e": -0.02,
+                    "replay_hits": 1,
+                }
+            ],
+            "summary": zga.summarize_gate_effectiveness(
+                [
+                    _irow("20250701", "银行", 0.01, 0.04),
+                    _irow("20250701", "电子", 0.02, 0.10),
+                ]
+            ),
+        }
+
+    def test_renders_demeaned_section_with_mechanism_note(self):
+        md = zga.render_md(self._payload())
+        assert "行业日去均值对照" in md
+        assert "银行" in md and "电子" in md
+        assert "相对排序证据" in md
+        assert "合计恒为 0" in md
+
+    def test_old_payload_without_key_renders_byte_identical(self):
+        # fail-open 家族纪律: 旧 payload 缺键 → 零新增字节
+        payload = self._payload()
+        payload["summary"] = dict(payload["summary"])
+        payload["summary"].pop("by_industry_day_demeaned")
+        md = zga.render_md(payload)
+        assert "行业日去均值对照" not in md
+        assert "相对排序证据" not in md
+
+    def test_excluded_days_note_renders_when_present(self):
+        payload = self._payload()
+        payload["summary"]["by_industry_day_demeaned"][
+            "days_excluded_single_industry"
+        ] = 2
+        payload["summary"]["by_industry_day_demeaned"][
+            "events_excluded_single_industry"
+        ] = 2
+        md = zga.render_md(payload)
+        assert "只含单一行业" in md
+
+    def test_malformed_demeaned_payload_does_not_crash(self):
+        # R142 F2 家族纪律: 非 Mapping 形态不崩不冒充
+        payload = self._payload()
+        payload["summary"]["by_industry_day_demeaned"] = "garbage"
+        md = zga.render_md(payload)
+        assert "行业日去均值对照" not in md
+        payload["summary"]["by_industry_day_demeaned"] = {
+            "by_industry": {"银行": "not-a-cell", "电子": {"events": 0}},
+        }
+        md = zga.render_md(payload)
+        assert "银行" not in md.split("行业日去均值对照")[-1]
+
+    def test_summary_payload_json_serializable(self):
+        payload = self._payload()
+        json.dumps(payload, sort_keys=True, ensure_ascii=False)

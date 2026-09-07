@@ -201,8 +201,70 @@ def summarize_gate_effectiveness(rows: list[dict[str, Any]]) -> dict[str, Any]:
             )
             for ind in _sorted_industries(rows)
         },
+        # R145 Op1 (R141 日混杂 confound 判读输入做实): 行业日去均值对照 —
+        # 同日截面去均值吸收市场日效应, 把『机会成本 vs 市场 β』变成可检验事实。
+        "by_industry_day_demeaned": industry_day_demeaned(rows),
     }
     return summary
+
+
+def industry_day_demeaned(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """行业日去均值对照 (day fixed effects): 同日跨行业相对结构。
+
+    零 hit 日门挡池横截面本身跨行业, 日去均值完全吸收同日共同效应 (市场
+    与 T+10 窗口共同因子), 只保留同日内跨行业相对排序 — 『某行业门挡候选
+    在同样这些零 hit 日内是否跑赢其他行业门挡候选』与市场日水平无关。
+    参与日 = 成熟行 (net 非 None) 跨 ≥2 不同行业的日; 单行业日去均值恒 0,
+    不冒充信息, 剔除并计数披露。行业 None 入 UNKNOWN_INDUSTRY_KEY 哨兵
+    (R141 Op2 纪律, 行字段不受影响 — 本函数只产出聚合)。CI 复用
+    cluster_boot_ci_low 按日聚类, n<MIN_CELL_N 诚实 None。
+
+    构造性语义: 去均值池内跨行业 (事件加权) 合计恒为 0 — 读数是相对排序
+    证据, 不是绝对机会成本 (渲染层机制注同义)。
+    """
+    by_day: dict[str, list[tuple[str | None, float]]] = {}
+    for r in rows:
+        if r.get("net") is None:
+            continue
+        by_day.setdefault(str(r["day"]), []).append(
+            (r.get("industry"), float(r["net"]))
+        )
+    participating: dict[str, list[tuple[str | None, float]]] = {}
+    excluded_days = 0
+    excluded_events = 0
+    for day, items in by_day.items():
+        if len({ind for ind, _ in items}) >= 2:
+            participating[day] = items
+        else:
+            excluded_days += 1
+            excluded_events += len(items)
+    pooled: dict[str, list[tuple[str, float]]] = {}
+    for day, items in participating.items():
+        day_mean = sum(net for _, net in items) / len(items)
+        for ind, net in items:
+            key = UNKNOWN_INDUSTRY_KEY if ind is None else ind
+            pooled.setdefault(key, []).append((day, net - day_mean))
+    cells: dict[str, dict[str, Any]] = {}
+    for key in sorted(pooled):
+        pts = pooled[key]
+        rets = [v for _, v in pts]
+        days = [d for d, _ in pts]
+        cells[key] = {
+            "events": len(rets),
+            "days": len(set(days)),
+            "e": sum(rets) / len(rets),
+            "ci90_low": (
+                cluster_boot_ci_low(rets, days)
+                if len(rets) >= MIN_CELL_N
+                else None
+            ),
+        }
+    return {
+        "days_participating": len(participating),
+        "days_excluded_single_industry": excluded_days,
+        "events_excluded_single_industry": excluded_events,
+        "by_industry": cells,
+    }
 
 
 HEAT_BUCKETS: tuple[str, ...] = (
@@ -601,6 +663,45 @@ def render_md(payload: Mapping[str, Any]) -> str:
     if len(industry_cells) > 8:
         lines.append(
             f"注: 其余 {len(industry_cells) - 8} 个行业见 JSON (by_industry), 只披露不判定。"
+        )
+    # R145 Op1: 行业日去均值对照节 — 同日截面去均值吸收市场日效应,
+    # 旧 payload 缺键/非 Mapping 零新增字节 (fail-open 家族纪律)。
+    demeaned = s.get("by_industry_day_demeaned")
+    if isinstance(demeaned, dict):
+        lines.append("")
+        lines.append("## 行业日去均值对照 (同日跨行业相对: 消除市场日效应)")
+        lines.append("")
+        lines.append("| 行业 | 事件 n | 日 n | 去均值净 E | CI90 下界 |")
+        lines.append("|---|---|---|---|---|")
+        d_raw = demeaned.get("by_industry")
+        d_cells = [
+            (ind, cell)
+            for ind, cell in (d_raw.items() if isinstance(d_raw, dict) else [])
+            if isinstance(cell, dict) and cell.get("events", 0) > 0
+        ]
+        d_cells.sort(key=lambda item: (-item[1]["events"], str(item[0])))
+        for ind, cell in d_cells[:8]:
+            ind_text = "—" if ind == UNKNOWN_INDUSTRY_KEY else str(ind)
+            d_e = cell.get("e")
+            d_ci = cell.get("ci90_low")
+            e_str = f"{d_e * 100:+.2f}%" if d_e is not None else "—"
+            ci_str = f"{d_ci * 100:+.2f}%" if d_ci is not None else "—"
+            lines.append(
+                f"| {ind_text} | {cell['events']} | "
+                f"{cell['days']} | {e_str} | {ci_str} |"
+            )
+        excl_days = demeaned.get("days_excluded_single_industry")
+        excl_events = demeaned.get("events_excluded_single_industry")
+        if type(excl_days) is int and excl_days > 0 and type(excl_events) is int:
+            lines.append("")
+            lines.append(
+                f"注: {excl_days} 天 (成熟行 {excl_events} 行) 只含单一行业, "
+                "去均值恒 0 不入对照, 不冒充信息。"
+            )
+        lines.append("")
+        lines.append(
+            "注: 去均值消除同日共同效应 (市场与 T+10 窗口共同因子), 读数是同日"
+            "跨行业相对排序证据而非绝对机会成本; 池内跨行业去均值合计恒为 0。"
         )
     lines.append("")
     lines.append("## 逐日明细 (零 hit 日)")
