@@ -614,3 +614,60 @@ class TestRecordGatePoolStatus:
         assert captured["require_advance"] is True
         assert captured["court_binding"] == _binding("sha256:aa01")
         assert captured["ledger_path"] == ledger
+
+
+class TestAdversarialReworkOp2:
+    """R143 Op2: 对 Op1 账本交付面的对抗性审查返工 (PoC 驱动)。"""
+
+    def test_summary_not_serializable_typed_fail_open(self, tmp_path):
+        # F1a PoC (修复前: TypeError 裸逃逸炸穿 main 报告生成)
+        ledger = tmp_path / "gate_pool_ledger.jsonl"
+        meta = zga.record_gate_pool_status(
+            {"summary": {"x": object()}},
+            "20260907",
+            ledger_path=ledger,
+            court_binding=_binding("sha256:aa01"),
+        )
+        assert meta == {"recorded": False, "reason": "snapshot_not_serializable"}
+        assert not ledger.exists()
+
+    def test_binding_mixed_type_keys_typed_fail_open(self, tmp_path):
+        # F1b PoC (修复前: json.dumps sort_keys TypeError 裸逃逸)
+        ledger = tmp_path / "gate_pool_ledger.jsonl"
+        meta = zga.record_gate_pool_status(
+            {"summary": _summary()},
+            "20260907",
+            ledger_path=ledger,
+            court_binding={1: "x", "a": 2},
+        )
+        assert meta == {"recorded": False, "reason": "snapshot_not_serializable"}
+        assert not ledger.exists()
+
+    def test_render_ledger_status_recorded_line(self):
+        payload = TestRenderMd()._payload()
+        base = zga.render_md(payload)
+        assert "门挡池稳定性账本" not in base  # 缺键零新增行
+        payload["gate_pool_record"] = {"recorded": True, "records": 1}
+        md = zga.render_md(payload)
+        assert "已落账 1 行" in md
+        assert zga.GATE_POOL_ANCHOR in md
+        # additive 逐字节组合: 状态行追加在末尾空行之前, 缺键渲染 = 有键渲染去掉追加行
+        assert md == base + f"门挡池稳定性账本: 已落账 1 行 (anchor {zga.GATE_POOL_ANCHOR})\n"
+
+    def test_render_ledger_status_not_advanced_and_failure(self):
+        payload = TestRenderMd()._payload()
+        payload["gate_pool_record"] = {
+            "recorded": False, "reason": "court_not_advanced", "records": 3,
+        }
+        md = zga.render_md(payload)
+        assert "数据未前进, 未重复落账 (账本 3 行)" in md
+        payload["gate_pool_record"] = {
+            "recorded": False, "reason": "write_failed",
+        }
+        md = zga.render_md(payload)
+        assert "⚠ 门挡池稳定性账本: write_failed" in md
+        payload["gate_pool_record"] = {
+            "recorded": False, "reason": "snapshot_not_serializable",
+        }
+        md = zga.render_md(payload)
+        assert "⚠ 门挡池稳定性账本: snapshot_not_serializable" in md

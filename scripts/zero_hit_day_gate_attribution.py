@@ -619,6 +619,28 @@ def render_md(payload: Mapping[str, Any]) -> str:
             f"{d['candidates']} | {d['gate_blocked_n']} | {d['mature_n']} | {e_str} | "
             f"{d['replay_hits']} |"
         )
+    # R143 Op2 F2: 落账状态人读可见 (R115 threshold_record MD 告警行
+    # 同款纪律) — 缺键/非 dict 零新增行, 旧 payload 渲染逐字节不变。
+    record = payload.get("gate_pool_record")
+    if isinstance(record, dict):
+        n = record.get("records")
+        n_str = (
+            str(n)
+            if isinstance(n, int) and not isinstance(n, bool)
+            else "?"
+        )
+        if record.get("recorded") is True:
+            lines.append(
+                f"门挡池稳定性账本: 已落账 {n_str} 行 (anchor {GATE_POOL_ANCHOR})"
+            )
+        elif record.get("reason") == "court_not_advanced":
+            lines.append(
+                f"门挡池稳定性账本: 数据未前进, 未重复落账 (账本 {n_str} 行)"
+            )
+        elif isinstance(record.get("reason"), str) and record["reason"]:
+            lines.append(
+                f"⚠ 门挡池稳定性账本: {record['reason']} (诊断面 fail-open)"
+            )
     lines.append("")
     return "\n".join(lines)
 
@@ -650,8 +672,11 @@ def record_gate_pool_status(
     未知不合并不比较不假装, 较两族兄弟 None 语义的形状收紧)。
 
     诊断面 fail-open: 装载经 load_trigger_ledger 单一实现 (损坏行
-    advisory 跳过); 写失败 (含 mkdir 失败形态, 较两族兄弟 mkdir 在
-    try 外收紧) 打印警告返回 write_failed, 不阻断报告生成。
+    advisory 跳过); 快照序列化失败 (summary 含不可 JSON 序列化值, 或
+    绑定混合类型键使 sort_keys 排序 TypeError — R143 Op2 PoC 双实锤)
+    打印警告返回 snapshot_not_serializable 零写入; 写失败 (含 mkdir
+    失败形态, 较两族兄弟 mkdir 在 try 外收紧) 打印警告返回
+    write_failed — 均不阻断报告生成。
     payload 无 dict summary → 不写。已知边界 (成文, 镜像两族):
     口径/锚语义变化 = 新证据世代, 须启用新账本文件 (记录内 anchor
     仅供审计比对)。
@@ -678,16 +703,19 @@ def record_gate_pool_status(
                 }
     records = [r for r in records if r.get("date") != snapshot["date"]]
     records.append(snapshot)
-    body = "\n".join(
-        json.dumps(r, ensure_ascii=False, sort_keys=True) for r in records
-    )
-    if body:
-        body += "\n"
     import os
     import tempfile
 
     path = Path(ledger_path)
     try:
+        # R143 Op2 F1: 序列化在 typed 守卫内 — summary/绑定含不可序列化
+        # 值或混合类型键时 TypeError/ValueError → snapshot_not_serializable
+        # fail-open, 绝不裸逃逸炸穿 main 报告生成
+        body = "\n".join(
+            json.dumps(r, ensure_ascii=False, sort_keys=True) for r in records
+        )
+        if body:
+            body += "\n"
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(
             dir=str(path.parent), prefix=".gate_pool_ledger_", suffix=".tmp"
@@ -707,6 +735,9 @@ def record_gate_pool_status(
     except OSError as exc:
         print(f"WARNING: 门挡池账本写入失败 (诊断面 fail-open): {exc}")
         return {"recorded": False, "reason": "write_failed"}
+    except (TypeError, ValueError) as exc:
+        print(f"WARNING: 门挡池账本快照不可序列化 (诊断面 fail-open): {exc}")
+        return {"recorded": False, "reason": "snapshot_not_serializable"}
     return {"recorded": True, "records": len(records)}
 
 
