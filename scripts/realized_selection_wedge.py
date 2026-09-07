@@ -323,12 +323,51 @@ def drift_rows(
             {
                 "signal_date": r.signal_date,
                 "ticker": r.ticker,
+                "horizon": PRIMARY_HORIZON,
                 "paper_strength": paper,
                 "court_strength": court,
                 "strength_drift": drift,
                 "court_bucket": strength_bucket(court) if court is not None else None,
                 "eligible": "reasons" not in cell,
                 "ineligible_reasons": cell.get("reasons", []),
+            }
+        )
+    return rows
+
+
+def nonprimary_drift_rows(
+    matched_records: Sequence[Any],
+    paper_strengths: Mapping[tuple[str, str], float],
+) -> list[dict[str, Any]]:
+    """非主面 matched 行 (未成熟主面 + h≠10) 的漂移披露行。
+
+    R138 开放项③的动机人群 (20260710 五笔 h=8) 就在这里 — Op1 漂移面
+    漏掉它们被 Op2 对抗审查实锤。逐行 horizon 显式; 资格概念对非主面行
+    不适用, 如实标注原因; 与主面行合计覆盖全部 matched 行 (覆盖恒等)。
+    """
+    rows: list[dict[str, Any]] = []
+    for r in sorted(matched_records, key=lambda r: (r.signal_date, r.ticker)):
+        horizon = int(r.horizon)
+        if horizon == PRIMARY_HORIZON and r.court_gross_ret_horizon is not None:
+            continue  # 主面行由 drift_rows 承载
+        key = (str(r.signal_date), str(r.ticker))
+        paper = paper_strengths.get(key)
+        court = r.court_strength
+        drift = paper - court if (paper is not None and court is not None) else None
+        rows.append(
+            {
+                "signal_date": r.signal_date,
+                "ticker": r.ticker,
+                "horizon": horizon,
+                "paper_strength": paper,
+                "court_strength": court,
+                "strength_drift": drift,
+                "court_bucket": strength_bucket(court) if court is not None else None,
+                "eligible": False,
+                "ineligible_reasons": [
+                    "primary_unmatured" if horizon == PRIMARY_HORIZON
+                    else "non_primary_horizon"
+                ],
             }
         )
     return rows
@@ -364,6 +403,11 @@ def drift_bucket_flips(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
         "missing_side_n": 0,
     }
     for row in rows:
+        if not isinstance(row, Mapping):
+            # 非 dict 行 (损坏写入/形态演化) = 不可比, 如实计数不崩不冒充
+            # (R141 公开纯函数面 NaN 家族纪律同款)。
+            flips["missing_side_n"] += 1
+            continue
         paper = _comparable_strength(row.get("paper_strength"))
         court = _comparable_strength(row.get("court_strength"))
         if paper is None or court is None:
@@ -472,6 +516,9 @@ def build_payload(
     )
     n_primary = len(b_all)
     drift_face_rows = drift_rows(b_all, recon.matched_records, paper_strengths)
+    drift_face_rows += nonprimary_drift_rows(
+        recon.matched_records, paper_strengths
+    )
     drift_face: dict[str, Any] = {
         "rows": drift_face_rows,
         "missing_decision_strength": missing_strengths,
@@ -577,6 +624,8 @@ def render_md(payload: Mapping[str, Any]) -> str:
     replay_attached = drift_face.get("replay_attached") is True
     replay_col = " | 现行重放" if replay_attached else ""
     replay_sep = " | ---" if replay_attached else ""
+    horizon_col = " | horizon" if flips is not None else ""
+    horizon_sep = " | ---" if flips is not None else ""
     lines += [
         "",
         "## 决策时强度 vs court 终态 (漂移面; drift = 决策时 − 终态, 正 = 生产看到的更高)",
@@ -584,15 +633,21 @@ def render_md(payload: Mapping[str, Any]) -> str:
         f"决策时强度缺失 {drift_face['missing_decision_strength']} 笔"
         " (日志无 eligible 行 — 含 300009 事件型历史污染, 如实 None 不冒充)",
         "",
-        f"| 信号日 | 票 | 决策时 | court 终态 | drift | court 桶{replay_col} | 终态资格 | 不合格原因 |",
-        f"|---|---|---|---|---|---|---{replay_sep}---|",
+        f"| 信号日 | 票{horizon_col} | 决策时 | court 终态 | drift | court 桶{replay_col} | 终态资格 | 不合格原因 |",
+        f"|---|---{horizon_sep}|---|---|---|---{replay_sep}|---|---|",
     ]
     for row in drift_face["rows"]:
         replay_cell = ""
         if replay_attached:
-            replay_cell = f" | {_fmt(row.get('replay_strength'))}" if row.get("replay_error") is None and row.get("replay_hit") else f" | {row.get('replay_error') or '—'}"
+            if row.get("replay_error") is None and row.get("replay_hit"):
+                replay_cell = f" | {_fmt(row.get('replay_strength'))}"
+            elif row.get("replay_error") is None and row.get("replay_hit") is False:
+                replay_cell = " | miss"
+            else:
+                replay_cell = f" | {row.get('replay_error') or '—'}"
+        horizon_cell = f" | {row['horizon']}" if flips is not None else ""
         lines.append(
-            f"| {row['signal_date']} | {row['ticker']} | {_fmt(row['paper_strength'])} "
+            f"| {row['signal_date']} | {row['ticker']}{horizon_cell} | {_fmt(row['paper_strength'])} "
             f"| {_fmt(row['court_strength'])} | {_fmt(row['strength_drift'])} "
             f"| {row['court_bucket'] or '—'}{replay_cell} | {'合格' if row['eligible'] else '不合格'} "
             f"| {','.join(row['ineligible_reasons']) or '—'} |"
@@ -600,12 +655,25 @@ def render_md(payload: Mapping[str, Any]) -> str:
     if flips is not None:
         lines += [
             "",
+            f"覆盖: drift 行 {len(drift_face['rows'])} == matched {payload['matched_n']} "
+            "(主面成熟 + 未成熟主面 + 非 h=10, horizon 列披露; R138③ 动机人群 0710 h=8 批在此面内)",
+            "",
             f"桶翻转汇总 (决策时 vs court 表, 双侧齐备 n={flips['compared_n']}): "
             f"资格翻转 {flips['qualification_flip']} · 触发器桶翻转 {flips['trigger_bucket_flip']} "
             f"· 无翻转 {flips['no_flip']} (单侧缺失 {flips['missing_side_n']} 笔不入桶, 不冒充可比)",
+        ]
+        if replay_attached:
+            hit_flips = sum(
+                1 for r in drift_face["rows"] if r.get("replay_hit") is False
+            )
+            lines.append(
+                f"表-重放 hit 分歧 {hit_flips} (court 行 hit 而现行重放 miss = 数据修订/表滞后信号)"
+            )
+        lines += [
             "",
             "机制 caveat: 决策时−重放 = 公式代际+数据修订 (不可分离, R138 成文); "
-            "court 表−重放 应逐行一致 (表即现行公式×现行数据), 分歧 = 数据修订/表滞后。"
+            "court 表−重放 应逐行一致 (表即现行公式×现行数据), 分歧 = 数据修订/表滞后; "
+            "重放 miss 的 strength 恒 0.0 哨兵非测量 (R140 实锤), 故 miss 行不显示强度。"
             "翻转计数只披露, 阈值/K 判读须与触发器账本合并 (owner 门)。",
         ]
     others = payload.get("other_horizons") or []

@@ -477,6 +477,52 @@ def test_attach_replay_leg_typed_failures() -> None:
     assert err == "ValueError: raw missing"
 
 
+def test_drift_bucket_flips_non_mapping_rows() -> None:
+    flips = drift_bucket_flips([None, "junk", 123, _drift_row(0.52, 0.43)])
+    assert flips["missing_side_n"] == 3
+    assert flips["compared_n"] == 1
+    assert flips["qualification_flip"] == 1
+
+
+def test_flips_exclude_bool_strengths() -> None:
+    flips = drift_bucket_flips([_drift_row(True, 0.55)])
+    assert flips["missing_side_n"] == 1
+    assert flips["compared_n"] == 0
+
+
+def test_other_horizon_rows_in_drift_face() -> None:
+    world = _fixture_world()
+    payload = build_payload(
+        world["recon"], world["ev"], world["inputs"], log_dir=None, report_date="20260907"
+    )
+    rows = payload["drift"]["rows"]
+    assert len(rows) == payload["matched_n"]
+    marked = {(r["ticker"], r["horizon"]) for r in rows}
+    assert ("000005", 8) in marked
+    nonprimary = [r for r in rows if r["horizon"] != 10]
+    assert nonprimary[0]["ineligible_reasons"] == ["non_primary_horizon"]
+    assert all(r["horizon"] == 10 for r in rows if r["ticker"] != "000005")
+    assert payload["components"]["residual_pp"] == 0.0
+
+
+def test_render_miss_marker_and_hit_divergence() -> None:
+    world = _fixture_world()
+    payload = build_payload(
+        world["recon"], world["ev"], world["inputs"], log_dir=None, report_date="20260907"
+    )
+    rows = payload["drift"]["rows"]
+
+    def replay(ticker, day):
+        return {"hit": ticker != "000001", "miss_stage": "c3_industry_weak",
+                "trigger_strength": 0.0}
+
+    attach_replay_leg(rows, replay)
+    payload["drift"]["replay_attached"] = True
+    md = render_md(payload)
+    assert "miss" in md
+    assert "表-重放 hit 分歧 1" in md
+
+
 def test_render_md_replay_leg_fail_open_and_present() -> None:
     world = _fixture_world()
     payload = build_payload(
