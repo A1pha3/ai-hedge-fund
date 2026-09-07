@@ -2297,3 +2297,34 @@ def test_day_cohort_line_clean_missing_dir_absent(case, tmp_path):
         )
         is None
     )
+
+
+def test_poison_dir_all_evidence_rows_light_together(tmp_path):
+    """R141 Op2 跨行一致性 smoke: 同毒化目录下四证据行 + freshness 行
+    同屏全部携带毒文件日期。零 today 注入 — 管线统一真实钟, 跨行单钟
+    是显形面不漏行的前提; freshness 行注入 calendar_sessions 是输入缝
+    (该行在日历缺失时对全部形态 fail-open, 家族纪律, 非钟注入)。"""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = tmp_path / "reports"
+    base.mkdir()
+    (base / "winrate_payoff_decomposition_20990101.json").write_text("{}")
+    (base / "signal_day_cohort_20990101.json").write_text("{}")
+    sessions = (_date(2026, 9, 4), _date(2026, 9, 5))
+    lines = {
+        "prior_drift": da._render_prior_drift_line(base),
+        "picks_quality": da._render_picks_quality_line(
+            [_detail("111.SZ", 0.72)], base
+        ),
+        "gap_reference": da._render_gap_reference_line(base),
+        "day_cohort": da._render_day_cohort_line(
+            [_detail("111.SZ", 0.72)], base
+        ),
+        "freshness": da._render_evidence_freshness_line(
+            _date(2026, 9, 5), reports_dir=base, calendar_sessions=sessions
+        ),
+    }
+    for name, line in lines.items():
+        assert line is not None, f"{name} 行毒化形态静默缺席"
+        assert "20990101" in line, f"{name} 行未携带毒文件日期"

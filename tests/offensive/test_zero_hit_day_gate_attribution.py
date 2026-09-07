@@ -101,6 +101,33 @@ class TestDayCounterfactualE:
         assert zga._industry_heat_bucket(-0.03) == "heat_non_positive"
         assert zga._industry_heat_bucket(None) == "heat_unknown"
 
+    def test_nan_heat_row_goes_unknown_not_cold(self):
+        # R141 Op2 PoC (RED→GREEN): NaN ≠ 冷 — 浮点管道常见形态, 静默归
+        # 冷桶会把冷桶 E 向零抬 (分层读数被污染)。
+        assert zga._industry_heat_bucket(float("nan")) == "heat_unknown"
+        rows = [
+            _irow("20250701", "医药", float("nan"), -0.06),
+            _irow("20250702", "医药", -0.01, -0.02),
+        ]
+        s = zga.summarize_gate_effectiveness(rows)
+        assert s["by_industry_heat"]["heat_unknown"]["events"] == 1
+        assert s["by_industry_heat"]["heat_unknown"]["e"] == pytest.approx(-0.06)
+        assert s["by_industry_heat"]["heat_non_positive"]["events"] == 1
+        assert s["by_industry_heat"]["heat_non_positive"]["e"] == pytest.approx(-0.02)
+
+    def test_none_industry_summary_key_json_serializable(self):
+        # R141 Op2 PoC (RED→GREEN): by_industry 键含 None 时
+        # json.dumps(sort_keys=True) TypeError — 哨兵键根除。
+        import json as _json
+
+        rows = [_irow("20250701", None, None, 0.01)]
+        s = zga.summarize_gate_effectiveness(rows)
+        dumped = _json.dumps(
+            {"summary": s}, ensure_ascii=False, sort_keys=True
+        )  # 不抛 TypeError
+        assert zga.UNKNOWN_INDUSTRY_KEY in dumped
+        assert s["by_industry"][zga.UNKNOWN_INDUSTRY_KEY]["events"] == 1
+
 
 def _row(day: str, regime: str, family: str, net: float | None) -> dict:
     return {
@@ -200,7 +227,7 @@ class TestSummarizeGateEffectiveness:
         assert ind["医药"]["e"] == pytest.approx(-0.04)
         assert ind["电子"]["events"] == 1
 
-    def test_industry_keys_deterministic_and_none_last(self):
+    def test_industry_keys_deterministic_and_unknown_last(self):
         rows = [
             _irow("20250701", "医药", 0.01, 0.01),
             _irow("20250702", None, None, 0.02),
@@ -208,19 +235,20 @@ class TestSummarizeGateEffectiveness:
         ]
         first = zga.summarize_gate_effectiveness(rows)
         second = zga.summarize_gate_effectiveness(list(reversed(rows)))
-        # 确定性 (Unicode 码点序, None 末位) — 具体序不是断言点, 稳定才是
+        # 确定性 (Unicode 码点序, unknown 哨兵末位) — 具体序不是断言点,
+        # 稳定才是; R141 Op2 起 None 键以哨兵入账 (JSON sort_keys 可序列化)
         assert list(first["by_industry"].keys()) == list(
             second["by_industry"].keys()
         )
         assert first["by_industry"]["银行"]["events"] == 1
         assert first["by_industry"]["医药"]["events"] == 1
-        assert first["by_industry"][None]["events"] == 1
+        assert first["by_industry"][zga.UNKNOWN_INDUSTRY_KEY]["events"] == 1
 
-    def test_rows_without_industry_keys_land_in_none_industry(self):
-        # 旧形态行 (无 industry 键) — .get 容纳, 落 None 行业不崩溃
+    def test_rows_without_industry_keys_land_in_unknown_industry(self):
+        # 旧形态行 (无 industry 键) — .get 容纳, 落 unknown 哨兵不崩溃
         rows = [_row("20250701", "normal", "c3_industry", -0.01)]
         s = zga.summarize_gate_effectiveness(rows)
-        assert s["by_industry"][None]["events"] == 1
+        assert s["by_industry"][zga.UNKNOWN_INDUSTRY_KEY]["events"] == 1
         assert s["by_industry_heat"]["heat_unknown"]["events"] == 1
 
     def test_ci_deterministic_per_call(self):
@@ -325,6 +353,21 @@ class TestRenderMd:
         md = zga.render_md(payload)
         assert "按行业热度分层" in md
         assert "None" not in md
+
+    def test_heat_confound_caveat_renders_when_present(self):
+        # R141 Op2: 日混杂 caveat — 热桶读数含市场日效应, 不等于门槛机会成本
+        payload = self._payload()
+        payload["heat_confound_caveat"] = (
+            "热度分层含日混杂 confound (测试fixture 措辞)"
+        )
+        md = zga.render_md(payload)
+        assert "日混杂 confound (测试fixture 措辞)" in md
+
+    def test_heat_confound_caveat_absent_key_omits_line(self):
+        # 键缺失诚实省略 (fail-open 家族纪律), 不虚构 caveat
+        payload = self._payload()
+        md = zga.render_md(payload)
+        assert "日混杂 confound" not in md
 
 
 def _ev(ts_code: str, day: str, *, gross_t10: float | None, **overrides) -> dict:

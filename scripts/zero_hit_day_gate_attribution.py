@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from datetime import date
 from pathlib import Path
@@ -193,7 +194,9 @@ def summarize_gate_effectiveness(rows: list[dict[str, Any]]) -> dict[str, Any]:
             for bucket in HEAT_BUCKETS
         },
         "by_industry": {
-            ind: _pooled([r for r in rows if r.get("industry") == ind])
+            (UNKNOWN_INDUSTRY_KEY if ind is None else ind): _pooled(
+                [r for r in rows if r.get("industry") == ind]
+            )
             for ind in _sorted_industries(rows)
         },
     }
@@ -206,12 +209,24 @@ HEAT_BUCKETS: tuple[str, ...] = (
     "heat_unknown",
 )
 
+# R141 Op2: summary/by_industry 的 unknown 行业哨兵键 — None 键会让
+# json.dumps(sort_keys=True) TypeError (str/None 不可比较), 行字段保持
+# 原样 None, 只有聚合键入哨兵 (JSON 可序列化, 渲染层映射回 '—')。
+UNKNOWN_INDUSTRY_KEY = "__unknown_industry__"
+
 
 def _industry_heat_bucket(industry_day_pct: float | None) -> str:
-    """当日行业涨幅 → 热度桶; 缺失归 unknown (绝不冒充任一侧)。"""
+    """当日行业涨幅 → 热度桶; 缺失/NaN 归 unknown (绝不冒充任一侧)。
+
+    R141 Op2: NaN 是浮点管道常见形态, 静默归冷桶会把冷桶 E 向零抬 —
+    与 None 同款归 unknown。
+    """
     if industry_day_pct is None:
         return "heat_unknown"
-    return "heat_positive" if float(industry_day_pct) > 0 else "heat_non_positive"
+    value = float(industry_day_pct)
+    if math.isnan(value):
+        return "heat_unknown"
+    return "heat_positive" if value > 0 else "heat_non_positive"
 
 
 def _sorted_industries(rows: list[dict[str, Any]]) -> list[str | None]:
@@ -447,6 +462,13 @@ def collect_zero_hit_day_attribution(
             "主导族 = 顺序门的首失败归因 (c0→c4 检测序), 低估后续门 "
             "(c3/c4) 对同一候选的贡献; 逐候选全条件分解需 fork 公式, 不做"
         ),
+        # R141 Op2: 行业热度分层的日混杂 confound 如实入文 — 热桶读数含
+        # 市场日效应 (热行业日聚集于强势市场期), 不等于门槛机会成本。
+        "heat_confound_caveat": (
+            "行业热度分层含日混杂 confound: 热行业日聚集于强势市场期, "
+            "热/冷桶读数均含市场日效应, 不等于门槛的机会成本或保护价值; "
+            "跨层比较只披露不判定"
+        ),
         "court_binding": court_binding(event_table, int(manifest.get("rows", 0))),
         "zero_hit_days_n": len(day_records),
         "replay_hit_days": [d["day"] for d in day_records if d["replay_hits"] > 0],
@@ -550,6 +572,11 @@ def render_md(payload: Mapping[str, Any]) -> str:
         lines.append(
             f"| {heat_cn[bucket]} | {cell['events']} | {cell['days']} | {e_str} | {ci_str} |"
         )
+    caveat = payload.get("heat_confound_caveat")
+    if caveat:
+        # R141 Op2: 日混杂 caveat — 热桶读数含市场日效应, 不是门槛机会成本
+        lines.append("")
+        lines.append(f"注: {caveat}")
     lines.append("")
     lines.append("## 按行业分层 (SW L1, 成熟事件数降序, 最多 8 行)")
     lines.append("")
@@ -560,12 +587,13 @@ def render_md(payload: Mapping[str, Any]) -> str:
     ]
     industry_cells.sort(key=lambda item: (-item[1]["events"], str(item[0])))
     for ind, cell in industry_cells[:8]:
+        ind_text = "—" if ind == UNKNOWN_INDUSTRY_KEY else str(ind)
         e_str = f"{cell['e'] * 100:+.2f}%" if cell["e"] is not None else "—"
         ci_str = (
             f"{cell['ci90_low'] * 100:+.2f}%" if cell["ci90_low"] is not None else "—"
         )
         lines.append(
-            f"| {ind if ind is not None else '—'} | {cell['events']} | "
+            f"| {ind_text} | {cell['events']} | "
             f"{cell['days']} | {e_str} | {ci_str} |"
         )
     if len(industry_cells) > 8:
