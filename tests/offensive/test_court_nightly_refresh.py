@@ -167,6 +167,7 @@ class TestNightlyDiagnosticsRefresh:
             "scripts/realized_selection_wedge.py",
             "scripts/day_feature_attribution.py",
             "scripts/stock_feature_attribution.py",
+            "scripts/zero_hit_day_gate_attribution.py",
         )
 
     def test_build_success_runs_diagnostics_in_order(self, tmp_path):
