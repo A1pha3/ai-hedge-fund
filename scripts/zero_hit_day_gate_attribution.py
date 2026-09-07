@@ -12,10 +12,12 @@ K 预注册与日层触发的判读语境。
   - 候选/历史门槛/detect 重放/反事实事件行 = btst_court_build 同源
     (load_panel/ticker_frame/BtstBreakoutSetup/_build_event), 现行公式
     现行数据 — 本脚本不复制任何条件语义;
-  - 近失集谓词: miss_stage ∈ {c2_*, c3_*, c4_*} (结构门 c0/c1 与涨停形状
-    之后的首个失败条件) 且 trigger_strength ≥ 0.50 (生产可买强度,
-    daily_action._MIN_TRIGGER_STRENGTH) — 只有一票之差的候选才是
-    『门槛挡掉的潜在买入』;
+  - 门挡集谓词: miss_stage ∈ {c2_*, c3_*, c4_*} (结构门 c0/c1 与涨停形状
+    之后的首个失败条件) 全池。**未强度条件化, 这是已知的诚实局限**:
+    detect 的强度 ranker 只在全部条件通过后计算, _miss 对 miss 恒返回
+    trigger_strength=0.0 (R140 Op2 真实数据实锤, 非『全部 miss 强度 <0.50』
+    的证据) — 强度条件化须 fork 公式, 违反单一实现纪律, 不做; 门挡集
+    反事实 E 的解读边界 (含未达强度阈值的弱候选) 在报告内成文;
   - 反事实收益 = production_aligned + net_returns 净口径 (t10, 与
     winrate_payoff_decomposition 逐字一致); gate_blocked (crisis/risk_off)
     行随 production_aligned 自然剔除 — normal-only 抉择面;
@@ -38,7 +40,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from datetime import date
 from pathlib import Path
@@ -67,7 +68,6 @@ from winrate_payoff_decomposition import (  # noqa: E402
 )
 
 PRIMARY_HORIZON = 10
-GATE_TS = 0.50  # 现行生产阈值 (daily_action._MIN_TRIGGER_STRENGTH)
 
 # 近失集: 结构门 (c0 数据 / c1 涨停形状) 之后的首个失败条件 — 这些候选已
 # 通过可交易形状, 只被资金流/行业/动量条件或数据不足挡下。
@@ -124,13 +124,10 @@ def dominant_blocked_family(stage_counts: Mapping[str, int]) -> str | None:
     return leaders[0]
 
 
-def is_near_miss(stage: str | None, strength: float) -> bool:
-    """近失谓词: 首个失败条件在 c2+ 且强度达生产可买阈值 (NaN 强度不入)。"""
-    if stage not in NEAR_MISS_STAGES:
-        return False
-    if isinstance(strength, float) and math.isnan(strength):
-        return False
-    return strength >= GATE_TS
+def is_gate_blocked(stage: str | None) -> bool:
+    """门挡谓词: 首个失败条件在 c2+ (不论强度 — miss 的 strength 恒 0,
+    强度条件化需 fork 公式, 见模块 docstring 局限披露)。"""
+    return stage in NEAR_MISS_STAGES
 
 
 def day_counterfactual_e(net_rets: Sequence[float | None]) -> float | None:
@@ -192,19 +189,19 @@ def summarize_gate_effectiveness(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def aligned_counterfactual_rows(
-    near_miss_evs: list[dict[str, Any]],
+    blocked_evs: list[dict[str, Any]],
     regime: Mapping[str, str | None],
 ) -> list[dict[str, Any]]:
     """近失事件行 → 生产对齐反事实行 (production_aligned 单一口径)。
 
-    被剔除的近失行 = near_miss_n − mature_n 披露, 不静默; t10 缺失 =
+    被剔除的门挡行 = gate_blocked_n − mature_n 披露, 不静默; t10 缺失 =
     不成熟/不可成交, 归一化成 None 让 candidate_universe 的 notna 统一处理。
     """
-    if not near_miss_evs:
+    if not blocked_evs:
         return []
-    for ev in near_miss_evs:
+    for ev in blocked_evs:
         ev.setdefault(f"gross_ret_t{PRIMARY_HORIZON}", None)
-    aligned = production_aligned(pd.DataFrame(near_miss_evs))
+    aligned = production_aligned(pd.DataFrame(blocked_evs))
     net_col = net_returns(list(aligned[f"gross_ret_t{PRIMARY_HORIZON}"]))
     return [
         {
@@ -212,15 +209,13 @@ def aligned_counterfactual_rows(
             "regime": regime.get(str(day)),
             "ts_code": ts_code,
             "stage": stage,
-            "strength": strength,
             "dominant_family": None,  # 调用方按日回填
             "net": net,
         }
-        for day, ts_code, stage, strength, net in zip(
+        for day, ts_code, stage, net in zip(
             aligned["signal_date"],
             aligned["ts_code"],
             aligned["_stage"],
-            aligned["_strength"],
             net_col,
         )
     ]
@@ -264,6 +259,15 @@ def collect_zero_hit_day_attribution(
         if not isinstance(rec, dict) or not isinstance(rec.get("day"), str):
             raise SystemExit(f"zero_hit_days 记录损坏: {rec!r} — fail-closed")
 
+    # end 缺省 = 面板实际数据末端 (数据真相, 非 manifest 请求态 — R130:
+    # window.end 是请求端点, 盘中重建可记今日而当日零数据); regime 缺标签
+    # 对已收盘会话仍是 fail-closed (与 court build 同门)。
+    panel = load_panel(raw_dir)
+    by_day = {d: g for d, g in panel.groupby("trade_date")}
+    groups = {c: g for c, g in panel.groupby("ts_code")}
+    end = end or max(by_day.keys())
+    if not end:
+        raise SystemExit("面板为空且未显式传 --end — fail-closed")
     sessions_cal = load_sessions(WINDOW_A_START, end)
     regime = load_regime_history()
     missing_regime = [s for s in sessions_cal if s not in regime]
@@ -272,9 +276,6 @@ def collect_zero_hit_day_attribution(
             f"regime 缺标签 {len(missing_regime)} 天 ({missing_regime[:5]}…) — "
             "与 court build 同门 fail-closed, 中止"
         )
-    panel = load_panel(raw_dir)
-    by_day = {d: g for d, g in panel.groupby("trade_date")}
-    groups = {c: g for c, g in panel.groupby("ts_code")}
     limit_up = load_limit_up_index(raw_dir)
     sw_frame = load_sw_industry(raw_dir)
     sw_rows = {
@@ -287,7 +288,7 @@ def collect_zero_hit_day_attribution(
     setup = BtstBreakoutSetup()
 
     day_records: list[dict[str, Any]] = []
-    near_miss_evs: list[dict[str, Any]] = []
+    blocked_evs: list[dict[str, Any]] = []
     for rec in zero_hit_days:
         s = rec["day"]
         day = by_day.get(s)
@@ -305,7 +306,7 @@ def collect_zero_hit_day_attribution(
         )
         stage_counts: dict[str, int] = {}
         replay_hits = 0
-        day_near_miss = 0
+        day_blocked_n = 0
         for row in cand.itertuples():
             ts_code, symbol = row.ts_code, str(row.ts_code).split(".")[0]
             group = groups.get(ts_code)
@@ -341,23 +342,21 @@ def collect_zero_hit_day_attribution(
                 stage_counts["replay_error"] = stage_counts.get("replay_error", 0) + 1
                 continue
             stage = getattr(result, "miss_stage", None)
-            strength = float(result.trigger_strength)
             if result.hit:
                 # manifest 零 hit 日出现现行公式 hit = 公式/数据漂移信号
                 # (R138 divergence 同族) — 披露, 不入反事实集。
                 replay_hits += 1
                 continue
             stage_counts[stage or "unknown"] = stage_counts.get(stage or "unknown", 0) + 1
-            if is_near_miss(stage, strength):
+            if is_gate_blocked(stage):
                 ev = _build_event(
                     groups, by_day, sessions_cal, symbol, ts_code, s,
                     float(row.close), result, regime.get(s), auth_names,
                     ind_name, frame,
                 )
                 ev["_stage"] = stage
-                ev["_strength"] = strength
-                near_miss_evs.append(ev)
-                day_near_miss += 1
+                blocked_evs.append(ev)
+                day_blocked_n += 1
         dominant = dominant_blocked_family(stage_counts)
         day_records.append(
             {
@@ -368,15 +367,15 @@ def collect_zero_hit_day_attribution(
                 "replay_hits": replay_hits,
                 "dominant_family": dominant,
                 "stage_counts": dict(sorted(stage_counts.items())),
-                "near_miss_n": day_near_miss,
+                "gate_blocked_n": day_blocked_n,
             }
         )
 
     # 反事实行过生产对齐宇宙单一实现 (fillable/mature/gate_blocked/degraded/
     # ST/行业缺失/排除名单/低价) — 与 winrate_payoff_decomposition 逐字同口径;
-    # 被剔除的近失行 = near_miss_n − mature_n 披露, 不静默。
+    # 被剔除的门挡行 = gate_blocked_n − mature_n 披露, 不静默。
     dominant_by_day = {d["day"]: d["dominant_family"] for d in day_records}
-    rows = aligned_counterfactual_rows(near_miss_evs, regime)
+    rows = aligned_counterfactual_rows(blocked_evs, regime)
     for r in rows:
         r["dominant_family"] = dominant_by_day.get(r["day"])
     for d in day_records:
@@ -389,9 +388,17 @@ def collect_zero_hit_day_attribution(
     payload = {
         "generated_at": date.today().isoformat(),
         "discipline": "纯诊断 (宪法 #2) — 零判定逻辑零行为授权; 只披露不判定",
-        "gate_ts": GATE_TS,
         "primary_horizon": PRIMARY_HORIZON,
-        "near_miss_stages": sorted(NEAR_MISS_STAGES),
+        "gate_blocked_stages": sorted(NEAR_MISS_STAGES),
+        "strength_conditioning": (
+            "门挡集未强度条件化: detect 的强度 ranker 只在全部条件通过后计算, "
+            "_miss 对 miss 恒返回 trigger_strength=0.0 — 门挡集含未达 0.50 "
+            "生产可买阈值的候选, E 方向解读须计入该混合 (R140 Op2 修正)"
+        ),
+        "attribution_caveat": (
+            "主导族 = 顺序门的首失败归因 (c0→c4 检测序), 低估后续门 "
+            "(c3/c4) 对同一候选的贡献; 逐候选全条件分解需 fork 公式, 不做"
+        ),
         "court_binding": court_binding(event_table, int(manifest.get("rows", 0))),
         "zero_hit_days_n": len(day_records),
         "replay_hit_days": [d["day"] for d in day_records if d["replay_hits"] > 0],
@@ -419,9 +426,13 @@ def render_md(payload: Mapping[str, Any]) -> str:
         f"rows {cb.get('rows')} · digest {str(cb.get('content_digest'))[:12]}"
     )
     lines.append(
-        f"零 hit 日 n={payload['zero_hit_days_n']} · 近失门槛 strength ≥ "
-        f"{payload['gate_ts']:.2f} · 反事实口径 t{payload['primary_horizon']} 净收益"
+        f"零 hit 日 n={payload['zero_hit_days_n']} · 门挡集 "
+        f"miss_stage ∈ {{{', '.join(payload['gate_blocked_stages'])}}} · "
+        f"反事实口径 t{payload['primary_horizon']} 净收益"
     )
+    lines.append("")
+    lines.append(f"**局限披露**: {payload['strength_conditioning']}")
+    lines.append(f"**归因 caveat**: {payload['attribution_caveat']}")
     replay_hit_days = payload.get("replay_hit_days") or []
     if replay_hit_days:
         lines.append(
@@ -440,7 +451,7 @@ def render_md(payload: Mapping[str, Any]) -> str:
     lines.append(
         "| 池化 | 事件 n | 日 n | 反事实净 E | CI90 下界 |")
     lines.append("|---|---|---|---|---|")
-    lines.append(f"| normal 内近失候选 | {nr['events']} | {nr['days']} | {e_str} | {ci_str} |")
+    lines.append(f"| normal 内门挡候选 | {nr['events']} | {nr['days']} | {e_str} | {ci_str} |")
     if nr["events"] > 0 and nr["events"] < MIN_CELL_N:
         lines.append(
             f"注: 事件 n < {MIN_CELL_N} — CI 不产出, 只披露不判定。"
@@ -475,7 +486,7 @@ def render_md(payload: Mapping[str, Any]) -> str:
     lines.append("")
     lines.append("## 逐日明细 (零 hit 日)")
     lines.append("")
-    lines.append("| 信号日 | regime | 主导族 | 候选 | 近失 | 成熟 | 反事实 E | 重放 hit |")
+    lines.append("| 信号日 | regime | 主导族 | 候选 | 门挡 | 成熟 | 反事实 E | 重放 hit |")
     lines.append("|---|---|---|---|---|---|---|---|")
     for d in payload["days"]:
         e_str = (
@@ -486,7 +497,7 @@ def render_md(payload: Mapping[str, Any]) -> str:
         lines.append(
             f"| {d['day']} | {d['regime']} | "
             f"{fam_cn.get(d['dominant_family'], d['dominant_family'])} | "
-            f"{d['candidates']} | {d['near_miss_n']} | {d['mature_n']} | {e_str} | "
+            f"{d['candidates']} | {d['gate_blocked_n']} | {d['mature_n']} | {e_str} | "
             f"{d['replay_hits']} |"
         )
     lines.append("")
@@ -499,7 +510,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--table-dir", default=str(TABLE_DIR), help="court 事件表目录")
     parser.add_argument("--report-dir", default=str(REPORT_DIR))
     parser.add_argument("--date-str", default=date.today().strftime("%Y%m%d"))
-    parser.add_argument("--end", default=date.today().strftime("%Y%m%d"))
+    parser.add_argument(
+        "--end", default=None,
+        help="窗口末端 YYYYMMDD (缺省 = manifest 已构建窗口末端)",
+    )
     args = parser.parse_args(argv)
 
     raw_dir = args.raw_dir or str(Path(TABLE_DIR).parent / "raw")

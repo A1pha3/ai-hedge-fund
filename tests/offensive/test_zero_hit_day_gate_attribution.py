@@ -65,24 +65,21 @@ class TestDominantBlockedFamily:
         )
 
 
-class TestIsNearMiss:
-    def test_boundary_strength_included(self):
-        assert zga.is_near_miss("c3_industry_weak", 0.50) is True
-
-    def test_below_threshold_excluded(self):
-        assert zga.is_near_miss("c3_industry_weak", 0.4999) is False
-
-    def test_structural_stages_excluded_even_with_strength(self):
-        assert zga.is_near_miss("c1_limit_up_pct", 0.9) is False
-        assert zga.is_near_miss("c0_prices_missing", 0.9) is False
-        assert zga.is_near_miss(None, 0.9) is False
-
-    def test_nan_strength_excluded(self):
-        assert zga.is_near_miss("c2_flow_below_mean", float("nan")) is False
-
-    def test_all_near_miss_stages_accepted(self):
+class TestIsGateBlocked:
+    def test_all_gate_blocked_stages_accepted(self):
         for stage in sorted(zga.NEAR_MISS_STAGES):
-            assert zga.is_near_miss(stage, 0.50) is True, stage
+            assert zga.is_gate_blocked(stage) is True, stage
+
+    def test_structural_stages_excluded(self):
+        assert zga.is_gate_blocked("c1_limit_up_pct") is False
+        assert zga.is_gate_blocked("c0_prices_missing") is False
+        assert zga.is_gate_blocked("history_short") is False
+        assert zga.is_gate_blocked(None) is False
+
+    def test_strength_irrelevant_to_predicate(self):
+        # R140 Op2 PoC 语义钉死: _miss 的 strength 恒 0, 门挡集不强度条件化 —
+        # 若未来有人把强度条件加回谓词, 本测当场红 (Op1 首跑 near_miss=0 死集复现)。
+        assert zga.is_gate_blocked("c3_industry_weak") is True
 
 
 class TestDayCounterfactualE:
@@ -174,8 +171,10 @@ class TestRenderMd:
     def _payload(self) -> dict:
         return {
             "generated_at": "20260907",
-            "gate_ts": 0.50,
             "primary_horizon": 10,
+            "gate_blocked_stages": sorted(zga.NEAR_MISS_STAGES),
+            "strength_conditioning": "门挡集未强度条件化 (测试fixture)",
+            "attribution_caveat": "首失败归因低估后续门贡献 (测试fixture)",
             "zero_hit_days_n": 1,
             "replay_hit_days": ["20250701"],
             "court_binding": {
@@ -190,7 +189,7 @@ class TestRenderMd:
                     "regime": "normal",
                     "dominant_family": "c3_industry",
                     "candidates": 81,
-                    "near_miss_n": 3,
+                    "gate_blocked_n": 3,
                     "mature_n": 2,
                     "counterfactual_e": -0.02,
                     "replay_hits": 1,
@@ -210,6 +209,8 @@ class TestRenderMd:
         assert "重放 hit 披露" in md and "20250701" in md
         assert "c3 行业/市场状态" in md
         assert "-2.00%" in md  # 日反事实 E
+        assert "局限披露" in md and "未强度条件化" in md
+        assert "归因 caveat" in md and "首失败归因" in md
 
     def test_missing_values_render_dash_not_crash(self):
         payload = self._payload()
@@ -249,7 +250,6 @@ def _ev(ts_code: str, day: str, *, gross_t10: float | None, **overrides) -> dict
         "gate_blocked": False,
         "gross_ret_t10": gross_t10,
         "_stage": "c3_industry_weak",
-        "_strength": 0.55,
     }
     ev.update(overrides)
     return ev
