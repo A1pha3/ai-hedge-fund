@@ -204,6 +204,9 @@ def summarize_gate_effectiveness(rows: list[dict[str, Any]]) -> dict[str, Any]:
         # R145 Op1 (R141 日混杂 confound 判读输入做实): 行业日去均值对照 —
         # 同日截面去均值吸收市场日效应, 把『机会成本 vs 市场 β』变成可检验事实。
         "by_industry_day_demeaned": industry_day_demeaned(rows),
+        # R146 Op1: demeaned 头条读数稳健性 — split-half 时间切片 + 日集中度
+        # (时间稳定吗? 是否少数日驱动?), additive 键经账本全聚合自动流转。
+        "demeaned_robustness": industry_day_demeaned_robustness(rows),
     }
     return summary
 
@@ -242,6 +245,40 @@ def industry_day_demeaned(rows: list[dict[str, Any]]) -> dict[str, Any]:
     构造性语义: 去均值池内跨行业 (事件加权) 合计恒为 0 — 读数是相对排序
     证据, 不是绝对机会成本 (渲染层机制注同义)。
     """
+    pooled, n_participating, excluded_days, excluded_events = (
+        _demeaned_pooled_points(rows)
+    )
+    cells: dict[str, dict[str, Any]] = {}
+    for key in sorted(pooled, key=str):  # str 键序: 混合类型键确定性 (F3)
+        pts = pooled[key]
+        rets = [v for _, v in pts]
+        days = [d for d, _ in pts]
+        cells[key] = {
+            "events": len(rets),
+            "days": len(set(days)),
+            "e": sum(rets) / len(rets),
+            "ci90_low": (
+                cluster_boot_ci_low(rets, days)
+                if len(rets) >= MIN_CELL_N
+                else None
+            ),
+        }
+    return {
+        "days_participating": n_participating,
+        "days_excluded_single_industry": excluded_days,
+        "events_excluded_single_industry": excluded_events,
+        "by_industry": cells,
+    }
+
+
+def _demeaned_pooled_points(
+    rows: list[dict[str, Any]],
+) -> tuple[dict[Any, list[tuple[str, float]]], int, int, int]:
+    """R146 Op1: 去均值池共享构造 (单一实现) — industry_day_demeaned 与
+    industry_day_demeaned_robustness 的参与日判定、成熟谓词 (_finite_net)、
+    哨兵键、单行业日剔除计数语义的单一定义; pooled 保持日迭代构造序
+    (原函数输出逐字节不变的 pin, R145 Op2 F3 键序纪律不变)。
+    """
     by_day: dict[str, list[tuple[Any, float]]] = {}
     for r in rows:
         net = _finite_net(r.get("net"))
@@ -263,27 +300,83 @@ def industry_day_demeaned(rows: list[dict[str, Any]]) -> dict[str, Any]:
         for ind, net in items:
             key = UNKNOWN_INDUSTRY_KEY if ind is None else ind
             pooled.setdefault(key, []).append((day, net - day_mean))
+    return pooled, len(participating), excluded_days, excluded_events
+
+
+def industry_day_demeaned_robustness(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """R146 Op1: demeaned 头条读数稳健性 (split-half 时间切片 + 日集中度)。
+
+    电子 +3.33% CI90 下界 +1.62% (33 参与日) 是 owner c3 行业门机会成本
+    判读的最大已测事实 (R145); 本函数把『时间稳定吗? 是否少数日驱动?』
+    变成可读事实。与 industry_day_demeaned 共享 _demeaned_pooled_points
+    单一实现。split-half: 参与日按 str 键序排序, 前 n//2 日为早半窗、
+    其余晚半窗 — 每日截面构成不变故去均值点原样沿用 (逐日截面跨行业合计
+    恒 0 ⇒ 任一半窗跨行业合计亦恒 0, 线性推论)。每半 {days, events, e,
+    ci90_low}: n<MIN_CELL_N 半窗粒度独立门控诚实 None; 任一半无事件 →
+    e=None 不冒充; sign_consistent 仅当两半均有事件时披露布尔。
+    day_concentration: 按日合计该行业去均值质量 (日序稳定求和),
+    total_sum != 0 时披露 top1_day/top1_share/top3_share — 正读数行业
+    回答『最大单日贡献了几成』, 负读数行业对称 (最对齐日占比), 并列时
+    稳定排序取最早日; total_sum==0 时份额与 top 日诚实 None (0 无法定义
+    占比)。只披露不判定 — 稳定性判读语义属 owner。
+    """
+    pooled, _n_participating, _excluded_days, _excluded_events = (
+        _demeaned_pooled_points(rows)
+    )
     cells: dict[str, dict[str, Any]] = {}
     for key in sorted(pooled, key=str):  # str 键序: 混合类型键确定性 (F3)
         pts = pooled[key]
-        rets = [v for _, v in pts]
-        days = [d for d, _ in pts]
+        day_order = sorted({d for d, _ in pts})
+        half = len(day_order) // 2
+        halves: dict[str, dict[str, Any]] = {}
+        for name, day_set in (
+            ("early", set(day_order[:half])),
+            ("late", set(day_order[half:])),
+        ):
+            rets = [v for d, v in pts if d in day_set]
+            days = [d for d, v in pts if d in day_set]
+            halves[name] = {
+                "days": len(day_set),
+                "events": len(rets),
+                "e": sum(rets) / len(rets) if rets else None,
+                "ci90_low": (
+                    cluster_boot_ci_low(rets, days)
+                    if len(rets) >= MIN_CELL_N
+                    else None
+                ),
+            }
+        early, late = halves["early"], halves["late"]
+        sign_consistent: bool | None = None
+        if early["events"] > 0 and late["events"] > 0:
+            sign_consistent = (early["e"] > 0) == (late["e"] > 0)
+        per_day: dict[str, float] = {}
+        for d, v in sorted(pts, key=lambda p: p[0]):  # 日序稳定求和
+            per_day[d] = per_day.get(d, 0.0) + v
+        total = sum(per_day[d] for d in sorted(per_day))
+        if total == 0:
+            concentration: dict[str, Any] = {
+                "total_sum": total,
+                "top1_day": None,
+                "top1_share": None,
+                "top3_share": None,
+            }
+        else:
+            ranked = sorted(
+                per_day.items(), key=lambda kv: kv[1], reverse=total > 0
+            )
+            concentration = {
+                "total_sum": total,
+                "top1_day": ranked[0][0],
+                "top1_share": ranked[0][1] / total,
+                "top3_share": sum(v for _, v in ranked[:3]) / total,
+            }
         cells[key] = {
-            "events": len(rets),
-            "days": len(set(days)),
-            "e": sum(rets) / len(rets),
-            "ci90_low": (
-                cluster_boot_ci_low(rets, days)
-                if len(rets) >= MIN_CELL_N
-                else None
-            ),
+            "events": len(pts),
+            "days": len(day_order),
+            "split_half": {**halves, "sign_consistent": sign_consistent},
+            "day_concentration": concentration,
         }
-    return {
-        "days_participating": len(participating),
-        "days_excluded_single_industry": excluded_days,
-        "events_excluded_single_industry": excluded_events,
-        "by_industry": cells,
-    }
+    return {"by_industry": cells}
 
 
 HEAT_BUCKETS: tuple[str, ...] = (
@@ -730,6 +823,80 @@ def render_md(payload: Mapping[str, Any]) -> str:
             "注: 去均值消除同日共同效应 (市场与 T+10 窗口共同因子), 读数是同日"
             "跨行业相对排序证据而非绝对机会成本; 池内跨行业去均值合计恒为 0。"
         )
+    # R146 Op1: 去均值对照稳健性节 — split-half 时间切片 + 日集中度;
+    # 旧 payload 缺键/非 dict/无有效行 零新增字节 (fail-open 家族纪律)。
+    robustness = s.get("demeaned_robustness")
+    if isinstance(robustness, dict):
+        r_raw = robustness.get("by_industry")
+        r_cells = []
+        for ind, cell in (r_raw.items() if isinstance(r_raw, dict) else []):
+            r_events = cell.get("events") if isinstance(cell, dict) else None
+            if type(r_events) is not int or r_events <= 0:
+                continue  # events 严格过滤, 垃圾 cell 不崩不冒充 (R145 F2 纪律)
+            r_cells.append((ind, cell))
+        if r_cells:
+            r_cells.sort(key=lambda item: (-item[1]["events"], str(item[0])))
+
+            def _half_text(half: Any) -> str:
+                if not isinstance(half, dict):
+                    return "—"
+                h_e = half.get("e")
+                h_n = half.get("events")
+                e_text = f"{h_e * 100:+.2f}%" if isinstance(h_e, (int, float)) and not isinstance(h_e, bool) else "—"
+                n_text = str(h_n) if type(h_n) is int and h_n >= 0 else "—"
+                return f"{e_text} ({n_text})"
+
+            def _share_text(share: Any) -> str:
+                if isinstance(share, (int, float)) and not isinstance(share, bool):
+                    return f"{share * 100:.0f}%"
+                return "—"
+
+            lines.append("")
+            lines.append("## 去均值对照稳健性 (split-half 时间切片 + 日集中度)")
+            lines.append("")
+            lines.append(
+                "| 行业 | 事件 n | 早半窗 E (n) | 晚半窗 E (n) "
+                "| 半窗符号一致 | Top1 日 | Top1 占比 | Top3 占比 |"
+            )
+            lines.append("|---|---|---|---|---|---|---|---|")
+            for ind, cell in r_cells[:8]:
+                ind_text = "—" if ind == UNKNOWN_INDUSTRY_KEY else str(ind)
+                halves = cell.get("split_half")
+                if isinstance(halves, dict):
+                    sign = halves.get("sign_consistent")
+                    sign_text = (
+                        "是" if sign is True else "否" if sign is False else "—"
+                    )
+                    early_text = _half_text(halves.get("early"))
+                    late_text = _half_text(halves.get("late"))
+                else:
+                    sign_text = early_text = late_text = "—"
+                conc = cell.get("day_concentration")
+                if isinstance(conc, dict):
+                    top1_day = conc.get("top1_day")
+                    top1_text = str(top1_day) if top1_day is not None else "—"
+                    top1_share = _share_text(conc.get("top1_share"))
+                    top3_share = _share_text(conc.get("top3_share"))
+                else:
+                    top1_text = top1_share = top3_share = "—"
+                lines.append(
+                    f"| {ind_text} | {cell['events']} | {early_text} "
+                    f"| {late_text} | {sign_text} | {top1_text} "
+                    f"| {top1_share} | {top3_share} |"
+                )
+            if len(r_cells) > 8:
+                lines.append(
+                    f"注: 其余 {len(r_cells) - 8} 个行业见 JSON "
+                    "(demeaned_robustness.by_industry), 只披露不判定。"
+                )
+            lines.append("")
+            lines.append(
+                "注: 参与日按日期序对半分 (早/晚半窗); 每日截面构成不变故去均值"
+                "点原样沿用, 任一半窗跨行业合计恒为 0 (逐日截面合计为 0 的线性"
+                "推论)。Top1 占比 = 该行业合计去均值质量中最大单日贡献占比, 越接"
+                "近 1 读数越由单日驱动; n<30 半窗 CI 与空半窗诚实缺失; 只披露"
+                "不判定。"
+            )
     lines.append("")
     lines.append("## 逐日明细 (零 hit 日)")
     lines.append("")

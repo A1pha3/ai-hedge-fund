@@ -868,7 +868,10 @@ class TestIndustryDayDemeanedRender:
             "by_industry": {"银行": "not-a-cell", "电子": {"events": 0}},
         }
         md = zga.render_md(payload)
-        assert "银行" not in md.split("行业日去均值对照")[-1]
+        # R146 Op1: 稳健性节合法跟随本节之后 — 节界以下一个 '##' 标题
+        # 有界切分 (原 [-1] 尾块假设被新兄弟节打破, 测试意图不变)
+        demeaned_body = md.split("行业日去均值对照", 1)[1].split("##")[0]
+        assert "银行" not in demeaned_body
 
     def test_summary_payload_json_serializable(self):
         payload = self._payload()
@@ -1025,3 +1028,253 @@ class TestIndustryDayDemeanedAdversarialPins:
         dd = (row.get("summary") or {}).get("by_industry_day_demeaned") or {}
         assert dd.get("days_participating") == 1
         assert "电子" in (dd.get("by_industry") or {})
+
+
+class TestIndustryDayDemeanedRobustness:
+    """R146 Op1: 门挡池 demeaned 头条读数稳健性披露 (split-half + 日集中度)。
+
+    电子 +3.33% CI90+1.62% (33 参与日) 是 owner c3 行业门机会成本判读的
+    最大已测事实 (R145); split-half 时间切片与日集中度把『时间稳定吗?
+    是否少数日驱动?』变成可读事实。与 industry_day_demeaned 共享
+    _demeaned_pooled_points 单一实现 (参与日/成熟谓词/哨兵键/剔除同语义);
+    每日截面构成不变故去均值点原样沿用。纯披露面, 零策略语义变更。
+    """
+
+    # 3 参与日: 早半窗 [d1] (n//2=1), 晚半窗 [d2, d3] — 全部 dyadic 精确值
+    ROWS3 = [
+        # d1: 银行 0.25 / 电子 1.0 → 均值 0.625 → 银行 −0.375, 电子 +0.375
+        _irow("20250701", "银行", 0.01, 0.25),
+        _irow("20250701", "电子", 0.02, 1.0),
+        # d2: 医药 −0.5 / 电子 0.25 → 均值 −0.125 → 医药 −0.375, 电子 +0.375
+        _irow("20250702", "医药", -0.01, -0.5),
+        _irow("20250702", "电子", 0.03, 0.25),
+        # d3: 银行 −0.5 / 电子 0.25 → 均值 −0.125 → 银行 −0.375, 电子 +0.375
+        _irow("20250703", "银行", 0.01, -0.5),
+        _irow("20250703", "电子", 0.02, 0.25),
+    ]
+
+    def _rob(self, rows):
+        return zga.industry_day_demeaned_robustness(list(rows))["by_industry"]
+
+    def test_split_half_math_three_days_asymmetric_halves(self):
+        cells = self._rob(self.ROWS3)
+        e_ = cells["电子"]
+        assert e_["events"] == 3 and e_["days"] == 3
+        # 早半窗 [d1]: 1 事件 +0.375; 晚半窗 [d2, d3]: 2 事件 +0.375
+        assert e_["split_half"]["early"] == {
+            "days": 1, "events": 1, "e": pytest.approx(0.375), "ci90_low": None,
+        }
+        assert e_["split_half"]["late"]["events"] == 2
+        assert e_["split_half"]["late"]["e"] == pytest.approx(0.375)
+        assert e_["split_half"]["sign_consistent"] is True
+        # 医药只在晚半窗出现 → 早半窗空集 e=None 不冒充, sign 诚实 None
+        med = cells["医药"]
+        assert med["split_half"]["early"]["events"] == 0
+        assert med["split_half"]["early"]["e"] is None
+        assert med["split_half"]["late"]["e"] == pytest.approx(-0.375)
+        assert med["split_half"]["sign_consistent"] is None
+        # 负读数行业 (银行) 两半同号 → sign True
+        assert cells["银行"]["split_half"]["early"]["e"] == pytest.approx(-0.375)
+        assert cells["银行"]["split_half"]["sign_consistent"] is True
+
+    def test_split_half_even_days_boundary(self):
+        # 每日截面跨行业 demeaned 合计恒 0 ⇒ 2 行业/日必反号 — 一稳一翻
+        # 需要 3 行业: 早窗 A +0.3 / B −0.3 / C 0; 晚窗 A +0.25 / B +0.25 / C −0.5
+        rows = []
+        for day in ("20250701", "20250702"):
+            rows += [
+                _irow(day, "A", None, 0.6),
+                _irow(day, "B", None, 0.0),
+                _irow(day, "C", None, 0.3),
+            ]
+        for day in ("20250703", "20250706"):
+            rows += [
+                _irow(day, "A", None, 0.75),
+                _irow(day, "B", None, 0.75),
+                _irow(day, "C", None, 0.0),
+            ]
+        cells = self._rob(rows)
+        # 4 参与日 → 早 [d1,d2] / 晚 [d3,d4]
+        assert cells["A"]["split_half"]["early"]["events"] == 2
+        assert cells["A"]["split_half"]["late"]["events"] == 2
+        assert cells["A"]["split_half"]["early"]["e"] == pytest.approx(0.3)
+        assert cells["A"]["split_half"]["late"]["e"] == pytest.approx(0.25)
+        assert cells["A"]["split_half"]["sign_consistent"] is True
+        b_half = cells["B"]["split_half"]
+        assert b_half["early"]["e"] == pytest.approx(-0.3)
+        assert b_half["late"]["e"] == pytest.approx(0.25)
+        assert b_half["sign_consistent"] is False
+
+    def test_split_half_ci_gate_min_cell_n(self):
+        # 61 参与日 → 每半窗 30/31 事件 ≥ MIN_CELL_N → 半窗 CI numeric;
+        # 35 参与日 → 半窗 17/18 < MIN_CELL_N → 半窗 CI 诚实 None
+        # (尽管格总计 35 ≥ MIN_CELL_N — 半窗粒度独立门控)
+        def _pairs(n_days):
+            rows = []
+            for i in range(n_days):
+                day = f"2025{i:04d}"
+                rows.append(_irow(day, "A", None, 0.5))
+                rows.append(_irow(day, "B", None, 0.0))
+            return rows
+
+        cells_big = self._rob(_pairs(61))
+        a = cells_big["A"]["split_half"]
+        assert a["early"]["events"] == 30 and a["late"]["events"] == 31
+        assert a["early"]["ci90_low"] is not None
+        assert a["late"]["ci90_low"] is not None
+        cells_mid = self._rob(_pairs(35))
+        m = cells_mid["A"]["split_half"]
+        assert m["early"]["events"] == 17 and m["late"]["events"] == 18
+        assert m["early"]["ci90_low"] is None and m["late"]["ci90_low"] is None
+
+    def test_day_concentration_single_day_industry_share_one(self):
+        cells = self._rob(self.ROWS3)
+        conc = cells["医药"]["day_concentration"]
+        assert conc["total_sum"] == pytest.approx(-0.375)
+        assert conc["top1_day"] == "20250702"
+        assert conc["top1_share"] == pytest.approx(1.0)
+        assert conc["top3_share"] == pytest.approx(1.0)
+
+    def test_day_concentration_multi_day_top1_fraction(self):
+        cells = self._rob(self.ROWS3)
+        conc = cells["电子"]["day_concentration"]
+        # 电子三日各 +0.375, 合计 1.125 → top1 占比恰 1/3
+        assert conc["total_sum"] == pytest.approx(1.125)
+        assert conc["top1_share"] == pytest.approx(1 / 3)
+        assert conc["top3_share"] == pytest.approx(1.0)
+        assert conc["top1_day"] == "20250701"  # 并列时稳定排序取最早日
+
+    def test_day_concentration_total_zero_honest_none(self):
+        # A 去均值 +0.25 / −0.25 精确抵消 → total_sum==0 → 份额与 top 日 None
+        rows = [
+            _irow("20250701", "A", None, 0.5),
+            _irow("20250701", "B", None, 0.0),
+            _irow("20250702", "A", None, 0.0),
+            _irow("20250702", "B", None, 0.5),
+        ]
+        cells = self._rob(rows)
+        conc = cells["A"]["day_concentration"]
+        assert conc["total_sum"] == 0.0
+        assert conc["top1_day"] is None
+        assert conc["top1_share"] is None
+        assert conc["top3_share"] is None
+
+    def test_negative_total_top1_is_most_negative_day(self):
+        cells = self._rob(self.ROWS3)
+        conc = cells["银行"]["day_concentration"]
+        assert conc["total_sum"] == pytest.approx(-0.75)
+        assert conc["top1_day"] == "20250701"
+        assert conc["top1_share"] == pytest.approx(0.5)
+
+    def test_sentinel_and_mixed_type_keys_deterministic(self):
+        rows = [
+            _irow("20250701", None, None, 0.5),
+            _irow("20250701", "银行", 0.01, 0.0),
+            _irow("20250702", 123, None, 0.5),
+            _irow("20250702", "银行", 0.01, 0.0),
+        ]
+        cells = self._rob(rows)
+        assert zga.UNKNOWN_INDUSTRY_KEY in cells
+        assert 123 in cells and "银行" in cells
+
+        def _canon(obj):
+            if isinstance(obj, dict):
+                return sorted((str(k), _canon(v)) for k, v in obj.items())
+            if isinstance(obj, list):
+                return [_canon(v) for v in obj]
+            return obj
+
+        assert _canon(cells) == _canon(self._rob(list(reversed(rows))))
+
+    def test_empty_rows_honest_shape(self):
+        assert zga.industry_day_demeaned_robustness([]) == {"by_industry": {}}
+
+    def test_participation_semantics_match_demeaned_cells(self):
+        # 与 industry_day_demeaned 共享单一实现的语义一致 pin:
+        # 两面每行业 events/days 逐格相等
+        dd = zga.summarize_gate_effectiveness(list(self.ROWS3))
+        by = dd["by_industry_day_demeaned"]["by_industry"]
+        rob = dd["demeaned_robustness"]["by_industry"]
+        assert set(by) == set(rob)
+        for ind, cell in by.items():
+            assert rob[ind]["events"] == cell["events"]
+            assert rob[ind]["days"] == cell["days"]
+
+    def test_summary_carries_robustness_key(self):
+        s = zga.summarize_gate_effectiveness(list(self.ROWS3))
+        assert "demeaned_robustness" in s
+        assert "电子" in s["demeaned_robustness"]["by_industry"]
+
+    def test_gate_pool_ledger_row_carries_robustness_key(self, tmp_path):
+        # 账本全聚合单一实现流转 pin (R143 『不挑子集』纪律, R145 F4 先例)
+        payload = {
+            "summary": zga.summarize_gate_effectiveness(list(self.ROWS3)),
+            "court_binding": {
+                "window_start": "20250701",
+                "window_end": "20260904",
+                "rows": 1950,
+                "content_digest": "sha256:abc",
+            },
+        }
+        ledger = tmp_path / "gate_pool_ledger.jsonl"
+        meta = zga.record_gate_pool_status(payload, "20260908", ledger_path=ledger)
+        assert meta.get("recorded") is True
+        row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+        rob = (row.get("summary") or {}).get("demeaned_robustness") or {}
+        assert "电子" in (rob.get("by_industry") or {})
+        assert rob["by_industry"]["电子"]["split_half"]["sign_consistent"] is True
+
+    # --- 渲染面 ---
+
+    def _payload(self, summary: dict) -> dict:
+        return {
+            "generated_at": "20260908",
+            "primary_horizon": 10,
+            "gate_blocked_stages": sorted(zga.NEAR_MISS_STAGES),
+            "strength_conditioning": "x",
+            "attribution_caveat": "x",
+            "zero_hit_days_n": 1,
+            "replay_hit_days": [],
+            "court_binding": {
+                "window_start": "20250701",
+                "window_end": "20260904",
+                "rows": 1950,
+                "content_digest": "sha256:abc",
+            },
+            "days": [],
+            "summary": summary,
+        }
+
+    def test_render_robustness_section_when_key_present(self):
+        s = zga.summarize_gate_effectiveness(list(self.ROWS3))
+        md = zga.render_md(self._payload(s))
+        assert "## 去均值对照稳健性" in md
+        section = md.split("去均值对照稳健性")[-1].split("##")[0]
+        assert "电子" in section and "医药" in section
+        assert "早半窗" in section and "晚半窗" in section
+        assert "是" in section  # sign_consistent 渲染
+        assert "Top1" in section
+
+    def test_render_missing_robustness_key_zero_new_bytes(self):
+        s = zga.summarize_gate_effectiveness(list(self.ROWS3))
+        s_old = {k: v for k, v in s.items() if k != "demeaned_robustness"}
+        md = zga.render_md(self._payload(s_old))
+        assert "去均值对照稳健性" not in md
+        # 摘除新键后的渲染与注入前等价 — 旧 payload 逐字节不变
+        s_patched = json.loads(json.dumps(s_old))
+        assert zga.render_md(self._payload(s_old)) == md
+
+    def test_render_robustness_malformed_cells_no_crash(self):
+        s = zga.summarize_gate_effectiveness(list(self.ROWS3))
+        rob = s["demeaned_robustness"]
+        rob["by_industry"]["垃圾A"] = {"events": None, "days": 0}
+        rob["by_industry"]["垃圾B"] = {
+            "events": 1, "days": 1,
+            "split_half": "not-a-dict",
+            "day_concentration": {"total_sum": None, "top1_share": "x"},
+        }
+        md = zga.render_md(self._payload(s))
+        section = md.split("去均值对照稳健性")[-1].split("##")[0]
+        assert "垃圾A" not in section  # events 严格过滤不入行 (R145 F2 纪律)
+        assert "垃圾B" in section  # 半分支坏形态渲染 — 不崩, 环节显 —
+        assert section.count("—") >= 1
