@@ -208,44 +208,63 @@ def summarize_gate_effectiveness(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return summary
 
 
+def _finite_net(value: Any) -> float | None:
+    """R145 Op2 F1: 成熟 net 有限性守卫 — NaN/Inf/bool 不成熟 (与 None 同义)。
+
+    NaN/Inf 是浮点管道常见形态 (R141 Op2 NaN 纪律), 静默入均值会把整个
+    同日截面变 NaN 波及无辜行业, 且 R143 Op3 起账本写入器 allow_nan=False
+    会令落账整体冻结 (PoC 双实锤); bool 是 int 子类按 1.0 参与均值是冒充
+    (R142 F2 pin)。与 _pooled (裸 is not None) 的不对称是已登记家族项
+    (R143 F3 summary 面 NaN 暴露), 单一实现纪律不在本轮扩大改兄弟面。
+    非数值类型 (str 等) 不在本守卫内 — 契约违反 fail-closed 崩溃是诚实行为。
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if not isinstance(value, (int, float)):
+        return None
+    net = float(value)
+    return net if math.isfinite(net) else None
+
+
 def industry_day_demeaned(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """行业日去均值对照 (day fixed effects): 同日跨行业相对结构。
 
     零 hit 日门挡池横截面本身跨行业, 日去均值完全吸收同日共同效应 (市场
     与 T+10 窗口共同因子), 只保留同日内跨行业相对排序 — 『某行业门挡候选
     在同样这些零 hit 日内是否跑赢其他行业门挡候选』与市场日水平无关。
-    参与日 = 成熟行 (net 非 None) 跨 ≥2 不同行业的日; 单行业日去均值恒 0,
-    不冒充信息, 剔除并计数披露。行业 None 入 UNKNOWN_INDUSTRY_KEY 哨兵
-    (R141 Op2 纪律, 行字段不受影响 — 本函数只产出聚合)。CI 复用
-    cluster_boot_ci_low 按日聚类, n<MIN_CELL_N 诚实 None。
+    参与日 = 成熟行 (net 为有限数值, _finite_net 守卫 — R145 Op2 F1)
+    跨 ≥2 不同行业的日; 单行业日去均值恒 0, 不冒充信息, 剔除并计数披露。
+    行业 None 入 UNKNOWN_INDUSTRY_KEY 哨兵 (R141 Op2 纪律, 行字段不受
+    影响 — 本函数只产出聚合); 聚合键序 str 确定性排序 (混合类型键不崩
+    — R145 Op2 F3)。CI 复用 cluster_boot_ci_low 按日聚类, n<MIN_CELL_N
+    诚实 None。
 
     构造性语义: 去均值池内跨行业 (事件加权) 合计恒为 0 — 读数是相对排序
     证据, 不是绝对机会成本 (渲染层机制注同义)。
     """
-    by_day: dict[str, list[tuple[str | None, float]]] = {}
+    by_day: dict[str, list[tuple[Any, float]]] = {}
     for r in rows:
-        if r.get("net") is None:
+        net = _finite_net(r.get("net"))
+        if net is None:
             continue
-        by_day.setdefault(str(r["day"]), []).append(
-            (r.get("industry"), float(r["net"]))
-        )
-    participating: dict[str, list[tuple[str | None, float]]] = {}
+        by_day.setdefault(str(r["day"]), []).append((r.get("industry"), net))
+    participating: dict[str, list[tuple[Any, float]]] = {}
     excluded_days = 0
     excluded_events = 0
     for day, items in by_day.items():
-        if len({ind for ind, _ in items}) >= 2:
+        if len({str(ind) for ind, _ in items}) >= 2:
             participating[day] = items
         else:
             excluded_days += 1
             excluded_events += len(items)
-    pooled: dict[str, list[tuple[str, float]]] = {}
+    pooled: dict[Any, list[tuple[str, float]]] = {}
     for day, items in participating.items():
         day_mean = sum(net for _, net in items) / len(items)
         for ind, net in items:
             key = UNKNOWN_INDUSTRY_KEY if ind is None else ind
             pooled.setdefault(key, []).append((day, net - day_mean))
     cells: dict[str, dict[str, Any]] = {}
-    for key in sorted(pooled):
+    for key in sorted(pooled, key=str):  # str 键序: 混合类型键确定性 (F3)
         pts = pooled[key]
         rets = [v for _, v in pts]
         days = [d for d, _ in pts]
@@ -294,9 +313,14 @@ def _industry_heat_bucket(industry_day_pct: float | None) -> str:
 
 
 def _sorted_industries(rows: list[dict[str, Any]]) -> list[str | None]:
-    """行内出现过的行业名, 确定性排序 (None 排末位 — 键序稳定)。"""
+    """行内出现过的行业名, 确定性排序 (None 排末位 — 键序稳定)。
+
+    R145 Op2 F3: str 键序排序 — 混合类型键 (int+str) 裸 sorted 会
+    TypeError (PoC 实锤, 经 summarize 的 by_industry 面可达); str 键
+    生产路径键序逐字节不变。
+    """
     values = {r.get("industry") for r in rows}
-    named = sorted(v for v in values if v is not None)
+    named = sorted((v for v in values if v is not None), key=str)
     return named + ([None] if None in values else [])
 
 
@@ -674,11 +698,14 @@ def render_md(payload: Mapping[str, Any]) -> str:
         lines.append("| 行业 | 事件 n | 日 n | 去均值净 E | CI90 下界 |")
         lines.append("|---|---|---|---|---|")
         d_raw = demeaned.get("by_industry")
-        d_cells = [
-            (ind, cell)
-            for ind, cell in (d_raw.items() if isinstance(d_raw, dict) else [])
-            if isinstance(cell, dict) and cell.get("events", 0) > 0
-        ]
+        d_cells = []
+        for ind, cell in (d_raw.items() if isinstance(d_raw, dict) else []):
+            # R145 Op2 F2: events 严格 int 非 bool 且 >0 — None/bool/垃圾
+            # cell 不崩不冒充 (R142 F2 家族纪律)
+            d_events = cell.get("events") if isinstance(cell, dict) else None
+            if type(d_events) is not int or d_events <= 0:
+                continue
+            d_cells.append((ind, cell))
         d_cells.sort(key=lambda item: (-item[1]["events"], str(item[0])))
         for ind, cell in d_cells[:8]:
             ind_text = "—" if ind == UNKNOWN_INDUSTRY_KEY else str(ind)

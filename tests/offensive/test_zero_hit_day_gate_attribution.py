@@ -873,3 +873,155 @@ class TestIndustryDayDemeanedRender:
     def test_summary_payload_json_serializable(self):
         payload = self._payload()
         json.dumps(payload, sort_keys=True, ensure_ascii=False)
+
+
+class TestIndustryDayDemeanedAdversarialPins:
+    """R145 Op2: 对 Op1 日去均值对照面的对抗性审查 PoC 收口。
+
+    F1 NaN/Inf/bool net 静默毒化 (日均值变 NaN 波及无辜行业 + R143
+    allow_nan=False 契约下账本落账整体冻结); F2 对照节 events=None
+    cell TypeError 崩溃; F3 混合类型行业键 sorted TypeError; F4 账本
+    全聚合流转 pin。登记不修 (scope 外家族项): _pooled/by_industry 的
+    NaN 暴露 (R143 F3 已登记)、事件加权池化方法论、非数值 net 契约
+    违反 fail-closed。
+    """
+
+    def test_nan_and_inf_net_not_mature_innocent_rows_unchanged(self):
+        # PoC1/PoC2 实锤: NaN 行毒化日均值 → 银行 (无辜) e 也 nan
+        rows = [
+            _irow("20250701", "电子", 0.01, float("nan")),
+            _irow("20250701", "银行", 0.01, -0.02),
+        ]
+        dd = zga.summarize_gate_effectiveness(rows)["by_industry_day_demeaned"]
+        # NaN 行不成熟 → 该日只剩银行一个成熟行业 → 单行业日剔除, 不冒充
+        assert dd["days_participating"] == 0
+        assert dd["days_excluded_single_industry"] == 1
+        assert dd["events_excluded_single_industry"] == 1
+        assert dd["by_industry"] == {}
+        # Inf 同语义
+        rows_inf = [
+            _irow("20250701", "电子", 0.01, float("inf")),
+            _irow("20250701", "银行", 0.01, -0.02),
+            _irow("20250702", "电子", 0.01, 0.03),
+            _irow("20250702", "银行", 0.01, 0.01),
+        ]
+        dd_inf = zga.summarize_gate_effectiveness(rows_inf)[
+            "by_industry_day_demeaned"
+        ]
+        assert dd_inf["days_participating"] == 1
+        assert dd_inf["by_industry"]["电子"]["e"] == pytest.approx(0.01)
+        assert dd_inf["by_industry"]["银行"]["e"] == pytest.approx(-0.01)
+
+    def test_bool_net_excluded_r142_f2_pin(self):
+        # R142 F2 同款: bool 是 int 子类, True 被当作 1.0 参与均值是冒充
+        rows = [
+            _irow("20250701", "电子", 0.01, True),
+            _irow("20250701", "银行", 0.01, -0.02),
+        ]
+        dd = zga.summarize_gate_effectiveness(rows)["by_industry_day_demeaned"]
+        assert dd["days_participating"] == 0
+        assert dd["days_excluded_single_industry"] == 1
+
+    def test_finite_path_numbers_byte_identical_to_pre_fix(self):
+        # 有限值路径行为不变 (Op1 验收数字钉死)
+        rows = [
+            _irow("20250701", "银行", 0.01, 0.04),
+            _irow("20250701", "电子", 0.02, 0.10),
+            _irow("20250702", "医药", -0.01, -0.06),
+            _irow("20250702", "电子", 0.03, 0.02),
+        ]
+        dd = zga.summarize_gate_effectiveness(rows)["by_industry_day_demeaned"]
+        assert dd["days_participating"] == 2
+        assert dd["by_industry"]["电子"]["e"] == pytest.approx((0.03 + 0.04) / 2)
+        assert dd["by_industry"]["银行"]["e"] == pytest.approx(-0.03)
+        assert dd["by_industry"]["医药"]["e"] == pytest.approx(-0.04)
+
+    def test_mixed_type_industry_keys_deterministic_no_crash(self):
+        # PoC4 实锤: int+str 键 sorted TypeError — str 键序确定性
+        rows = [
+            _irow("20250701", 123, None, 0.05),
+            _irow("20250701", "银行", 0.01, -0.02),
+        ]
+        dd = zga.summarize_gate_effectiveness(rows)["by_industry_day_demeaned"]
+        assert dd["days_participating"] == 1
+        assert set(dd["by_industry"].keys()) == {123, "银行"}
+
+        def _canon(obj):
+            # 混合类型键在 json.dumps(sort_keys=True) 层不可排序 —
+            # 确定性断言用键规范化投影 (str 键序)
+            if isinstance(obj, dict):
+                return sorted((str(k), _canon(v)) for k, v in obj.items())
+            if isinstance(obj, list):
+                return [_canon(v) for v in obj]
+            return obj
+
+        first = _canon(dd)
+        second = _canon(
+            zga.summarize_gate_effectiveness(list(reversed(rows)))[
+                "by_industry_day_demeaned"
+            ]
+        )
+        assert first == second
+
+    def test_render_demeaned_section_bad_events_cells_no_crash(self):
+        # PoC3 实锤: events=None cell → TypeError '>' not supported
+        rows = [
+            _irow("20250701", "电子", 0.01, 0.05),
+            _irow("20250701", "银行", 0.01, -0.02),
+        ]
+        summary = zga.summarize_gate_effectiveness(rows)
+        dd = summary["by_industry_day_demeaned"]
+        dd["by_industry"]["垃圾A"] = {
+            "events": None, "days": 0, "e": None, "ci90_low": None
+        }
+        dd["by_industry"]["垃圾B"] = {
+            "events": True, "days": 1, "e": 0.01, "ci90_low": None
+        }
+        payload = {
+            "generated_at": "20260908",
+            "primary_horizon": 10,
+            "gate_blocked_stages": sorted(zga.NEAR_MISS_STAGES),
+            "strength_conditioning": "x",
+            "attribution_caveat": "x",
+            "zero_hit_days_n": 1,
+            "replay_hit_days": [],
+            "court_binding": {
+                "window_start": "20250701",
+                "window_end": "20260904",
+                "rows": 1950,
+                "content_digest": "sha256:abc",
+            },
+            "days": [],
+            "summary": summary,
+        }
+        md = zga.render_md(payload)
+        section = md.split("行业日去均值对照")[-1].split("##")[0]
+        assert "垃圾A" not in section
+        assert "垃圾B" not in section
+        assert "电子" in section and "银行" in section
+
+    def test_gate_pool_ledger_row_carries_demeaned_key(self, tmp_path):
+        # F4 pin: 新聚合经 summary 全聚合单一实现流入账本行 (R143 Op1
+        # 『不挑子集』纪律 — 生产行待 court 前进后携带是前进门 by-design)
+        import json as _json
+
+        rows = [
+            _irow("20250701", "电子", 0.01, 0.05),
+            _irow("20250701", "银行", 0.01, -0.02),
+        ]
+        payload = {
+            "summary": zga.summarize_gate_effectiveness(rows),
+            "court_binding": {
+                "window_start": "20250701",
+                "window_end": "20260904",
+                "rows": 1950,
+                "content_digest": "sha256:abc",
+            },
+        }
+        ledger = tmp_path / "gate_pool_ledger.jsonl"
+        meta = zga.record_gate_pool_status(payload, "20260908", ledger_path=ledger)
+        assert meta.get("recorded") is True
+        row = _json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+        dd = (row.get("summary") or {}).get("by_industry_day_demeaned") or {}
+        assert dd.get("days_participating") == 1
+        assert "电子" in (dd.get("by_industry") or {})
