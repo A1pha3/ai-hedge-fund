@@ -64,6 +64,8 @@ from winrate_payoff_decomposition import (  # noqa: E402
     REPORT_DIR,
     cluster_boot_ci_low,
     court_binding,
+    court_data_state_equal,
+    load_trigger_ledger,
     net_returns,
     production_aligned,
 )
@@ -621,6 +623,115 @@ def render_md(payload: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+GATE_POOL_LEDGER_PATH = REPORT_DIR / "gate_pool_counterfactual_ledger.jsonl"
+GATE_POOL_ANCHOR = "production_aligned/t10/gate_pool_counterfactual"
+
+
+def record_gate_pool_status(
+    payload: Mapping[str, Any],
+    date_str: str,
+    ledger_path: Path | str = GATE_POOL_LEDGER_PATH,
+    court_binding: Mapping[str, Any] | None = None,
+    require_advance: bool = False,
+) -> dict[str, Any]:
+    """把本次刷新的门挡池反事实聚合按日期落账本 (R143 Op1; 两族 K 同构第三族)。
+
+    强度族 record_trigger_status (R81/R84/R130) 与日层族
+    record_cohort_trigger_status (R126) 的同构兄弟: 门挡池反事实聚合是
+    (数据状态, 口径) 的确定性纯函数, 同一份数据反复刷新不产生新证据 —
+    require_advance=True (数据增长耦合路径) 时绑定与账本**任一**历史
+    记录同数据状态 (court_data_state_equal 单一实现, 只认 content_digest)
+    即 skip; 同日刷新替换同日记录 (幂等收敛), 跨日追加 (append-only)。
+
+    快照 = summary 全聚合 (normal/热度三桶/逐行业/主导族) + anchor +
+    court 数据状态绑定 — 不挑聚合子集: 哪些聚合对 owner 的 c3 门槛机会
+    成本判读有资格属判读语义, 不在落账面发明。绑定非 None 但非映射
+    (畸形) → 不写字段且前进门放行 (R128 condition_dict 家族纪律: 形状
+    未知不合并不比较不假装, 较两族兄弟 None 语义的形状收紧)。
+
+    诊断面 fail-open: 装载经 load_trigger_ledger 单一实现 (损坏行
+    advisory 跳过); 写失败 (含 mkdir 失败形态, 较两族兄弟 mkdir 在
+    try 外收紧) 打印警告返回 write_failed, 不阻断报告生成。
+    payload 无 dict summary → 不写。已知边界 (成文, 镜像两族):
+    口径/锚语义变化 = 新证据世代, 须启用新账本文件 (记录内 anchor
+    仅供审计比对)。
+    """
+    summary = payload.get("summary")
+    if not isinstance(summary, dict):
+        return {"recorded": False, "reason": "no_gate_pool_summary"}
+    snapshot: dict[str, Any] = {
+        "date": str(date_str),
+        "anchor": GATE_POOL_ANCHOR,
+        "summary": summary,
+    }
+    binding_ok = isinstance(court_binding, Mapping)
+    if binding_ok:
+        snapshot["court"] = dict(court_binding)
+    records = load_trigger_ledger(ledger_path)
+    if require_advance and binding_ok:
+        for previous in records:
+            if court_data_state_equal(previous.get("court"), court_binding):
+                return {
+                    "recorded": False,
+                    "reason": "court_not_advanced",
+                    "records": len(records),
+                }
+    records = [r for r in records if r.get("date") != snapshot["date"]]
+    records.append(snapshot)
+    body = "\n".join(
+        json.dumps(r, ensure_ascii=False, sort_keys=True) for r in records
+    )
+    if body:
+        body += "\n"
+    import os
+    import tempfile
+
+    path = Path(ledger_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(
+            dir=str(path.parent), prefix=".gate_pool_ledger_", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(body)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except OSError as exc:
+        print(f"WARNING: 门挡池账本写入失败 (诊断面 fail-open): {exc}")
+        return {"recorded": False, "reason": "write_failed"}
+    return {"recorded": True, "records": len(records)}
+
+
+def attach_gate_pool_record(
+    payload: dict[str, Any],
+    date_str: str,
+    ledger_path: Path | str = GATE_POOL_LEDGER_PATH,
+) -> dict[str, Any]:
+    """main 接线: 从 payload 自带的 court_binding 落账 (R138 Op3
+    attach_divergence_diagnosis 同款接线提取, 测试不经 CLI 可达)。
+
+    require_advance=True: 夜刷是数据增长耦合路径 (court 重建 → 门挡池
+    刷新 → 账本追加, 镜像 R84 强度族路径); payload 无 court_binding
+    (畸形形态) → 传 None, 落账面按无绑定语义收敛 (不假装知道身份)。
+    """
+    payload["gate_pool_record"] = record_gate_pool_status(
+        payload,
+        date_str,
+        ledger_path=ledger_path,
+        court_binding=payload.get("court_binding"),
+        require_advance=True,
+    )
+    return payload["gate_pool_record"]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--raw-dir", default=None, help="court raw 目录 (缺省单一事实源)")
@@ -631,12 +742,17 @@ def main(argv: list[str] | None = None) -> int:
         "--end", default=None,
         help="窗口末端 YYYYMMDD (缺省 = manifest 已构建窗口末端)",
     )
+    parser.add_argument(
+        "--gate-ledger", default=str(GATE_POOL_LEDGER_PATH),
+        help="门挡池稳定性账本路径 (测试可覆写)",
+    )
     args = parser.parse_args(argv)
 
     raw_dir = args.raw_dir or str(Path(TABLE_DIR).parent / "raw")
     payload = collect_zero_hit_day_attribution(raw_dir, args.table_dir, args.end)
     report_dir = Path(args.report_dir)
     report_dir.mkdir(parents=True, exist_ok=True)
+    attach_gate_pool_record(payload, args.date_str, Path(args.gate_ledger))
     md_path = report_dir / f"zero_hit_day_gate_attribution_{args.date_str}.md"
     json_path = report_dir / f"zero_hit_day_gate_attribution_{args.date_str}.json"
     md_path.write_text(render_md(payload), encoding="utf-8")

@@ -6,6 +6,7 @@ fixture 全部非对称 (R13 教训: 对称 fixture 的数值断言无牙); 零�
 
 from __future__ import annotations
 
+import json
 import math
 
 import pytest
@@ -474,3 +475,142 @@ class TestCollectFailClosed:
         )
         with pytest.raises(SystemExit, match="损坏"):
             zga.collect_zero_hit_day_attribution(tmp_path, tmp_path, "20260907")
+
+
+def _binding(digest: str) -> dict:
+    return {
+        "window_start": "20250701",
+        "window_end": "20260907",
+        "rows": 10,
+        "formula_fingerprint": "fp",
+        "content_digest": digest,
+        "universe_audit_complete": True,
+    }
+
+
+def _summary() -> dict:
+    return {
+        "events_total": 2,
+        "normal_regime_pooled": {"events": 2, "e": 0.01, "ci90_low": None, "days": 1},
+        "by_industry_heat": {
+            "heat_positive": {"events": 1, "e": 0.02, "ci90_low": None, "days": 1},
+            "heat_non_positive": {"events": 1, "e": -0.01, "ci90_low": None, "days": 1},
+            "heat_unknown": {"events": 0, "e": None, "ci90_low": None, "days": 0},
+        },
+    }
+
+
+class TestRecordGatePoolStatus:
+    """R143 Op1: 门挡池反事实稳定性账本 (两族 K 账本同构第三族)。"""
+
+    def test_record_writes_single_row(self, tmp_path):
+        ledger = tmp_path / "gate_pool_ledger.jsonl"
+        meta = zga.record_gate_pool_status(
+            {"summary": _summary()},
+            "20260907",
+            ledger_path=ledger,
+            court_binding=_binding("sha256:aa01"),
+        )
+        assert meta == {"recorded": True, "records": 1}
+        lines = ledger.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        rec = json.loads(lines[0])
+        assert rec["date"] == "20260907"
+        assert rec["anchor"] == zga.GATE_POOL_ANCHOR
+        assert rec["summary"] == _summary()
+        assert rec["court"]["content_digest"] == "sha256:aa01"
+
+    def test_advance_gate_rejects_same_data_state(self, tmp_path):
+        ledger = tmp_path / "gate_pool_ledger.jsonl"
+        kw = dict(
+            ledger_path=ledger,
+            court_binding=_binding("sha256:aa01"),
+            require_advance=True,
+        )
+        assert zga.record_gate_pool_status(
+            {"summary": _summary()}, "20260907", **kw
+        )["recorded"] is True
+        meta = zga.record_gate_pool_status(
+            {"summary": _summary()}, "20260908", **kw
+        )
+        assert meta == {
+            "recorded": False,
+            "reason": "court_not_advanced",
+            "records": 1,
+        }
+        assert len(ledger.read_text(encoding="utf-8").splitlines()) == 1
+
+    def test_advance_gate_opens_on_data_advance(self, tmp_path):
+        ledger = tmp_path / "gate_pool_ledger.jsonl"
+        kw = dict(ledger_path=ledger, require_advance=True)
+        assert zga.record_gate_pool_status(
+            {"summary": _summary()}, "20260907",
+            court_binding=_binding("sha256:aa01"), **kw
+        )["recorded"] is True
+        meta = zga.record_gate_pool_status(
+            {"summary": _summary()}, "20260908",
+            court_binding=_binding("sha256:bb02"), **kw
+        )
+        assert meta == {"recorded": True, "records": 2}
+        assert len(ledger.read_text(encoding="utf-8").splitlines()) == 2
+
+    def test_same_day_replay_replaces(self, tmp_path):
+        ledger = tmp_path / "gate_pool_ledger.jsonl"
+        kw = dict(ledger_path=ledger, court_binding=_binding("sha256:aa01"))
+        zga.record_gate_pool_status({"summary": _summary()}, "20260907", **kw)
+        replaced = dict(_summary())
+        replaced["events_total"] = 3
+        meta = zga.record_gate_pool_status(
+            {"summary": replaced}, "20260907", **kw
+        )
+        assert meta == {"recorded": True, "records": 1}
+        rec = json.loads(ledger.read_text(encoding="utf-8").splitlines()[0])
+        assert rec["summary"]["events_total"] == 3
+
+    def test_missing_summary_no_write(self, tmp_path):
+        ledger = tmp_path / "gate_pool_ledger.jsonl"
+        meta = zga.record_gate_pool_status(
+            {}, "20260907", ledger_path=ledger
+        )
+        assert meta == {"recorded": False, "reason": "no_gate_pool_summary"}
+        meta = zga.record_gate_pool_status(
+            {"summary": "junk"}, "20260907", ledger_path=ledger
+        )
+        assert meta == {"recorded": False, "reason": "no_gate_pool_summary"}
+        assert not ledger.exists()
+
+    def test_write_failure_fail_open(self, tmp_path):
+        blocker = tmp_path / "blocker"
+        blocker.write_text("file", encoding="utf-8")
+        ledger = blocker / "gate_pool_ledger.jsonl"  # parent 是文件 → mkdir 失败
+        meta = zga.record_gate_pool_status(
+            {"summary": _summary()},
+            "20260907",
+            ledger_path=ledger,
+            court_binding=_binding("sha256:aa01"),
+        )
+        assert meta == {"recorded": False, "reason": "write_failed"}
+        assert blocker.read_text(encoding="utf-8") == "file"
+
+    def test_main_attaches_gate_pool_record(self, tmp_path, monkeypatch):
+        ledger = tmp_path / "gate_pool_ledger.jsonl"
+        payload = {
+            "summary": _summary(),
+            "court_binding": _binding("sha256:aa01"),
+        }
+        captured: dict = {}
+
+        def fake_record(p, d, ledger_path=None, court_binding=None,
+                        require_advance=False):
+            captured.update(
+                ledger_path=ledger_path, court_binding=court_binding,
+                require_advance=require_advance,
+            )
+            return {"recorded": True, "records": 1}
+
+        monkeypatch.setattr(zga, "record_gate_pool_status", fake_record)
+        zga.attach_gate_pool_record(payload, "20260907", ledger)
+        assert payload["gate_pool_record"] == {"recorded": True, "records": 1}
+        assert captured["require_advance"] is True
+        assert captured["court_binding"] == _binding("sha256:aa01")
+        assert captured["ledger_path"] == ledger
