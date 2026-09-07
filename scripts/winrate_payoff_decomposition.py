@@ -1342,6 +1342,22 @@ def court_binding(court_table: Path, rows: int) -> dict[str, object]:
 # 不变; 记录读取面只有一份, 操作员视图与落账面永远同语义。
 
 
+def ledger_date_str_valid(date_str: object) -> bool:
+    """三族账本写入器共享的 date_str 输入形状 (R144 Op3 登记项② 收口)。
+
+    恰 8 位 ASCII 数字串 (YYYYMMDD)。账本行键的同日替换幂等与跨夜对齐
+    语义依赖此形状 — 非 8 位形态 (『2026-9-8』/『20260908T00』/空串/
+    None/int) 此前经 str() 强转静默入账。两兄弟族 (day-cohort /
+    gate-pool) 导入复用同一实现, reason 词表三族一致。
+    """
+    return (
+        isinstance(date_str, str)
+        and date_str.isascii()
+        and date_str.isdigit()
+        and len(date_str) == 8
+    )
+
+
 def record_trigger_status(
     payload: dict[str, object],
     date_str: str,
@@ -1371,7 +1387,11 @@ def record_trigger_status(
     旧形态无 court 字段记录与 manifest 损坏 degrade 形态行为不变)。
     已知边界 (成文): 触发规则/锚/min_n 语义变化 = 新证据世代, 须启用新
     账本文件, 不在本门判别范围 (记录内 anchor/min_n 仅供审计比对)。
+    非 8 位 ASCII 数字串 date (含 None/int) → invalid_date_str 零写入
+    (R144 Op3 三族输入形状守卫, 先于 payload 守卫)。
     """
+    if not ledger_date_str_valid(date_str):
+        return {"recorded": False, "reason": "invalid_date_str"}
     trigger = payload.get("threshold_trigger")
     if not isinstance(trigger, dict):
         return {"recorded": False, "reason": "no_threshold_trigger"}

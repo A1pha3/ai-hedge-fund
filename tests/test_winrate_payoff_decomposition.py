@@ -3359,3 +3359,31 @@ class TestRegimeCompositionAdversarialPins:
         assert "Regime 构成核查" in md
         assert "早期 n=—" in md
         assert "当前 n=—" in md
+
+
+class TestLedgerDateShapeGuard:
+    """R144 Op3: 三族账本写入器 date_str 输入形状守卫 (登记项② 收口)。
+
+    非 8 位 date_str 此前经 str() 强转静默入账成为账本行键, 污染同日
+    替换幂等键与跨夜对齐语义。守卫先于 payload 守卫 (输入形状优先于
+    内容语义), 非法 → invalid_date_str 零写入 (家族失败契约延伸)。
+    """
+
+    BAD_DATES = ["", "2026090", "202609081", "20260908T00", "2026-9-8", None, 20260908]
+
+    def test_trigger_writer_rejects_malformed_dates_zero_write(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import record_trigger_status
+
+        ledger = tmp_path / "threshold_trigger_ledger.jsonl"
+        payload = {"threshold_trigger": TestRecordTriggerStatusTypedFailures()._trigger(0.001)}
+        for bad in self.BAD_DATES:
+            meta = record_trigger_status(payload, bad, ledger_path=ledger)
+            assert meta == {"recorded": False, "reason": "invalid_date_str"}, bad
+        assert not ledger.exists()
+
+    def test_guard_precedes_payload_guard(self, tmp_path):
+        """空 payload + 非法 date → invalid_date_str (非 no_threshold_trigger)。"""
+        from scripts.winrate_payoff_decomposition import record_trigger_status
+
+        meta = record_trigger_status({}, "2026-9-8", ledger_path=tmp_path / "l.jsonl")
+        assert meta == {"recorded": False, "reason": "invalid_date_str"}

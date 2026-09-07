@@ -671,3 +671,20 @@ class TestAdversarialReworkOp2:
         }
         md = zga.render_md(payload)
         assert "⚠ 门挡池稳定性账本: snapshot_not_serializable" in md
+
+
+class TestLedgerDateShapeGuard:
+    """R144 Op3: 门挡池族 record_gate_pool_status 的 date_str 形状守卫。"""
+
+    def test_gate_pool_writer_rejects_malformed_dates_zero_write(self, tmp_path):
+        ledger = tmp_path / "gate_pool_counterfactual_ledger.jsonl"
+        for bad in ["", "202609081", "20260908T00", None, 20260908]:
+            meta = zga.record_gate_pool_status({}, bad, ledger_path=ledger)
+            assert meta == {"recorded": False, "reason": "invalid_date_str"}, bad
+        assert not ledger.exists()
+
+    def test_guard_precedes_payload_guard_valid_date_unchanged(self, tmp_path):
+        meta = zga.record_gate_pool_status({}, "2026-9-8", ledger_path=tmp_path / "l.jsonl")
+        assert meta == {"recorded": False, "reason": "invalid_date_str"}
+        meta = zga.record_gate_pool_status({}, "20260908", ledger_path=tmp_path / "l.jsonl")
+        assert meta == {"recorded": False, "reason": "no_gate_pool_summary"}

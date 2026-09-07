@@ -680,8 +680,14 @@ def record_gate_pool_status(
     守卫并加 allow_nan=False)。
     payload 无 dict summary → 不写。已知边界 (成文, 镜像两族):
     口径/锚语义变化 = 新证据世代, 须启用新账本文件 (记录内 anchor
-    仅供审计比对)。
+    仅供审计比对)。非 8 位 ASCII 数字串 date (含 None/int) →
+    invalid_date_str 零写入 (R144 Op3 三族输入形状守卫, 单一实现
+    ledger_date_str_valid, 先于 payload 守卫)。
     """
+    from winrate_payoff_decomposition import ledger_date_str_valid
+
+    if not ledger_date_str_valid(date_str):
+        return {"recorded": False, "reason": "invalid_date_str"}
     summary = payload.get("summary")
     if not isinstance(summary, dict):
         return {"recorded": False, "reason": "no_gate_pool_summary"}

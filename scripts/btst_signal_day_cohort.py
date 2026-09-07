@@ -577,7 +577,14 @@ def record_cohort_trigger_status(
     误判为数据前进。旧形态记录无 court 字段 / 缺 digest → 门放行。
     已知边界 (成文): 触发规则/锚/min_n 语义变化 = 新证据世代, 须启用新
     账本文件 (记录内 anchor/min_n 仅供审计比对)。
+    非 8 位 ASCII 数字串 date (含 None/int) → invalid_date_str 零写入
+    (R144 Op3 三族输入形状守卫, 单一实现 ledger_date_str_valid, 先于
+    payload 守卫)。
     """
+    from winrate_payoff_decomposition import ledger_date_str_valid
+
+    if not ledger_date_str_valid(date_str):
+        return {"recorded": False, "reason": "invalid_date_str"}
     trigger = payload.get("cohort_trigger")
     if not isinstance(trigger, dict):
         return {"recorded": False, "reason": "no_cohort_trigger"}
