@@ -67,6 +67,11 @@ EARLY_MANIFEST_PATH = Path(
     "data/research/btst_court/event_tables_early/manifest_v1.json"
 )
 MAIN_MANIFEST_PATH = TABLE_DIR / "manifest_v1.json"
+# 构成核查 (R144 Op1) 的早期窗口事件表 — regime_composition_check 冷读面,
+# 缺席/不可读/缺列 → typed fail-open (不阻断对比披露)。
+EARLY_COURT_TABLE_PATH = Path(
+    "data/research/btst_court/event_tables_early/event_table_v1.csv.gz"
+)
 # 对比锚定分组: 触发器锚桶 + 全体 (production_aligned/t10)。
 CROSS_WINDOW_BUCKET_GROUPS: tuple[str, ...] = (
     "ALL",
@@ -884,12 +889,136 @@ def _trigger_condition(trigger: object, key: str) -> dict[str, object]:
     }
 
 
+def regime_composition_check(
+    early_court_table: Path, current_court_table: Path
+) -> dict[str, object]:
+    """两窗口 production_aligned 宇宙 regime 构成核查 (R144 Op1)。
+
+    动机 (R136 开放项①): 跨窗 caveat 把『regime 构成不同』列为 ≥0.70 桶
+    跨窗符号反转的可能解释 — 该 hand-wave 在触发器锚口径下机械可检验:
+    production_aligned (单一实现) 过滤后两宇宙的 regime 计数即可判定构成
+    差异是否存在。两宇宙均纯 normal 时, 构成差异不能解释跨窗分歧。
+
+    fail-open 家族纪律: 表缺失/不可读/损坏 → {label}_table_unavailable,
+    过滤列缺失 → {label}_table_missing_columns (缺列清单随附) — 顶层
+    available=False, 渲染零新增字节, caveat 三保持原文。aligned_total=0
+    的空宇宙不冒充纯 normal (无法区分『无非 normal 行』与『无行』)。
+    gate 拦截机制计数来自全表 regime × gate_blocked, 与对齐宇宙计数
+    分开披露 (对齐宇宙的排除还有 degraded/ST/低价等非 gate 通道)。
+    """
+    import sys as _sys
+
+    _scripts = str(Path(__file__).resolve().parent)
+    if _scripts not in _sys.path:
+        _sys.path.insert(0, _scripts)
+    from review_btst_prior_court import (  # noqa: E402
+        HORIZON_COL,
+        PRODUCTION_EXCLUDE_COLS,
+    )
+
+    def _side(path: Path, label: str) -> dict[str, object]:
+        try:
+            ev = pd.read_csv(path)
+        except Exception:  # noqa: BLE001 - 缺失/不可读/损坏同语义: 不假装知道
+            return {"available": False, "reason": f"{label}_table_unavailable"}
+        required = [
+            "regime",
+            "fillable",
+            "gate_blocked",
+            "price_ge_3",
+            HORIZON_COL,
+            *PRODUCTION_EXCLUDE_COLS,
+        ]
+        missing = [c for c in required if c not in ev.columns]
+        if missing:
+            return {
+                "available": False,
+                "reason": f"{label}_table_missing_columns",
+                "missing_columns": missing,
+            }
+        aligned = production_aligned(ev)
+        counts: dict[str, int] = {}
+        for value, count in aligned["regime"].value_counts(dropna=False).items():
+            key = value if isinstance(value, str) else "missing"
+            counts[key] = counts.get(key, 0) + int(count)
+        gate_block: dict[str, dict[str, int]] = {}
+        regime_labels = ev["regime"].map(
+            lambda v: v if isinstance(v, str) else "missing"
+        )
+        blocked = ev["gate_blocked"].fillna(False) == True  # noqa: E712
+        for name, grp in ev.groupby(regime_labels, sort=False):
+            gate_block[str(name)] = {
+                "blocked": int(blocked[grp.index].sum()),
+                "total": int(len(grp)),
+            }
+        return {
+            "available": True,
+            "aligned_counts": counts,
+            "aligned_total": int(len(aligned)),
+            "gate_blocked_by_regime": gate_block,
+        }
+
+    sides = {
+        "early": _side(Path(early_court_table), "early"),
+        "current": _side(Path(current_court_table), "current"),
+    }
+    failed = next(
+        (sides[k] for k in ("early", "current") if not sides[k]["available"]),
+        None,
+    )
+    if failed is not None:
+        out: dict[str, object] = {
+            "available": False,
+            "reason": failed["reason"],
+        }
+        if isinstance(failed.get("missing_columns"), list):
+            out["missing_columns"] = failed["missing_columns"]
+        return out
+    pure_normal = all(
+        side["aligned_total"] > 0 and set(side["aligned_counts"]) <= {"normal"}
+        for side in sides.values()
+    )
+    return {
+        "available": True,
+        "early": sides["early"],
+        "current": sides["current"],
+        "both_aligned_pure_normal": pure_normal,
+    }
+
+
+def _composition_caveats(composition: object) -> list[str]:
+    """构成核查在场时精确化 caveat 三 (hand-wave → 已检验事实); 其余原样。"""
+    caveats = list(CROSS_WINDOW_CAVEATS)
+    comp = composition if isinstance(composition, dict) else None
+    if comp is None or not comp.get("available"):
+        return caveats
+    if len(caveats) != 3:
+        return caveats
+    if comp.get("both_aligned_pure_normal") is True:
+        caveats[2] = (
+            "跨窗分歧的 regime 构成解释已被锚口径核查排除 (两窗口"
+            " production_aligned 对齐宇宙均为纯 normal): 分歧发生于同"
+            " regime (normal)、同公式下, 不能归因于 crisis/risk_off 构成"
+            "差异 — 是否窗口内市况/结构演化或幸存者偏差所致属 owner 判读门"
+            " (本对比只披露不判定)。"
+        )
+    else:
+        caveats[2] = (
+            "跨窗构成核查在场 (见构成核查行): 对齐宇宙非纯 normal — 构成"
+            "差异与窗口内市况/结构演化对分歧的相对贡献不可分离, 判读属"
+            " owner 评估门 (本对比只披露不判定)。"
+        )
+    return caveats
+
+
 def attach_cross_window_validation(
     payload: dict[str, object],
     *,
     early_report_dir: Path = EARLY_REPORT_DIR,
     early_manifest_path: Path = EARLY_MANIFEST_PATH,
     main_manifest_path: Path = MAIN_MANIFEST_PATH,
+    early_court_table: Path = EARLY_COURT_TABLE_PATH,
+    current_court_table: Path = COURT_TABLE,
 ) -> dict[str, object]:
     """把早期窗口 (2022-2024) 外部验证对比挂到 payload (R136 Op1)。
 
@@ -1105,6 +1234,11 @@ def attach_cross_window_validation(
         else None
     )
 
+    # 构成核查 (R144 Op1): 只在对比披露成功路径上运行 — 绊线拒绝形态
+    # 不做构成核查 (节已不可用, 无判读语境)。
+    composition = regime_composition_check(
+        early_court_table, current_court_table
+    )
     payload["cross_window_validation"] = {
         "available": True,
         "early_report_date": report_date,
@@ -1116,7 +1250,8 @@ def attach_cross_window_validation(
         "formula_fingerprint_match": fingerprint_match,
         "buckets": buckets,
         "trigger": trigger_block,
-        "caveats": list(CROSS_WINDOW_CAVEATS),
+        "regime_composition": composition,
+        "caveats": _composition_caveats(composition),
     }
     return payload
 
@@ -1704,6 +1839,67 @@ def _render_cross_window_validation(payload: dict[str, object], L: list[str]) ->
 
     L.append(f"- 合取 (①∧②): 当前 {armed_txt('current')} · 早期 {armed_txt('early')}")
     L.append("")
+    composition = cw.get("regime_composition")
+    if isinstance(composition, dict) and composition.get("available"):
+
+        def _counts_txt(side: object) -> str:
+            side_d = side if isinstance(side, dict) else {}
+            counts = side_d.get("aligned_counts")
+            counts = counts if isinstance(counts, dict) else {}
+            total = side_d.get("aligned_total")
+            total_txt = (
+                str(total)
+                if isinstance(total, int) and not isinstance(total, bool)
+                else "—"
+            )
+            known = ("normal", "crisis", "risk_off")
+            parts = [
+                f"{name} {_n_cell(counts.get(name, 0))}" for name in known
+            ]
+            for name, count in counts.items():
+                if name not in known:
+                    parts.append(f"{name} {_n_cell(count)}")
+            return f"n={total_txt} ({'/'.join(parts)})"
+
+        def _gate_txt(side: object, label: str) -> str:
+            side_d = side if isinstance(side, dict) else {}
+            gm = side_d.get("gate_blocked_by_regime")
+            gm = gm if isinstance(gm, dict) else {}
+            parts = []
+            for name in sorted(gm):
+                if name == "normal":
+                    continue
+                cell = gm[name] if isinstance(gm[name], dict) else {}
+                total = cell.get("total")
+                if not isinstance(total, int) or isinstance(total, bool):
+                    continue
+                if total == 0:
+                    continue
+                blocked = cell.get("blocked")
+                blocked_txt = (
+                    str(blocked)
+                    if isinstance(blocked, int) and not isinstance(blocked, bool)
+                    else "—"
+                )
+                parts.append(f"{name} {blocked_txt}/{total}")
+            return (
+                f"{label} {' · '.join(parts)}"
+                if parts
+                else f"{label} (无非 normal 行)"
+            )
+
+        early_side = composition.get("early")
+        current_side = composition.get("current")
+        L.append(
+            "- Regime 构成核查 (production_aligned 锚口径): "
+            f"早期 {_counts_txt(early_side)} · 当前 {_counts_txt(current_side)}"
+        )
+        L.append(
+            "- gate 拦截机制 (全表非 normal 行被 production gate 拦截"
+            "(对齐宇宙的排除另有 degraded/ST/低价等通道)): "
+            f"{_gate_txt(early_side, '早期')} · {_gate_txt(current_side, '当前')}"
+        )
+        L.append("")
     caveats = cw.get("caveats")
     for caveat in caveats if isinstance(caveats, list) else []:
         L.append(f"- {caveat}")
@@ -1766,6 +1962,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="早期窗口 court manifest (窗口身份 + 公式指纹)")
     parser.add_argument("--main-manifest", default=str(MAIN_MANIFEST_PATH),
                         help="当前窗口 court manifest (公式指纹对比侧)")
+    parser.add_argument("--early-court-table",
+                        default=str(EARLY_COURT_TABLE_PATH),
+                        help="早期窗口事件表 (regime 构成核查; 缺失 = 构成行缺席)")
     args = parser.parse_args(argv)
 
     date_str = date.today().strftime("%Y%m%d")
@@ -1789,6 +1988,8 @@ def main(argv: list[str] | None = None) -> int:
         early_report_dir=Path(args.early_report_dir),
         early_manifest_path=Path(args.early_manifest),
         main_manifest_path=Path(args.main_manifest),
+        early_court_table=Path(args.early_court_table),
+        current_court_table=court_table,
     )
     binding = court_binding(court_table, rows=len(ev))
     record_meta = record_trigger_status(

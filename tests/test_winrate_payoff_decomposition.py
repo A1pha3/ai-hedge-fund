@@ -3063,3 +3063,216 @@ class TestRecordTriggerStatusTypedFailures:
         )
         assert meta == {"recorded": False, "reason": "write_failed"}
         assert blocker.read_text(encoding="utf-8") == "file"
+
+
+class TestRegimeCompositionCheck:
+    """R144 Op1: 跨窗 regime 构成核查 — 数字钉死 + fail-open 家族 + 渲染字节稳定。
+
+    动机: R136 跨窗 caveat 把『regime 构成不同』列为 ≥0.70 桶跨窗符号反转的
+    可能解释 — 该 hand-wave 在 production_aligned 锚口径下机械可检验。
+    """
+
+    COLS = [
+        "regime", "gate_blocked", "fillable", "price_ge_3",
+        "degraded", "st_name", "industry_missing", "excluded_ticker",
+        "gross_ret_t10",
+    ]
+
+    @staticmethod
+    def _row(regime, *, blocked=False, fillable=True, ret=0.05):
+        return {
+            "regime": regime, "gate_blocked": blocked, "fillable": fillable,
+            "price_ge_3": True, "degraded": False, "st_name": False,
+            "industry_missing": False, "excluded_ticker": False,
+            "gross_ret_t10": ret,
+        }
+
+    def _write_csv(self, path, rows):
+        import pandas as pd
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(rows, columns=self.COLS).to_csv(path, index=False)
+        return path
+
+    def _early_rows(self):
+        # 2 normal (gate 放行) + 2 crisis (全拦) + 1 risk_off (全拦)
+        return [
+            self._row("normal"), self._row("normal"),
+            self._row("crisis", blocked=True), self._row("crisis", blocked=True),
+            self._row("risk_off", blocked=True),
+        ]
+
+    def test_counts_pinned_and_gate_mechanism(self, tmp_path):
+        """A1: 构成计数 + gate 拦截机制数字钉死; 双对齐宇宙纯 normal 判定。"""
+        from scripts.winrate_payoff_decomposition import regime_composition_check
+
+        early = self._write_csv(tmp_path / "early" / "t.csv", self._early_rows())
+        current = self._write_csv(
+            tmp_path / "current" / "t.csv",
+            [self._row("normal"), self._row("normal"), self._row("normal")],
+        )
+        out = regime_composition_check(early, current)
+        assert out["available"] is True
+        assert out["early"]["aligned_counts"] == {"normal": 2}
+        assert out["early"]["aligned_total"] == 2
+        assert out["early"]["gate_blocked_by_regime"] == {
+            "normal": {"blocked": 0, "total": 2},
+            "crisis": {"blocked": 2, "total": 2},
+            "risk_off": {"blocked": 1, "total": 1},
+        }
+        assert out["current"]["aligned_counts"] == {"normal": 3}
+        assert out["current"]["aligned_total"] == 3
+        assert out["both_aligned_pure_normal"] is True
+
+    def test_mixed_aligned_universe_not_pure_normal(self, tmp_path):
+        """对齐宇宙出现非 normal 行 (gate 放行的 crisis) → 纯 normal 判定 False。"""
+        from scripts.winrate_payoff_decomposition import regime_composition_check
+
+        early = self._write_csv(tmp_path / "early" / "t.csv", self._early_rows())
+        current = self._write_csv(
+            tmp_path / "current" / "t.csv",
+            [self._row("normal"), self._row("crisis")],  # crisis 未被拦
+        )
+        out = regime_composition_check(early, current)
+        assert out["available"] is True
+        assert out["current"]["aligned_counts"] == {"normal": 1, "crisis": 1}
+        assert out["both_aligned_pure_normal"] is False
+
+    def test_missing_table_typed_unavailable(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import regime_composition_check
+
+        current = self._write_csv(tmp_path / "c" / "t.csv", [self._row("normal")])
+        out = regime_composition_check(tmp_path / "absent" / "t.csv", current)
+        assert out == {"available": False, "reason": "early_table_unavailable"}
+
+    def test_missing_columns_typed(self, tmp_path):
+        import pandas as pd
+
+        from scripts.winrate_payoff_decomposition import regime_composition_check
+
+        path = tmp_path / "early" / "t.csv"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame([{"fillable": True, "gate_blocked": False}]).to_csv(
+            path, index=False
+        )
+        current = self._write_csv(tmp_path / "c" / "t.csv", [self._row("normal")])
+        out = regime_composition_check(path, current)
+        assert out["available"] is False
+        assert out["reason"] == "early_table_missing_columns"
+        assert "regime" in out["missing_columns"]
+
+    def test_attach_carries_composition_and_precise_caveat(self, tmp_path):
+        """接线: 成功路径挂 regime_composition 键; 纯 normal → caveat 三精确化。"""
+        from scripts.winrate_payoff_decomposition import (
+            CROSS_WINDOW_CAVEATS,
+            attach_cross_window_validation,
+        )
+
+        payload = TestCrossWindowValidation()._current_payload()
+        early_dir = TestCrossWindowValidation._write_early_report(
+            tmp_path, TestCrossWindowValidation._early_payload()
+        )
+        early_table = self._write_csv(
+            tmp_path / "tables" / "early.csv", self._early_rows()
+        )
+        current_table = self._write_csv(
+            tmp_path / "tables" / "current.csv", [self._row("normal")]
+        )
+        attach_cross_window_validation(
+            payload,
+            early_report_dir=early_dir,
+            early_manifest_path=TestCrossWindowValidation._write_manifest(
+                tmp_path / "em" / "m.json",
+                window={"start": "20220104", "end": "20241231", "sessions": 726},
+            ),
+            main_manifest_path=TestCrossWindowValidation._write_manifest(
+                tmp_path / "mm" / "m.json"
+            ),
+            early_court_table=early_table,
+            current_court_table=current_table,
+        )
+        cw = payload["cross_window_validation"]
+        assert cw["regime_composition"]["available"] is True
+        assert cw["regime_composition"]["both_aligned_pure_normal"] is True
+        assert len(cw["caveats"]) == 3
+        assert cw["caveats"][:2] == list(CROSS_WINDOW_CAVEATS)[:2]
+        assert "核查排除" in cw["caveats"][2]
+        assert cw["caveats"][2] != list(CROSS_WINDOW_CAVEATS)[2]
+
+    def test_attach_unavailable_composition_keeps_legacy_caveat(self, tmp_path):
+        """fail-open: 构成表缺席 → 无 regime_composition 数字, caveat 三原样。"""
+        from scripts.winrate_payoff_decomposition import (
+            CROSS_WINDOW_CAVEATS,
+            attach_cross_window_validation,
+        )
+
+        payload = TestCrossWindowValidation()._current_payload()
+        early_dir = TestCrossWindowValidation._write_early_report(
+            tmp_path, TestCrossWindowValidation._early_payload()
+        )
+        attach_cross_window_validation(
+            payload,
+            early_report_dir=early_dir,
+            early_manifest_path=TestCrossWindowValidation._write_manifest(
+                tmp_path / "em" / "m.json",
+                window={"start": "20220104", "end": "20241231", "sessions": 726},
+            ),
+            main_manifest_path=TestCrossWindowValidation._write_manifest(
+                tmp_path / "mm" / "m.json"
+            ),
+            early_court_table=tmp_path / "absent.csv",
+            current_court_table=tmp_path / "absent2.csv",
+        )
+        cw = payload["cross_window_validation"]
+        assert cw["regime_composition"]["available"] is False
+        assert cw["regime_composition"]["reason"] == "early_table_unavailable"
+        assert cw["caveats"] == list(CROSS_WINDOW_CAVEATS)
+
+    def test_render_composition_lines_and_legacy_byte_stability(self, tmp_path):
+        """渲染: 构成行 + 拦截机制行; 旧 payload (缺键) 零新增字节。"""
+        from scripts.winrate_payoff_decomposition import (
+            CROSS_WINDOW_CAVEATS,
+            attach_cross_window_validation,
+            render_md,
+        )
+
+        payload = TestCrossWindowValidation()._current_payload()
+        early_dir = TestCrossWindowValidation._write_early_report(
+            tmp_path, TestCrossWindowValidation._early_payload()
+        )
+        early_table = self._write_csv(
+            tmp_path / "tables" / "early.csv", self._early_rows()
+        )
+        current_table = self._write_csv(
+            tmp_path / "tables" / "current.csv", [self._row("normal")]
+        )
+        attach_cross_window_validation(
+            payload,
+            early_report_dir=early_dir,
+            early_manifest_path=TestCrossWindowValidation._write_manifest(
+                tmp_path / "em" / "m.json",
+                window={"start": "20220104", "end": "20241231", "sessions": 726},
+            ),
+            main_manifest_path=TestCrossWindowValidation._write_manifest(
+                tmp_path / "mm" / "m.json"
+            ),
+            early_court_table=early_table,
+            current_court_table=current_table,
+        )
+        md = render_md(payload, "20260906")
+        assert "Regime 构成核查" in md
+        assert "早期 n=2 (normal 2/crisis 0/risk_off 0)" in md
+        assert "当前 n=1 (normal 1/crisis 0/risk_off 0)" in md
+        assert "gate 拦截" in md and "crisis 2/2" in md and "risk_off 1/1" in md
+        assert "核查排除" in md
+
+        # 旧 payload 形态: 缺 regime_composition 键 + caveat 三原文 → 渲染零新增
+        legacy = dict(payload)
+        cw_legacy = dict(payload["cross_window_validation"])
+        cw_legacy.pop("regime_composition")
+        cw_legacy["caveats"] = list(CROSS_WINDOW_CAVEATS)
+        legacy["cross_window_validation"] = cw_legacy
+        md_legacy = render_md(legacy, "20260906")
+        assert "Regime 构成核查" not in md_legacy
+        assert "gate 拦截" not in md_legacy
+        assert md_legacy.split("跨窗口外部验证")[0] == md.split("跨窗口外部验证")[0]
