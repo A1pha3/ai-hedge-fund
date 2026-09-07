@@ -138,11 +138,15 @@ def day_counterfactual_e(net_rets: Sequence[float | None]) -> float | None:
 
     R147 Op1 F-c: 成熟谓词 _finite_net 单一实现 — NaN/Inf 输入不再产出
     NaN/Inf E 写入日报 JSON 行 (报告面输入与账本面同守卫); bool 不冒充。
+    R147 Op2 F-b: 聚合级守卫 — 有限点和仍可溢出 (输入守卫不覆盖派生,
+    R146 F1 同族), 非有限 → None 不冒充完整收益 (inf 直达日报 JSON 行
+    会以 Infinity 字面量毒化整份报告)。
     """
     mature = [float(v) for v in net_rets if _finite_net(v) is not None]
     if not mature:
         return None
-    return sum(mature) / len(mature)
+    e = sum(mature) / len(mature)
+    return e if math.isfinite(e) else None
 
 
 def summarize_gate_effectiveness(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -184,6 +188,11 @@ def summarize_gate_effectiveness(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if net is not None:
             per_day.setdefault(r["day"], []).append(net)
     day_es = [sum(v) / len(v) for v in per_day.values()]
+    # R147 Op2 F-a: 输入守卫不覆盖派生聚合 (R146 F1 同族) — 非有限日
+    # 聚合 (有限点和溢出 inf) 不入三分桶: inf>0 判 True 会误分类
+    # costly_gt0 对判读撒谎; 分桶因此在契约违反输入下不划分
+    # days_with_mature (后者如实保留, 注释披露不冒充)
+    day_es = [e for e in day_es if math.isfinite(e)]
     summary: dict[str, Any] = {
         "events_total": len(rows),
         # R147 Op1 F-b: 成熟计数与池化/日分布同一谓词 (有限净值)

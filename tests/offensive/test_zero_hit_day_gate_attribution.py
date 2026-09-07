@@ -1508,3 +1508,43 @@ class TestLedgerWriterAllowNanFamilyConvergence:
         assert hashlib.sha256(blob2.encode()).hexdigest() == (
             "03ddad958bdb8dfece4c5e4e2b10b966f7b4ed3d961dd8ac7b8cb20b212c2ee1"
         )
+
+
+class TestAdversarialOp2AggregateFacePins:
+    """R147 Op2: 对 Op1 交付面的对抗性审查 — 聚合面残留两连 (PoC 实锤)。
+
+    Op1 输入面守卫 (_finite_net 单一实现) 不覆盖派生聚合 — R146 F1
+    「_finite_net 只守输入」同族模式在 Op1 新守卫面复现:
+    F-a day_e_distribution 日聚合 sum(v)/len(v) 无守卫 — 单日两行
+    1e308 → 日聚合 inf, inf>0 判 True 被误分类 costly_gt0 (分布对
+    契约违反输入撒谎; nan 形态三桶全丢静默消失);
+    F-b day_counterfactual_e 聚合无守卫 — 有限点和溢出 inf 直达日报
+    payload counterfactual_e 行 (main 报告 allow_nan 默认写 Infinity
+    字面量 → 严格解析器拒整份日报; Op1 F-c 只守了输入)。
+    登记不修: _finite_net 大整数 OverflowError (fail-closed 诚实)、
+    历史毒化账本行致未来冻结 (生产账本已验证干净)、
+    cluster_boot_ci_low 内部 1e308 尺度 (R146 已接受)。
+    """
+
+    def test_day_e_distribution_inf_aggregate_not_classified(self):
+        # F-a RED (修复前: costly_gt0==1 — inf 被误分类为代价日)
+        rows = [
+            {"day": "20250701", "regime": "normal", "dominant_family": "c2",
+             "net": 1e308},
+            {"day": "20250701", "regime": "normal", "dominant_family": "c2",
+             "net": 1e308},
+        ]
+        s = zga.summarize_gate_effectiveness(rows)
+        assert s["day_e_distribution"] == {
+            "protective_lt0": 0, "costly_gt0": 0, "flat_eq0": 0,
+        }
+        # 成熟事实如实保留 — 非有限日聚合不入分布, 不冒充「无成熟行」
+        assert s["days_with_mature"] == 1
+        assert s["events_mature"] == 2
+
+    def test_day_counterfactual_e_overflow_aggregate_none(self):
+        # F-b RED (修复前: inf 直达日报 JSON 行)
+        assert zga.day_counterfactual_e([1e308, 1e308]) is None
+        # 有限路径数字不变 (巨大但有限的和仍如实返回)
+        assert zga.day_counterfactual_e([1e308, -0.02]) == pytest.approx(5e307)
+        assert zga.day_counterfactual_e([0.01, 0.03]) == pytest.approx(0.02)
