@@ -735,7 +735,9 @@ def test_freshness_line_renders_when_stale_two_sessions(tmp_path, monkeypatch):
     assert "20260827" in line
     assert "陈旧 2 个交易日" in line
     assert "触发器账本最后判定 20260827" in line
-    assert "court 覆盖至 20260827" in line
+    # R139 Op3: window_end 同样落后 ≥2 交易日 → 覆盖部分从被动『覆盖至』
+    # 升级为『覆盖停滞』(停滞距离与最后覆盖日期仍可见)
+    assert "court 覆盖停滞 2 个交易日（最后覆盖 20260827）" in line
     assert "仅披露" in line
 
 
@@ -967,6 +969,126 @@ def test_freshness_line_reconcile_failure_surfaces(tmp_path, monkeypatch):
     assert line is not None
     assert "reconcile: exit rc=1: reconcile boom" in line
     assert "夜刷判定链 1 步失败" in line
+
+
+# ---------- R139 Op3: court 窗口停滞子句 ----------
+
+def _freshness_env_window(tmp_path, monkeypatch, window_end, report_day="20260828"):
+    from src.screening.offensive import daily_action as _da
+
+    base = _write_decomposition_report(tmp_path, date=report_day)
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec(report_day, c1_lit=True, c2_lit=False, window_end=window_end),
+    ]))
+    monkeypatch.setattr(
+        _da,
+        "_COURT_REFRESH_STATUS_PATH",
+        tmp_path / "no-status.json",
+    )
+
+
+def test_freshness_line_fires_when_court_window_stalls(tmp_path, monkeypatch):
+    """R139 Op3 A1 (RED→GREEN): window_end 落后 as_of 2 个交易日且其余全绿
+    (报告新鲜/ok=True/诊断无键) → 出行『覆盖停滞』+ 冻结尾句 — 闭合
+    『一切正常但证据宇宙冻结』组合 (连续空涨停日/原料边界事故)."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    _freshness_env_window(tmp_path, monkeypatch, "20260827")
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "court 覆盖停滞 2 个交易日（最后覆盖 20260827）" in line
+    assert "证据冻结" in line
+
+
+def test_freshness_line_quiet_when_window_lags_one_session(tmp_path, monkeypatch):
+    """R139 Op3 A2: 落后 1 个交易日属合法空涨停日节律 → 整行省略零噪声."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    _freshness_env_window(tmp_path, monkeypatch, "20260828")
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is None
+
+
+def test_freshness_line_stall_and_report_stale_coexist(tmp_path, monkeypatch):
+    """R139 Op3 A3: 报告陈旧与窗口停滞同时成立 → 单行双事实, 陈旧文案不变."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    _freshness_env_window(tmp_path, monkeypatch, "20260827", report_day="20260827")
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "陈旧 2 个交易日" in line
+    assert "court 覆盖停滞 2 个交易日（最后覆盖 20260827）" in line
+
+
+def test_freshness_line_quiet_when_window_precedes_all_sessions(tmp_path, monkeypatch):
+    """R139 Op3 A4 (fail-open): 窗口早于全部会话 (无折算会话) → 子句安静,
+    不虚构停滞距离 (报告陈旧判定照常兜底)."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    _freshness_env_window(tmp_path, monkeypatch, "20200101")
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is None
+
+
+def test_freshness_line_window_snap_to_last_session_before_nontrading_day(tmp_path, monkeypatch):
+    """R139 Op3 (真实形态折算): 真实账本 window_end 常为非交易日 (如周六,
+    宿主实测 20260905 ∉ 日历) — 非交易日覆盖 ≡ 前一收盘覆盖: 周六窗口折算
+    到周五, 距离 1 → 安静; 若按原样丢给 session_distance 会 ValueError
+    永久安静, 子句在真实数据上死代码."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    _freshness_env_window(tmp_path, monkeypatch, "20260829")
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is None
+
+
+def test_freshness_line_stall_with_diagnostic_failure_keeps_frozen_tail(tmp_path, monkeypatch):
+    """R139 Op3: 窗口停滞与诊断失败并存 → 冻结尾句优先 (数据真冻结),
+    两事实同屏."""
+    import json as _json
+    from datetime import date as _date
+
+    from src.screening.offensive import daily_action as da
+
+    _freshness_env_window(tmp_path, monkeypatch, "20260827")
+    status_dir = tmp_path / "st"
+    _write_refresh_status_full(
+        status_dir,
+        diagnostics={"scripts/btst_signal_day_cohort.py": {
+            "rc": 2, "error": "exit rc=2: cohort boom",
+        }},
+    )
+    status_path = status_dir / "court_refresh_status.json"
+    payload = _json.loads(status_path.read_text(encoding="utf-8"))
+    payload["reconcile"] = {"rc": 0, "error": None}
+    status_path.write_text(_json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(
+        da, "_COURT_REFRESH_STATUS_PATH", status_path
+    )
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "court 覆盖停滞 2 个交易日" in line
+    assert "夜刷判定链 1 步失败" in line
+    assert "证据冻结" in line
+    assert "其余判定面照常刷新" not in line
 
 
 def test_freshness_line_stale_and_diagnostic_failure_coexist(tmp_path, monkeypatch):
