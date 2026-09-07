@@ -134,8 +134,12 @@ def is_gate_blocked(stage: str | None) -> bool:
 
 
 def day_counterfactual_e(net_rets: Sequence[float | None]) -> float | None:
-    """日反事实 E = 成熟净收益均值; 无成熟行 → None (绝不冒充 0)。"""
-    mature = [float(v) for v in net_rets if v is not None]
+    """日反事实 E = 成熟净收益均值; 无成熟行 → None (绝不冒充 0)。
+
+    R147 Op1 F-c: 成熟谓词 _finite_net 单一实现 — NaN/Inf 输入不再产出
+    NaN/Inf E 写入日报 JSON 行 (报告面输入与账本面同守卫); bool 不冒充。
+    """
+    mature = [float(v) for v in net_rets if _finite_net(v) is not None]
     if not mature:
         return None
     return sum(mature) / len(mature)
@@ -148,14 +152,21 @@ def summarize_gate_effectiveness(rows: list[dict[str, Any]]) -> dict[str, Any]:
     事件 n < 30 → CI None; 空集 → 各聚合 None 不冒充。
     """
     def _pooled(subset: list[dict[str, Any]]) -> dict[str, Any]:
-        rets = [r["net"] for r in subset if r["net"] is not None]
-        days = [r["day"] for r in subset if r["net"] is not None]
+        # R147 Op1 F-b: 成熟谓词 _finite_net 单一实现 (R143 F3/R145 登记
+        # 家族项收口) — 裸 is not None 下 NaN/Inf 入均值令 e=nan/inf 冒充,
+        # 且在写入器 allow_nan 契约下冻结落账; bool 是 int 子类不冒充
+        rets = [v for r in subset if (v := _finite_net(r["net"])) is not None]
+        days = [r["day"] for r in subset if _finite_net(r["net"]) is not None]
         if not rets:
             return {"events": 0, "e": None, "ci90_low": None, "days": 0}
         e = sum(rets) / len(rets)
+        # R147 Op1 F-b: 有限点和仍可溢出 (R146 聚合级语义镜像) — 非有限
+        # e → None 不冒充; ci 仅在 e 非 None 且 n 足额时计算
+        if not math.isfinite(e):
+            e = None
         ci = (
             cluster_boot_ci_low(rets, days)
-            if len(rets) >= MIN_CELL_N
+            if e is not None and len(rets) >= MIN_CELL_N
             else None
         )
         return {
@@ -169,12 +180,14 @@ def summarize_gate_effectiveness(rows: list[dict[str, Any]]) -> dict[str, Any]:
     blocked = [r for r in rows if r["regime"] in REGIME_GATE_BLOCK]
     per_day: dict[str, list[float]] = {}
     for r in rows:
-        if r["net"] is not None:
-            per_day.setdefault(r["day"], []).append(r["net"])
+        net = _finite_net(r["net"])  # R147 Op1 F-b: 同 _pooled 成熟谓词
+        if net is not None:
+            per_day.setdefault(r["day"], []).append(net)
     day_es = [sum(v) / len(v) for v in per_day.values()]
     summary: dict[str, Any] = {
         "events_total": len(rows),
-        "events_mature": sum(1 for r in rows if r["net"] is not None),
+        # R147 Op1 F-b: 成熟计数与池化/日分布同一谓词 (有限净值)
+        "events_mature": sum(1 for r in rows if _finite_net(r["net"]) is not None),
         "days_with_mature": len(per_day),
         "day_e_distribution": {
             "protective_lt0": sum(1 for e in day_es if e < 0),
@@ -215,10 +228,12 @@ def _finite_net(value: Any) -> float | None:
     """R145 Op2 F1: 成熟 net 有限性守卫 — NaN/Inf/bool 不成熟 (与 None 同义)。
 
     NaN/Inf 是浮点管道常见形态 (R141 Op2 NaN 纪律), 静默入均值会把整个
-    同日截面变 NaN 波及无辜行业, 且 R143 Op3 起账本写入器 allow_nan=False
-    会令落账整体冻结 (PoC 双实锤); bool 是 int 子类按 1.0 参与均值是冒充
-    (R142 F2 pin)。与 _pooled (裸 is not None) 的不对称是已登记家族项
-    (R143 F3 summary 面 NaN 暴露), 单一实现纪律不在本轮扩大改兄弟面。
+    同日截面变 NaN 波及无辜行业, 且写入器 allow_nan=False 契约下会冻结
+    落账或 (R147 Op1 F-a 前的旧写入器) 静默写 NaN/Infinity 字面量毒化
+    账本 (PoC 实锤); bool 是 int 子类按 1.0 参与均值是冒充 (R142 F2 pin)。
+    R147 Op1 F-b: _pooled/events_mature/per_day/day_counterfactual_e 与
+    去均值两面全部收敛到本单一实现 (R143 F3/R145 登记家族项收口),
+    消费面不再有裸 is not None 成熟谓词。
     非数值类型 (str 等) 不在本守卫内 — 契约违反 fail-closed 崩溃是诚实行为。
     """
     if value is None or isinstance(value, bool):
@@ -244,6 +259,11 @@ def industry_day_demeaned(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
     构造性语义: 去均值池内跨行业 (事件加权) 合计恒为 0 — 读数是相对排序
     证据, 不是绝对机会成本 (渲染层机制注同义)。
+
+    R147 Op1 F-b: 非有限派生点在 _demeaned_pooled_points 构造处剔除,
+    e 聚合非有限 → None (有限点和溢出), ci90_low 仅在 e 非 None 且
+    n 足额时计算 — 本面与 demeaned_robustness 面语义一致 (R146 isinf
+    登记事实就此收口, 契约违反输入不再产出非有限聚合冻结/毒化账本)。
     """
     pooled, n_participating, excluded_days, excluded_events = (
         _demeaned_pooled_points(rows)
@@ -253,13 +273,19 @@ def industry_day_demeaned(rows: list[dict[str, Any]]) -> dict[str, Any]:
         pts = pooled[key]
         rets = [v for _, v in pts]
         days = [d for d, _ in pts]
+        e = sum(rets) / len(rets)
+        # R147 Op1 F-b: 有限点和仍可溢出 (R146 语义镜像) — 非有限聚合
+        # None 不冒充; ci 仅在 e 非 None 且 n 足额时计算 (rets 逐点有限
+        # 由 _demeaned_pooled_points 构造处保证, bootstrap 输入有限)
+        if not math.isfinite(e):
+            e = None
         cells[key] = {
             "events": len(rets),
             "days": len(set(days)),
-            "e": sum(rets) / len(rets),
+            "e": e,
             "ci90_low": (
                 cluster_boot_ci_low(rets, days)
-                if len(rets) >= MIN_CELL_N
+                if e is not None and len(rets) >= MIN_CELL_N
                 else None
             ),
         }
@@ -278,6 +304,11 @@ def _demeaned_pooled_points(
     industry_day_demeaned_robustness 的参与日判定、成熟谓词 (_finite_net)、
     哨兵键、单行业日剔除计数语义的单一定义; pooled 保持日迭代构造序
     (原函数输出逐字节不变的 pin, R145 Op2 F3 键序纪律不变)。
+
+    R147 Op1 F-b: 非有限派生点 (|net − day_mean| 可达 2·max|net|, 单点
+    即可溢出) 在构造处统一按不成熟剔除 — 与输入 NaN 同语义, 两消费面
+    计数自此一致 (R146 面「events 可能与旧面不同」披露随之失效); 有限
+    值路径逐字节不变。
     """
     by_day: dict[str, list[tuple[Any, float]]] = {}
     for r in rows:
@@ -298,8 +329,11 @@ def _demeaned_pooled_points(
     for day, items in participating.items():
         day_mean = sum(net for _, net in items) / len(items)
         for ind, net in items:
+            point = net - day_mean
+            if isinstance(point, float) and not math.isfinite(point):
+                continue  # R147 Op1 F-b: 非有限派生点不成熟 (输入 NaN 同语义)
             key = UNKNOWN_INDUSTRY_KEY if ind is None else ind
-            pooled.setdefault(key, []).append((day, net - day_mean))
+            pooled.setdefault(key, []).append((day, point))
     return pooled, len(participating), excluded_days, excluded_events
 
 
@@ -323,22 +357,20 @@ def industry_day_demeaned_robustness(rows: list[dict[str, Any]]) -> dict[str, An
     R146 Op2 F1: 派生聚合有限性守卫 — _finite_net 只守输入, 去均值派生值
     |net − day_mean| 可达 2·max|net|, 输入有限不保证派生有限 (单点即非
     有限, 或有限点和溢出 inf); 非有限派生点按不成熟处理不入聚合 (与输入
-    NaN 同语义; 因此本面 events 计数可能与 industry_day_demeaned 不同 —
-    如实披露不冒充), split_half e 与 total_sum 非有限 → None。ci90_low
-    仅在 e 非 None 且 n 足额时计算 (rets 逐点有限时 bootstrap 输入有限,
-    无需重复守卫)。R146 Op2 F2: sign_consistent 以 e 非 None 双侧门控 —
-    None 与 None 比较是 TypeError 不是 False。
+    NaN 同语义)。R147 Op1 F-b: 该过滤已上移至共享 helper
+    _demeaned_pooled_points 构造处 (单一实现), 本面与
+    industry_day_demeaned 的事件/日计数自此一致 (R146 的「两面 events
+    可能不同」披露失效), 本面保留 e/total_sum 聚合级非有限 → None。
+    ci90_low 仅在 e 非 None 且 n 足额时计算 (rets 逐点有限由构造处
+    保证, 无需重复守卫)。R146 Op2 F2: sign_consistent 以 e 非 None
+    双侧门控 — None 与 None 比较是 TypeError 不是 False。
     """
     pooled, _n_participating, _excluded_days, _excluded_events = (
         _demeaned_pooled_points(rows)
     )
     cells: dict[str, dict[str, Any]] = {}
     for key in sorted(pooled, key=str):  # str 键序: 混合类型键确定性 (F3)
-        pts = [
-            (d, v)
-            for d, v in pooled[key]
-            if isinstance(v, float) and math.isfinite(v)
-        ]  # R146 Op2 F1: 非有限派生点不成熟 (输入 NaN 同语义)
+        pts = pooled[key]
         day_order = sorted({d for d, _ in pts})
         half = len(day_order) // 2
         halves: dict[str, dict[str, Any]] = {}
@@ -988,9 +1020,11 @@ def record_gate_pool_status(
     未知不合并不比较不假装, 较两族兄弟 None 语义的形状收紧)。
 
     诊断面 fail-open: 装载经 load_trigger_ledger 单一实现 (损坏行
-    advisory 跳过); 快照序列化失败 (summary 含不可 JSON 序列化值, 或
-    绑定混合类型键使 sort_keys 排序 TypeError — R143 Op2 PoC 双实锤)
-    打印警告返回 snapshot_not_serializable 零写入; 写失败 (含 mkdir
+    advisory 跳过); 快照序列化失败 (summary 含不可 JSON 序列化值,
+    NaN/Inf 非有限值 — R147 Op1 F-a 起本写入器 allow_nan=False 与两族
+    兄弟逐字一致, 绝不静默写 NaN/Infinity 字面量毒化账本, 或绑定混合
+    类型键使 sort_keys 排序 TypeError — R143 Op2 PoC 实锤) 打印警告
+    返回 snapshot_not_serializable 零写入; 写失败 (含 mkdir
     失败形态) 打印警告返回 write_failed — 均不阻断报告生成 (R143 Op3
     起三族写入器失败契约一致: 兄弟两族的 mkdir/序列化已同入 typed
     守卫并加 allow_nan=False)。
@@ -1033,9 +1067,15 @@ def record_gate_pool_status(
     try:
         # R143 Op2 F1: 序列化在 typed 守卫内 — summary/绑定含不可序列化
         # 值或混合类型键时 TypeError/ValueError → snapshot_not_serializable
-        # fail-open, 绝不裸逃逸炸穿 main 报告生成
+        # fail-open, 绝不裸逃逸炸穿 main 报告生成。
+        # R147 Op1 F-a: allow_nan=False — 本写入器此前实际缺该参数 (R143
+        # Op3 只改了两族兄弟代码与本文档 docstring, 87102fc9 提交信息
+        # 「三族失败契约完全一致」为失实陈述), NaN/Inf 静默序列化
+        # NaN/Infinity 字面量落账毒化 K 判读数据源 (PoC 实锤); 现与兄弟
+        # 逐字同款: 非有限 → ValueError → snapshot_not_serializable 零写入
         body = "\n".join(
-            json.dumps(r, ensure_ascii=False, sort_keys=True) for r in records
+            json.dumps(r, ensure_ascii=False, sort_keys=True, allow_nan=False)
+            for r in records
         )
         if body:
             body += "\n"

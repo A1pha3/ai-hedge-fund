@@ -6,6 +6,7 @@ fixture 全部非对称 (R13 教训: 对称 fixture 的数值断言无牙); 零�
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 
@@ -1318,12 +1319,15 @@ class TestDemeanedRobustnessAdversarialPins:
         assert total is None or math.isfinite(total)
         # 新面子树 JSON 安全 (R143 allow_nan=False 契约下本面不再投毒)
         json.dumps(rob, allow_nan=False)
-        # 旧面 (industry_day_demeaned) 派生 inf 同族暴露 pin — declare
-        # stop_condition (a) 登记不修: R143 F3 家族项 + 单一实现纪律,
-        # 输出逐字节不变义务优先; 整账冻结经旧面仍可达是已登记事实
+        # R147 Op1: isinf 登记 pin 翻转 (披露更新 — 登记事实已修)。R146
+        # 时代旧面 (industry_day_demeaned) 派生 inf 是已登记家族暴露的
+        # 实证 pin; 本轮 F-b 收敛后非有限派生聚合降级 None, 全 summary
+        # JSON 安全, 账本冻结/毒化经旧面不可达 (另见
+        # TestLedgerWriterAllowNanFamilyConvergence 端到端)
         summary = zga.summarize_gate_effectiveness(list(self.OVERFLOW_ROWS))
+        json.dumps(summary, allow_nan=False)
         old_dd = summary["by_industry_day_demeaned"]["by_industry"]
-        assert math.isinf(old_dd["A"]["e"])  # 已登记家族暴露的实证 pin
+        assert old_dd["A"]["e"] is None or math.isfinite(old_dd["A"]["e"])
 
     def test_f1_input_finite_path_unchanged(self):
         # 有限值路径逐字节 pin (Op1 ROWS3 交付数字不变)
@@ -1396,3 +1400,111 @@ class TestDemeanedRobustnessAdversarialPins:
         assert "垃圾C" in section  # events=2 合法入行
         assert "x" not in section.split("| 垃圾C")[-1].split("\n")[0]
         assert "—" in section  # 畸形环节显 —
+
+
+class TestLedgerWriterAllowNanFamilyConvergence:
+    """R147 Op1: 门挡池账本写入器 allow_nan 家族收敛 + 旧面非有限守卫。
+
+    本会话 Observe PoC 实锤 (可重放): R143 Op3 (87102fc9) 声称三族写入器
+    失败契约一致 (typed 守卫 + allow_nan=False), 但门挡池写入器的
+    json.dumps 实际缺 allow_nan=False — NaN/Inf summary 静默序列化
+    NaN/Infinity 字面量落账 (recorded=True), 毒化 owner K 判读第三族
+    数据源 (兄弟族 W2 同款失败), 而非 docstring 与 R145/R146 叙事声称的
+    snapshot_not_serializable 冻结。测试盲区根因: 既有 snapshot 测试只
+    覆盖 TypeError 面 (与 allow_nan 无关), NaN 行为从未经真实写入器 pin。
+    修复: (F-a) 写入器 allow_nan=False (兄弟逐字同款); (F-b) summary
+    旧面输入/派生非有限守卫收敛 (_finite_net 单一实现, 登记项② 收口);
+    (F-c) day_counterfactual_e 同守卫; (F-d) docstring 失实修正。
+    """
+
+    def test_writer_nan_stat_typed_fail_open(self, tmp_path):
+        # F-a RED (修复前: recorded=True, NaN 字面量落盘毒化账本)
+        ledger = tmp_path / "gate_pool_ledger.jsonl"
+        s = _summary()
+        s["normal_regime_pooled"]["e"] = float("nan")
+        meta = zga.record_gate_pool_status(
+            {"summary": s}, "20260908", ledger_path=ledger,
+        )
+        assert meta == {"recorded": False, "reason": "snapshot_not_serializable"}
+        assert not ledger.exists()
+
+    def test_writer_infinity_stat_typed_fail_open(self, tmp_path):
+        # F-a: Infinity 同语义 — 严格 JSON 契约与两族兄弟逐字一致
+        ledger = tmp_path / "gate_pool_ledger.jsonl"
+        s = _summary()
+        s["gate_blocked_pooled"] = {
+            "events": 1, "e": float("inf"), "ci90_low": None, "days": 1,
+        }
+        meta = zga.record_gate_pool_status(
+            {"summary": s}, "20260908", ledger_path=ledger,
+        )
+        assert meta == {"recorded": False, "reason": "snapshot_not_serializable"}
+        assert not ledger.exists()
+
+    def test_overflow_rows_summary_json_safe_and_ledger_records(self, tmp_path):
+        # F-b RED: R146 OVERFLOW_ROWS 下旧面派生 inf (isinf pin 登记事实)
+        # → 修复后全 summary 子树 JSON 安全且账本端到端落账 (登记项② 收口:
+        # 契约违反输入不再冻结/毒化账本, 聚合诚实降级 None 不冒充)
+        rows = list(TestDemeanedRobustnessAdversarialPins.OVERFLOW_ROWS)
+        s = zga.summarize_gate_effectiveness(rows)
+        json.dumps(s, allow_nan=False)  # 不抛 ValueError
+        ledger = tmp_path / "gate_pool_ledger.jsonl"
+        meta = zga.record_gate_pool_status(
+            {"summary": s}, "20260908", ledger_path=ledger,
+        )
+        assert meta == {"recorded": True, "records": 1}
+        body = ledger.read_text(encoding="utf-8")
+        assert "Infinity" not in body
+        assert "NaN" not in body
+
+    def test_pooled_nan_inf_bool_net_immature(self):
+        # F-b RED: _pooled 裸 is not None — NaN/Inf 入池化 e=nan/inf 冒充,
+        # bool 是 int 子类按 1.0 参与均值是冒充 (R142 F2 语义)
+        rows = [
+            _row("20250701", "normal", "c2", float("nan")),
+            _row("20250701", "normal", "c2", float("inf")),
+            _row("20250701", "normal", "c2", True),
+            _row("20250701", "normal", "c2", 0.04),
+        ]
+        s = zga.summarize_gate_effectiveness(rows)
+        pooled = s["normal_regime_pooled"]
+        assert pooled["events"] == 1
+        assert pooled["e"] == pytest.approx(0.04)
+        assert s["events_mature"] == 1
+        assert s["days_with_mature"] == 1
+        assert s["day_e_distribution"] == {
+            "protective_lt0": 0, "costly_gt0": 1, "flat_eq0": 0,
+        }
+
+    def test_day_counterfactual_e_non_finite_immature(self):
+        # F-c: NaN/Inf/bool 不成熟 — NaN 输入不再产出 NaN counterfactual_e
+        # 写入日报 JSON (报告面输入与账本面同守卫单一实现)
+        assert zga.day_counterfactual_e([float("nan")]) is None
+        assert zga.day_counterfactual_e([float("inf"), -0.02]) == pytest.approx(-0.02)
+        assert zga.day_counterfactual_e([True, 0.02]) == pytest.approx(0.02)
+
+    def test_finite_path_summary_bytes_unchanged(self):
+        # A4: 生产有限值路径逐字节 — 修复前摘要钉死 (sha256 of sorted JSON)
+        rows = list(TestIndustryDayDemeanedRobustness.ROWS3)
+        blob = json.dumps(
+            zga.summarize_gate_effectiveness(rows),
+            sort_keys=True, ensure_ascii=False,
+        )
+        assert hashlib.sha256(blob.encode()).hexdigest() == (
+            "4717974d040cc31043d8a3e5969c8427594602cd57b0b4a872702ed5524101a7"
+        )
+        mixed = [
+            {"day": "20250701", "regime": "normal", "dominant_family": "c2",
+             "industry": "电子", "industry_day_pct": 0.01, "net": 0.05},
+            {"day": "20250701", "regime": "normal", "dominant_family": "c3",
+             "industry": "银行", "industry_day_pct": -0.01, "net": -0.02},
+            {"day": "20250702", "regime": "crisis", "dominant_family": "c2",
+             "industry": "电子", "industry_day_pct": 0.0, "net": None},
+        ]
+        blob2 = json.dumps(
+            zga.summarize_gate_effectiveness(mixed),
+            sort_keys=True, ensure_ascii=False,
+        )
+        assert hashlib.sha256(blob2.encode()).hexdigest() == (
+            "03ddad958bdb8dfece4c5e4e2b10b966f7b4ed3d961dd8ac7b8cb20b212c2ee1"
+        )
