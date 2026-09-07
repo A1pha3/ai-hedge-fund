@@ -2307,13 +2307,19 @@ def _render_evidence_freshness_line(
 
         refresh_clause = ""
         if status is not None and status.get("ok") is False:
+            # R139 Op2 归因因果序: fetch.error → build.error → build.skipped —
+            # fetch 失败时 build 必 skipped ('fetch_failed' 泛化标签), 旧序让
+            # 泛化标签截胡 status 文件里已有的可操作原因 (宿主 20260907 演练
+            # 实锤: 'daily 缺 1 天 [...]' 被降级为 'fetch_failed'); _run_step
+            # 成功恒 (rc, None), fetch.error ⇒ fetch 失败, 前置无语义歧义;
+            # manifest 缺失形态 fetch.error=None 自然落回 build.skipped。
             detail = None
-            build = status.get("build")
-            if isinstance(build, dict):
-                detail = build.get("skipped") or build.get("error")
             fetch = status.get("fetch")
-            if not detail and isinstance(fetch, dict):
+            if isinstance(fetch, dict):
                 detail = fetch.get("error")
+            build = status.get("build")
+            if not detail and isinstance(build, dict):
+                detail = build.get("error") or build.get("skipped")
             # R115b Op3 (G2): 不推断『昨夜』— 落盘失败/断跑残留的陈旧失败
             # status 会被谎报; 措辞携带 status 自报日期, 缺失则明语未知。
             status_day = status.get("date")
