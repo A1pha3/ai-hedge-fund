@@ -776,7 +776,9 @@ def test_freshness_line_renders_when_refresh_failed_even_if_fresh(tmp_path, monk
     # G2: 不推断『昨夜』— 措辞携带 status 真实日期
     assert "court 夜刷状态 失败" in line
     assert "status 20260830" in line
-    assert "fetch_failed" in line
+    # R139 Op2 F: 归因因果序改为 fetch.error 优先 — 该断言旧锁 'fetch_failed'
+    # 正是被修复的降级标签, 契约更新为可操作的 error 尾
+    assert "exit rc=1: fetch boom" in line
 
 
 def test_freshness_line_omitted_when_report_missing(tmp_path, monkeypatch):
@@ -987,6 +989,96 @@ def test_freshness_line_stale_and_diagnostic_failure_coexist(tmp_path, monkeypat
     assert "陈旧 2 个交易日" in line
     assert "夜刷判定链 1 步失败" in line
     assert "证据冻结" in line
+
+
+def test_freshness_line_fetch_failure_shows_actionable_error(tmp_path, monkeypatch):
+    """R139 Op2 F (PoC RED→GREEN): fetch 失败时归因因果序 fetch.error 优先 —
+    旧序 build.skipped='fetch_failed' 泛化标签截胡, status 文件里已有的可操作
+    原因 (如 'daily 缺 1 天') 被降级, 操作员当晚无法归因."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, date="20260828")
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260828", c1_lit=True, c2_lit=False, window_end="20260828"),
+    ]))
+    status_dir = tmp_path / "st"
+    status_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "date": "20260907",
+        "ok": False,
+        "fetch": {"rc": 1, "error": "exit rc=1: daily 缺 1 天 ['20260907']"},
+        "build": {"skipped": "fetch_failed"},
+    }
+    (status_dir / "court_refresh_status.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        da, "_COURT_REFRESH_STATUS_PATH", status_dir / "court_refresh_status.json"
+    )
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "daily 缺 1 天 ['20260907']" in line
+    assert "fetch_failed" not in line
+
+
+def test_freshness_line_manifest_missing_falls_back_to_skip_tag(tmp_path, monkeypatch):
+    """R139 Op2 A2: fetch 成功而 manifest 缺失 (build skip, fetch.error=None)
+    → 自然落回 build.skipped, 既有语义不变路径."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, date="20260828")
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260828", c1_lit=True, c2_lit=False, window_end="20260828"),
+    ]))
+    status_dir = tmp_path / "st"
+    status_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "date": "20260907",
+        "ok": True,
+        "fetch": {"rc": 0, "error": None},
+        "build": {"skipped": "court_manifest_missing_or_window_missing"},
+    }
+    (status_dir / "court_refresh_status.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        da, "_COURT_REFRESH_STATUS_PATH", status_dir / "court_refresh_status.json"
+    )
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    # ok=True → 既有 refresh 子句不触发 (skip 非 failure), 行仍省略
+    assert line is None
+
+
+def test_freshness_line_report_missing_beats_diagnostic_failure(tmp_path, monkeypatch):
+    """R139 Op2 A3 (边界钉死): 报告目录缺失 (判定面未建立稳态) + status 含诊断
+    失败 → 整行省略。R115 fail-open 家族纪律: 报告缺失时行让位, 诊断子句不单独
+    撑起一行 — 钉死为显式选择, 防未来『顺手修复』悄然改变稳态语义."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    _patch_drift_reports_dir(monkeypatch, tmp_path / "no-such-reports")
+    status_dir = tmp_path / "st"
+    _write_refresh_status_full(
+        status_dir,
+        diagnostics={"scripts/btst_signal_day_cohort.py": {
+            "rc": 2, "error": "exit rc=2: cohort boom",
+        }},
+    )
+    monkeypatch.setattr(
+        da, "_COURT_REFRESH_STATUS_PATH", status_dir / "court_refresh_status.json"
+    )
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is None
 
 
 def test_freshness_line_renders_in_daily_action_when_stale(case, tmp_path, monkeypatch):
