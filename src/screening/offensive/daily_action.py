@@ -2272,6 +2272,7 @@ def _render_evidence_freshness_line(
         future_anomaly = report_date > wall_today
         dist_text = None
         stale = False
+        window_stall_dist = None
         if sessions:
             from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
 
@@ -2294,6 +2295,30 @@ def _render_evidence_freshness_line(
             if dist_text is None and dist is not None:
                 stale = dist >= _FRESHNESS_STALE_SESSIONS
                 dist_text = f"陈旧 {dist} 个交易日"
+            # R139 Op3: court 窗口停滞 — fetch 成功 (数据存在性校验) + build
+            # 成功 (该日 0 行窗口不延伸) + ok=True + 报告文件名每日刷新的组合
+            # 下, 既有三个触发条件 (报告陈旧/ok=False/诊断步失败) 全部安静而
+            # 证据宇宙冻结 (连续合法空涨停日或原料边界事故同形)。复用同一
+            # 日历实例计算 window_end→as_of 交易距离, ≥ 报告陈旧同款阈值出
+            # 行; 落后 1 日属合法空日零噪声; 窗口早于全部会话/as_of 不在日历
+            # → 安静 fail-open (报告陈旧判定照常兜底)。
+            if window_end:
+                try:
+                    window_end_date = datetime.strptime(window_end, "%Y%m%d").date()
+                except ValueError:
+                    window_end_date = None
+                if window_end_date is not None:
+                    # 真实账本 window_end 常落在非交易日 (面板日期范围端点),
+                    # 非交易日覆盖 ≡ 前一收盘覆盖 (语义为真): 按日历中 ≤
+                    # window_end 的最后会话折算, 不因 ValueError 永久安静。
+                    covered = [d for d in sessions if d <= window_end_date]
+                    if covered:
+                        try:
+                            wdist = calendar.session_distance(covered[-1], as_of)
+                        except ValueError:
+                            wdist = None
+                        if wdist is not None and wdist >= _FRESHNESS_STALE_SESSIONS:
+                            window_stall_dist = wdist
         if dist_text is None:
             days = (as_of - report_date).days
             if days < 0 and future_anomaly:
@@ -2333,13 +2358,27 @@ def _render_evidence_freshness_line(
             )
             refresh_clause = f" · court 夜刷状态 失败（{inner[:160]}）"
         diag_clause = _diagnostic_failure_clause(status)
-        diag_only = not stale and not refresh_clause and bool(diag_clause)
-        if not stale and not refresh_clause and not diag_clause:
+        diag_only = (
+            not stale
+            and not refresh_clause
+            and window_stall_dist is None
+            and bool(diag_clause)
+        )
+        if (
+            not stale
+            and not refresh_clause
+            and not diag_clause
+            and window_stall_dist is None
+        ):
             return None
         parts = [f"分解报告 {report_day}（{dist_text}）"]
         if ledger_last:
             parts.append(f"触发器账本最后判定 {ledger_last}")
-        if window_end:
+        if window_stall_dist is not None:
+            parts.append(
+                f"court 覆盖停滞 {window_stall_dist} 个交易日（最后覆盖 {window_end}）"
+            )
+        elif window_end:
             parts.append(f"court 覆盖至 {window_end}")
         tail = (
             " — 失败步骤的报告/账本停留在最后成功夜，其余判定面照常刷新；"
