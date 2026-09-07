@@ -94,12 +94,33 @@ class TestDayCounterfactualE:
     def test_single_mature_row(self):
         assert zga.day_counterfactual_e([None, 0.02]) == pytest.approx(0.02)
 
+    def test_industry_heat_bucket_predicate(self):
+        # R141 Op1: 热度谓词三桶; None/缺失归 unknown 不冒充任一侧
+        assert zga._industry_heat_bucket(0.012) == "heat_positive"
+        assert zga._industry_heat_bucket(0.0) == "heat_non_positive"
+        assert zga._industry_heat_bucket(-0.03) == "heat_non_positive"
+        assert zga._industry_heat_bucket(None) == "heat_unknown"
+
 
 def _row(day: str, regime: str, family: str, net: float | None) -> dict:
     return {
         "day": day,
         "regime": regime,
         "dominant_family": family,
+        "net": net,
+    }
+
+
+def _irow(
+    day: str, industry: str | None, ind_pct: float | None,
+    net: float | None, *, regime: str = "normal",
+) -> dict:
+    return {
+        "day": day,
+        "regime": regime,
+        "dominant_family": "c3_industry",
+        "industry": industry,
+        "industry_day_pct": ind_pct,
         "net": net,
     }
 
@@ -150,6 +171,57 @@ class TestSummarizeGateEffectiveness:
         rows = [_row("20250701", "normal", "c3_industry", -0.01)]
         s = zga.summarize_gate_effectiveness(rows)
         assert s["normal_regime_pooled"]["ci90_low"] is None
+
+    def test_industry_heat_stratification_pools(self):
+        # R141 Op1: 热度三桶池化 — 非对称数值, 均值只由各桶成熟行决定
+        rows = [
+            _irow("20250701", "银行", 0.02, 0.04),
+            _irow("20250701", "银行", 0.01, 0.02),
+            _irow("20250702", "医药", -0.01, -0.06),
+            _irow("20250703", "医药", 0.0, -0.02),
+            _irow("20250706", "电子", None, 0.01),
+            _irow("20250707", "电子", None, None),
+        ]
+        s = zga.summarize_gate_effectiveness(rows)
+        heat = s["by_industry_heat"]
+        assert set(heat.keys()) == set(zga.HEAT_BUCKETS)
+        assert heat["heat_positive"]["events"] == 2
+        assert heat["heat_positive"]["e"] == pytest.approx(0.03)
+        assert heat["heat_non_positive"]["events"] == 2
+        assert heat["heat_non_positive"]["e"] == pytest.approx(-0.04)
+        assert heat["heat_unknown"]["events"] == 1
+        assert heat["heat_unknown"]["e"] == pytest.approx(0.01)
+        # n < MIN_CELL_N → CI None (只披露不判定)
+        assert all(c["ci90_low"] is None for c in heat.values())
+        # 行业分层: 每行业独立池化, 键确定 (None 缺席时无 None 键)
+        ind = s["by_industry"]
+        assert ind["银行"]["events"] == 2
+        assert ind["银行"]["e"] == pytest.approx(0.03)
+        assert ind["医药"]["e"] == pytest.approx(-0.04)
+        assert ind["电子"]["events"] == 1
+
+    def test_industry_keys_deterministic_and_none_last(self):
+        rows = [
+            _irow("20250701", "医药", 0.01, 0.01),
+            _irow("20250702", None, None, 0.02),
+            _irow("20250703", "银行", -0.01, -0.01),
+        ]
+        first = zga.summarize_gate_effectiveness(rows)
+        second = zga.summarize_gate_effectiveness(list(reversed(rows)))
+        # 确定性 (Unicode 码点序, None 末位) — 具体序不是断言点, 稳定才是
+        assert list(first["by_industry"].keys()) == list(
+            second["by_industry"].keys()
+        )
+        assert first["by_industry"]["银行"]["events"] == 1
+        assert first["by_industry"]["医药"]["events"] == 1
+        assert first["by_industry"][None]["events"] == 1
+
+    def test_rows_without_industry_keys_land_in_none_industry(self):
+        # 旧形态行 (无 industry 键) — .get 容纳, 落 None 行业不崩溃
+        rows = [_row("20250701", "normal", "c3_industry", -0.01)]
+        s = zga.summarize_gate_effectiveness(rows)
+        assert s["by_industry"][None]["events"] == 1
+        assert s["by_industry_heat"]["heat_unknown"]["events"] == 1
 
     def test_ci_deterministic_per_call(self):
         # R13 纪律: 同输入两次调用恒等 (per-call seeded, 与调用历史无关)
@@ -228,6 +300,32 @@ class TestRenderMd:
         md = zga.render_md(payload)
         assert "重放 hit 披露" not in md
 
+    def test_renders_industry_strata_lines(self):
+        # R141 Op1: 行业热度三桶 + top 行业行渲染
+        payload = self._payload()
+        payload["summary"]["by_industry_heat"] = {
+            "heat_positive": {"events": 1200, "days": 40, "e": 0.004, "ci90_low": -0.001},
+            "heat_non_positive": {"events": 620, "days": 30, "e": -0.011, "ci90_low": -0.02},
+            "heat_unknown": {"events": 0, "days": 0, "e": None, "ci90_low": None},
+        }
+        payload["summary"]["by_industry"] = {
+            "银行": {"events": 300, "days": 20, "e": 0.006, "ci90_low": 0.001},
+            "医药": {"events": 210, "days": 15, "e": -0.008, "ci90_low": None},
+        }
+        md = zga.render_md(payload)
+        assert "按行业热度分层" in md
+        assert "热 (行业涨幅 > 0)" in md and "+0.40%" in md
+        assert "冷 (≤ 0)" in md and "-1.10%" in md
+        assert "未知 (行业/涨幅缺失)" in md
+        assert "按行业分层" in md and "银行" in md and "医药" in md
+
+    def test_industry_strata_missing_values_dash_not_crash(self):
+        payload = self._payload()
+        # 空分层 (无任何行) → 整表 '—', 不崩溃且不渲染 None 字面量
+        md = zga.render_md(payload)
+        assert "按行业热度分层" in md
+        assert "None" not in md
+
 
 def _ev(ts_code: str, day: str, *, gross_t10: float | None, **overrides) -> dict:
     """合成近失事件行 (_build_event 生产对齐列 + _stage/_strength, 数值非对称)。"""
@@ -291,6 +389,25 @@ class TestAlignedCounterfactualRows:
             self.REGIME,
         )
         assert [r["ts_code"] for r in rows] == ["000009.SZ"]
+
+    def test_industry_columns_carried_through_alignment(self):
+        # R141 Op1: industry_name/_industry_day_pct 经 production_aligned 穿透
+        rows = zga.aligned_counterfactual_rows(
+            [
+                _ev(
+                    "000001.SZ", "20250701", gross_t10=0.10,
+                    industry_name="银行", _industry_day_pct=0.012,
+                ),
+                _ev("000009.SZ", "20250701", gross_t10=0.06),
+            ],
+            self.REGIME,
+        )
+        by_code = {r["ts_code"]: r for r in rows}
+        assert by_code["000001.SZ"]["industry"] == "银行"
+        assert by_code["000001.SZ"]["industry_day_pct"] == pytest.approx(0.012)
+        # 缺列事件 → None (分层归 unknown, 不冒充)
+        assert by_code["000009.SZ"]["industry"] is None
+        assert by_code["000009.SZ"]["industry_day_pct"] is None
 
 
 class TestCollectFailClosed:

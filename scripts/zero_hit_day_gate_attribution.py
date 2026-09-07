@@ -184,8 +184,41 @@ def summarize_gate_effectiveness(rows: list[dict[str, Any]]) -> dict[str, Any]:
             fam: _pooled([r for r in rows if r["dominant_family"] == fam])
             for fam in FAMILY_ORDER + ("mixed",)
         },
+        # R141 Op1 (R138 开放项① 收口): 行业热度分层 — c3 门自身输入
+        # (当日行业涨幅) 三桶 + 每 SW L1 池化; n<MIN_CELL_N CI=None 只披露。
+        "by_industry_heat": {
+            bucket: _pooled(
+                [r for r in rows if _industry_heat_bucket(r.get("industry_day_pct")) == bucket]
+            )
+            for bucket in HEAT_BUCKETS
+        },
+        "by_industry": {
+            ind: _pooled([r for r in rows if r.get("industry") == ind])
+            for ind in _sorted_industries(rows)
+        },
     }
     return summary
+
+
+HEAT_BUCKETS: tuple[str, ...] = (
+    "heat_positive",
+    "heat_non_positive",
+    "heat_unknown",
+)
+
+
+def _industry_heat_bucket(industry_day_pct: float | None) -> str:
+    """当日行业涨幅 → 热度桶; 缺失归 unknown (绝不冒充任一侧)。"""
+    if industry_day_pct is None:
+        return "heat_unknown"
+    return "heat_positive" if float(industry_day_pct) > 0 else "heat_non_positive"
+
+
+def _sorted_industries(rows: list[dict[str, Any]]) -> list[str | None]:
+    """行内出现过的行业名, 确定性排序 (None 排末位 — 键序稳定)。"""
+    values = {r.get("industry") for r in rows}
+    named = sorted(v for v in values if v is not None)
+    return named + ([None] if None in values else [])
 
 
 def aligned_counterfactual_rows(
@@ -201,6 +234,11 @@ def aligned_counterfactual_rows(
         return []
     for ev in blocked_evs:
         ev.setdefault(f"gross_ret_t{PRIMARY_HORIZON}", None)
+        # 行业热度分层维度 (R141 Op1): _build_event 自带 industry_name;
+        # 热度由日循环以 _industry_day_pct 侧信道回填 (镜像 _stage 模式),
+        # 旧形态事件缺列 → None (分层归 unknown, 不冒充)。
+        ev.setdefault("industry_name", None)
+        ev.setdefault("_industry_day_pct", None)
     aligned = production_aligned(pd.DataFrame(blocked_evs))
     net_col = net_returns(list(aligned[f"gross_ret_t{PRIMARY_HORIZON}"]))
     return [
@@ -210,12 +248,18 @@ def aligned_counterfactual_rows(
             "ts_code": ts_code,
             "stage": stage,
             "dominant_family": None,  # 调用方按日回填
+            "industry": None if pd.isna(industry_name) else str(industry_name),
+            "industry_day_pct": (
+                None if pd.isna(ind_pct) else float(ind_pct)
+            ),
             "net": net,
         }
-        for day, ts_code, stage, net in zip(
+        for day, ts_code, stage, industry_name, ind_pct, net in zip(
             aligned["signal_date"],
             aligned["ts_code"],
             aligned["_stage"],
+            aligned["industry_name"],
+            aligned["_industry_day_pct"],
             net_col,
         )
     ]
@@ -355,6 +399,10 @@ def collect_zero_hit_day_attribution(
                     ind_name, frame,
                 )
                 ev["_stage"] = stage
+                # R141 Op1: 当日行业涨幅 (c3 门自身输入) 随行穿透到分层
+                ev["_industry_day_pct"] = (
+                    float(ind_pct) if ind_pct is not None else None
+                )
                 blocked_evs.append(ev)
                 day_blocked_n += 1
         dominant = dominant_blocked_family(stage_counts)
@@ -482,6 +530,47 @@ def render_md(payload: Mapping[str, Any]) -> str:
         )
         lines.append(
             f"| {fam_cn.get(fam, fam)} | {cell['events']} | {cell['days']} | {e_str} | {ci_str} |"
+        )
+    lines.append("")
+    lines.append("## 按行业热度分层 (c3 门自身输入: 当日行业涨幅)")
+    lines.append("")
+    lines.append("| 热度桶 | 事件 n | 日 n | 反事实净 E | CI90 下界 |")
+    lines.append("|---|---|---|---|---|")
+    heat_cn = {
+        "heat_positive": "热 (行业涨幅 > 0)",
+        "heat_non_positive": "冷 (≤ 0)",
+        "heat_unknown": "未知 (行业/涨幅缺失)",
+    }
+    for bucket in HEAT_BUCKETS:
+        cell = s["by_industry_heat"][bucket]
+        e_str = f"{cell['e'] * 100:+.2f}%" if cell["e"] is not None else "—"
+        ci_str = (
+            f"{cell['ci90_low'] * 100:+.2f}%" if cell["ci90_low"] is not None else "—"
+        )
+        lines.append(
+            f"| {heat_cn[bucket]} | {cell['events']} | {cell['days']} | {e_str} | {ci_str} |"
+        )
+    lines.append("")
+    lines.append("## 按行业分层 (SW L1, 成熟事件数降序, 最多 8 行)")
+    lines.append("")
+    lines.append("| 行业 | 事件 n | 日 n | 反事实净 E | CI90 下界 |")
+    lines.append("|---|---|---|---|---|")
+    industry_cells = [
+        (ind, cell) for ind, cell in s["by_industry"].items() if cell["events"] > 0
+    ]
+    industry_cells.sort(key=lambda item: (-item[1]["events"], str(item[0])))
+    for ind, cell in industry_cells[:8]:
+        e_str = f"{cell['e'] * 100:+.2f}%" if cell["e"] is not None else "—"
+        ci_str = (
+            f"{cell['ci90_low'] * 100:+.2f}%" if cell["ci90_low"] is not None else "—"
+        )
+        lines.append(
+            f"| {ind if ind is not None else '—'} | {cell['events']} | "
+            f"{cell['days']} | {e_str} | {ci_str} |"
+        )
+    if len(industry_cells) > 8:
+        lines.append(
+            f"注: 其余 {len(industry_cells) - 8} 个行业见 JSON (by_industry), 只披露不判定。"
         )
     lines.append("")
     lines.append("## 逐日明细 (零 hit 日)")
