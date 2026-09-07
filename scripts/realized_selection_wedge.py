@@ -334,6 +334,94 @@ def drift_rows(
     return rows
 
 
+QUALIFICATION_THRESHOLD = 0.50
+
+
+def _comparable_strength(value: Any) -> float | None:
+    """有限数值才可比较 — NaN/inf/非数值一律视为缺失 (R141 NaN 家族纪律)。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    finite = float(value)
+    return finite if math.isfinite(finite) else None
+
+
+def drift_bucket_flips(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    """漂移面翻转聚合 (决策时 vs court 表, 双侧齐备才可比)。
+
+    - ``qualification_flip``: 跨 0.50 门槛翻转 (生产 ≥0.50 放行 vs court 终态
+      不达标, 或反向) — 触发器/先验证据的资格群体与生产门槛的资格群体错位;
+    - ``trigger_bucket_flip``: 两侧均 ≥0.50 但强度桶异 (0.50-0.60/0.60-0.70/
+      ≥0.70) — 阈值触发器锚定桶的成员漂移;
+    - ``no_flip``: 同桶; ``compared_n``/``missing_side_n``: 可比/单侧缺失
+      (缺失侧由既有 missing_decision_strength 披露承接, 不冒充可比)。
+    零判定逻辑 — 只披露, 不进任何触发器/授权路径。
+    """
+    flips = {
+        "qualification_flip": 0,
+        "trigger_bucket_flip": 0,
+        "no_flip": 0,
+        "compared_n": 0,
+        "missing_side_n": 0,
+    }
+    for row in rows:
+        paper = _comparable_strength(row.get("paper_strength"))
+        court = _comparable_strength(row.get("court_strength"))
+        if paper is None or court is None:
+            flips["missing_side_n"] += 1
+            continue
+        flips["compared_n"] += 1
+        paper_q = paper >= QUALIFICATION_THRESHOLD
+        court_q = court >= QUALIFICATION_THRESHOLD
+        if paper_q != court_q:
+            flips["qualification_flip"] += 1
+        elif strength_bucket(paper) != strength_bucket(court):
+            flips["trigger_bucket_flip"] += 1
+        else:
+            flips["no_flip"] += 1
+    return flips
+
+
+def attach_replay_leg(
+    rows: list[dict[str, Any]], replay_fn: Any
+) -> list[dict[str, Any]]:
+    """现行重放第三腿 (原地附加): ``replay_fn(ticker, day)`` → 结局 dict。
+
+    契约镜像 ``replay_divergence_diagnosis`` (R138 Op3): hit 恰为 bool,
+    非 Mapping / 缺 hit / 非 bool hit → typed ``replay_bad_outcome`` 不冒充;
+    None 结局 → ``replay_no_outcome``; 抛错 → ``类型: 消息`` 逐行 typed 不吞。
+    ``replay_strength`` 只在重放 hit 时有意义 (R140 实锤: miss 的
+    trigger_strength 恒 0.0 哨兵, 非测量), round 4; miss 行 strength None。
+    """
+    for row in rows:
+        error: str | None = None
+        outcome: Mapping[str, Any] | None = None
+        try:
+            raw = replay_fn(str(row["ticker"]), str(row["signal_date"]))
+            if raw is None:
+                error = "replay_no_outcome"
+            elif not isinstance(raw, Mapping):
+                error = f"replay_bad_outcome: {type(raw).__name__}"
+            elif not isinstance(raw.get("hit"), bool):
+                error = f"replay_bad_outcome: non-bool hit {raw.get('hit')!r}"
+            else:
+                outcome = raw
+        except Exception as exc:  # noqa: BLE001 — 失败本身进披露面, typed 不吞
+            error = f"{type(exc).__name__}: {exc}"
+        hit = bool(outcome.get("hit")) if outcome is not None else False
+        strength = outcome.get("trigger_strength") if outcome is not None else None
+        row["replay_hit"] = hit if outcome is not None else None
+        row["replay_strength"] = (
+            round(float(strength), 4)
+            if hit
+            and isinstance(strength, (int, float))
+            and not isinstance(strength, bool)
+            and math.isfinite(float(strength))
+            else None
+        )
+        row["replay_error"] = error
+    return rows
+
+
 def _other_horizon_blocks(matched_records: Sequence[Any]) -> list[dict[str, Any]]:
     """h≠10 的 matched 买入单独披露 (不进主恒等面)。"""
     grouped: dict[int, list[float]] = {}
@@ -383,6 +471,12 @@ def build_payload(
         ba_vals=[c["ret_pct"] for c in b_all],
     )
     n_primary = len(b_all)
+    drift_face_rows = drift_rows(b_all, recon.matched_records, paper_strengths)
+    drift_face: dict[str, Any] = {
+        "rows": drift_face_rows,
+        "missing_decision_strength": missing_strengths,
+        "flips": drift_bucket_flips(drift_face_rows),
+    }
     return {
         "report_date": report_date,
         "horizon": f"t{PRIMARY_HORIZON}",
@@ -413,10 +507,7 @@ def build_payload(
         "primary_min_n": PRIMARY_MIN_N,
         "unmatured_primary_n": unmatured,
         "per_day": per_day_rows(buy_days, universe, b_elig, b_inelig),
-        "drift": {
-            "rows": drift_rows(b_all, recon.matched_records, paper_strengths),
-            "missing_decision_strength": missing_strengths,
-        },
+        "drift": drift_face,
         "other_horizons": _other_horizon_blocks(recon.matched_records),
         "discipline": [
             "纯诊断 (宪法 #2): 胜率/赔率不替代组合路径证据; 本工具零判定逻辑",
@@ -481,23 +572,42 @@ def render_md(payload: Mapping[str, Any]) -> str:
             f"| {row['bought_elig_n']} | {_fmt(row['bought_elig_mean_pct'])} "
             f"| {row['bought_inelig_n']} |"
         )
+    drift_face = payload["drift"]
+    flips = drift_face.get("flips")
+    replay_attached = drift_face.get("replay_attached") is True
+    replay_col = " | 现行重放" if replay_attached else ""
+    replay_sep = " | ---" if replay_attached else ""
     lines += [
         "",
         "## 决策时强度 vs court 终态 (漂移面; drift = 决策时 − 终态, 正 = 生产看到的更高)",
         "",
-        f"决策时强度缺失 {payload['drift']['missing_decision_strength']} 笔"
+        f"决策时强度缺失 {drift_face['missing_decision_strength']} 笔"
         " (日志无 eligible 行 — 含 300009 事件型历史污染, 如实 None 不冒充)",
         "",
-        "| 信号日 | 票 | 决策时 | court 终态 | drift | court 桶 | 终态资格 | 不合格原因 |",
-        "|---|---|---|---|---|---|---|---|",
+        f"| 信号日 | 票 | 决策时 | court 终态 | drift | court 桶{replay_col} | 终态资格 | 不合格原因 |",
+        f"|---|---|---|---|---|---|---{replay_sep}---|",
     ]
-    for row in payload["drift"]["rows"]:
+    for row in drift_face["rows"]:
+        replay_cell = ""
+        if replay_attached:
+            replay_cell = f" | {_fmt(row.get('replay_strength'))}" if row.get("replay_error") is None and row.get("replay_hit") else f" | {row.get('replay_error') or '—'}"
         lines.append(
             f"| {row['signal_date']} | {row['ticker']} | {_fmt(row['paper_strength'])} "
             f"| {_fmt(row['court_strength'])} | {_fmt(row['strength_drift'])} "
-            f"| {row['court_bucket'] or '—'} | {'合格' if row['eligible'] else '不合格'} "
+            f"| {row['court_bucket'] or '—'}{replay_cell} | {'合格' if row['eligible'] else '不合格'} "
             f"| {','.join(row['ineligible_reasons']) or '—'} |"
         )
+    if flips is not None:
+        lines += [
+            "",
+            f"桶翻转汇总 (决策时 vs court 表, 双侧齐备 n={flips['compared_n']}): "
+            f"资格翻转 {flips['qualification_flip']} · 触发器桶翻转 {flips['trigger_bucket_flip']} "
+            f"· 无翻转 {flips['no_flip']} (单侧缺失 {flips['missing_side_n']} 笔不入桶, 不冒充可比)",
+            "",
+            "机制 caveat: 决策时−重放 = 公式代际+数据修订 (不可分离, R138 成文); "
+            "court 表−重放 应逐行一致 (表即现行公式×现行数据), 分歧 = 数据修订/表滞后。"
+            "翻转计数只披露, 阈值/K 判读须与触发器账本合并 (owner 门)。",
+        ]
     others = payload.get("other_horizons") or []
     if others:
         lines += [
@@ -540,6 +650,11 @@ def main(argv: list[str] | None = None) -> int:
         "--setup-log-dir", type=Path, default=Path("data/reports/setup_output_log"),
         help="决策时强度恢复的 setup_output_log 目录 (缺失 → v2 行全记缺失)。",
     )
+    parser.add_argument(
+        "--raw-dir", type=Path, default=None,
+        help="现行重放第三腿的 court raw 目录 (默认 panel-dir 的父目录, 与 "
+        "btst_realized_vs_court 同约定); 重放链失败 → 第三腿整体缺席 (fail-open)。",
+    )
     parser.add_argument("--output-json", type=Path, default=None)
     parser.add_argument("--output-md", type=Path, default=None)
     args = parser.parse_args(argv)
@@ -576,6 +691,7 @@ def main(argv: list[str] | None = None) -> int:
     payload = build_payload(
         recon, court_table, inputs, log_dir=args.setup_log_dir, report_date=stamp
     )
+    _attach_replay_third_leg(payload, raw_dir=args.raw_dir or args.panel_dir.parent, regime_labels=regime_labels)
 
     out_json = args.output_json or (REPORTS_DIR / f"selection_wedge_{stamp}.json")
     out_md = args.output_md or (REPORTS_DIR / f"selection_wedge_{stamp}.md")
@@ -588,6 +704,38 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps(payload["components"], ensure_ascii=False))
     print(f"written: {out_json} / {out_md}")
     return 0
+
+
+def _attach_replay_third_leg(
+    payload: dict[str, Any], *, raw_dir: Path, regime_labels: Mapping[str, str]
+) -> None:
+    """现行重放第三腿接线 (fail-open): 重放链任一失败 → 第三腿整体缺席。
+
+    重放函数经 ``build_court_replay_fn`` 单一实现 (court build 同源, 不复制
+    任何检测/评分语义, R138 纪律); 逐行 typed 错误由 ``attach_replay_leg``
+    承接。构造链失败镜像 ``attach_divergence_diagnosis`` (R138 Op3): typed
+    单行降级, 不冒充诊断结论。
+    """
+    rows = payload["drift"]["rows"]
+    if not rows:
+        return
+    try:
+        from btst_realized_vs_court import build_court_replay_fn
+
+        replay_fn = build_court_replay_fn(raw_dir, regime_map=regime_labels)
+        attach_replay_leg(rows, replay_fn)
+    except (Exception, SystemExit) as exc:  # noqa: BLE001 — 降级本身要 typed 可见
+        print(
+            json.dumps(
+                {
+                    "replay_third_leg": "unavailable",
+                    "reason": f"{type(exc).__name__}: {exc}",
+                },
+                ensure_ascii=False,
+            )
+        )
+        return
+    payload["drift"]["replay_attached"] = True
 
 
 def _court_window_from_manifest(path: Path) -> tuple[str, str] | None:

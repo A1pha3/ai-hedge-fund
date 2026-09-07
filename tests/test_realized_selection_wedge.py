@@ -19,6 +19,8 @@ from scripts.btst_realized_vs_court import (
 )
 from scripts.realized_selection_wedge import (
     _load_log_strengths,
+    attach_replay_leg,
+    drift_bucket_flips,
     classify_ineligible_reasons,
     decompose_wedge,
     eligible_universe_cells,
@@ -376,6 +378,120 @@ def test_poisoned_log_strength_forms(tmp_path) -> None:
     assert mapping[("20260701", "000014")] == pytest.approx(0.62)
     assert [k for k in mapping if k[1] in ("000010", "000011", "000012", "000013")] == []
     assert missing == 4  # 毒化值不入 map → 如实记缺失 (绝不以毒值冒充决策时强度)
+
+
+# ---------------------------------------------------------------------------
+# R142 Op1 — 匹配行强度漂移三方对比 (翻转聚合 + 现行重放第三腿)
+# ---------------------------------------------------------------------------
+
+def _drift_row(paper, court, ticker="301234.SZ"):
+    return {
+        "signal_date": "20260710",
+        "ticker": ticker,
+        "paper_strength": paper,
+        "court_strength": court,
+        "strength_drift": (
+            paper - court if (paper is not None and court is not None) else None
+        ),
+        "court_bucket": None,
+        "eligible": True,
+        "ineligible_reasons": [],
+    }
+
+
+def test_drift_bucket_flips_classification() -> None:
+    rows = [
+        _drift_row(0.52, 0.43),
+        _drift_row(0.48, 0.55),
+        _drift_row(0.72, 0.62),
+        _drift_row(0.65, 0.66),
+        _drift_row(None, 0.55),
+        _drift_row(0.52, None),
+    ]
+    flips = drift_bucket_flips(rows)
+    assert flips["qualification_flip"] == 2
+    assert flips["trigger_bucket_flip"] == 1
+    assert flips["no_flip"] == 1
+    assert flips["compared_n"] == 4
+    assert flips["missing_side_n"] == 2
+
+
+def test_drift_bucket_flips_boundary_and_nonfinite() -> None:
+    assert drift_bucket_flips([])["compared_n"] == 0
+    flips = drift_bucket_flips([_drift_row(0.50, 0.4999)])
+    assert flips["qualification_flip"] == 1
+    nan = float("nan")
+    flips = drift_bucket_flips([_drift_row(nan, 0.55), _drift_row(0.55, nan)])
+    assert flips["compared_n"] == 0
+    assert flips["missing_side_n"] == 2
+
+
+def test_attach_replay_leg_hit_and_miss() -> None:
+    rows = [
+        _drift_row(0.52, 0.43, ticker="301234.SZ"),
+        _drift_row(0.48, 0.55, ticker="000001.SZ"),
+    ]
+
+    def replay(ticker, day):
+        return {
+            "hit": ticker == "301234.SZ",
+            "miss_stage": None if ticker.endswith("SZ") else "c3_industry_weak",
+            "trigger_strength": 0.43123,
+        }
+
+    out = attach_replay_leg(rows, replay)
+    assert out[0]["replay_hit"] is True
+    assert out[0]["replay_strength"] == 0.4312
+    assert out[0]["replay_error"] is None
+    assert out[1]["replay_hit"] is False
+    assert out[1]["replay_strength"] is None
+    assert out[1]["replay_error"] is None
+
+
+def test_attach_replay_leg_typed_failures() -> None:
+    base = [_drift_row(0.52, 0.43)]
+
+    def bad_type(ticker, day):
+        return "hit"
+
+    assert attach_replay_leg(base, bad_type)[0]["replay_error"].startswith(
+        "replay_bad_outcome"
+    )
+
+    def bad_hit(ticker, day):
+        return {"hit": "yes", "trigger_strength": 0.9}
+
+    assert attach_replay_leg(base, bad_hit)[0]["replay_error"].startswith(
+        "replay_bad_outcome: non-bool hit"
+    )
+
+    def no_outcome(ticker, day):
+        return None
+
+    assert attach_replay_leg(base, no_outcome)[0]["replay_error"] == "replay_no_outcome"
+
+    def boom(ticker, day):
+        raise ValueError("raw missing")
+
+    err = attach_replay_leg(base, boom)[0]["replay_error"]
+    assert err == "ValueError: raw missing"
+
+
+def test_render_md_replay_leg_fail_open_and_present() -> None:
+    world = _fixture_world()
+    payload = build_payload(
+        world["recon"], world["ev"], world["inputs"], log_dir=None, report_date="20260906"
+    )
+    md_old = render_md(payload)
+    assert "现行重放" not in md_old
+    rows = payload["drift"]["rows"]
+    attach_replay_leg(rows, lambda t, d: {"hit": True, "miss_stage": None, "trigger_strength": 0.5})
+    payload["drift"]["flips"] = drift_bucket_flips(payload["drift"]["rows"])
+    payload["drift"]["replay_attached"] = True
+    md_new = render_md(payload)
+    assert "现行重放" in md_new
+    assert "桶翻转汇总" in md_new
+    assert "公式代际" in md_new
 
 
 def test_matched_coverage_identity() -> None:
