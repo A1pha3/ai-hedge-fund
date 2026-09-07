@@ -319,13 +319,26 @@ def industry_day_demeaned_robustness(rows: list[dict[str, Any]]) -> dict[str, An
     回答『最大单日贡献了几成』, 负读数行业对称 (最对齐日占比), 并列时
     稳定排序取最早日; total_sum==0 时份额与 top 日诚实 None (0 无法定义
     占比)。只披露不判定 — 稳定性判读语义属 owner。
+
+    R146 Op2 F1: 派生聚合有限性守卫 — _finite_net 只守输入, 去均值派生值
+    |net − day_mean| 可达 2·max|net|, 输入有限不保证派生有限 (单点即非
+    有限, 或有限点和溢出 inf); 非有限派生点按不成熟处理不入聚合 (与输入
+    NaN 同语义; 因此本面 events 计数可能与 industry_day_demeaned 不同 —
+    如实披露不冒充), split_half e 与 total_sum 非有限 → None。ci90_low
+    仅在 e 非 None 且 n 足额时计算 (rets 逐点有限时 bootstrap 输入有限,
+    无需重复守卫)。R146 Op2 F2: sign_consistent 以 e 非 None 双侧门控 —
+    None 与 None 比较是 TypeError 不是 False。
     """
     pooled, _n_participating, _excluded_days, _excluded_events = (
         _demeaned_pooled_points(rows)
     )
     cells: dict[str, dict[str, Any]] = {}
     for key in sorted(pooled, key=str):  # str 键序: 混合类型键确定性 (F3)
-        pts = pooled[key]
+        pts = [
+            (d, v)
+            for d, v in pooled[key]
+            if isinstance(v, float) and math.isfinite(v)
+        ]  # R146 Op2 F1: 非有限派生点不成熟 (输入 NaN 同语义)
         day_order = sorted({d for d, _ in pts})
         half = len(day_order) // 2
         halves: dict[str, dict[str, Any]] = {}
@@ -335,27 +348,35 @@ def industry_day_demeaned_robustness(rows: list[dict[str, Any]]) -> dict[str, An
         ):
             rets = [v for d, v in pts if d in day_set]
             days = [d for d, v in pts if d in day_set]
+            e = sum(rets) / len(rets) if rets else None
+            if e is not None and not math.isfinite(e):
+                e = None  # 有限点和仍可溢出 — 非有限聚合不冒充
             halves[name] = {
                 "days": len(day_set),
                 "events": len(rets),
-                "e": sum(rets) / len(rets) if rets else None,
+                "e": e,
                 "ci90_low": (
                     cluster_boot_ci_low(rets, days)
-                    if len(rets) >= MIN_CELL_N
+                    if e is not None and len(rets) >= MIN_CELL_N
                     else None
                 ),
             }
         early, late = halves["early"], halves["late"]
         sign_consistent: bool | None = None
-        if early["events"] > 0 and late["events"] > 0:
+        if early["e"] is not None and late["e"] is not None:
+            # R146 Op2 F2: e None 门控 — None > 0 是 TypeError 不是 False
             sign_consistent = (early["e"] > 0) == (late["e"] > 0)
         per_day: dict[str, float] = {}
         for d, v in sorted(pts, key=lambda p: p[0]):  # 日序稳定求和
-            per_day[d] = per_day.get(d, 0.0) + v
+            day_sum = per_day.get(d, 0.0) + v
+            if math.isfinite(day_sum):
+                per_day[d] = day_sum
+            else:
+                per_day.pop(d, None)  # 非有限日合计不入集中度 (不冒充)
         total = sum(per_day[d] for d in sorted(per_day))
-        if total == 0:
+        if total == 0 or not math.isfinite(total):
             concentration: dict[str, Any] = {
-                "total_sum": total,
+                "total_sum": total if math.isfinite(total) else None,
                 "top1_day": None,
                 "top1_share": None,
                 "top3_share": None,

@@ -1278,3 +1278,121 @@ class TestIndustryDayDemeanedRobustness:
         assert "垃圾A" not in section  # events 严格过滤不入行 (R145 F2 纪律)
         assert "垃圾B" in section  # 半分支坏形态渲染 — 不崩, 环节显 —
         assert section.count("—") >= 1
+
+
+class TestDemeanedRobustnessAdversarialPins:
+    """R146 Op2: 对 Op1 稳健性披露面的对抗性审查 PoC 收口。
+
+    F1 派生聚合非有限毒化 — _finite_net 只守输入, 去均值派生值
+    |net − day_mean| 可达 2·max|net|, 两天同号 1e308 级 (仍有限, 通过
+    输入守卫) 输入令 split_half e 与 total_sum 溢出 inf; R143 Op3 起
+    record_gate_pool_status 以 allow_nan=False 序列化 → 账本落账整体
+    冻结 (R145 F1 双实锤的派生面残留)。F2 交互: e 守卫为 None 后
+    sign_consistent 的 (e > 0) 比较对 None TypeError。F3 渲染畸形
+    share/负 days 分支 pin。登记不修: industry_day_demeaned/_pooled
+    旧面同族派生 inf 暴露 (R143 F3 家族项 + 单一实现纪律, 输出逐字节
+    不变义务优先)、r["day"] 缺键 (Op1 前既有)。
+    """
+
+    OVERFLOW_ROWS = [
+        _irow("20250701", "A", None, 1e308),
+        _irow("20250701", "B", None, -1e308),
+        _irow("20250702", "A", None, 1e308),
+        _irow("20250702", "B", None, -1e308),
+        _irow("20250703", "A", None, 1e308),
+        _irow("20250703", "B", None, -1e308),
+    ]
+
+    def test_f1_derived_overflow_no_inf_poc(self):
+        # 修复前 RED: A 去均值点恒 +1e308, 晚半窗两点 sum=2e308=inf,
+        # total_sum=3e308=inf → json.dumps(allow_nan=False) ValueError
+        # (账本落账冻结); 修复后非有限派生 → None 不冒充, json 可序列化
+        rob = zga.industry_day_demeaned_robustness(list(self.OVERFLOW_ROWS))
+        a = rob["by_industry"]["A"]
+        late_e = a["split_half"]["late"]["e"]
+        assert late_e is None or math.isfinite(late_e)
+        assert not (
+            isinstance(late_e, float) and math.isinf(late_e)
+        )
+        total = a["day_concentration"]["total_sum"]
+        assert total is None or math.isfinite(total)
+        # 新面子树 JSON 安全 (R143 allow_nan=False 契约下本面不再投毒)
+        json.dumps(rob, allow_nan=False)
+        # 旧面 (industry_day_demeaned) 派生 inf 同族暴露 pin — declare
+        # stop_condition (a) 登记不修: R143 F3 家族项 + 单一实现纪律,
+        # 输出逐字节不变义务优先; 整账冻结经旧面仍可达是已登记事实
+        summary = zga.summarize_gate_effectiveness(list(self.OVERFLOW_ROWS))
+        old_dd = summary["by_industry_day_demeaned"]["by_industry"]
+        assert math.isinf(old_dd["A"]["e"])  # 已登记家族暴露的实证 pin
+
+    def test_f1_input_finite_path_unchanged(self):
+        # 有限值路径逐字节 pin (Op1 ROWS3 交付数字不变)
+        rows = TestIndustryDayDemeanedRobustness.ROWS3
+        before = json.dumps(
+            zga.industry_day_demeaned_robustness(list(rows)),
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        assert "电子" in before  # 结构存在
+        cells = zga.industry_day_demeaned_robustness(list(rows))["by_industry"]
+        assert cells["电子"]["split_half"]["early"]["e"] == pytest.approx(0.375)
+        assert cells["电子"]["day_concentration"]["top1_share"] == pytest.approx(
+            1 / 3
+        )
+
+    def test_f2_sign_consistent_none_when_half_e_guarded(self):
+        # F2 交互 pin: 溢出输入下晚半窗 e 守卫为 None → sign 不得对
+        # None 比较 (TypeError), 必须 None 不冒充
+        rob = zga.industry_day_demeaned_robustness(list(self.OVERFLOW_ROWS))
+        sign = rob["by_industry"]["A"]["split_half"]["sign_consistent"]
+        assert sign is None
+
+    def test_f1_single_industry_point_overflow_maturity(self):
+        # 单点派生即非有限 (三行业日 |net−mean| 溢出): 该点按不成熟处理,
+        # 不入任何聚合; 全点非有限的行业 → 零事件诚实形态
+        rows = [
+            _irow("20250701", "A", None, 1.5e308),
+            _irow("20250701", "B", None, -1.5e308),
+            _irow("20250701", "C", None, -1.5e308),
+            # mean = −5e307 → A 去均值 2e308 = inf (单点即非有限)
+            _irow("20250702", "A", None, 0.5),
+            _irow("20250702", "B", None, -0.25),
+        ]
+        rob = zga.industry_day_demeaned_robustness(rows)
+        a = rob["by_industry"]["A"]
+        # 日 1 的 inf 点不入聚合 → A 只剩日 2 的有限点 (0.5 − 0.125 = 0.375)
+        assert a["events"] == 1 and a["days"] == 1
+        # 单参与日落入晚半窗 (day_order 前半为早窗, n=1 → 早窗空)
+        assert a["split_half"]["early"]["e"] is None
+        assert a["split_half"]["late"]["e"] == pytest.approx(0.375)
+        assert a["split_half"]["sign_consistent"] is None
+        assert a["day_concentration"]["top1_share"] == pytest.approx(1.0)
+
+    def test_f3_render_robustness_malformed_share_and_days_no_crash(self):
+        # 渲染分支 pin: 畸形 share (str/bool) → '—'; 负 days → '—'
+        rows = TestIndustryDayDemeanedRobustness.ROWS3
+        s = zga.summarize_gate_effectiveness(list(rows))
+        rob = s["demeaned_robustness"]
+        rob["by_industry"]["垃圾C"] = {
+            "events": 2,
+            "days": -1,
+            "split_half": {
+                "early": {"days": -1, "events": 1, "e": 0.01, "ci90_low": None},
+                "late": {"days": 0, "events": True, "e": False, "ci90_low": None},
+                "sign_consistent": "yes",
+            },
+            "day_concentration": {
+                "total_sum": 0.02,
+                "top1_day": "20250701",
+                "top1_share": "x",
+                "top3_share": True,
+            },
+        }
+        payload = TestIndustryDayDemeanedRobustness._payload(
+            TestIndustryDayDemeanedRobustness(), s
+        )
+        md = zga.render_md(payload)
+        section = md.split("去均值对照稳健性")[-1].split("##")[0]
+        assert "垃圾C" in section  # events=2 合法入行
+        assert "x" not in section.split("| 垃圾C")[-1].split("\n")[0]
+        assert "—" in section  # 畸形环节显 —
