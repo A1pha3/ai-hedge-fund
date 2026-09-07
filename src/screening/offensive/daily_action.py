@@ -1487,7 +1487,10 @@ _ALIGNMENT_SUMMARY_PATH = Path("data/reports/realized_vs_court_alignment.json")
 _DATE_8_RE = re.compile(r"[0-9]{8}")
 
 
-def _render_prior_drift_line(reports_dir: str | Path | None = None) -> str | None:
+def _render_prior_drift_line(
+    reports_dir: str | Path | None = None,
+    today: date | None = None,
+) -> str | None:
     """先验漂移披露行 (R109 Op1): 冻结先验 vs 最新 court 证据的日度可见性。
 
     R98 漂移包定性先验 vs court 重建「相对高估 ~37x」(er_delta 0.55pp), 但
@@ -1510,7 +1513,10 @@ def _render_prior_drift_line(reports_dir: str | Path | None = None) -> str | Non
 
         found = latest_decomposition_report(base)
         if found is None:
-            return None
+            # R140 Op3 (R137 开放项②): 未来日期毒文件占据目录时 typed 告警
+            # 显形 (哪一行证据被谁挡住必须可见); 其余 None 形态 (目录缺失/
+            # 纯损坏) 维持行缺席逐字节不变。
+            return _poisoned_line("先验漂移披露", base, today)
         report_path, payload = found
         rows = payload["universes"]["production_aligned"]["horizons"]["t10"]
         row = next(item for item in rows if item.get("group") == "ALL")
@@ -1742,6 +1748,7 @@ def _render_universe_alignment_line(
 
 def _render_gap_reference_line(
     reports_dir: str | Path | None = None,
+    today: date | None = None,
 ) -> str | None:
     """执行面缺口参考行 (R92 Op3): gap 判别证据到操作员执行视图的通路。
 
@@ -1754,11 +1761,11 @@ def _render_gap_reference_line(
     """
     from src.screening.offensive.gap_disclosure import gap_execution_reference
 
-    reference = gap_execution_reference(
-        reports_dir if reports_dir is not None else Path("data/reports")
-    )
+    base = reports_dir if reports_dir is not None else Path("data/reports")
+    reference = gap_execution_reference(base)
     if reference is None:
-        return None
+        # R140 Op3: 毒化形态 typed 显形, 其余 None 形态维持行缺席不变。
+        return _poisoned_line("执行面缺口参考", base, today)
     if reference["split_stable"] is True:
         split_note = "罚分跨半方向稳定"
     elif reference["split_stable"] is False:
@@ -1780,6 +1787,7 @@ def _render_gap_reference_line(
 def _render_picks_quality_line(
     plan_details,
     reports_dir: str | Path | None = None,
+    today: date | None = None,
 ) -> str | None:
     """今日入选质量构成行 (R114 Op3): 当日输出与 court 证据的最后一段通路。
 
@@ -1808,7 +1816,7 @@ def _render_picks_quality_line(
         )
         found = latest_decomposition_report(base)
         if found is None:
-            return None
+            return _poisoned_line("入选质量构成", base, today)  # R140 Op3
         report_path, payload = found
         rows = payload["universes"]["production_aligned"]["horizons"]["t10"]
         bucket_rows: dict[str, dict] = {}
@@ -1853,6 +1861,7 @@ def _render_picks_quality_line(
 def _render_day_cohort_line(
     plan_details,
     reports_dir: str | Path | None = None,
+    today: date | None = None,
 ) -> str | None:
     """今日信号日 cohort 语境行 (R125 Op3): 日层共振证据的操作员面。
 
@@ -1871,6 +1880,7 @@ def _render_day_cohort_line(
         return None
     try:
         from src.screening.offensive.gap_disclosure import (
+            COHORT_REPORT_GLOB,
             cohort_size_bucket,
             latest_signal_day_cohort_report,
         )
@@ -1881,7 +1891,13 @@ def _render_day_cohort_line(
         )
         found = latest_signal_day_cohort_report(base)
         if found is None:
-            return None
+            # R140 Op3: cohort 报告族毒化 typed 显形 (glob 参数族覆盖);
+            # 探测 glob = COHORT_REPORT_GLOB 公开单一常量 (读取体同源)。
+            # 其余 None 形态维持行缺席不变。
+            return _poisoned_line(
+                "信号日 cohort 语境", base, today, label="cohort 报告",
+                glob_pattern=COHORT_REPORT_GLOB,
+            )
         report_path, payload = found
         bucket_rows = payload.get("cohort_buckets")
         if not isinstance(bucket_rows, list) or not bucket_rows:
@@ -2104,31 +2120,45 @@ def _render_day_cohort_trigger_line() -> str | None:
 def _future_dated_report_day(reports_dir, today: date | None = None) -> str | None:
     """目录内最新未来日期报告的文件名日期; 无则 None (R137 Op1 异常显形面)。
 
-    未来日期守卫下沉共享读取体后, 证据消费者经 latest_decomposition_report
-    不再读到未来日期报告 (None, 不回退)。本 helper 专供 freshness 行的异常
-    探测 — 只看文件名日期不解析内容, 与读取体共用 report_filename_date
-    单一谓词防漂移。``today`` 注入锚 (R137 Op2 对抗审查 F2): 探测与渲染
-    必须同一时钟 — freshness 行可注入 ``today`` (R127 测试确定性纪律),
-    探测若锚真实钟会在注入世界里把被守卫拒绝的文件名送进渲染 (两钟语义
-    分叉); 未注入时与渲染默认同锚 date.today()。
+    R140 Op3 起实现升为 gap_disclosure.future_dated_report_day 公开单一
+    实现 (四个证据行的毒化告警与 freshness 行异常探测共用, glob 参数覆盖
+    两报告族) — 本委托保持 freshness 行调用点与签名不变。
+    """
+    from src.screening.offensive.gap_disclosure import future_dated_report_day
+
+    return future_dated_report_day(reports_dir, today=today)
+
+
+def _poisoned_line(
+    title: str,
+    reports_dir,
+    today: date | None = None,
+    *,
+    label: str = "分解报告",
+    glob_pattern: str | None = None,
+) -> str | None:
+    """证据行毒化告警的装配面 (R140 Op3, R137 开放项②收口)。
+
+    未来日期毒文件占据报告目录时出行『<title>：不可用 — <typed 子句>』
+    (子句措辞 = gap_disclosure.poisoned_report_clause 单一来源); 非毒化
+    None 形态 (目录缺失/纯损坏) 返回 None → 调用行维持整行省略逐字节
+    不变 (fail-open 家族纪律不回归)。today 注入锚透传探测器 (渲染与
+    探测同钟, R137 Op2 纪律)。
     """
     from src.screening.offensive.gap_disclosure import (
         DECOMPOSITION_REPORT_GLOB,
-        report_filename_date,
+        poisoned_report_clause,
     )
 
-    base = Path(reports_dir)
-    try:
-        dates = [
-            report_filename_date(p)
-            for p in base.glob(DECOMPOSITION_REPORT_GLOB)
-        ]
-    except OSError:
+    clause = poisoned_report_clause(
+        reports_dir,
+        glob_pattern=glob_pattern or DECOMPOSITION_REPORT_GLOB,
+        today=today,
+        label=label,
+    )
+    if clause is None:
         return None
-    wall_today = today if today is not None else date.today()
-    today_text = wall_today.strftime("%Y%m%d")
-    future = [d for d in dates if d is not None and d > today_text]
-    return max(future) if future else None
+    return f"{title}：不可用 — {clause}"
 
 
 def _diagnostic_failure_clause(status: dict | None) -> str:

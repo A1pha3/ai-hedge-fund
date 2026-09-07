@@ -109,7 +109,59 @@ def _latest_dated_report(
     return path, payload
 
 
-_COHORT_REPORT_GLOB = "signal_day_cohort_*.json"
+def future_dated_report_day(
+    reports_dir: str | Path = Path("data/reports"),
+    glob_pattern: str = DECOMPOSITION_REPORT_GLOB,
+    today: "dt.date | None" = None,
+) -> str | None:
+    """目录内最新未来日期报告的文件名日期; 无则 None (毒化探测, R140 Op3)。
+
+    未来日期守卫下沉共享读取体 (R137 Op1) 后证据消费者读到 None 不回退 —
+    本探测让消费行区分两种 None 形态: 目录缺失/纯损坏 (维持行缺席 fail-open
+    家族纪律) 与『目录被未来日期文件占据』(毒化/时钟故障, typed 告警显形,
+    操作员必须看得见哪一行证据被谁挡住)。只看文件名日期不解析内容, 与
+    读取体共用 report_filename_date 单一谓词; today 注入锚与渲染同钟
+    (R127 测试确定性 / R137 Op2 两钟分叉纪律); glob 参数覆盖分解报告与
+    signal_day_cohort 两报告族。
+    """
+    base = Path(reports_dir)
+    try:
+        dates = [
+            report_filename_date(p) for p in base.glob(glob_pattern)
+        ]
+    except OSError:
+        return None
+    wall_today = today if today is not None else _today()
+    today_text = wall_today.strftime("%Y%m%d")
+    future = [d for d in dates if d is not None and d > today_text]
+    return max(future) if future else None
+
+
+def poisoned_report_clause(
+    reports_dir: str | Path = Path("data/reports"),
+    glob_pattern: str = DECOMPOSITION_REPORT_GLOB,
+    today: "dt.date | None" = None,
+    label: str = "分解报告",
+) -> str | None:
+    """消费行毒化告警子句的单一措辞源 (R140 Op3); 非毒化 → None。
+
+    四个证据行 (先验漂移/入选质量构成/执行面缺口参考/信号日 cohort 语境)
+    的未来日期毒文件 typed 告警共用同一段措辞 — 措辞漂移会让操作员把
+    同一异常当成四种故障。
+    """
+    day = future_dated_report_day(reports_dir, glob_pattern, today)
+    if day is None:
+        return None
+    return (
+        f"{label}目录被未来日期文件占据（最新 {day}）— "
+        "守卫拒绝读取（核查文件名或时钟）"
+    )
+
+
+# 公开单一常量 (R140 Op3: cohort 语境行毒化探测需同源 glob — 字面量复制
+# 会让探测面与读取面在 glob 演化时分叉, DECOMPOSITION_REPORT_GLOB 同款纪律)
+COHORT_REPORT_GLOB = "signal_day_cohort_*.json"
+_COHORT_REPORT_GLOB = COHORT_REPORT_GLOB
 
 # cohort 规模分桶 (R123 Op1 定义, R125 Op3 上移单一实现家): 左闭右闭日数
 # 边界, 显式边界不玩 cut 花活。脚本 (scripts/btst_signal_day_cohort) 与

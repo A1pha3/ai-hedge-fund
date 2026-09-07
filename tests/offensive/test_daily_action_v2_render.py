@@ -2096,9 +2096,11 @@ def test_day_cohort_trigger_line_discloses_folded_duplicates(case, tmp_path, mon
 def test_future_dated_poison_guarded_evidence_but_flagged_freshness(
     case, tmp_path, monkeypatch
 ):
-    """R137 Op1 双面行为钉死: 未来日期毒报告在场时 —
-    (a) 证据消费面 (先验漂移行) fail-closed: 整行省略且不回退次新合法报告
-        (守卫下沉共享读取体, 修复前毒报告劫持『最新』被当作当前证据渲染);
+    """未来日期毒报告在场时的双面行为 (R137 Op1 立面, R140 Op3 契约升级) —
+    (a) 证据消费面 (先验漂移行) fail-closed: 毒报告不被当作证据也不回退次新
+        合法报告 (守卫下沉共享读取体), 且以 typed 告警显形『不可用 — 毒化
+        原因』而非旧契约的静默整行省略 (R140 Op3: 操作员必须看得见哪一行
+        证据被谁挡住);
     (b) 异常显形面 (freshness 行) 照常出行: 报告日期在今日之后文案保留
         (R115b G1 告警不因守卫失效)。"""
     from datetime import date as _date
@@ -2121,7 +2123,12 @@ def test_future_dated_poison_guarded_evidence_but_flagged_freshness(
     run = service.complete_run(context, candidates=())
     view = DailyActionV2Run(run, (), run.open_positions, (), ())
     text = render_daily_action_v2(view)
-    assert "先验漂移披露" not in text  # (a) 毒报告不被当作证据, 也不回退次新
+    # (a) 毒报告不被当作证据也不回退次新 — 且 R140 Op3 起 typed 告警显形
+    assert "先验漂移披露：不可用" in text
+    assert "20990101" in text
+    assert "守卫拒绝读取" in text
+    # 毒值 0.99 不得以任何形式进入先验漂移行渲染 (证据面仍 fail-closed)
+    assert "先验漂移披露：BTST" not in text
 
     line = da._render_evidence_freshness_line(
         _date(2026, 9, 4), today=_date(2026, 9, 5)
@@ -2157,3 +2164,136 @@ def test_future_probe_uses_injected_today_one_clock(case, tmp_path, monkeypatch)
     assert line is not None
     assert "报告日期在今日之后（文件名或时钟异常）" in line
     assert "20990101" in line
+
+
+# ━━━ R140 Op3: 未来日期毒文件 typed 告警族 (R137 开放项②收口) ━━━
+
+
+def test_future_dated_probe_single_source_delegation(tmp_path):
+    """daily_action._future_dated_report_day 委托 gap_disclosure 单一实现 —
+    两处行为分叉 (一侧拒一侧看不见) 在源头钉死。"""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.gap_disclosure import future_dated_report_day
+
+    base = _write_decomposition_report(tmp_path, date="20990101")
+    assert da._future_dated_report_day(
+        base, today=_date(2026, 9, 1)
+    ) == future_dated_report_day(base, today=_date(2026, 9, 1)) == "20990101"
+
+
+def test_future_dated_probe_injected_clock_two_directions(tmp_path):
+    """today 注入锚双向: 注入晚于毒日期 → 无毒化; 注入早于 → 探测命中。"""
+    from datetime import date as _date
+    from src.screening.offensive.gap_disclosure import future_dated_report_day
+
+    base = _write_decomposition_report(tmp_path, date="20990101")
+    assert future_dated_report_day(base, today=_date(2099, 12, 31)) is None
+    assert future_dated_report_day(base, today=_date(2026, 9, 1)) == "20990101"
+
+
+def test_prior_drift_line_poison_typed_warning(tmp_path, monkeypatch):
+    """先验漂移行: 毒文件在场 → typed 告警携带毒日期; 毒值不进渲染。"""
+    import json as _json
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, expectancy=-0.0001, wr=0.4456)
+    poison = _json.loads(
+        (base / "winrate_payoff_decomposition_20260904.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    poison["universes"]["production_aligned"]["horizons"]["t10"][0][
+        "expectancy"
+    ] = 0.99
+    (base / "winrate_payoff_decomposition_20990101.json").write_text(
+        _json.dumps(poison, ensure_ascii=False), encoding="utf-8"
+    )
+    line = da._render_prior_drift_line(base, today=_date(2026, 9, 5))
+    assert line is not None
+    assert line.startswith("先验漂移披露：不可用 — ")
+    assert "20990101" in line and "守卫拒绝读取" in line
+    assert "0.99" not in line and "+99.00%" not in line
+
+
+def test_prior_drift_line_clean_missing_dir_byte_identical_absence(
+    tmp_path, monkeypatch
+):
+    """非毒化 None 形态 (目录缺失/纯损坏) 维持整行省略 (fail-open 不回归)。"""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert da._render_prior_drift_line(empty, today=_date(2026, 9, 5)) is None
+    corrupt = tmp_path / "corrupt"
+    corrupt.mkdir()
+    (corrupt / "winrate_payoff_decomposition_20260904.json").write_text(
+        "{broken", encoding="utf-8"
+    )
+    assert (
+        da._render_prior_drift_line(corrupt, today=_date(2026, 9, 5)) is None
+    )
+
+
+def test_picks_quality_line_poison_typed_warning(case, tmp_path):
+    """入选质量构成行: 毒文件在场 → typed 告警 (非毒化省略形态不变)。"""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = tmp_path / "reports"
+    base.mkdir()
+    (base / "winrate_payoff_decomposition_20990101.json").write_text("{}",)
+    line = da._render_picks_quality_line(
+        [_detail("111.SZ", 0.72)], base, today=_date(2026, 9, 5)
+    )
+    assert line is not None
+    assert line.startswith("入选质量构成：不可用 — ")
+    assert "20990101" in line
+
+
+def test_gap_reference_line_poison_typed_warning(tmp_path):
+    """执行面缺口参考行: 毒文件在场 → typed 告警。"""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = tmp_path / "reports"
+    base.mkdir()
+    (base / "winrate_payoff_decomposition_20990101.json").write_text("{}")
+    line = da._render_gap_reference_line(base, today=_date(2026, 9, 5))
+    assert line is not None
+    assert line.startswith("执行面缺口参考：不可用 — ")
+    assert "20990101" in line
+
+
+def test_day_cohort_line_poison_typed_warning_cohort_glob(case, tmp_path):
+    """cohort 语境行: cohort 报告族毒文件同等显形 (glob 参数族覆盖)。"""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = tmp_path / "reports"
+    base.mkdir()
+    (base / "signal_day_cohort_20990101.json").write_text("{}")
+    line = da._render_day_cohort_line(
+        [_detail("111.SZ", 0.72)], base, today=_date(2026, 9, 5)
+    )
+    assert line is not None
+    assert line.startswith("信号日 cohort 语境：不可用 — ")
+    assert "cohort 报告目录被未来日期文件占据" in line
+    assert "20990101" in line
+
+
+def test_day_cohort_line_clean_missing_dir_absent(case, tmp_path):
+    """cohort 语境行非毒化形态: 目录缺失维持整行省略。"""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert (
+        da._render_day_cohort_line(
+            [_detail("111.SZ", 0.72)], empty, today=_date(2026, 9, 5)
+        )
+        is None
+    )
