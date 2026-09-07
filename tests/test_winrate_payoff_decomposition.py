@@ -19,6 +19,7 @@ from scripts.winrate_payoff_decomposition import (
     THRESHOLD_TRIGGER_MIN_N,
     attribution,
     attach_threshold_trigger,
+    court_window_from_events,
     net_returns,
     strength_bucket,
     threshold_trigger_status,
@@ -2981,3 +2982,25 @@ class TestEarlyReportContentDigestBinding:
         self._attach(payload2, early_dir, em2, mm2)
         md2 = render_md(payload2, "20260906")
         assert "未 pin (行数绊线 only)" in md2
+
+
+class TestCourtWindowFromEvents:
+    """R141 Op3: 证据窗口随报告声明 — 数据内容真相 (signal_date min/max)。"""
+
+    def _ev(self, dates):
+        import pandas as pd
+        return pd.DataFrame({"signal_date": dates})
+
+    def test_min_max_string_dates(self):
+        window = court_window_from_events(self._ev(["20250901", "20250701", "20260904"]))
+        assert window == {"start": "20250701", "end": "20260904"}
+
+    def test_empty_table_both_none(self):
+        window = court_window_from_events(self._ev([]))
+        assert window == {"start": None, "end": None}
+
+    def test_nan_rows_ignored(self):
+        import pandas as pd
+        ev = self._ev(["20250701", math.nan, "20260904"])
+        window = court_window_from_events(ev)
+        assert window == {"start": "20250701", "end": "20260904"}

@@ -1530,6 +1530,19 @@ def _render_prior_drift_line(
         if er_delta_pp < _PRIOR_DRIFT_MIN_ER_PP and wr_delta_pp < _PRIOR_DRIFT_MIN_WR_PP:
             return None
         report_date = report_path.stem.rsplit("_", 1)[-1]
+        # R141 Op3: 构建日与覆盖末端分开披露 — payload.court_window 缺失
+        # (旧报告) 回退现行格式, 不虚构覆盖。
+        court_window = (
+            payload.get("court_window")
+            if isinstance(payload.get("court_window"), dict)
+            else None
+        )
+        window_end = court_window.get("end") if court_window else None
+        evidence_span = (
+            f"{report_date} 构建 · 覆盖至 {window_end}"
+            if isinstance(window_end, str) and window_end
+            else report_date
+        )
         ci_low = row.get("cluster_ci_low_90")
         ci_text = (
             f"（CI90 下界 {ci_low:+.1%}）"
@@ -1538,7 +1551,7 @@ def _render_prior_drift_line(
         )
         return (
             f"先验漂移披露：BTST T+10 先验 期望 {dist.expected_return:+.2%}/"
-            f"胜率 {dist.winrate:.1%} vs 最新 court 生产对齐（{report_date}，"
+            f"胜率 {dist.winrate:.1%} vs 最新 court 生产对齐（{evidence_span}，"
             f"n={row.get('n')}）期望 {evidence_er_pp / 100:+.2%}/"
             f"胜率 {evidence_wr_pp:.1f}%{ci_text} · 偏离 E {er_delta_pp:.2f}pp/"
             f"胜率 {wr_delta_pp:.1f}pp — 重校准属 owner 决策（R98 决策包），"
@@ -1775,8 +1788,17 @@ def _render_gap_reference_line(
     total = (
         f"，生产对齐 n={reference['total_n']}" if reference["total_n"] else ""
     )
+    # R141 Op3: 构建日与覆盖末端是两个事实 — 『证据截至 <构建日>』会被
+    # 误读为数据覆盖 (同屏 freshness 行『court 覆盖至 <窗口末端>』相差一
+    # 个周末即矛盾); 旧报告缺 court_window 回退构建日语义, 不虚构覆盖。
+    window_end = reference.get("window_end")
+    evidence_span = (
+        f"court 证据构建 {reference['evidence_date']} · 覆盖至 {window_end}"
+        if window_end
+        else f"court 证据构建 {reference['evidence_date']}"
+    )
     return (
-        f"执行面缺口参考（court 证据截至 {reference['evidence_date']}{total}）："
+        f"执行面缺口参考（{evidence_span}{total}）："
         f"T+1 开盘高开>5% 子集历史期望 {reference['e_hi']:+.2%}"
         f"（n={reference['n_hi']}） vs ≤5% {reference['e_lo']:+.2%}"
         f"（n={reference['n_lo']}）· {split_note} — 竞价后高开>5% 时可对照"

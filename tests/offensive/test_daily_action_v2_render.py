@@ -1061,7 +1061,6 @@ def test_freshness_line_window_snap_to_last_session_before_nontrading_day(tmp_pa
 def test_freshness_line_stall_with_diagnostic_failure_keeps_frozen_tail(tmp_path, monkeypatch):
     """R139 Op3: 窗口停滞与诊断失败并存 → 冻结尾句优先 (数据真冻结),
     两事实同屏."""
-    import json as _json
     from datetime import date as _date
 
     from src.screening.offensive import daily_action as da
@@ -1075,6 +1074,7 @@ def test_freshness_line_stall_with_diagnostic_failure_keeps_frozen_tail(tmp_path
         }},
     )
     status_path = status_dir / "court_refresh_status.json"
+    import json as _json
     payload = _json.loads(status_path.read_text(encoding="utf-8"))
     payload["reconcile"] = {"rc": 0, "error": None}
     status_path.write_text(_json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -2328,3 +2328,87 @@ def test_poison_dir_all_evidence_rows_light_together(tmp_path):
     for name, line in lines.items():
         assert line is not None, f"{name} 行毒化形态静默缺席"
         assert "20990101" in line, f"{name} 行未携带毒文件日期"
+
+
+def _write_windowed_decomposition_report(tmp_path, with_window=True, date="20260904"):
+    """R141 Op3: 带/不带 court_window 的分解报告 (gap anatomy 可读)。"""
+    import json as _json
+    base = tmp_path / "reports"
+    base.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "universes": {
+            "production_aligned": {
+                "horizons": {"t10": [{"group": "ALL", "n": 1627}]},
+                "gap_anatomy": {
+                    "available": True,
+                    "buckets": [
+                        {"bucket": "5~10%", "n": 157, "expectancy": -0.0401},
+                        {"bucket": "0~2%", "n": 900, "expectancy": 0.0042},
+                    ],
+                },
+            },
+        },
+    }
+    if with_window:
+        payload["court_window"] = {"start": "20250701", "end": "20260904"}
+    (base / f"winrate_payoff_decomposition_{date}.json").write_text(
+        _json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+    return base
+
+
+def test_gap_reference_line_renders_build_and_window(tmp_path):
+    """R141 Op3: gap 行区分『构建』与『覆盖至』两个事实。"""
+    from src.screening.offensive import daily_action as da
+
+    base = _write_windowed_decomposition_report(tmp_path, with_window=True)
+    line = da._render_gap_reference_line(base)
+    assert line is not None
+    assert "court 证据构建 20260904 · 覆盖至 20260904" in line
+    assert "court 证据截至" not in line
+
+
+def test_gap_reference_line_old_report_falls_back_to_build_date(tmp_path):
+    """旧报告缺 court_window → 回退构建日语义, 不虚构『覆盖至』。"""
+    from src.screening.offensive import daily_action as da
+
+    base = _write_windowed_decomposition_report(tmp_path, with_window=False)
+    line = da._render_gap_reference_line(base)
+    assert line is not None
+    assert "court 证据构建 20260904" in line
+    assert "覆盖至" not in line
+
+
+def test_prior_drift_line_renders_window_when_present(tmp_path, monkeypatch):
+    """R141 Op3: 漂移行『(X 构建 · 覆盖至 Y, n=…)』标注。"""
+    import json as _json
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = tmp_path / "reports"
+    base.mkdir()
+    payload = _json.loads(
+        (  # 复用共享 fixture 形态
+            _write_decomposition_report(tmp_path, date="20260904")
+            / "winrate_payoff_decomposition_20260904.json"
+        ).read_text(encoding="utf-8")
+    )
+    payload["court_window"] = {"start": "20250701", "end": "20260905"}
+    (base / "winrate_payoff_decomposition_20260904.json").write_text(
+        _json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+    line = da._render_prior_drift_line(base, today=_date(2026, 9, 5))
+    assert line is not None
+    assert "（20260904 构建 · 覆盖至 20260905，n=" in line
+
+
+def test_prior_drift_line_old_report_keeps_legacy_format(tmp_path, monkeypatch):
+    """旧报告缺 court_window → 现行『(X，n=…)』格式逐字节不变。"""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, date="20260904")
+    line = da._render_prior_drift_line(base, today=_date(2026, 9, 5))
+    assert line is not None
+    assert "（20260904，n=" in line
+    assert "覆盖至" not in line

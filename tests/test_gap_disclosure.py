@@ -206,6 +206,46 @@ def test_gap_reference_ignores_non_dated_lookalike_files(tmp_path):
     assert ref["evidence_date"] == "20260904"
 
 
+# --------------------- R141 Op3: 证据窗口穿透 ---------------------
+
+
+def test_gap_reference_window_end_passthrough(tmp_path):
+    """payload.court_window.end 穿透; 缺失/畸形 → None (不虚构覆盖)。"""
+    base = tmp_path / "reports"
+    base.mkdir()
+    from scripts.winrate_payoff_decomposition import production_aligned  # noqa: F401
+
+    payload = _minimal_payload()
+    payload["universes"]["production_aligned"]["gap_anatomy"] = {
+        "available": True,
+        "buckets": [
+            {"bucket": "5~10%", "n": 10, "expectancy": -0.5},
+            {"bucket": "0~2%", "n": 30, "expectancy": 0.1},
+        ],
+    }
+    # 窗口在场 → 穿透
+    with_window = dict(payload)
+    with_window["court_window"] = {"start": "20250701", "end": "20260904"}
+    (base / "winrate_payoff_decomposition_20260904.json").write_text(
+        json.dumps(with_window), encoding="utf-8")
+    ref = gap_execution_reference(base)
+    assert ref is not None
+    assert ref["window_end"] == "20260904"
+    assert ref["evidence_date"] == "20260904"
+
+    # 畸形窗口 (非 8 位数字) → None
+    (base / "winrate_payoff_decomposition_20260904.json").write_text(json.dumps({
+        **payload, "court_window": {"start": "x", "end": "2026-09-04"}}), encoding="utf-8")
+    ref = gap_execution_reference(base)
+    assert ref is not None and ref["window_end"] is None
+
+    # 旧报告 (无 court_window) → None
+    (base / "winrate_payoff_decomposition_20260904.json").write_text(
+        json.dumps(payload), encoding="utf-8")
+    ref = gap_execution_reference(base)
+    assert ref is not None and ref["window_end"] is None
+
+
 # --------------------- R137 Op1: 共享读取体未来日期守卫 ---------------------
 
 

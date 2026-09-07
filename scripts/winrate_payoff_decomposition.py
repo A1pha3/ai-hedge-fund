@@ -150,6 +150,20 @@ def production_aligned(ev) -> "pd.DataFrame":
     return universe.loc[~excluded_any].copy()
 
 
+def court_window_from_events(ev) -> dict[str, str | None]:
+    """事件表 → 数据内容证据窗口 {start,end} (R141 Op3)。
+
+    signal_date min/max 是数据内容真相, 非 court_binding 的请求态窗口
+    (R130 Op1 纪律); 消费行以『覆盖至』渲染, 与 freshness 行同指数据
+    窗口末端。空表两值 None (不冒充)。
+    """
+    signal_dates = ev["signal_date"].dropna().astype(str).sort_values()
+    return {
+        "start": str(signal_dates.iloc[0]) if len(signal_dates) else None,
+        "end": str(signal_dates.iloc[-1]) if len(signal_dates) else None,
+    }
+
+
 def net_returns(gross: list[float | None]) -> list[float | None]:
     """gross → 净收益 (None 透传; 与 btst_court_views.net_ret 同式)。"""
     return [
@@ -1754,6 +1768,8 @@ def main(argv: list[str] | None = None) -> int:
     payload = decompose(ev, universes=tuple(args.universes))
     payload["court_rows"] = len(ev)
     payload["court_sessions"] = int(ev["signal_date"].nunique())
+    # R141 Op3: 证据窗口随报告声明 (数据内容真相, R130 Op1 纪律)。
+    payload["court_window"] = court_window_from_events(ev)
     attach_threshold_trigger(payload)
     attach_prior_alignment(payload)
     attach_cross_window_validation(

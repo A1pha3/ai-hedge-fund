@@ -270,8 +270,18 @@ def gap_execution_reference(
             all_row = next((r for r in rows if isinstance(r, dict) and r.get("group") == "ALL"), None)
             if all_row is not None and isinstance(all_row.get("n"), int):
                 total_n = all_row["n"]
+    # R141 Op3: 证据窗口末端穿透 — payload.court_window.end 是数据内容
+    # 真相 (事件表 signal_date max), 与 evidence_date (报告构建日) 是两个
+    # 事实; 旧报告缺字段 → None (消费行回退构建日语义, 不虚构覆盖)。
+    window_end = None
+    court_window = payload.get("court_window")
+    if isinstance(court_window, dict):
+        value = court_window.get("end")
+        if isinstance(value, str) and len(value) == 8 and value.isdigit():
+            window_end = value
     return {
         "evidence_date": _path.stem.rsplit("_", 1)[-1],
+        "window_end": window_end,
         "n_hi": int(hi_n),
         "e_hi": hi_we / hi_n,
         "n_lo": int(lo_n),
