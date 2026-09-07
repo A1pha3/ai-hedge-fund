@@ -675,8 +675,9 @@ def record_gate_pool_status(
     advisory 跳过); 快照序列化失败 (summary 含不可 JSON 序列化值, 或
     绑定混合类型键使 sort_keys 排序 TypeError — R143 Op2 PoC 双实锤)
     打印警告返回 snapshot_not_serializable 零写入; 写失败 (含 mkdir
-    失败形态, 较两族兄弟 mkdir 在 try 外收紧) 打印警告返回
-    write_failed — 均不阻断报告生成。
+    失败形态) 打印警告返回 write_failed — 均不阻断报告生成 (R143 Op3
+    起三族写入器失败契约一致: 兄弟两族的 mkdir/序列化已同入 typed
+    守卫并加 allow_nan=False)。
     payload 无 dict summary → 不写。已知边界 (成文, 镜像两族):
     口径/锚语义变化 = 新证据世代, 须启用新账本文件 (记录内 anchor
     仅供审计比对)。

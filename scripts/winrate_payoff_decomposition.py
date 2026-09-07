@@ -1219,7 +1219,10 @@ def record_trigger_status(
     同日刷新替换同日记录: court 表不变则判定数值恒等, 替换即幂等收敛;
     court 表变了则同日晚刷新就是最新事实 (append-only 跨日, 原地更新同日)。
     payload 无 threshold_trigger (如全候选单口径, 无判定锚) → 不写。
-    诊断面 fail-open: 写失败打印警告, 不阻断报告生成。
+    诊断面 fail-open: 写失败/快照不可序列化 (含 NaN/Inf stat,
+    allow_nan=False 拒绝静默毒化 — R143 Op3 与门挡池/日层族同款
+    typed 守卫) 打印警告返回 write_failed/snapshot_not_serializable,
+    不阻断报告生成。
 
     court_binding = court_binding() 的数据状态身份, 随快照落盘。
     require_advance=True (数据增长耦合路径) 时, 绑定与账本**任一**历史
@@ -1280,15 +1283,21 @@ def record_trigger_status(
                 }
     records = [r for r in records if r.get("date") != snapshot["date"]]
     records.append(snapshot)
-    body = "\n".join(json.dumps(r, ensure_ascii=False, sort_keys=True) for r in records)
-    if body:
-        body += "\n"
     import os
     import tempfile
 
     path = Path(ledger_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
     try:
+        # R143 Op3: 序列化在 typed 守卫内 + allow_nan=False (镜像 Op2
+        # 门挡池守卫) — 不可序列化值/NaN/Inf → snapshot_not_serializable
+        # fail-open 零写入, 绝不裸逃逸炸穿夜刷诊断或静默毒化账本
+        body = "\n".join(
+            json.dumps(r, ensure_ascii=False, sort_keys=True, allow_nan=False)
+            for r in records
+        )
+        if body:
+            body += "\n"
+        path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".trigger_ledger_", suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -1305,6 +1314,9 @@ def record_trigger_status(
     except OSError as exc:
         print(f"WARNING: 触发器账本写入失败 (诊断面 fail-open): {exc}")
         return {"recorded": False, "reason": "write_failed"}
+    except (TypeError, ValueError) as exc:
+        print(f"WARNING: 触发器账本快照不可序列化 (诊断面 fail-open): {exc}")
+        return {"recorded": False, "reason": "snapshot_not_serializable"}
     return {"recorded": True, "records": len(records)}
 
 

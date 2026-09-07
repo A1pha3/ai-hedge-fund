@@ -1190,3 +1190,60 @@ class TestAdversarialPinningR131Op3:
             )
         # 全表事件合计恒等
         assert sum(c["n"] for r in cross for c in r["cells"]) == payload["n_events"]
+
+
+class TestRecordCohortTriggerStatusTypedFailures:
+    """R143 Op3: 兄弟落账函数同族硬化 — Op2 门挡池守卫施加于日层族。
+
+    PoC 镜像 (修复前 RED): 不可序列化 stat → TypeError 裸逃逸; NaN
+    stat → json.dumps 静默写出 NaN 行毒化 K 判读数据; ledger parent
+    为文件 → mkdir FileExistsError 裸逃逸。
+    """
+
+    def _trigger(self, strong_stat, mid_stat):
+        return {
+            "anchor": "production_aligned/t10/cohort_size",
+            "min_n": 30,
+            "condition_strong_bucket_ci_above_zero": {
+                "lit": True, "judged": True, "n": 30, "stat": strong_stat,
+            },
+            "condition_mid_buckets_expectancy_negative": {
+                "lit": True, "judged": True, "n": 30, "stat": mid_stat,
+            },
+            "conjunction_armed": False,
+        }
+
+    def test_unserializable_stat_typed_fail_open(self, tmp_path):
+        ledger = tmp_path / "signal_day_cohort_trigger_ledger.jsonl"
+        meta = record_cohort_trigger_status(
+            {"cohort_trigger": self._trigger(0.01, object())},
+            "20260907",
+            ledger_path=ledger,
+        )
+        assert meta == {
+            "recorded": False, "reason": "snapshot_not_serializable"
+        }
+        assert not ledger.exists()
+
+    def test_nan_stat_typed_fail_open(self, tmp_path):
+        ledger = tmp_path / "signal_day_cohort_trigger_ledger.jsonl"
+        meta = record_cohort_trigger_status(
+            {"cohort_trigger": self._trigger(0.01, float("nan"))},
+            "20260907",
+            ledger_path=ledger,
+        )
+        assert meta == {
+            "recorded": False, "reason": "snapshot_not_serializable"
+        }
+        assert not ledger.exists()
+
+    def test_file_parent_write_failed_not_raise(self, tmp_path):
+        blocker = tmp_path / "blocker"
+        blocker.write_text("file", encoding="utf-8")
+        meta = record_cohort_trigger_status(
+            {"cohort_trigger": self._trigger(0.01, -0.01)},
+            "20260907",
+            ledger_path=blocker / "signal_day_cohort_trigger_ledger.jsonl",
+        )
+        assert meta == {"recorded": False, "reason": "write_failed"}
+        assert blocker.read_text(encoding="utf-8") == "file"

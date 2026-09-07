@@ -21,6 +21,7 @@ from scripts.winrate_payoff_decomposition import (
     attach_threshold_trigger,
     court_window_from_events,
     net_returns,
+    record_trigger_status,
     strength_bucket,
     threshold_trigger_status,
     win_loss_stats,
@@ -3004,3 +3005,61 @@ class TestCourtWindowFromEvents:
         ev = self._ev(["20250701", math.nan, "20260904"])
         window = court_window_from_events(ev)
         assert window == {"start": "20250701", "end": "20260904"}
+
+
+class TestRecordTriggerStatusTypedFailures:
+    """R143 Op3: 兄弟落账函数同族硬化 — Op2 门挡池守卫施加于强度族。
+
+    PoC 三连 (修复前 RED): W1 不可序列化 stat → TypeError 裸逃逸炸穿
+    夜刷诊断; W2 NaN stat → json.dumps 静默写出 NaN 行毒化 K 判读数据;
+    W3 ledger parent 为文件 → mkdir FileExistsError (exist_ok 对文件
+    形态仍抛) 裸逃逸。
+    """
+
+    def _trigger(self, stat):
+        return {
+            "anchor": "production_aligned/t10",
+            "min_n": 30,
+            "condition_1_strong_bucket_ci_above_zero": {
+                "lit": True, "judged": True, "n": 30, "stat": stat,
+            },
+            "condition_2_mid_bucket_expectancy_negative": {
+                "lit": False, "judged": True, "n": 30, "stat": -0.001,
+            },
+            "conjunction_armed": False,
+        }
+
+    def test_unserializable_stat_typed_fail_open(self, tmp_path):
+        ledger = tmp_path / "threshold_trigger_ledger.jsonl"
+        meta = record_trigger_status(
+            {"threshold_trigger": self._trigger(object())},
+            "20260907",
+            ledger_path=ledger,
+        )
+        assert meta == {
+            "recorded": False, "reason": "snapshot_not_serializable"
+        }
+        assert not ledger.exists()
+
+    def test_nan_stat_typed_fail_open(self, tmp_path):
+        ledger = tmp_path / "threshold_trigger_ledger.jsonl"
+        meta = record_trigger_status(
+            {"threshold_trigger": self._trigger(float("nan"))},
+            "20260907",
+            ledger_path=ledger,
+        )
+        assert meta == {
+            "recorded": False, "reason": "snapshot_not_serializable"
+        }
+        assert not ledger.exists()
+
+    def test_file_parent_write_failed_not_raise(self, tmp_path):
+        blocker = tmp_path / "blocker"
+        blocker.write_text("file", encoding="utf-8")
+        meta = record_trigger_status(
+            {"threshold_trigger": self._trigger(0.001)},
+            "20260907",
+            ledger_path=blocker / "threshold_trigger_ledger.jsonl",
+        )
+        assert meta == {"recorded": False, "reason": "write_failed"}
+        assert blocker.read_text(encoding="utf-8") == "file"
