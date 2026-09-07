@@ -3276,3 +3276,86 @@ class TestRegimeCompositionCheck:
         assert "Regime 构成核查" not in md_legacy
         assert "gate 拦截" not in md_legacy
         assert md_legacy.split("跨窗口外部验证")[0] == md.split("跨窗口外部验证")[0]
+
+
+class TestRegimeCompositionAdversarialPins:
+    """R144 Op2: Op1 构成核查面的对抗性审查边界钉死 (PoC 四连后的回归锁)。
+
+    P1 空对齐宇宙 / P2 NaN regime / P3 畸形 caveats 三形态审查判读为行为正确
+    (诚实披露不冒充) — 本类将其锁死防重构漂移; P4 (字符串化布尔 gate_blocked
+    被 ==True 静默吞) 系 production_aligned 单一实现既有语义, 登记不修。
+    """
+
+    COLS = TestRegimeCompositionCheck.COLS
+    _row = staticmethod(TestRegimeCompositionCheck.__dict__["_row"])
+    _write_csv = TestRegimeCompositionCheck.__dict__["_write_csv"]
+
+    def test_p1_empty_aligned_universe_not_claimed_pure_normal(self, tmp_path):
+        """空对齐宇宙 (全部行被排除): total=0 → 不冒充纯 normal, 无异常。"""
+        from scripts.winrate_payoff_decomposition import regime_composition_check
+
+        early = self._write_csv(
+            tmp_path / "e" / "t.csv",
+            [dict(self._row("normal"), price_ge_3=False)],
+        )
+        current = self._write_csv(tmp_path / "c" / "t.csv", [self._row("normal")])
+        out = regime_composition_check(early, current)
+        assert out["available"] is True
+        assert out["early"]["aligned_counts"] == {}
+        assert out["early"]["aligned_total"] == 0
+        assert out["both_aligned_pure_normal"] is False
+
+    def test_p2_nan_regime_missing_bucket_honest(self, tmp_path):
+        """NaN regime 行: 『missing』桶诚实入 gate 机制行, 不入 aligned 计数。"""
+        from scripts.winrate_payoff_decomposition import regime_composition_check
+
+        early = self._write_csv(
+            tmp_path / "e" / "t.csv",
+            [self._row("normal"), dict(self._row("crisis", blocked=True), regime=None)],
+        )
+        current = self._write_csv(tmp_path / "c" / "t.csv", [self._row("normal")])
+        out = regime_composition_check(early, current)
+        assert out["available"] is True
+        assert out["early"]["aligned_counts"] == {"normal": 1}
+        assert "missing" in out["early"]["gate_blocked_by_regime"]
+        assert out["early"]["gate_blocked_by_regime"]["missing"] == {
+            "blocked": 1, "total": 1,
+        }
+        assert out["both_aligned_pure_normal"] is True
+
+    def test_p3_malformed_caveats_guard(self, tmp_path):
+        """畸形 caveats 守卫: available=False / 非 dict / 异常长度 → 常量原样。"""
+        from scripts.winrate_payoff_decomposition import (
+            CROSS_WINDOW_CAVEATS,
+            _composition_caveats,
+        )
+
+        assert _composition_caveats({"available": False}) == list(CROSS_WINDOW_CAVEATS)
+        assert _composition_caveats(None) == list(CROSS_WINDOW_CAVEATS)
+        assert _composition_caveats("junk") == list(CROSS_WINDOW_CAVEATS)
+        # available=True 但 both_aligned_pure_normal 非 bool → 中性精确化分支
+        out = _composition_caveats({"available": True, "both_aligned_pure_normal": None})
+        assert len(out) == 3 and out[2] != CROSS_WINDOW_CAVEATS[2]
+
+    def test_p4_render_tolerates_corrupt_composition_payload(self, tmp_path):
+        """渲染对畸形 composition 载荷零异常, 逐字段 '—' 退化。"""
+        from scripts.winrate_payoff_decomposition import render_md
+
+        payload = TestCrossWindowValidation()._current_payload()
+        payload["cross_window_validation"] = {
+            "available": True,
+            "early_window": {"start": "20220104", "end": "20241231"},
+            "buckets": [],
+            "caveats": ["x"],
+            "regime_composition": {
+                "available": True,
+                "both_aligned_pure_normal": True,
+                "early": None,
+                "current": {"aligned_counts": "junk", "aligned_total": "x"},
+                "gate_blocked_by_regime": "junk",
+            },
+        }
+        md = render_md(payload, "20260908")
+        assert "Regime 构成核查" in md
+        assert "早期 n=—" in md
+        assert "当前 n=—" in md

@@ -1895,8 +1895,8 @@ def _render_cross_window_validation(payload: dict[str, object], L: list[str]) ->
             f"早期 {_counts_txt(early_side)} · 当前 {_counts_txt(current_side)}"
         )
         L.append(
-            "- gate 拦截机制 (全表非 normal 行被 production gate 拦截"
-            "(对齐宇宙的排除另有 degraded/ST/低价等通道)): "
+            "- gate 拦截机制 (全表非 normal 行被 production gate 拦截;"
+            " 对齐宇宙的排除另有 degraded/ST/低价等通道): "
             f"{_gate_txt(early_side, '早期')} · {_gate_txt(current_side, '当前')}"
         )
         L.append("")
