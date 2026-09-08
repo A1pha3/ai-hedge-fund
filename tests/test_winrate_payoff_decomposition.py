@@ -3592,6 +3592,65 @@ class TestTrailingWindow:
             is True
         )
 
+    def test_days_n_below_one_invalid_shape(self):
+        # R149 Op2 F-c RED (修复前: days_n=0 经 all_days[-0:] 返回全窗)
+        from scripts.winrate_payoff_decomposition import trailing_window
+
+        w = self._tw(self._frame(), days_n=3)
+        assert w["available"] is True  # 基线: 正常尾窗
+        for bad in (0, -1):
+            tw = self._tw(self._frame(), days_n=bad)
+            assert tw == {"available": False, "reason": "invalid_days_n"}
+
+    def _neg_delta_trailing_md(self):
+        # R149 Op2 F-a/F-b 渲染输入: 尾窗差 (旧窗 +0.50 拉高全窗) → delta<0
+        import pandas as pd
+
+        from scripts.winrate_payoff_decomposition import (
+            net_returns as nr,
+            render_md,
+            strength_bucket,
+            trailing_window,
+        )
+
+        rows = [
+            {"signal_date": sd, "trigger_strength": s,
+             "gross_ret_t10": r + 0.0065}
+            for sd, s, r in [
+                ("20260311", 0.90, 0.50),
+                ("20260312", 0.30, -0.06),
+                ("20260313", 0.55, -0.04),
+            ]
+        ]
+        w = pd.DataFrame(rows).astype({"signal_date": str})
+        w["net_ret_t10"] = nr(w["gross_ret_t10"].tolist())
+        w["strength_bucket"] = w["trigger_strength"].map(strength_bucket)
+        tw_neg = trailing_window(w, days_n=2)
+        assert tw_neg["delta_vs_full"] < 0
+        payload = {
+            "horizons": {},
+            "universes": {
+                "all_candidates": {"horizons": {}},
+                "production_aligned": {"horizons": {}, "trailing_window": tw_neg},
+            },
+        }
+        return render_md(payload, "20260908")
+
+    def test_render_negative_delta_direction_neutral(self):
+        # R149 Op2 F-a RED (修复前: delta<0 仍渲染『全窗聚合由旧窗主导』
+        # 方向性虚假叙事): 负 delta 只描述差值, 方向描述与正 delta 对称。
+        md = self._neg_delta_trailing_md()
+        assert "由旧窗主导" not in md
+        assert "近期更弱" in md  # 负 delta 方向描述对称
+
+    def test_render_multi_view_conjunction_pin(self):
+        # R149 Op2 F-b RED (修复前:『近期判读以本节为准』过度声称单一池化
+        # 读数 — 真实形态半窗符号翻转 + CI 跨零): 改为多视图合取措辞。
+        md = self._neg_delta_trailing_md()
+        assert "多视图" in md
+        assert "单一读数不冒充结论" in md
+        assert "以本节为准" not in md
+
     def test_render_trailing_section_and_fail_open(self):
         from scripts.winrate_payoff_decomposition import (
             render_md,

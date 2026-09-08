@@ -342,6 +342,10 @@ def trailing_window(
     sign_consistent 仅两半 expectancy 非 None 才披露 (R146/R15 半窗纪
     律)。无成熟行 → available=False 不冒充。
     """
+    if days_n < 1:
+        # R149 Op2 F-c: days_n=0 经 all_days[-0:] 会静默返回全窗 (尾窗
+        # 语义反转 PoC 实锤) — 形状守卫 invalid_days_n 家族零计算返回。
+        return {"available": False, "reason": "invalid_days_n"}
     valid = work[work["net_ret_t10"].notna()]
     all_days = sorted(valid["signal_date"].astype(str).unique())
     if not all_days:
@@ -1752,10 +1756,16 @@ def _render_trailing_window(uni: dict, L: list[str]) -> None:
     delta = tw.get("delta_vs_full")
     full_e = tw.get("full_window_expectancy")
     if isinstance(delta, (int, float)) and not isinstance(delta, bool):
+        # R149 Op2 F-a/F-b: 方向中性 — delta 只描述『近期 − 全窗』差值
+        # (正=近期更强/负=近期更弱), 不归因旧窗 (负 delta 时『由旧窗主导』
+        # 是虚假叙事 PoC 实锤); 单一池化读数不冒充方向结论 (真实形态:
+        # 半窗符号翻转 + CI 跨零), 判读 = 多视图合取属 owner。
+        direction = "近期更强" if delta > 0 else ("近期更弱" if delta < 0 else "持平")
         L.append(
             f"- **全窗对照**: 全期 E={_tw_num(full_e)} → 近期差"
-            f" {_tw_num(delta)} — 全窗聚合由旧窗主导, 先验漂移行 (全窗 vs"
-            " 先验) 在新旧窗符号相反时方向性误导, 近期判读以本节为准。"
+            f" {_tw_num(delta)} ({direction}) — 全窗聚合混合新旧窗, 先验漂"
+            "移行 (全窗 vs 先验) 不反映近期方向; 方向判读以本节多视图"
+            " (池化 CI/梯度/半窗) 合取, 单一读数不冒充结论。"
         )
     buckets = tw.get("strength_buckets")
     if isinstance(buckets, list):
