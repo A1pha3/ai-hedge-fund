@@ -52,17 +52,48 @@ def _reject_nonfinite_constant(name: str) -> float:
     raise ValueError(f"non-finite JSON constant not allowed: {name}")
 
 
+def _reject_overflow_float(text: str) -> float:
+    """拒绝经 parse_float 面的溢出数字 ('1e400'/'-1e400' → inf)。
+
+    R150 Op2 对 Op1 交付面的对抗审查收口: parse_constant 只拦 NaN/Infinity
+    字面量, 溢出十进制数字走 parse_float 面静默解析成 inf — Op1 守卫只守
+    数字违约的字面量形态不守数值形态, 冻结缺陷经 '1e400' 原样可达 (Observe
+    期端到端 PoC 实锤)。有限溢出下界 (1e-400 → 0.0) 是合法有限值, 不拒。
+    """
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError(f"non-finite JSON float not allowed: {text}")
+    return value
+
+
+def _loads_strict(line: str) -> object:
+    """单行严格 JSON 解析 — 两族账本读面的单一实现 (R150 Op2 收敛)。
+
+    parse_constant + parse_float 双拒收 (字面量形态 + 数值形态), 调用方
+    catch (json.JSONDecodeError, ValueError, RecursionError) 统一入损坏行
+    advisory 跳过分支; RecursionError (深嵌套行, RuntimeError 族) 同家族 —
+    证据面损坏不得阻断披露/生产面 (R115/R129 纪律)。
+    """
+    return json.loads(
+        line,
+        parse_constant=_reject_nonfinite_constant,
+        parse_float=_reject_overflow_float,
+    )
+
+
 def load_trigger_ledger(ledger_path: Path | str | None = None) -> list[dict]:
     """读触发器账本, 按日期升序; 损坏行 advisory 跳过 (诊断面语义)。
 
     兼容两种记录形态: R81 旧形态 (无 ``court`` 字段) 与 R84 起带 court
     绑定的新形态 — 读取侧对字段不加严, 披露面自行判空。
 
-    损坏行 = JSON 语法违约 (JSONDecodeError) **及** 严格 JSON 违约的
-    NaN/Infinity 字面量行 (R150 Op1 读面防御, ``_reject_nonfinite_constant``):
-    后者曾被宽容读成 inf 流入追加路径令两族账本写入面永久冻结
-    (snapshot_not_serializable, R147③ 三度登记)。跳过即自愈 — 追加路径
-    的整账重写不回写毒化行, 落盘账本恒为严格 JSON 可解析事实。
+    损坏行 = JSON 语法违约 (JSONDecodeError) **及** 严格 JSON 违约的毒化
+    数值行 — NaN/Infinity 字面量 (R150 Op1, ``_reject_nonfinite_constant``)
+    与溢出数字 '1e400' (R150 Op2, ``_reject_overflow_float``: parse_float
+    面, Op1 字面量单面守卫的旁路) 及深嵌套行 RecursionError (R150 Op2, 同
+    损坏行家族)。毒化行曾被宽容读成 inf 流入追加路径令两族账本写入面永久
+    冻结 (snapshot_not_serializable, R147③ 三度登记)。跳过即自愈 — 追加
+    路径的整账重写不回写毒化行, 落盘账本恒为严格 JSON 可解析事实。
     """
     path = _resolve(ledger_path)
     records: list[dict] = []
@@ -78,8 +109,8 @@ def load_trigger_ledger(ledger_path: Path | str | None = None) -> list[dict]:
         if not line:
             continue
         try:
-            rec = json.loads(line, parse_constant=_reject_nonfinite_constant)
-        except (json.JSONDecodeError, ValueError):
+            rec = _loads_strict(line)
+        except (json.JSONDecodeError, ValueError, RecursionError):
             continue
         if isinstance(rec, dict) and rec.get("date"):
             records.append(rec)
@@ -477,6 +508,7 @@ def load_k_observations(path: Path | str | None = None) -> list[dict]:
     证据面损坏不得阻断披露/生产面)。畸形行 advisory 跳过, 不假装有观测。
     R150 Op1: NaN/Infinity 字面量行同入损坏行家族 (镜像本模块追加型写面
     的读面防御, ``load_trigger_ledger`` docstring 成文冻结机制)。
+    R150 Op2: 溢出数字与深嵌套行经 ``_loads_strict`` 单一实现同语义。
     """
     log_path = Path(path) if path is not None else K_OBSERVATION_LOG_PATH
     try:
@@ -490,8 +522,8 @@ def load_k_observations(path: Path | str | None = None) -> list[dict]:
         if not line:
             continue
         try:
-            rec = json.loads(line, parse_constant=_reject_nonfinite_constant)
-        except (json.JSONDecodeError, ValueError):
+            rec = _loads_strict(line)
+        except (json.JSONDecodeError, ValueError, RecursionError):
             continue
         observed = rec.get("observed_date") if isinstance(rec, dict) else None
         if (

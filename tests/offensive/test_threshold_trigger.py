@@ -902,3 +902,84 @@ def test_clean_ledger_load_behavior_unchanged(tmp_path):
     assert sorted(loaded, key=lambda r: r["date"]) == sorted(
         strict, key=lambda r: r["date"]
     )
+
+
+# ---------------------------------------------------------------------------
+# R150 Op2: 对 Op1 交付面的对抗性审查收口 — ① 数字面旁路: parse_constant 只拦
+# NaN/Infinity/-Infinity 字面量, '1e400' 经 parse_float 静默解析为 inf, Op1
+# 防御被完整旁路 (冻结原样可达, Observe 期端到端 PoC 实锤); ② 深嵌套行
+# RecursionError 裸逃逸炸穿 load 调用面 (损坏行家族纪律: 证据面损坏不得阻断
+# 披露/生产面)。
+# ---------------------------------------------------------------------------
+
+def test_load_skips_overflow_float_lines(tmp_path):
+    """1e400/-1e400 溢出行 (parse_float 面) advisory 跳过, 干净行保留。"""
+    good = json.dumps(
+        _rec("20260829", c1_lit=True), ensure_ascii=False, sort_keys=True
+    )
+    lines = [
+        good,
+        '{"date": "20260830", "condition_1": {"lit": true, "judged": true,'
+        ' "n": 340, "stat": 1e400}}',
+        '{"date": "20260831", "condition_1": {"lit": false, "judged": true,'
+        ' "n": 340, "stat": -1e400}}',
+    ]
+    records = tt.load_trigger_ledger(_write_raw_lines(tmp_path, lines))
+    assert [r["date"] for r in records] == ["20260829"]
+
+
+def test_append_path_self_heals_past_overflow_float_line(tmp_path):
+    """1e400 毒化行追加自愈端到端 (Op1 后仍冻结的旁路面闭合)。"""
+    from scripts.winrate_payoff_decomposition import record_trigger_status
+
+    good = json.dumps(
+        _rec("20260901", court={"content_digest": "sha256:" + "d" * 64}),
+        ensure_ascii=False, sort_keys=True,
+    )
+    poison = (
+        '{"date": "20260902", "condition_1": {"lit": true, "judged": true,'
+        ' "n": 340, "stat": 1e400}, "conjunction_armed": true,'
+        ' "court": {"content_digest": "sha256:' + "e" * 64 + '"}}'
+    )
+    path = _write_raw_lines(tmp_path, [good, poison])
+    payload = {"threshold_trigger": {
+        "anchor": "production_aligned/t10",
+        "min_n": 30,
+        "condition_1_strong_bucket_ci_above_zero": {
+            "lit": True, "judged": True, "n": 340, "stat": 0.001,
+        },
+        "condition_2_mid_bucket_expectancy_negative": {
+            "lit": False, "judged": True, "n": 341, "stat": 0.002,
+        },
+        "conjunction_armed": False,
+    }}
+    result = record_trigger_status(payload, "20260903", ledger_path=path)
+    assert result["recorded"] is True, result
+    text = path.read_text(encoding="utf-8")
+    dates = [
+        json.loads(line)["date"]
+        for line in text.splitlines() if line.strip()
+    ]
+    assert dates == ["20260901", "20260903"]
+    assert "1e400" not in text and "Infinity" not in text
+
+
+def test_load_skips_deeply_nested_line_without_escaping(tmp_path):
+    """深嵌套 JSON 行 RecursionError 入损坏行家族 advisory 跳过, 不炸穿
+    load 调用面 (日报触发器行/夜刷 build 双面)。"""
+    good = json.dumps(_rec("20260829"), ensure_ascii=False, sort_keys=True)
+    deep = "[" * 20000 + "]" * 20000
+    path = _write_raw_lines(tmp_path, [good, deep])
+    records = tt.load_trigger_ledger(path)
+    assert [r["date"] for r in records] == ["20260829"]
+
+
+def test_legal_large_floats_unchanged(tmp_path):
+    """合法大数值 (1e300, 有限) 不受溢出拒收影响 — 行为收紧边界 pin。"""
+    line = (
+        '{"date": "20260829", "condition_1": {"lit": true, "judged": true,'
+        ' "n": 340, "stat": 1e300}}'
+    )
+    records = tt.load_trigger_ledger(_write_raw_lines(tmp_path, [line]))
+    assert len(records) == 1
+    assert records[0]["condition_1"]["stat"] == 1e300

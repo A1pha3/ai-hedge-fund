@@ -491,3 +491,17 @@ def test_cohort_load_delegates_poisoned_line_skip(tmp_path):
     ledger.write_text(good + "\n" + poison + "\n", encoding="utf-8")
     records = ct.load_cohort_trigger_ledger(ledger)
     assert [r["date"] for r in records] == ["20260901"]
+
+
+def test_cohort_load_delegates_overflow_and_deep_nest_skip(tmp_path):
+    """R150 Op2: 日层族委托装载继承数字面旁路拒收与深嵌套跳过。"""
+    good = json.dumps(_record("20260901"), ensure_ascii=False, sort_keys=True)
+    poison = (
+        '{"date": "20260902", "strong_bucket": {"lit": true, "judged": true,'
+        ' "n": 864, "stat": 1e400}, "conjunction_armed": true}'
+    )
+    deep = "[" * 20000 + "]" * 20000
+    ledger = tmp_path / "cohort_ledger.jsonl"
+    ledger.write_text(good + "\n" + poison + "\n" + deep + "\n", encoding="utf-8")
+    records = ct.load_cohort_trigger_ledger(ledger)
+    assert [r["date"] for r in records] == ["20260901"]
