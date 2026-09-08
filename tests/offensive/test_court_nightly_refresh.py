@@ -161,6 +161,7 @@ class TestNightlyDiagnosticsRefresh:
         # stock_feature_attribution 提交晚于 R133 Op3 曾静默缺席, 陈旧诊断
         # 面的 split-half 判定会被操作员当现状消费; 未来新增诊断脚本漏接
         # 在此当场暴露 (顺序也是契约: status.diagnostics 键序可读性)。
+        # R152 Op1: + strength_component_decomposition (分量级解剖, 同门先例)。
         assert DIAGNOSTIC_SCRIPTS == (
             "scripts/winrate_payoff_decomposition.py",
             "scripts/btst_signal_day_cohort.py",
@@ -168,6 +169,7 @@ class TestNightlyDiagnosticsRefresh:
             "scripts/day_feature_attribution.py",
             "scripts/stock_feature_attribution.py",
             "scripts/zero_hit_day_gate_attribution.py",
+            "scripts/strength_component_decomposition.py",
         )
 
     def test_build_success_runs_diagnostics_in_order(self, tmp_path):

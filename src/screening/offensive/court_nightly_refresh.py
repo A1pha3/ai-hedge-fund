@@ -61,6 +61,9 @@ DIAGNOSTIC_SCRIPTS: tuple[str, ...] = (
     "scripts/day_feature_attribution.py",
     "scripts/stock_feature_attribution.py",
     "scripts/zero_hit_day_gate_attribution.py",
+    # R152 Op1: 强度分量级解剖 — 成员随诊断面契约扩展 (R133/R135 同门先例),
+    # pinned-set 测试同步钉住防再漏接。
+    "scripts/strength_component_decomposition.py",
 )
 DIAGNOSTIC_TIMEOUT_S = 600
 
