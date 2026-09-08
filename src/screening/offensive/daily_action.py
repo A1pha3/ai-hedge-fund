@@ -1561,6 +1561,95 @@ def _render_prior_drift_line(
         return None
 
 
+def _render_trailing_window_line(
+    reports_dir: str | Path | None = None,
+) -> str | None:
+    """近期窗条件化披露行 (R149 Op3): 尾 N 信号日三读数的日度可见性。
+
+    R149 Op1 实证全窗聚合可方向性误导 (全期 E≈0 完全由旧窗拖累, 尾 20 信号日
+    可为全样本最强窗) — 先验漂移行 (全窗 vs 先验) 会把「证据低于先验」读进
+    日报, 而近期窗恰在先验之上。本行消费最新分解报告同一载荷的 trailing_window
+    (R149 Op1 additive 键, scripts 侧 trailing_window 纯函数单一实现的产物;
+    本行零重算 — 报告与日报两面数字漂移在构造上不可能), 以 R149 Op2 方向中性
+    措辞把池化/强度梯度/半窗并置 (单一读数不冒充方向结论, 判读 = 多视图合取
+    属 owner)。
+
+    fail-open 家族纪律 (镜像先验漂移行 R109/对齐行 R118): 报告缺失/损坏/
+    trailing_window 键缺失/非 dict/available 非 True → 整行省略 (目录被未来
+    日期毒文件占据时, 先验漂移行同款 _poisoned_line 已显形告警, 本行不重复);
+    池化 E/胜率非有限 → 整行省略 (行主体缺失不以残行冒充); 其余子句 (CI90/
+    delta/梯度/半窗) 非有限或缺失 → 对应子句省略不虚构 (R119 数值守卫家族)。
+    本行是披露不是行为改变 — 不进入任何计划/评分/仓位/退出决策路径。
+    """
+    try:
+        base = Path(reports_dir) if reports_dir is not None else _PRIOR_DRIFT_REPORTS_DIR
+        from src.screening.offensive.gap_disclosure import latest_decomposition_report
+
+        found = latest_decomposition_report(base)
+        if found is None:
+            return None
+        _report_path, payload = found
+        universes = payload.get("universes")
+        aligned = (
+            universes.get("production_aligned")
+            if isinstance(universes, dict)
+            else None
+        )
+        tw = aligned.get("trailing_window") if isinstance(aligned, dict) else None
+        if not isinstance(tw, dict) or tw.get("available") is not True:
+            return None
+        pooled = tw.get("pooled")
+        pooled = pooled if isinstance(pooled, dict) else {}
+        expectancy = pooled.get("expectancy")
+        winrate = pooled.get("winrate")
+        if not _is_finite_number(expectancy) or not _is_finite_number(winrate):
+            return None
+        n = pooled.get("n")
+        n_text = f"n={n}" if isinstance(n, int) and not isinstance(n, bool) else "n=—"
+        days = tw.get("observed_days")
+        days_text = (
+            f"尾 {days} 信号日"
+            if isinstance(days, int) and not isinstance(days, bool)
+            else "近期窗"
+        )
+        span = f"{tw.get('first_day')}..{tw.get('last_day')}"
+        ci_low = pooled.get("cluster_ci_low_90")
+        ci_text = f"（CI90 下界 {ci_low:+.2%}）" if _is_finite_number(ci_low) else ""
+        parts = [
+            f"近期窗判读：{days_text}（{span}，{n_text}）"
+            f"期望 {expectancy:+.2%}/胜率 {winrate:.1%}{ci_text}"
+        ]
+        delta = tw.get("delta_vs_full")
+        if _is_finite_number(delta):
+            direction = (
+                "近期更强" if delta > 0 else ("近期更弱" if delta < 0 else "持平")
+            )
+            parts.append(f"全窗对照 {delta:+.2%}（{direction}）")
+        gradient = tw.get("gradient_monotone_up")
+        if isinstance(gradient, bool):
+            parts.append(f"强度梯度单调非降: {'是' if gradient else '否'}")
+        halves = tw.get("split_half")
+        if isinstance(halves, dict):
+            sign = halves.get("sign_consistent")
+            if isinstance(sign, bool):
+                early = halves.get("early")
+                late = halves.get("late")
+                e_early = early.get("expectancy") if isinstance(early, dict) else None
+                e_late = late.get("expectancy") if isinstance(late, dict) else None
+                halves_e = (
+                    f"早 {e_early:+.2%}/晚 {e_late:+.2%} "
+                    if _is_finite_number(e_early) and _is_finite_number(e_late)
+                    else ""
+                )
+                parts.append(f"半窗: {halves_e}{'符号一致' if sign else '符号翻转'}")
+        return (
+            " · ".join(parts)
+            + " — 判读属 owner 多视图合取，仅披露不改变决策（宪法 #2）"
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def _is_finite_number(value: object) -> bool:
     """有限数值 (bool 是 int 子类显式排除; NaN/inf 是 float 合法值同样排除)。
 
@@ -2610,6 +2699,13 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     drift_line = _render_prior_drift_line()
     if drift_line:
         lines.append(drift_line)
+        lines.append("")
+    # 近期窗条件化披露行 (R149 Op3): 尾 N 信号日三读数的日度可见性 — 全窗
+    # 漂移行的镜像补齐 (R149 Op1 两度登记的日报消费面), trailing_window 不可
+    # 用整行省略 (fail-open 家族), 与上方各行省略语义一致.
+    trailing_line = _render_trailing_window_line()
+    if trailing_line:
+        lines.append(trailing_line)
         lines.append("")
     # 宇宙对齐行 (R118 Op1): 证据宇宙 vs 生产宇宙对账 + realized 兑现 —
     # summary 缺失/损坏整行省略 (fail-open 家族), 与上方五行省略语义一致.

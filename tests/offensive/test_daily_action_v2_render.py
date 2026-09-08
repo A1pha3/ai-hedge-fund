@@ -441,6 +441,177 @@ def test_prior_drift_line_ignores_non_dated_lookalike_files(case, tmp_path, monk
     assert "backup" not in text
 
 
+# ---------- R149 Op3: 近期窗条件化披露行 (日报消费面收口) ----------
+
+def _real_shape_trailing_window():
+    """真实形态 (20260908 报告) 的 trailing_window 载荷 — 非对称 fixture (R13 教训).
+
+    池化 E>0 / 半窗早负晚正 / delta>0 — 与全窗漂移行 (E<0 vs 先验) 方向相反,
+    恰是本行要显形的分歧形态。
+    """
+    return {
+        "available": True,
+        "window_days_n": 20,
+        "observed_days": 20,
+        "first_day": "20260709",
+        "last_day": "20260821",
+        "pooled": {
+            "n": 341, "wins": 178, "winrate": 0.5219941348973607,
+            "avg_win": 0.1417149355706783, "avg_loss": -0.1463000636349404,
+            "payoff": 0.9686594253594907, "expectancy": 0.004042076712860554,
+            "cluster_ci_low_90": -0.05731911387539803,
+        },
+        "full_window_expectancy": -5.338592315450724e-05,
+        "delta_vs_full": 0.004095462636015061,
+        "strength_buckets": [
+            {"bucket": "<0.50", "n": 144, "wins": 60, "winrate": 0.4166666666666667,
+             "expectancy": -0.0454},
+            {"bucket": "0.50-0.60", "n": 76, "wins": 42, "winrate": 0.5526315789473685,
+             "expectancy": 0.0146},
+        ],
+        "gradient_monotone_up": True,
+        "split_half": {
+            "early": {"days": 10, "n": 228, "expectancy": -0.036577613496487256,
+                      "winrate": 0.49122807017543857},
+            "late": {"days": 10, "n": 113, "expectancy": 0.0860003897016331,
+                     "winrate": 0.584070796460177},
+            "sign_consistent": False,
+        },
+    }
+
+
+def _write_decomposition_report_with_trailing(tmp_path, trailing, date="20260908"):
+    """合成含 (或不含) trailing_window 的最新分解报告 — R149 Op1 additive 键形态."""
+    base = _write_decomposition_report(tmp_path, date=date)
+    payload_path = base / f"winrate_payoff_decomposition_{date}.json"
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    if trailing is not None:
+        payload["universes"]["production_aligned"]["trailing_window"] = trailing
+    payload_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return base
+
+
+def test_trailing_window_line_renders_multi_view(case, tmp_path, monkeypatch):
+    """A1: available=True → 池化/CI/梯度/半窗/delta 方向中性词 + owner 边界齐."""
+    _patch_drift_reports_dir(
+        monkeypatch,
+        _write_decomposition_report_with_trailing(tmp_path, _real_shape_trailing_window()),
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "近期窗判读" in text
+    assert "尾 20 信号日" in text and "20260709..20260821" in text and "n=341" in text
+    assert "+0.40%" in text and "52.2%" in text       # 池化 E / 胜率
+    assert "CI90 下界 -5.73%" in text                  # 聚类 bootstrap CI
+    assert "强度梯度单调非降: 是" in text
+    assert "早 -3.66%/晚 +8.60% 符号翻转" in text       # 半窗 (真实形态: 符号翻转)
+    assert "近期更强" in text                          # delta>0 方向中性词
+    assert "owner" in text and "宪法 #2" in text        # 判读边界
+
+
+def test_trailing_window_line_omitted_when_unavailable(case, tmp_path, monkeypatch):
+    """A2: available 非 True (no_mature_rows/invalid_days_n 形态) → 整行省略."""
+    tw = _real_shape_trailing_window()
+    tw["available"] = False
+    tw["reason"] = "no_mature_rows"
+    _patch_drift_reports_dir(
+        monkeypatch, _write_decomposition_report_with_trailing(tmp_path, tw)
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "近期窗判读" not in render_daily_action_v2(view)
+
+
+def test_trailing_window_line_omitted_when_key_missing_or_malformed(
+    case, tmp_path, monkeypatch
+):
+    """A2: trailing_window 键缺失 / 非 dict → 整行省略 (fail-open 家族)."""
+    service, _repository, as_of, _sessions = case
+
+    # 键缺失
+    _patch_drift_reports_dir(
+        monkeypatch, _write_decomposition_report_with_trailing(tmp_path, None)
+    )
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "近期窗判读" not in render_daily_action_v2(view)
+
+    # 非 dict
+    _patch_drift_reports_dir(
+        monkeypatch,
+        _write_decomposition_report_with_trailing(tmp_path, "garbage"),
+    )
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "近期窗判读" not in render_daily_action_v2(view)
+
+
+def test_trailing_window_line_omitted_when_report_missing(case, tmp_path, monkeypatch):
+    """A2: 报告目录缺失 → 整行省略无异常 (fail-open 家族纪律)."""
+    _patch_drift_reports_dir(monkeypatch, tmp_path / "no-such-reports")
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "近期窗判读" not in render_daily_action_v2(view)
+
+
+def test_trailing_window_line_negative_delta_direction_symmetric(
+    case, tmp_path, monkeypatch
+):
+    """A3: delta<0 → 「近期更弱」与正 delta「近期更强」方向词对称, 无归因叙事."""
+    tw = _real_shape_trailing_window()
+    tw["delta_vs_full"] = -0.0041
+    tw["full_window_expectancy"] = 0.05
+    _patch_drift_reports_dir(
+        monkeypatch, _write_decomposition_report_with_trailing(tmp_path, tw)
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "近期更弱" in text
+    assert "近期更强" not in text
+    assert "由旧窗主导" not in text   # Op2 A1 同款纪律: 方向词不携带归因叙事
+
+
+def test_trailing_window_line_nonfinite_cells_omitted(case, tmp_path, monkeypatch):
+    """A2/R119 家族: 池化 E 非有限 → 整行省略; CI 非有限 → 子句省略不虚构."""
+    service, _repository, as_of, _sessions = case
+
+    # 池化 E 非有限 (str 冒充数值) → 行主体缺失, 整行省略不以残行冒充
+    tw = _real_shape_trailing_window()
+    tw["pooled"]["expectancy"] = "oops"
+    _patch_drift_reports_dir(
+        monkeypatch, _write_decomposition_report_with_trailing(tmp_path, tw)
+    )
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    assert "近期窗判读" not in render_daily_action_v2(view)
+
+    # CI 非有限 (NaN) → CI 子句省略, 行其余照常 (不虚构 CI)
+    tw = _real_shape_trailing_window()
+    tw["pooled"]["cluster_ci_low_90"] = float("nan")
+    _patch_drift_reports_dir(
+        monkeypatch, _write_decomposition_report_with_trailing(tmp_path, tw)
+    )
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    trailing = next(line for line in text.splitlines() if "近期窗判读" in line)
+    assert "CI90" not in trailing   # CI 子句省略 (先验漂移行的 CI90 子句不相干)
+
+
 def test_prior_drift_line_omitted_when_all_row_missing_keys(case, tmp_path, monkeypatch):
     """ALL 行缺 expectancy/winrate 键: 整行省略零崩溃 (畸形报告家族)."""
     base = tmp_path / "reports"
