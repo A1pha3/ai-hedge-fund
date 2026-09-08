@@ -36,11 +36,33 @@ def _resolve(ledger_path: Path | str | None) -> Path:
     return Path(ledger_path) if ledger_path is not None else LEDGER_PATH
 
 
+def _reject_nonfinite_constant(name: str) -> float:
+    """严格 JSON 语义拒绝 NaN/Infinity/-Infinity 字面量 (RFC 8259 非法)。
+
+    R150 Op1 (R147③ 三度登记项收口): json.loads 默认把上述字面量宽容读成
+    float('inf'/'nan') — 写入面 R143/R147 起以 allow_nan=False 拒绝毒化,
+    读面宽容接受即「守卫只守一个阶段」同族残留: 一条历史毒化行经整账
+    load 流入追加路径 (filter→append→全量重序列化 allow_nan=False) 永久
+    ValueError → snapshot_not_serializable 零写入 = 两族账本写入面冻结,
+    且读面静默 (夜刷 WARNING 归因「快照不可序列化」与「历史行毒化」不可
+    区分)。raise ValueError → 与 JSONDecodeError 同入损坏行 advisory 跳过
+    分支 (load_trigger_ledger docstring 既有语义); 追加路径的整账重写自此
+    天然隔离毒化行 (自愈去毒), 消费面看到的账本恒为严格 JSON 可解析事实。
+    """
+    raise ValueError(f"non-finite JSON constant not allowed: {name}")
+
+
 def load_trigger_ledger(ledger_path: Path | str | None = None) -> list[dict]:
     """读触发器账本, 按日期升序; 损坏行 advisory 跳过 (诊断面语义)。
 
     兼容两种记录形态: R81 旧形态 (无 ``court`` 字段) 与 R84 起带 court
     绑定的新形态 — 读取侧对字段不加严, 披露面自行判空。
+
+    损坏行 = JSON 语法违约 (JSONDecodeError) **及** 严格 JSON 违约的
+    NaN/Infinity 字面量行 (R150 Op1 读面防御, ``_reject_nonfinite_constant``):
+    后者曾被宽容读成 inf 流入追加路径令两族账本写入面永久冻结
+    (snapshot_not_serializable, R147③ 三度登记)。跳过即自愈 — 追加路径
+    的整账重写不回写毒化行, 落盘账本恒为严格 JSON 可解析事实。
     """
     path = _resolve(ledger_path)
     records: list[dict] = []
@@ -56,8 +78,8 @@ def load_trigger_ledger(ledger_path: Path | str | None = None) -> list[dict]:
         if not line:
             continue
         try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
+            rec = json.loads(line, parse_constant=_reject_nonfinite_constant)
+        except (json.JSONDecodeError, ValueError):
             continue
         if isinstance(rec, dict) and rec.get("date"):
             records.append(rec)
@@ -320,7 +342,11 @@ def load_k_registration(
     owner_ref = data.get("owner_ref")
     if not isinstance(anchor, str) or not anchor:
         return ("malformed", None)
-    if not isinstance(registered_date, str) or not registered_date.isdigit()             or len(registered_date) != 8:
+    if (
+        not isinstance(registered_date, str)
+        or not registered_date.isdigit()
+        or len(registered_date) != 8
+    ):
         return ("malformed", None)
     if not _is_pos_int(data.get("k_070")):
         return ("malformed", None)
@@ -449,6 +475,8 @@ def load_k_observations(path: Path | str | None = None) -> list[dict]:
     流入资格窗口起算日, 再经 ``trigger_qualification`` 形状复验 ValueError
     裸逃逸炸掉 ``--daily-action`` 渲染与夜刷 build 双面 (fail-open 家族纪律:
     证据面损坏不得阻断披露/生产面)。畸形行 advisory 跳过, 不假装有观测。
+    R150 Op1: NaN/Infinity 字面量行同入损坏行家族 (镜像本模块追加型写面
+    的读面防御, ``load_trigger_ledger`` docstring 成文冻结机制)。
     """
     log_path = Path(path) if path is not None else K_OBSERVATION_LOG_PATH
     try:
@@ -462,8 +490,8 @@ def load_k_observations(path: Path | str | None = None) -> list[dict]:
         if not line:
             continue
         try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
+            rec = json.loads(line, parse_constant=_reject_nonfinite_constant)
+        except (json.JSONDecodeError, ValueError):
             continue
         observed = rec.get("observed_date") if isinstance(rec, dict) else None
         if (

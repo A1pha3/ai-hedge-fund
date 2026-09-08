@@ -412,7 +412,9 @@ class TestCohortKDisclosure:
         first = ct.observe_cohort_k_registration(reg, "20260906", path=obs_path)
         second = ct.observe_cohort_k_registration(reg, "20260906", path=obs_path)
         assert first == second
-        lines = [l for l in obs_path.read_text(encoding="utf-8").splitlines() if l]
+        lines = [
+            ln for ln in obs_path.read_text(encoding="utf-8").splitlines() if ln
+        ]
         assert len(lines) == 1
 
 
@@ -475,3 +477,17 @@ def test_stability_reports_folded_duplicates():
     assert ct.cohort_trigger_stability([_record("20260905", c1_lit=True)])[
         "folded_duplicates"
     ] == 0
+
+
+def test_cohort_load_delegates_poisoned_line_skip(tmp_path):
+    """R150 Op1: 日层族装载经 threshold_trigger 单一实现继承毒化行拒收
+    (Infinity/NaN 字面量 = 损坏行家族, advisory 跳过, 干净行保留)。"""
+    good = json.dumps(_record("20260901"), ensure_ascii=False, sort_keys=True)
+    poison = (
+        '{"date": "20260902", "strong_bucket": {"lit": true, "judged": true,'
+        ' "n": 864, "stat": Infinity}, "conjunction_armed": true}'
+    )
+    ledger = tmp_path / "cohort_ledger.jsonl"
+    ledger.write_text(good + "\n" + poison + "\n", encoding="utf-8")
+    records = ct.load_cohort_trigger_ledger(ledger)
+    assert [r["date"] for r in records] == ["20260901"]

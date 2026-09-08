@@ -786,3 +786,119 @@ def test_fold_multiple_separate_duplicate_runs():
     assert st["condition_1_streak"] == 0   # 尾段 B 未亮断链
     assert st["folded_duplicates"] == 2
     assert st["records"] == 4
+
+
+# ---------------------------------------------------------------------------
+# R150 Op1: 毒化账本行读面防御 (R147③ 三度登记项收口) — Infinity/-Infinity/
+# NaN 字面量 (RFC 8259 非法, R143/R147 写入面 allow_nan=False 的镜像违约)
+# = 损坏行家族, 读面拒收 → 追加路径整账重写天然隔离毒化行 (自愈去毒),
+# 修复「一条历史毒化行 → record_trigger_status 永久 snapshot_not_serializable
+# 零写入冻结」(RED PoC 实锤)。
+# ---------------------------------------------------------------------------
+
+def _write_raw_lines(tmp_path, lines):
+    path = tmp_path / "ledger_poison.jsonl"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_load_skips_nonfinite_constant_lines(tmp_path):
+    """毒化行按损坏行家族语义 advisory 跳过, 干净行保留升序不变。"""
+    good = json.dumps(_rec("20260829"), ensure_ascii=False, sort_keys=True)
+    lines = [
+        good,
+        '{"date": "20260830", "condition_1": {"lit": true, "judged": true,'
+        ' "n": 340, "stat": Infinity}}',
+        '{"date": "20260831", "condition_1": {"lit": false, "judged": true,'
+        ' "n": 340, "stat": NaN}}',
+        '{"date": "20260901", "condition_1": {"lit": true, "judged": true,'
+        ' "n": 340, "stat": -Infinity}}',
+    ]
+    records = tt.load_trigger_ledger(_write_raw_lines(tmp_path, lines))
+    assert [r["date"] for r in records] == ["20260829"]
+
+
+def test_poisoned_line_does_not_inflate_streaks(tmp_path):
+    """毒化行 (lit=true + stat=Infinity) 被拒收 → 连亮计数不含毒化判定
+    (宽容读入时 lit=true 会把断链尾行当点亮, 膨胀 owner K 判读数据源)。"""
+    good = json.dumps(
+        _rec("20260829", c1_lit=True), ensure_ascii=False, sort_keys=True
+    )
+    poison = (
+        '{"date": "20260830", "condition_1": {"lit": true, "judged": true,'
+        ' "n": 340, "stat": Infinity}, "conjunction_armed": true}'
+    )
+    records = tt.load_trigger_ledger(_write_raw_lines(tmp_path, [good, poison]))
+    st = tt.trigger_stability(records)
+    assert st["condition_1_streak"] == 1
+    assert st["records"] == 1
+
+
+def test_load_k_observations_skips_nonfinite_lines(tmp_path):
+    path = tmp_path / "klog.jsonl"
+    good = json.dumps({"observed_date": "20260901", "k_hash": "sha256:aa",
+                       "k_070": 8})
+    bad = ('{"observed_date": "20260902", "k_hash": "sha256:bb",'
+           ' "k_070": Infinity}')
+    path.write_text(good + "\n" + bad + "\n", encoding="utf-8")
+    records = tt.load_k_observations(path)
+    assert [r["observed_date"] for r in records] == ["20260901"]
+
+
+def test_append_path_self_heals_past_poisoned_line(tmp_path):
+    """端到端自愈: 预置毒化行的账本经 record_trigger_status 追加 →
+    recorded=True 且落盘文件毒化行消失、新快照在场 (修复前 RED =
+    snapshot_not_serializable 零写入冻结)。"""
+    from scripts.winrate_payoff_decomposition import record_trigger_status
+
+    good = json.dumps(
+        _rec("20260901", court={"content_digest": "sha256:" + "a" * 64}),
+        ensure_ascii=False, sort_keys=True,
+    )
+    poison = (
+        '{"date": "20260902", "condition_1": {"lit": true, "judged": true,'
+        ' "n": 340, "stat": Infinity}, "conjunction_armed": true,'
+        ' "court": {"content_digest": "sha256:' + "b" * 64 + '"}}'
+    )
+    path = _write_raw_lines(tmp_path, [good, poison])
+    payload = {"threshold_trigger": {
+        "anchor": "production_aligned/t10",
+        "min_n": 30,
+        "condition_1_strong_bucket_ci_above_zero": {
+            "lit": True, "judged": True, "n": 340, "stat": 0.001,
+        },
+        "condition_2_mid_bucket_expectancy_negative": {
+            "lit": False, "judged": True, "n": 341, "stat": 0.002,
+        },
+        "conjunction_armed": False,
+    }}
+    result = record_trigger_status(payload, "20260903", ledger_path=path)
+    assert result["recorded"] is True, result
+    text = path.read_text(encoding="utf-8")
+    assert "Infinity" not in text
+    dates = [
+        json.loads(line)["date"]
+        for line in text.splitlines() if line.strip()
+    ]
+    assert dates == ["20260901", "20260903"]
+
+
+def test_clean_ledger_load_behavior_unchanged(tmp_path):
+    """干净账本行为逐字节不变: load 结果与逐行严格解析一致 (零行为变化
+    pin — R150 Op1 只把非有限常量行加入既有损坏行家族)。"""
+    import json as _json
+
+    records = [
+        _rec("20260829"),
+        _rec("20260831", court={"content_digest": "sha256:" + "c" * 64}),
+    ]
+    path = _write(tmp_path, records)
+    loaded = tt.load_trigger_ledger(path)
+    strict = [
+        _json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert sorted(loaded, key=lambda r: r["date"]) == sorted(
+        strict, key=lambda r: r["date"]
+    )
