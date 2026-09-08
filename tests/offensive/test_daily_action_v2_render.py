@@ -612,6 +612,73 @@ def test_trailing_window_line_nonfinite_cells_omitted(case, tmp_path, monkeypatc
     assert "CI90" not in trailing   # CI 子句省略 (先验漂移行的 CI90 子句不相干)
 
 
+def test_trailing_window_full_window_contrast_renders_both_numbers(
+    case, tmp_path, monkeypatch
+):
+    """A1 (R151 Op1): 全窗对照双数形态 — 全窗 E 与近期差分列渲染.
+
+    修复前 RED: 「全窗对照 +0.41%(近期更强)」把 delta_vs_full (近期−全窗差值)
+    放在全窗标签下 — 读者把差值误读为全窗期望 (真实全窗 E=-0.00%), 与紧邻
+    先验漂移行 (全窗 E -0.00%) 同报自相矛盾; 报告面同节是正确双数格式
+    「全期 E=-0.00% → 近期差 +0.41%」。本测钉死值形态 (fixture 非对称:
+    full_e≠delta, R13 教训), 防方向词断言再放过数字误导。
+    """
+    tw = _real_shape_trailing_window()
+    assert tw["full_window_expectancy"] != tw["delta_vs_full"]  # 非对称前提
+    _patch_drift_reports_dir(
+        monkeypatch, _write_decomposition_report_with_trailing(tmp_path, tw)
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    trailing = next(line for line in text.splitlines() if "近期窗判读" in line)
+    assert "全窗 E -0.01%" in trailing       # 全窗数值 = payload full_window_expectancy (-5.34e-05 → -0.01%)
+    assert "近期差 +0.41%" in trailing       # 差值独立标签 (零重算, 直取 payload)
+    assert "全窗对照 +0.41%" not in trailing  # 修复前形态: delta 值在全窗标签下
+
+
+def test_trailing_window_full_window_missing_or_nonfinite_degrades(
+    case, tmp_path, monkeypatch
+):
+    """A3 (R151 Op1): full_window_expectancy 缺失/非有限 → 「较全窗差」降级形态
+    (无全窗数值, 不虚构); delta 也非有限 → 整个子句省略 (fail-open 家族纪律)."""
+    service, _repository, as_of, _sessions = case
+
+    def _render_with(tw):
+        _patch_drift_reports_dir(
+            monkeypatch, _write_decomposition_report_with_trailing(tmp_path, tw)
+        )
+        context = service.advance_lifecycle(as_of)
+        run = service.complete_run(context, candidates=())
+        view = DailyActionV2Run(run, (), run.open_positions, (), ())
+        text = render_daily_action_v2(view)
+        return next(line for line in text.splitlines() if "近期窗判读" in line)
+
+    # 键缺失 → 仅差值降级, 无全窗数值
+    tw = _real_shape_trailing_window()
+    del tw["full_window_expectancy"]
+    trailing = _render_with(tw)
+    assert "较全窗差 +0.41%" in trailing
+    assert "全窗 E" not in trailing
+
+    # 非有限 (NaN) → 同降级
+    tw = _real_shape_trailing_window()
+    tw["full_window_expectancy"] = float("nan")
+    trailing = _render_with(tw)
+    assert "较全窗差 +0.41%" in trailing
+    assert "全窗 E" not in trailing
+
+    # delta 非有限 → 整个子句省略 (方向词一并省略, 不以残子句冒充)
+    tw = _real_shape_trailing_window()
+    tw["delta_vs_full"] = float("nan")
+    trailing = _render_with(tw)
+    assert "全窗 E" not in trailing
+    assert "较全窗差" not in trailing
+    assert "近期更强" not in trailing and "近期更弱" not in trailing
+
+
 def test_prior_drift_line_omitted_when_all_row_missing_keys(case, tmp_path, monkeypatch):
     """ALL 行缺 expectancy/winrate 键: 整行省略零崩溃 (畸形报告家族)."""
     base = tmp_path / "reports"

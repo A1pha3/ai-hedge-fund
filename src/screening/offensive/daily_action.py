@@ -1579,6 +1579,8 @@ def _render_trailing_window_line(
     日期毒文件占据时, 先验漂移行同款 _poisoned_line 已显形告警, 本行不重复);
     池化 E/胜率非有限 → 整行省略 (行主体缺失不以残行冒充); 其余子句 (CI90/
     delta/梯度/半窗) 非有限或缺失 → 对应子句省略不虚构 (R119 数值守卫家族)。
+    R151 Op1: 全窗对照子句为双数形态「全窗 E → 近期差 (方向词)」镜像报告面,
+    全窗 E 缺失/非有限时降级为「较全窗差」仅差值形态 (无全窗数值不虚构)。
     本行是披露不是行为改变 — 不进入任何计划/评分/仓位/退出决策路径。
     """
     try:
@@ -1619,12 +1621,23 @@ def _render_trailing_window_line(
             f"近期窗判读：{days_text}（{span}，{n_text}）"
             f"期望 {expectancy:+.2%}/胜率 {winrate:.1%}{ci_text}"
         ]
+        # R151 Op1: 全窗对照双数形态 (镜像报告面 render_md 同节) — 修复前 delta
+        # (近期−全窗差值) 被渲染在「全窗对照」标签下, 读者把差值误读为全窗期望,
+        # 与紧邻先验漂移行同报自相矛盾 (20260908 日报实锤)。全窗 E 直取 payload
+        # full_window_expectancy (零重算), 缺失/非有限时降级为仅差值形态不虚构
+        # (R119 数值守卫家族); delta 非有限则整个子句省略。
+        full_e = tw.get("full_window_expectancy")
         delta = tw.get("delta_vs_full")
         if _is_finite_number(delta):
             direction = (
                 "近期更强" if delta > 0 else ("近期更弱" if delta < 0 else "持平")
             )
-            parts.append(f"全窗对照 {delta:+.2%}（{direction}）")
+            if _is_finite_number(full_e):
+                parts.append(
+                    f"全窗 E {full_e:+.2%} → 近期差 {delta:+.2%}（{direction}）"
+                )
+            else:
+                parts.append(f"较全窗差 {delta:+.2%}（{direction}）")
         gradient = tw.get("gradient_monotone_up")
         if isinstance(gradient, bool):
             parts.append(f"强度梯度单调非降: {'是' if gradient else '否'}")
