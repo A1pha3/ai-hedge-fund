@@ -152,6 +152,13 @@ class TestComponentAnatomy:
         with pytest.raises(SystemExit, match="low_vol_score"):
             analyze(ev)
 
+    def test_missing_core_columns_fail_closed(self):
+        """R152 Op2 A1: core 列缺失同入 typed 拒绝 (修复前裸 KeyError 逃逸)。"""
+        for col in ("trigger_strength", "signal_date", "gross_ret_t10"):
+            ev = _fixture_ev().drop(columns=[col])
+            with pytest.raises(SystemExit, match=col):
+                analyze(ev)
+
 
 class TestSplitHalf:
     def _rows(self, spec):
@@ -225,6 +232,13 @@ class TestRenderMd:
         assert "探索性 in-sample" in md and "宪法 #2" in md
         assert "上市板" in md and "低波" in md
         assert "hi−lo" in md
+
+    def test_count_cells_integer_rendering(self):
+        """R152 Op2 A2: n 计数格整数渲染 (修复前 '4.000' 三位小数实锤)。"""
+        payload = analyze(_fixture_ev())
+        md = render_md(payload)
+        assert "| 上市板 (board_score) | 4 / " in md
+        assert ".000 / " not in md and ".000 |" not in md
 
     def test_malformed_payload_no_crash(self):
         assert render_md(None) == ""

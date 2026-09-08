@@ -186,13 +186,22 @@ def component_split_half(
 def analyze(ev: "pd.DataFrame") -> dict[str, object]:
     """事件表 → 完整分量解剖 payload (生产对齐 × T+10 主 horizon)。
 
-    分量列缺失 = 口径理解错误, SystemExit fail-closed (镜像
+    列缺失 = 口径理解错误, SystemExit fail-closed (镜像
     production_aligned 的过滤列纪律 — 静默当作缺失列会渲染全 unknown
-    假装分析了)。ret 列经 net_returns 统一扣成本。
+    假装分析了)。R152 Op2: 必需列全集 = 五分量 + trigger_strength +
+    signal_date + gross_ret_t10 — 缺 core 列时此前经 _pool_frame/
+    net_returns/component_split_half 裸 KeyError 逃逸 (PoC 实锤),
+    与分量列同入 typed 拒绝。ret 列经 net_returns 统一扣成本。
     """
-    missing = [c for c, _ in COMPONENTS if c not in ev.columns]
+    required = [
+        *(c for c, _ in COMPONENTS),
+        "trigger_strength",
+        "signal_date",
+        "gross_ret_t10",
+    ]
+    missing = [c for c in required if c not in ev.columns]
     if missing:
-        raise SystemExit(f"court 事件表缺少强度分量列: {missing}")
+        raise SystemExit(f"court 事件表缺少必需列: {missing}")
     universe = production_aligned(ev)
     work = universe.copy()
     work["net_ret_t10"] = net_returns(work["gross_ret_t10"].tolist())
@@ -215,6 +224,14 @@ def _fmt(v: object, pct: bool = True) -> str:
     if not math.isfinite(float(v)):
         return "—"
     return f"{v:+.2%}" if pct else f"{v:.3f}"
+
+
+def _fmt_count(v: object) -> str:
+    """计数格整数渲染 (R152 Op2: 修复前 n 经 _fmt(pct=False) 渲染 '226.000'
+    三位小数 — int 计数被 :.3f 浮点格式化, 真实报告实锤)。"""
+    if isinstance(v, bool) or not isinstance(v, int):
+        return "—"
+    return str(v)
 
 
 def render_md(payload: object) -> str:
@@ -286,9 +303,9 @@ def render_md(payload: object) -> str:
                                     sign = "翻转"
                     lines.append(
                         f"| {label} ({comp_key}) "
-                        f"| {_fmt(lo.get('n'), pct=False)} / {_fmt(lo.get('expectancy'))}"
+                        f"| {_fmt_count(lo.get('n'))} / {_fmt(lo.get('expectancy'))}"
                         f" / {_fmt(lo.get('cluster_ci_low_90'))} "
-                        f"| {_fmt(hi.get('n'), pct=False)} / {_fmt(hi.get('expectancy'))}"
+                        f"| {_fmt_count(hi.get('n'))} / {_fmt(hi.get('expectancy'))}"
                         f" / {_fmt(hi.get('cluster_ci_low_90'))} "
                         f"| {_fmt(cell.get('hi_lo_delta'))} | {sign} |"
                     )
