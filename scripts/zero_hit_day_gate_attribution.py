@@ -1140,7 +1140,9 @@ def main(argv: list[str] | None = None) -> int:
 
     R148 Op1 报告面失败契约 (R147 登记项②): payload 含非有限值或不可
     序列化对象时 SystemExit 零产物 — serialize-first + allow_nan=False,
-    与三族账本写入器 (R147 Op1 F-a) 同款序列化契约。缺报告 + 响亮失败
+    与三族账本写入器 (R147 Op1 F-a) 同款序列化契约。R148 Op2 对抗审查
+    扩写盘面: md/json 写盘对失败时 best-effort 清除半套产物后同出口 —
+    序列化与写盘两面均零部分产物。缺报告 + 响亮失败
     优于静默毒化报告 (NaN/Infinity 字面量会被严格解析器整份拒绝, 而报告
     是 owner c3 门槛机会成本判读的主消费面); 夜刷链 _run_step 按
     rc!=0 + stderr 尾部归因。
@@ -1181,8 +1183,20 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(
             f"main 报告 JSON 序列化失败 (fail-closed, 零产物写入): {exc}"
         ) from exc
-    md_path.write_text(md_text, encoding="utf-8")
-    json_path.write_text(json_text, encoding="utf-8")
+    try:
+        md_path.write_text(md_text, encoding="utf-8")
+        json_path.write_text(json_text, encoding="utf-8")
+    except OSError as exc:
+        # R148 Op2 对抗审查: 写盘对失败与序列化失败同契约 — best-effort
+        # 清除本运行已落盘产物, 不留下新 md 配旧/无 json 的半套报告对
+        # (清理失败静默容忍, 不掩盖原异常; json_path 为目录等非本运行
+        # 产物形态 unlink 失败如实放行)。
+        for artifact in (md_path, json_path):
+            try:
+                artifact.unlink()
+            except OSError:
+                pass
+        raise SystemExit(f"main 报告写盘失败 (fail-closed): {exc}") from exc
     s = payload["summary"]
     nr = s["normal_regime_pooled"]
     print(

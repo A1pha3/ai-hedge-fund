@@ -1637,3 +1637,25 @@ class TestMainReportWriteFaceR148:
         assert (
             report_dir / "zero_hit_day_gate_attribution_20260908.md"
         ).exists()
+
+    def test_json_write_failure_no_md_remnant(self, tmp_path, monkeypatch):
+        # R148 Op2 F-a RED (修复前: 裸 IsADirectoryError + md 落盘半套产物)
+        payload = self._payload()
+        report_dir = tmp_path / "reports"
+        report_dir.mkdir(parents=True)
+        (report_dir / "zero_hit_day_gate_attribution_20260908.json").mkdir()
+        with pytest.raises(SystemExit, match="写盘失败"):
+            self._run_main(tmp_path, monkeypatch, payload)
+        md = report_dir / "zero_hit_day_gate_attribution_20260908.md"
+        assert not md.exists()  # 半套产物已清除
+
+    def test_md_write_failure_no_json_remnant(self, tmp_path, monkeypatch):
+        # R148 Op2 F-a 对称面: md 写盘失败 → json 不落盘
+        payload = self._payload()
+        report_dir = tmp_path / "reports"
+        report_dir.mkdir(parents=True)
+        (report_dir / "zero_hit_day_gate_attribution_20260908.md").mkdir()
+        with pytest.raises(SystemExit, match="写盘失败"):
+            self._run_main(tmp_path, monkeypatch, payload)
+        json_path = report_dir / "zero_hit_day_gate_attribution_20260908.json"
+        assert not json_path.exists()
