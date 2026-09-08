@@ -3387,3 +3387,255 @@ class TestLedgerDateShapeGuard:
 
         meta = record_trigger_status({}, "2026-9-8", ledger_path=tmp_path / "l.jsonl")
         assert meta == {"recorded": False, "reason": "invalid_date_str"}
+
+
+class TestTrailingWindow:
+    """R149 Op1: 近期窗 (尾 N 信号日) 条件化判读面。
+
+    Observe 实证 (真实 court 生产对齐 n=1627): 全窗 E≈0 完全由旧窗拖累,
+    尾 20 信号日为全样本最强窗且强度梯度单调陡峭 — 全窗口径 (先验漂移
+    行) 在新旧窗符号相反时方向性误导。fixture 非对称 (R13 教训)。
+    净收益 = gross − 0.0065, fixture gross 反向加回, 断言直用净额。
+    """
+
+    def _frame(self, n_days: int = 5, flip: bool = False):
+        import pandas as pd
+
+        # 尾 3 日 (days_n=3 近期窗), 前 2 日应被切掉 (旧窗毒化行)
+        # 尾窗逐日 E 非对称: 0311: −0.06 (0.30) / 0312: +0.04 (0.55),
+        # 0313: +0.10 (0.90), +0.02 (0.75) → 桶梯度 <0.50 → 0.50-0.60 → ≥0.70 递增
+        # flip=True 时尾窗改递减 (梯度布尔反向面)
+        seq = [
+            ("20260309", 0.90, -0.50),   # 旧窗 (应被切掉)
+            ("20260310", 0.30, -0.60),   # 旧窗
+            ("20260311", 0.30, -0.06),   # 尾窗 <0.50
+            ("20260312", 0.55, 0.04),    # 尾窗 0.50-0.60
+            ("20260313", 0.90, 0.10),    # 尾窗 ≥0.70
+            ("20260313", 0.75, 0.02),    # 尾窗 ≥0.70 (第二行, 0.60-0.70 桶空)
+        ]
+        if flip:
+            seq = [
+                ("20260309", 0.90, -0.50),
+                ("20260310", 0.30, -0.60),
+                ("20260311", 0.30, 0.06),
+                ("20260312", 0.55, -0.04),
+                ("20260313", 0.90, -0.10),
+                ("20260313", 0.75, -0.02),
+            ]
+        rows = [
+            {"signal_date": sd, "trigger_strength": s, "gross_ret_t10": r + 0.0065}
+            for sd, s, r in seq[:n_days + 1]
+        ]
+        return pd.DataFrame(rows).astype({"signal_date": str})
+
+    def _tw(self, frame, **kw):
+        from scripts.winrate_payoff_decomposition import trailing_window
+
+        work = frame.copy()
+        work["net_ret_t10"] = net_returns(work["gross_ret_t10"].tolist())
+        from scripts.winrate_payoff_decomposition import strength_bucket
+
+        work["strength_bucket"] = work["trigger_strength"].map(strength_bucket)
+        return trailing_window(work, **kw)
+
+    def test_tail_day_selection_exact(self):
+        tw = self._tw(self._frame(), days_n=3)
+        assert tw["available"] is True
+        assert tw["observed_days"] == 3
+        assert tw["first_day"] == "20260311"
+        assert tw["last_day"] == "20260313"
+        # 旧窗两行 (−0.50/−0.60) 被切掉: pooled n = 尾窗 4 行
+        assert tw["pooled"]["n"] == 4
+        # 逐位手算: (−0.06 + 0.04 + 0.10 + 0.02) / 4 = +0.025
+        assert tw["pooled"]["expectancy"] == pytest.approx(0.025, abs=1e-12)
+        # 胜率 3/4
+        assert tw["pooled"]["winrate"] == pytest.approx(0.75, abs=1e-12)
+        # 全窗对照: 全体 6 行 (−0.50−0.60−0.06+0.04+0.10+0.02)/6 = −0.166...
+        assert tw["full_window_expectancy"] == pytest.approx(-1.0 / 6, abs=1e-12)
+        # delta = 0.025 − (−1/6) = 0.191666...
+        assert tw["delta_vs_full"] == pytest.approx(0.025 + 1.0 / 6, abs=1e-12)
+
+    def test_strength_bucket_gradient_and_subthreshold_pool(self):
+        tw = self._tw(self._frame(), days_n=3)
+        buckets = {b["bucket"]: b for b in tw["strength_buckets"]}
+        # '<0.50' 桶 = 0.50 门槛外毒池读数 (n=1, E=−0.06)
+        assert buckets["<0.50"]["n"] == 1
+        assert buckets["<0.50"]["expectancy"] == pytest.approx(-0.06, abs=1e-12)
+        # '0.60-0.70' 桶空 (fixture 无该桶行) → n=0, 期望 None
+        assert buckets["0.60-0.70"]["n"] == 0
+        assert buckets["0.60-0.70"]["expectancy"] is None
+        # 空桶不虚构反证: 观测桶非降 (<0.50 −0.06 ≤ 0.50-0.60 +0.04 ≤ ≥0.70 +0.10) → True
+        assert tw["gradient_monotone_up"] is True
+
+    def test_gradient_none_when_single_observed_bucket(self):
+        # 观测数值桶 <2 → None (单点不冒充梯度)
+        import pandas as pd
+
+        from scripts.winrate_payoff_decomposition import (
+            net_returns as nr,
+            strength_bucket,
+            trailing_window,
+        )
+
+        rows = [
+            {"signal_date": "20260311", "trigger_strength": 0.30,
+             "gross_ret_t10": -0.06 + 0.0065},
+            {"signal_date": "20260312", "trigger_strength": None,
+             "gross_ret_t10": 0.01 + 0.0065},
+        ]
+        w = pd.DataFrame(rows).astype({"signal_date": str})
+        w["net_ret_t10"] = nr(w["gross_ret_t10"].tolist())
+        w["strength_bucket"] = w["trigger_strength"].map(strength_bucket)
+        tw = trailing_window(w, days_n=3)
+        # 有序数值桶仅 <0.50 有行 (unknown 无序不入梯度) → None
+        assert tw["gradient_monotone_up"] is None
+
+    def test_gradient_monotone_true_and_false(self):
+        # 全桶非空输入: 递增 → True
+        import pandas as pd
+        from scripts.winrate_payoff_decomposition import (
+            net_returns as nr,
+            strength_bucket,
+            trailing_window,
+        )
+
+        def mk(pairs):
+            rows = [
+                {"signal_date": sd, "trigger_strength": s, "gross_ret_t10": r + 0.0065}
+                for sd, s, r in pairs
+            ]
+            w = pd.DataFrame(rows).astype({"signal_date": str})
+            w["net_ret_t10"] = nr(w["gross_ret_t10"].tolist())
+            w["strength_bucket"] = w["trigger_strength"].map(strength_bucket)
+            return w
+
+        up = mk([
+            ("20260311", 0.30, -0.06),
+            ("20260312", 0.55, 0.04),
+            ("20260312", 0.65, 0.05),
+            ("20260313", 0.90, 0.10),
+        ])
+        tw_up = trailing_window(up, days_n=3)
+        assert tw_up["gradient_monotone_up"] is True
+        down = mk([
+            ("20260311", 0.30, 0.06),
+            ("20260312", 0.55, -0.04),
+            ("20260312", 0.65, -0.05),
+            ("20260313", 0.90, -0.10),
+        ])
+        tw_down = trailing_window(down, days_n=3)
+        assert tw_down["gradient_monotone_up"] is False
+
+    def test_split_half_sign_consistency_and_honest_none(self):
+        tw = self._tw(self._frame(), days_n=3)
+        halves = tw["split_half"]
+        # 尾 3 日对分: early {0311} (E −0.06), late {0312,0313} (E +0.0533...)
+        assert halves["early"]["expectancy"] == pytest.approx(-0.06, abs=1e-12)
+        assert halves["late"]["expectancy"] == pytest.approx(0.08 / 1.5, abs=1e-12)
+        assert halves["sign_consistent"] is False
+        # 半窗无成熟行 → sign_consistent None (单日窗 early 空)
+        tw1 = self._tw(self._frame(), days_n=1)
+        assert tw1["split_half"]["early"]["n"] == 0
+        assert tw1["split_half"]["early"]["expectancy"] is None
+        assert tw1["split_half"]["sign_consistent"] is None
+
+    def test_determinism_same_input_same_output(self):
+        # CI per-call seeded (R13): 同输入两次调用整块逐位恒等
+        a = self._tw(self._frame(), days_n=3)
+        b = self._tw(self._frame(), days_n=3)
+        assert a == b
+
+    def test_no_mature_rows_available_false(self):
+        import pandas as pd
+        from scripts.winrate_payoff_decomposition import (
+            net_returns as nr,
+            strength_bucket,
+            trailing_window,
+        )
+
+        empty = pd.DataFrame({
+            "signal_date": ["20260311"],
+            "trigger_strength": [0.9],
+            "gross_ret_t10": [float("nan")],
+        }).astype({"signal_date": str})
+        empty["net_ret_t10"] = nr(empty["gross_ret_t10"].tolist())
+        empty["strength_bucket"] = empty["trigger_strength"].map(strength_bucket)
+        tw = trailing_window(empty, days_n=3)
+        assert tw == {"available": False, "reason": "no_mature_rows"}
+
+    def test_decompose_wiring_universe_discipline(self, tmp_path, monkeypatch):
+        # A4 口径 pin: production_aligned 有 trailing_window, all_candidates 无
+        import pandas as pd
+
+        from scripts.winrate_payoff_decomposition import decompose
+
+        rows = [
+            {"signal_date": "20260311", "trigger_strength": 0.30,
+             "gross_ret_t10": -0.06 + 0.0065, "gross_ret_t5": 0.0,
+             "regime": "normal",
+             "gate_blocked": False, "fillable": True, "price_ge_3": True},
+            {"signal_date": "20260312", "trigger_strength": 0.90,
+             "gross_ret_t10": 0.10 + 0.0065, "gross_ret_t5": 0.0,
+             "regime": "normal",
+             "gate_blocked": False, "fillable": True, "price_ge_3": True},
+        ]
+        df = pd.DataFrame(rows).astype({"signal_date": str})
+        for col in ("degraded", "st_name", "industry_missing", "excluded_ticker"):
+            df[col] = False
+        payload = decompose(df)
+        assert "trailing_window" in payload["universes"]["production_aligned"]
+        assert "trailing_window" not in payload["universes"]["all_candidates"]
+        assert (
+            payload["universes"]["production_aligned"]["trailing_window"][
+                "available"
+            ]
+            is True
+        )
+
+    def test_render_trailing_section_and_fail_open(self):
+        from scripts.winrate_payoff_decomposition import (
+            render_md,
+            trailing_window,
+        )
+
+        base_payload = {
+            "horizons": {},
+            "universes": {
+                "all_candidates": {"horizons": {}},
+                "production_aligned": {"horizons": {}},
+            },
+        }
+        # 缺键 → 零新增字节 (fail-open)
+        md_without = render_md(dict(base_payload), "20260908")
+        assert "近期窗判读" not in md_without
+        # 有键 → 四要素齐 (池化/梯度/半窗/机制注)
+        work = self._frame()
+        tw = self._tw(work, days_n=3)
+        payload = {
+            "horizons": {},
+            "universes": {
+                "all_candidates": {"horizons": {}},
+                "production_aligned": {
+                    "horizons": {},
+                    "trailing_window": tw,
+                },
+            },
+        }
+        md = render_md(payload, "20260908")
+        assert "### 近期窗判读 (尾 N 信号日, R149)" in md
+        assert "**池化**" in md and "20260311..20260313" in md
+        assert "**强度梯度**" in md and "门槛外毒池" in md
+        assert "**半窗**" in md and "符号一致: 否" in md
+        assert "机制注" in md and "宪法 #2" in md
+        # available=False → 零新增字节 (不冒充)
+        payload_off = {
+            "horizons": {},
+            "universes": {
+                "all_candidates": {"horizons": {}},
+                "production_aligned": {
+                    "horizons": {},
+                    "trailing_window": {"available": False},
+                },
+            },
+        }
+        assert "近期窗判读" not in render_md(payload_off, "20260908")

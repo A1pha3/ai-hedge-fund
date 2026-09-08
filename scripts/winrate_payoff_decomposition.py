@@ -99,6 +99,7 @@ MIN_CELL_N = 30  # 与 panel_health_check / panel_signal_decomposition 一致
 N_BOOT = 10_000
 BOOT_SEED = 20260822  # 每次调用新建 seeded RNG — 可复现与进程历史/行序无关 (R13)
 PRIMARY_HORIZON = 10  # BTST 固定合约
+TRAILING_SIGNAL_DAYS = 20  # 近期窗 = 尾 N 个有成熟行的信号日 (判读语义常量, 只披露不判定)
 TRIGGER_LEDGER_PATH = Path("data/reports/threshold_trigger_ledger.jsonl")
 CONTRAST_HORIZONS = (5,)
 # 预注册阈值触发器判定门槛 (AGENTS.md 项1; R10/R77 判定纪律同款)
@@ -319,6 +320,103 @@ def slice_bucket_stability(u: "pd.DataFrame") -> list[dict[str, object]]:
             })
         out.append({"slice": label, "range": f"{lo}..{hi}", "buckets": cells})
     return out
+
+
+def trailing_window(
+    work: "pd.DataFrame", *, days_n: int = TRAILING_SIGNAL_DAYS
+) -> dict[str, object]:
+    """近期窗 (尾 N 个有成熟行的信号日) 条件化判读面 — R149 Op1。
+
+    第一性原理: 全窗聚合对『现在还赚不赚钱』不设防 — R144 跨窗反转已
+    实证全窗口径可掩盖 regime 依赖的 edge, 而先验漂移行 (全窗 vs 先验)
+    在新旧窗符号相反时方向性误导 (Observe 实证: 全期 E≈0 完全由旧窗
+    拖累, 尾 20 信号日恰为全样本最强窗且强度梯度单调陡峭)。本面只披露
+    不判定 (宪法 #2): 池化/分桶/半窗统计全部单一实现复用 (win_loss_stats,
+    CI 为 per-call seeded 聚类 bootstrap R13 纪律), 判读语义属 owner。
+
+    尾窗选择 = 有成熟 (net_ret_t10 非空) 行的信号日全序末 days_n 日;
+    强度四桶经 threshold_trigger 单一实现桶序, 其中 '<0.50' 条目即 0.50
+    门槛外毒池读数 (生产不入场, 仅作阈值证据); gradient_monotone_up 对
+    有序数值桶 (排除无序 'unknown' 桶) 中 n>0 的观测桶判定非降序, 观测
+    桶 <2 时 None (单点不冒充梯度, 空桶不虚构反证); split_half 按日序对分,
+    sign_consistent 仅两半 expectancy 非 None 才披露 (R146/R15 半窗纪
+    律)。无成熟行 → available=False 不冒充。
+    """
+    valid = work[work["net_ret_t10"].notna()]
+    all_days = sorted(valid["signal_date"].astype(str).unique())
+    if not all_days:
+        return {"available": False, "reason": "no_mature_rows"}
+    tail_days = set(all_days[-days_n:])
+    sub = valid[valid["signal_date"].astype(str).isin(tail_days)]
+    pooled = win_loss_stats(
+        sub["net_ret_t10"].tolist(), sub["signal_date"].astype(str).tolist()
+    )
+    full_stats = win_loss_stats(
+        valid["net_ret_t10"].tolist(), valid["signal_date"].astype(str).tolist()
+    )
+    buckets: list[dict[str, object]] = []
+    for bucket in ALL_STRENGTH_BUCKETS:
+        cell = sub[sub["strength_bucket"] == bucket]
+        buckets.append(
+            {
+                "bucket": bucket,
+                **win_loss_stats(
+                    cell["net_ret_t10"].tolist(),
+                    cell["signal_date"].astype(str).tolist(),
+                ),
+            }
+        )
+    ordered = [b for b in buckets if b["bucket"] != "unknown"]
+    observed = [b for b in ordered if b["n"]]
+    gradient_monotone_up: bool | None = (
+        all(
+            observed[i]["expectancy"] <= observed[i + 1]["expectancy"]
+            for i in range(len(observed) - 1)
+        )
+        if len(observed) >= 2
+        else None
+    )
+    tail_sorted = sorted(tail_days)
+    half = len(tail_sorted) // 2
+    halves: dict[str, object] = {}
+    for label, day_set in (
+        ("early", set(tail_sorted[:half])),
+        ("late", set(tail_sorted[half:])),
+    ):
+        cell = sub[sub["signal_date"].astype(str).isin(day_set)]
+        stats = win_loss_stats(cell["net_ret_t10"].tolist())
+        halves[label] = {
+            "days": len(day_set),
+            "n": stats["n"],
+            "expectancy": stats["expectancy"],
+            "winrate": stats["winrate"],
+        }
+    e_early = halves["early"]["expectancy"]
+    e_late = halves["late"]["expectancy"]
+    sign_consistent: bool | None = (
+        (e_early > 0) == (e_late > 0)
+        if e_early is not None and e_late is not None
+        else None
+    )
+    trailing_e = pooled["expectancy"]
+    full_e = full_stats["expectancy"]
+    return {
+        "available": True,
+        "window_days_n": days_n,
+        "observed_days": len(tail_days),
+        "first_day": tail_sorted[0],
+        "last_day": tail_sorted[-1],
+        "pooled": pooled,
+        "full_window_expectancy": full_e,
+        "delta_vs_full": (
+            trailing_e - full_e
+            if trailing_e is not None and full_e is not None
+            else None
+        ),
+        "strength_buckets": buckets,
+        "gradient_monotone_up": gradient_monotone_up,
+        "split_half": {**halves, "sign_consistent": sign_consistent},
+    }
 
 
 def gap_anatomy(u: "pd.DataFrame") -> dict[str, object]:
@@ -561,6 +659,11 @@ def decompose(
                 else:
                     entry["attribution_vs_all"] = None
             uni["horizons"][f"t{horizon}"] = rows
+            if universe_name == "production_aligned" and horizon == PRIMARY_HORIZON:
+                # R149 Op1: 近期窗判读面只在生产对齐口径 (先验/触发器/日报
+                # 判读全部该口径, decompose docstring 已禁与 all_candidates
+                # 混引); 主 horizon 一份, 对比 horizon 不重复计算。
+                uni["trailing_window"] = trailing_window(work)
         uni["slice_bucket_stability"] = slice_bucket_stability(frame)
         required_gap_cols = ("gap_t1_open", "ret_close_anchor_t10", "gross_ret_t10")
         if all(c in frame.columns for c in required_gap_cols):
@@ -1496,6 +1599,7 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
     if aligned:
         _render_slice_bucket_stability(aligned, L)
         _render_gap_anatomy(aligned, L)
+        _render_trailing_window(aligned, L)
         # R135 Op2: 先验对齐判定经 attach_prior_alignment 挂载的双守卫结构化
         # 键渲染 (镜像 review_btst_prior_court 对齐断言语义); 旧内联单守卫
         # 计算已移除 — 『对齐 (±1pp 内)』歧义措辞 + 胜率守卫缺席不可回归。
@@ -1606,6 +1710,107 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
     L.append(f"  (固定 bootstrap 种子; court 表 {COURT_TABLE})。")
     L.append("")
     return "\n".join(L)
+
+
+def _tw_num(value: object) -> str:
+    """近期窗单元格防御渲染 — 非有限数值 (含 bool/str/None) 一律 '—'
+    (R142 F2 家族纪律: 垃圾 cell 不崩溃不冒充)。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "—"
+    return f"{value:+.2%}"
+
+
+def _render_trailing_window(uni: dict, L: list[str]) -> None:
+    """近期窗判读节 (R149 Op1) — 缺键/非 dict/available 非真零新增字节
+    (fail-open 家族纪律); 全窗口径对近期判读的方向性误导风险在机制注
+    点名, 判读语义属 owner (宪法 #2)。"""
+    tw = uni.get("trailing_window") if isinstance(uni, dict) else None
+    if not isinstance(tw, dict) or tw.get("available") is not True:
+        return
+    pooled = tw.get("pooled")
+    if not isinstance(pooled, dict):
+        return
+    e = pooled.get("expectancy")
+    if isinstance(e, bool) or not isinstance(e, (int, float)):
+        return
+    L.append("### 近期窗判读 (尾 N 信号日, R149)")
+    L.append("")
+    wr = pooled.get("winrate")
+    wr_txt = (
+        f"{wr:.2%}"
+        if isinstance(wr, (int, float)) and not isinstance(wr, bool)
+        else "—"
+    )
+    L.append(
+        f"- **池化**: {tw.get('first_day')}..{tw.get('last_day')}"
+        f" ({_n_cell(tw.get('observed_days'))} 日, n={_n_cell(pooled.get('n'))})"
+        f" E={_tw_num(e)} / 胜率={wr_txt}"
+    )
+    ci = pooled.get("cluster_ci_low_90")
+    if isinstance(ci, (int, float)) and not isinstance(ci, bool):
+        L.append(f"  CI90 下界 {_tw_num(ci)} (聚类 bootstrap, per-call seeded)")
+    delta = tw.get("delta_vs_full")
+    full_e = tw.get("full_window_expectancy")
+    if isinstance(delta, (int, float)) and not isinstance(delta, bool):
+        L.append(
+            f"- **全窗对照**: 全期 E={_tw_num(full_e)} → 近期差"
+            f" {_tw_num(delta)} — 全窗聚合由旧窗主导, 先验漂移行 (全窗 vs"
+            " 先验) 在新旧窗符号相反时方向性误导, 近期判读以本节为准。"
+        )
+    buckets = tw.get("strength_buckets")
+    if isinstance(buckets, list):
+        cells = []
+        for b in buckets:
+            if not isinstance(b, dict):
+                continue
+            be = b.get("expectancy")
+            bw = b.get("winrate")
+            cells.append(
+                f"{b.get('bucket')}: n={_n_cell(b.get('n'))}"
+                f" E={_tw_num(be)} 胜率="
+                + (
+                    f"{bw:.2%}"
+                    if isinstance(bw, (int, float)) and not isinstance(bw, bool)
+                    else "—"
+                )
+            )
+        if cells:
+            grad = tw.get("gradient_monotone_up")
+            grad_txt = (
+                "是"
+                if grad is True
+                else ("否" if grad is False else "—(观测桶不足)")
+            )
+            L.append("- **强度梯度** (门槛外→强): " + " · ".join(cells))
+            L.append(
+                f"  梯度单调非降: {grad_txt} — '<0.50' 桶即 0.50 门槛外毒池"
+                " (生产不入场, 仅作阈值证据)。"
+            )
+    halves = tw.get("split_half")
+    if isinstance(halves, dict):
+        he = halves.get("early")
+        hl = halves.get("late")
+        sc = halves.get("sign_consistent")
+        if isinstance(he, dict) and isinstance(hl, dict):
+            L.append(
+                "- **半窗**: 早 {_d} 日 E={_e} / 晚 {_d2} 日 E={_e2} — 符号"
+                "一致: {_s}".format(
+                    _d=_n_cell(he.get("days")),
+                    _e=_tw_num(he.get("expectancy")),
+                    _d2=_n_cell(hl.get("days")),
+                    _e2=_tw_num(hl.get("expectancy")),
+                    _s=(
+                        "是"
+                        if sc is True
+                        else ("否" if sc is False else "—(半窗无成熟行)")
+                    ),
+                )
+            )
+    L.append(
+        f"- 机制注: 尾 N={tw.get('window_days_n')} 信号日判读语义属"
+        " owner; 只披露不判定 (宪法 #2), 不构成任何阈值/仓位/行为授权。"
+    )
+    L.append("")
 
 
 def _render_slice_bucket_stability(uni: dict, L: list[str]) -> None:
