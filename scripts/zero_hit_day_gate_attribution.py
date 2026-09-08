@@ -1136,6 +1136,15 @@ def attach_gate_pool_record(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI 入口: 收集归因 payload → 落账 → 写 md/json 报告对。
+
+    R148 Op1 报告面失败契约 (R147 登记项②): payload 含非有限值或不可
+    序列化对象时 SystemExit 零产物 — serialize-first + allow_nan=False,
+    与三族账本写入器 (R147 Op1 F-a) 同款序列化契约。缺报告 + 响亮失败
+    优于静默毒化报告 (NaN/Infinity 字面量会被严格解析器整份拒绝, 而报告
+    是 owner c3 门槛机会成本判读的主消费面); 夜刷链 _run_step 按
+    rc!=0 + stderr 尾部归因。
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--raw-dir", default=None, help="court raw 目录 (缺省单一事实源)")
     parser.add_argument("--table-dir", default=str(TABLE_DIR), help="court 事件表目录")
@@ -1158,11 +1167,22 @@ def main(argv: list[str] | None = None) -> int:
     attach_gate_pool_record(payload, args.date_str, Path(args.gate_ledger))
     md_path = report_dir / f"zero_hit_day_gate_attribution_{args.date_str}.md"
     json_path = report_dir / f"zero_hit_day_gate_attribution_{args.date_str}.json"
-    md_path.write_text(render_md(payload), encoding="utf-8")
-    json_path.write_text(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1),
-        encoding="utf-8",
-    )
+    md_text = render_md(payload)
+    try:
+        # R148 Op1 (R147 登记项②): serialize-first + allow_nan=False —
+        # 报告面与三族账本写入器同款序列化契约: 非有限值绝不静默写
+        # NaN/Infinity 字面量进报告 JSON; 序列化先于任何产物写盘, 失败时
+        # 零部分产物 (修复前 md 先落盘留下半套报告), typed fail-closed
+        # 与 manifest 缺失/损坏同出口。
+        json_text = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, indent=1, allow_nan=False
+        )
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(
+            f"main 报告 JSON 序列化失败 (fail-closed, 零产物写入): {exc}"
+        ) from exc
+    md_path.write_text(md_text, encoding="utf-8")
+    json_path.write_text(json_text, encoding="utf-8")
     s = payload["summary"]
     nr = s["normal_regime_pooled"]
     print(

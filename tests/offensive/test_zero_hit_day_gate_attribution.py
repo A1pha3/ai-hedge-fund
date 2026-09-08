@@ -1548,3 +1548,92 @@ class TestAdversarialOp2AggregateFacePins:
         # 有限路径数字不变 (巨大但有限的和仍如实返回)
         assert zga.day_counterfactual_e([1e308, -0.02]) == pytest.approx(5e307)
         assert zga.day_counterfactual_e([0.01, 0.03]) == pytest.approx(0.02)
+
+
+class TestMainReportWriteFaceR148:
+    """R148 Op1 (R147 登记项②): main() 报告面 JSON 序列化契约收敛。
+
+    Observe PoC (可重放): 非有限 payload 经真实 main() 修复前 rc=0 静默、
+    报告 JSON 含 Infinity 字面量、严格解析器 (parse_constant 抛错) 整份
+    拒绝 — 与 R147 Op1 收敛的账本写入器毒化 (allow_nan 静默落账) 同构的
+    报告面残留, 报告是 owner c3 门槛机会成本判读的主消费面。
+    修复契约: serialize-first + allow_nan=False + typed fail-closed
+    (SystemExit 零产物, 与 manifest 缺失/损坏同出口; 夜刷链 _run_step
+    按 rc!=0 + stderr 尾部归因)。
+    """
+
+    def _payload(self) -> dict:
+        return {
+            "generated_at": "20260908",
+            "primary_horizon": 10,
+            "gate_blocked_stages": sorted(zga.NEAR_MISS_STAGES),
+            "strength_conditioning": "测试fixture",
+            "attribution_caveat": "测试fixture",
+            "zero_hit_days_n": 1,
+            "replay_hit_days": [],
+            "court_binding": None,
+            "days": [],
+            "summary": zga.summarize_gate_effectiveness([]),
+        }
+
+    def _run_main(self, tmp_path, monkeypatch, payload):
+        """经真实 main() 写盘; attach 以真实形态注入 gate_pool_record 键。"""
+        monkeypatch.setattr(
+            zga, "collect_zero_hit_day_attribution", lambda *a, **k: payload
+        )
+
+        def fake_attach(p, d, ledger_path=None):
+            p["gate_pool_record"] = {"recorded": True}
+            return p["gate_pool_record"]
+
+        monkeypatch.setattr(zga, "attach_gate_pool_record", fake_attach)
+        report_dir = tmp_path / "reports"
+        rc = zga.main(
+            [
+                "--report-dir", str(report_dir),
+                "--gate-ledger", str(tmp_path / "l.jsonl"),
+                "--date-str", "20260908",
+            ]
+        )
+        return rc, report_dir
+
+    def _reject_constant(self, name):
+        raise ValueError(f"strict reject: {name}")
+
+    def test_non_finite_payload_fail_closed_zero_artifacts(
+        self, tmp_path, monkeypatch
+    ):
+        # A1 RED (修复前: rc=0 + Infinity 字面量落盘 + md/json 半套产物)
+        payload = self._payload()
+        payload["summary"]["normal_regime_pooled"]["e"] = float("inf")
+        with pytest.raises(SystemExit, match="fail-closed"):
+            self._run_main(tmp_path, monkeypatch, payload)
+        report_dir = tmp_path / "reports"
+        assert report_dir.exists()
+        assert list(report_dir.iterdir()) == []  # 零部分产物
+
+    def test_unserializable_payload_same_typed_exit(self, tmp_path, monkeypatch):
+        # A2 TypeError 面与 ValueError 同守卫 (混合类型键使 sort_keys 排序失败)
+        payload = self._payload()
+        payload["summary"]["mixed"] = {1: "a", "b": 2}
+        with pytest.raises(SystemExit, match="fail-closed"):
+            self._run_main(tmp_path, monkeypatch, payload)
+        report_dir = tmp_path / "reports"
+        assert list(report_dir.iterdir()) == []
+
+    def test_finite_payload_bytes_strictly_canonical(self, tmp_path, monkeypatch):
+        # A3 有限值路径逐字节不变 (allow_nan=False 对有限值与写序无字节影响)
+        payload = self._payload()
+        rc, report_dir = self._run_main(tmp_path, monkeypatch, payload)
+        assert rc == 0
+        json_path = report_dir / "zero_hit_day_gate_attribution_20260908.json"
+        text = json_path.read_text(encoding="utf-8")
+        # 严格解析器通过 (Infinity/NaN/NaN 字面量任一出现即拒)
+        json.loads(text, parse_constant=self._reject_constant)
+        assert (
+            text
+            == json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1)
+        )
+        assert (
+            report_dir / "zero_hit_day_gate_attribution_20260908.md"
+        ).exists()
