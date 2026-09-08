@@ -679,6 +679,73 @@ def test_trailing_window_full_window_missing_or_nonfinite_degrades(
     assert "近期更强" not in trailing and "近期更弱" not in trailing
 
 
+def test_trailing_window_span_shape_guard_omits_garbage(
+    case, tmp_path, monkeypatch
+):
+    """A1/A2 (R151 Op2): first_day/last_day 形状守卫 — 畸形 span 省略不虚构.
+
+    修复前 RED (Observe 期 PoC): span 是行内唯一无形状守卫的单元格 (n/days/
+    CI/E/半窗全有守卫), int 123/dict 裸 f-string 垃圾渲染直达操作员日报
+    (「(123..None，n=10)」「({'a': 1}..[1, 2]，n=10)」), R119 P1 『垃圾渲染』
+    家族违例; 修复后 8 位数字串 (同模块 _DATE_8_RE 单一实现) 才渲染。
+    """
+    service, _repository, as_of, _sessions = case
+
+    def _render_with(tw):
+        _patch_drift_reports_dir(
+            monkeypatch, _write_decomposition_report_with_trailing(tmp_path, tw)
+        )
+        context = service.advance_lifecycle(as_of)
+        run = service.complete_run(context, candidates=())
+        view = DailyActionV2Run(run, (), run.open_positions, (), ())
+        text = render_daily_action_v2(view)
+        return next(line for line in text.splitlines() if "近期窗判读" in line)
+
+    # int / None 混合畸形 → span 省略, 行主体与数值子句保留
+    tw = _real_shape_trailing_window()
+    tw["first_day"] = 123
+    tw["last_day"] = None
+    trailing = _render_with(tw)
+    assert "123..None" not in trailing
+    assert "近期窗判读：尾 20 信号日（n=341）期望" in trailing
+    assert "全窗 E -0.01%" in trailing          # 其余子句不受影响 (Op1 双数形态)
+
+    # dict/list repr 畸形 → 同守卫
+    tw = _real_shape_trailing_window()
+    tw["first_day"] = {"a": 1}
+    tw["last_day"] = [1, 2]
+    trailing = _render_with(tw)
+    assert "{'a': 1}" not in trailing and "[1, 2]" not in trailing
+
+    # banana / 7 位 / 9 位数字串 → 同守卫 (8 位 fullmatch 家族语义)
+    for bad in ("banana", "2026070", "202607099"):
+        tw = _real_shape_trailing_window()
+        tw["first_day"] = bad
+        trailing = _render_with(tw)
+        assert bad not in trailing
+
+    # 合法 8 位 span 照旧渲染 (修复后正常形态逐字节不变)
+    trailing = _render_with(_real_shape_trailing_window())
+    assert "（20260709..20260821，n=341）" in trailing
+
+
+def test_trailing_window_zero_delta_flat_form(case, tmp_path, monkeypatch):
+    """A4 (R151 Op2): delta=0 → 「近期差 +0.00%(持平)」三分支全覆盖 pin."""
+    tw = _real_shape_trailing_window()
+    tw["delta_vs_full"] = 0.0
+    _patch_drift_reports_dir(
+        monkeypatch, _write_decomposition_report_with_trailing(tmp_path, tw)
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    trailing = next(line for line in text.splitlines() if "近期窗判读" in line)
+    assert "近期差 +0.00%（持平）" in trailing
+    assert "近期更强" not in trailing and "近期更弱" not in trailing
+
+
 def test_prior_drift_line_omitted_when_all_row_missing_keys(case, tmp_path, monkeypatch):
     """ALL 行缺 expectancy/winrate 键: 整行省略零崩溃 (畸形报告家族)."""
     base = tmp_path / "reports"

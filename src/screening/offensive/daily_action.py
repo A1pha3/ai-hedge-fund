@@ -1614,11 +1614,23 @@ def _render_trailing_window_line(
             if isinstance(days, int) and not isinstance(days, bool)
             else "近期窗"
         )
-        span = f"{tw.get('first_day')}..{tw.get('last_day')}"
+        # R151 Op2: span 形状守卫 — first_day/last_day 与本行其余单元格 (n/days/
+        # CI/E/半窗) 同防线, 8 位数字串 (同模块 _DATE_8_RE 单一实现) 才渲染;
+        # 畸形 → span 省略不虚构 (修复前 int 123/dict 裸 f-string 垃圾渲染直达
+        # 操作员日报, R119 P1 家族)。
+        first_day = tw.get("first_day")
+        last_day = tw.get("last_day")
+        span_ok = (
+            isinstance(first_day, str)
+            and _DATE_8_RE.fullmatch(first_day) is not None
+            and isinstance(last_day, str)
+            and _DATE_8_RE.fullmatch(last_day) is not None
+        )
+        span_text = f"{first_day}..{last_day}，" if span_ok else ""
         ci_low = pooled.get("cluster_ci_low_90")
         ci_text = f"（CI90 下界 {ci_low:+.2%}）" if _is_finite_number(ci_low) else ""
         parts = [
-            f"近期窗判读：{days_text}（{span}，{n_text}）"
+            f"近期窗判读：{days_text}（{span_text}{n_text}）"
             f"期望 {expectancy:+.2%}/胜率 {winrate:.1%}{ci_text}"
         ]
         # R151 Op1: 全窗对照双数形态 (镜像报告面 render_md 同节) — 修复前 delta
