@@ -3019,3 +3019,63 @@ def test_exit_advice_row_shows_pct_alongside_exit_advice(tmp_path):
     row = next(line for line in text.splitlines() if "000909" in line)
     assert "浮 -20.0%" in row
     assert "建议次日退出" in row
+
+
+# ---------- R159 Op1: 持仓行 T+10 到期日披露 (v1 C-DAILY-ACTION-POSITION-VISIBILITY 迁移恢复) ----------
+
+def test_exit_advice_row_shows_maturity_date(tmp_path):
+    """持仓行披露「到期 M/D（剩N天）」— 到期日与剩余日历日 (v1 同款口径),
+    同日到期 cohort (0831 五笔集中释放) 由此日度可见."""
+    run, _sessions, _target, _r = _run_with_open_position(tmp_path)
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    row = next(line for line in text.splitlines() if "000909" in line)
+    # entry = sessions[15], T+10 = sessions[24], as_of = sessions[20] → 剩 4 天
+    assert "到期 9/10（剩4天）" in row
+    assert "影子建议" in row
+
+
+def test_exit_advice_row_omits_maturity_when_none(tmp_path):
+    """projected_exit_date=None (旧构造/日历不足) → 到期子句省略, 行其余部分
+    与修复前逐字节一致 (R158 fail-open 同款钉住)."""
+    from dataclasses import replace as dc_replace
+
+    run, _s, _t, _r = _run_with_open_position(tmp_path)
+    stripped = dc_replace(run.open_positions[0], projected_exit_date=None)
+    view_with = DailyActionV2Run(run, (), run.open_positions, (), ())
+    view_without = DailyActionV2Run(run, (), (stripped,), (), ())
+    text_with = render_daily_action_v2(view_with)
+    text_without = render_daily_action_v2(view_without)
+    row_with = next(line for line in text_with.splitlines() if "000909" in line)
+    row_without = next(line for line in text_without.splitlines() if "000909" in line)
+    assert "到期" in row_with
+    assert "到期" not in row_without
+    assert row_without == row_with.replace(" 到期 9/10（剩4天）", "")
+
+
+def test_exit_advice_row_maturity_today(tmp_path):
+    """到期日 == as_of → 「今日到期」形态 (v1 同款)."""
+    from dataclasses import replace as dc_replace
+
+    run, sessions, _t, _r = _run_with_open_position(tmp_path)
+    as_of = run.trade_date
+    matured = dc_replace(run.open_positions[0], projected_exit_date=as_of)
+    view = DailyActionV2Run(run, (), (matured,), (), ())
+    text = render_daily_action_v2(view)
+    row = next(line for line in text.splitlines() if "000909" in line)
+    assert "今日到期" in row
+    assert "剩" not in row
+
+
+def test_exit_advice_row_maturity_survives_datetime_trade_date(tmp_path):
+    """service_run.trade_date=datetime (R157 F-a 同款形态) → 到期子句整体省略,
+    行不阻断 (datetime - date TypeError 被家族同款防御吞掉)."""
+    from dataclasses import replace as dc_replace
+
+    run, _s, _t, _r = _run_with_open_position(tmp_path)
+    stale_service_run = dc_replace(run, trade_date=datetime(2026, 9, 6, 18, 0))
+    view = DailyActionV2Run(stale_service_run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    row = next(line for line in text.splitlines() if "000909" in line)
+    assert "到期" not in row
+    assert "影子建议" in row

@@ -2721,6 +2721,26 @@ def _render_flip_state_line(as_of) -> str | None:
     )
 
 
+def _maturity_clause(maturity: Any, as_of: Any) -> str:
+    """T+10 到期子句 (R159 Op1) — fail-open 家族: 子句省略绝不阻断持仓行.
+
+    maturity 非 date (含 datetime 子类, R157 F-a 同款排除) / 与 as_of 日历
+    算术不兼容 → 空串。days 以日历日计 (v1「剩N天」同款口径, 以 as_of 为
+    基准); 过期日 (days<0) 只披露日期不显负数。
+    """
+    if not isinstance(maturity, date) or isinstance(maturity, datetime):
+        return ""
+    try:
+        days = (maturity - as_of).days
+    except TypeError:
+        return ""
+    if days == 0:
+        return " 今日到期"
+    if days > 0:
+        return f" 到期 {maturity.month}/{maturity.day}（剩{days}天）"
+    return f" 到期 {maturity.month}/{maturity.day}"
+
+
 def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> str:
     """Render the daily operator view — one track regardless of ``verbose``.
 
@@ -3010,6 +3030,8 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     # 未实现盈亏子句 (R158 Op1): 与影子退出信号同一价格帧的 as-of 口径浮盈亏
     # (「我的仓位现在赚了还是亏了」, v1 渲染器已有需求, v2 迁移曾静默丢失)。
     # fail-open 家族纪律: 字段缺失/None/非有限 → 子句省略, 行不阻断主视图。
+    # T+10 到期子句 (R159 Op1): v1 C-DAILY-ACTION-POSITION-VISIBILITY 的
+    # 「到期 X (剩N天)」迁移恢复 — 同日到期 cohort (集中释放) 由此日度可见。
     shadow_rows: list[str] = []
     for trade in run.open_positions:
         label = _pad_to(_label(trade.ticker), _LABEL_WIDTH)
@@ -3018,7 +3040,10 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         pnl_clause = ""
         if isinstance(pnl, Real) and not isinstance(pnl, bool) and math.isfinite(pnl):
             pnl_clause = f" 浮 {pnl:+.1%}"
-        shadow_rows.append(f"{label}{pnl_clause} 影子建议：{advice}")
+        maturity_clause = _maturity_clause(
+            getattr(trade, "projected_exit_date", None), as_of
+        )
+        shadow_rows.append(f"{label}{pnl_clause} 影子建议：{advice}{maturity_clause}")
         if verbose:
             debug.append(_debug_shadow_line(trade))
     lines.extend(_render_section("持仓退出建议（影子，不改变默认退出）", shadow_rows))

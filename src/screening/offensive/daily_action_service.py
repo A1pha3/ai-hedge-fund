@@ -179,6 +179,12 @@ class OpenPositionView(LedgerTrade):
     # 价格帧 (除权免疫调整后同口径) — 单一事实源, 不引入第二价格路径。
     # insufficient_data 或 close 非有限时 None, 渲染层 fail-open 省略子句。
     shadow_unrealized_pct: float | None = None
+    # 默认退出合约的 T+10 到期日 (R159 Op1, v1 C-DAILY-ACTION-POSITION-VISIBILITY
+    # 迁移恢复): forced_exit_target_date 已持久化时优先, 否则按该 setup 的持有期
+    # 策略 (SETUP_HOLDING_SESSIONS, 与 _evaluate_open_positions 强制退出同源)
+    # 从交易日历推导; entry 缺失 / 日历覆盖不足 / 未知 setup → None,
+    # 渲染层 fail-open 省略子句。
+    projected_exit_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -1180,7 +1186,27 @@ class DailyActionService:
             shadow_unrealized_pct=_shadow_unrealized_pct(
                 result[3], trade.raw_entry_price
             ),
+            projected_exit_date=self._projected_exit_date(trade),
         )
+
+    def _projected_exit_date(self, trade: LedgerTrade) -> date | None:
+        """默认退出合约到期日 (披露面): 与真实强制退出同一日历单源.
+
+        EXIT_PENDING 时台账已持久化 forced_exit_target_date (事实优先);
+        OPEN 持仓按 setup 持有期策略 (SETUP_HOLDING_SESSIONS, 计划准入
+        _has_holding_horizon 同源) 从交易日历推导第 N 个持有会话。
+        entry 缺失 / 未知 setup / 日历覆盖不足 → None (fail-open, 渲染层
+        省略子句, 绝不为披露猜测日期)。
+        """
+        if trade.forced_exit_target_date is not None:
+            return trade.forced_exit_target_date
+        required = SETUP_HOLDING_SESSIONS.get(trade.setup)
+        if trade.entry_date is None or required is None:
+            return None
+        try:
+            return self.calendar.nth_holding_session(trade.entry_date, required)
+        except ValueError:
+            return None
 
     def _evaluate_shadow_path(
         self,

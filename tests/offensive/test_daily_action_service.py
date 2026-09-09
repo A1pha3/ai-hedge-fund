@@ -831,3 +831,47 @@ def test_shadow_unrealized_pct_none_on_nan_close(tmp_path, monkeypatch):
     run = service.run(sessions[20], ())
     view = run.open_positions[0]
     assert view.shadow_unrealized_pct is None
+
+
+# ---------- R159 Op1: 持仓行 T+10 到期日披露 (默认退出合约单一事实源, fail-open) ----------
+
+def test_projected_exit_date_is_tenth_holding_session(tmp_path):
+    """OPEN 持仓的 projected_exit_date = calendar.nth_holding_session(entry, 10)
+    — 与真实强制退出 (_evaluate_open_positions) 同一单一事实源, 零新日期路径."""
+    from src.screening.offensive.daily_action_service import SETUP_HOLDING_SESSIONS
+
+    sessions = _pnl_sessions()
+    service = _pnl_service(tmp_path, sessions, close=8.0)
+    open_trade(service, "000207", sessions[15])
+    run = service.run(sessions[20], ())
+    view = run.open_positions[0]
+    expected = service.calendar.nth_holding_session(
+        sessions[15], SETUP_HOLDING_SESSIONS["btst_breakout"]
+    )
+    assert view.projected_exit_date == expected == sessions[24]
+
+
+def test_projected_exit_date_none_when_calendar_insufficient(tmp_path):
+    """日历覆盖不足 (nth_holding_session ValueError) → None (fail-open 家族,
+    渲染层省略子句, 行不阻断)."""
+    sessions = _pnl_sessions(n=20)
+    service = _pnl_service(tmp_path, sessions, close=8.0)
+    open_trade(service, "000208", sessions[15])
+    run = service.run(sessions[19], ())
+    view = run.open_positions[0]
+    assert view.projected_exit_date is None
+
+
+def test_projected_exit_date_none_for_unknown_setup_policy(tmp_path):
+    """setup 不在 SETUP_HOLDING_SESSIONS 持有期策略内 → None (不猜测 horizon)."""
+    sessions = _pnl_sessions()
+    service = _pnl_service(tmp_path, sessions, close=8.0)
+    plan = service.repository.create_plan(
+        "000209", "btst_unknown_setup", "v2", sessions[14], sessions[15], 0.10, 1
+    )
+    service.repository.settle_plan_at_open(
+        plan.trade_id, sessions[15], 10.0, 9.0, 11.0, False, 10.5, 9.5
+    )
+    run = service.run(sessions[20], ())
+    view = next(t for t in run.open_positions if t.ticker == "000209")
+    assert view.projected_exit_date is None
