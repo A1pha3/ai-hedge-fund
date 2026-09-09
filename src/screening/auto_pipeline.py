@@ -972,6 +972,9 @@ def _default_dependencies(
                 reasons=("refresh_result_unavailable",),
             )
         readiness_state["publication"] = publication
+        _capture_setup_evidence_after_publication(
+            publication, reports_dir=reports_dir, data_dir=data_dir
+        )
         payload["daily_action_readiness"] = _daily_readiness_publication_payload(
             publication
         )
@@ -1020,6 +1023,48 @@ def _default_dependencies(
         update_tracking=update_tracking,
         get_daily_readiness_publication=lambda: readiness_state["publication"],
     )
+
+
+def _capture_setup_evidence_after_publication(
+    publication: object,
+    *,
+    reports_dir: Path,
+    data_dir: Path,
+) -> None:
+    """发布侧 setup 信号证据捕获接线 (R160 Op1; advisory, 绝不阻断 --auto)。
+
+    ``setup_output_log`` 的写入口此前只在 ``--daily-action`` dispatcher — 操作
+    员漏跑该命令的晚上信号证据不留痕 (2026-07-30~08-11 七个交易日覆盖断层的
+    根因形态, 其中六天 ``--auto`` 已跑)。healthy 发布后经生产 loader + 确定性
+    重扫 + 合并写入器补齐证据面 (发布点缓存仍新鲜, PIT 重验可过 — 事后不可补
+    录); attempt 发布 (清单不健康) 没有可消费的信号事实, 短路。捕获失败不阻断
+    ``--auto`` — 此时无计划在座, 与容量/漏斗/scan_run 的 fail-open 同族;
+    ``--daily-action`` 面的 fail-closed (写失败阻断新计划) 语义不变。写目标
+    ``reports_dir/setup_output_log`` 与 ``--daily-action`` 的默认目录同一
+    (生产 reports_dir=data/reports), 晚间重跑按 (ticker, setup) 键确定性折叠。
+    """
+    if getattr(publication, "status", None) != "healthy":
+        return
+    manifest = getattr(publication, "manifest", None)
+    if manifest is None:
+        return
+    from src.screening.offensive.setup_evidence_capture import (
+        capture_setup_evidence_for_publication,
+    )
+
+    try:
+        capture_setup_evidence_for_publication(
+            manifest.trade_date,
+            reports_dir=Path(reports_dir),
+            data_dir=Path(data_dir),
+            out_dir=Path(reports_dir) / "setup_output_log",
+        )
+    except Exception:  # noqa: BLE001 - advisory, 绝不阻断 --auto
+        logger.warning(
+            "[Auto] setup 信号证据捕获失败 (advisory, 不阻断): 当日证据由 "
+            "--daily-action 面 fail-closed 兜底",
+            exc_info=True,
+        )
 
 
 def _daily_readiness_publication_payload(publication: object) -> dict[str, Any]:

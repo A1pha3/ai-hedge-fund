@@ -1018,17 +1018,6 @@ def _cached_daily_action_market_bar(cache, trade_date):
     )
 
 
-def _plan_layer_blocked_candidates(scan) -> tuple:
-    """panel 层被拒候选单一实现 (主日志与 scan_run 刷新快照共用): detect 前的
-    数据契约拒票 (candidate_not_plan_eligible) 不入任何证据行 — 样本外对照组
-    纯度政策的单一表达, 两个写证据的调用点不得各自内联漂移。"""
-    return tuple(
-        b
-        for b in getattr(scan, "blocked_candidates", ()) or ()
-        if getattr(b, "reason", "") != "candidate_not_plan_eligible"
-    )
-
-
 def _entry_window_block_reason(signal_date, open_sessions) -> str | None:
     """入场窗口护栏: 计划按入场日开盘价成交, 当前时刻走过入场日 09:30 后,
     再创建的计划会按"现实不可执行"的今日开盘记账 — 返回阻断原因, 否则 None."""
@@ -1119,6 +1108,9 @@ def _resolve_daily_action(
     )
     from src.screening.offensive.daily_action_snapshot import (
         load_verified_daily_action_snapshot,
+    )
+    from src.screening.offensive.setup_evidence_capture import (
+        plan_layer_blocked_candidates,
     )
     from src.screening.offensive.execution_adjuster import ExecutionCosts
     from src.screening.offensive.ledger_repository import LedgerRepository
@@ -1233,7 +1225,7 @@ def _resolve_daily_action(
                     # 契约拒票 (未触发, 0715 量级 263/267), 混入会把 filtered 组从
                     # "触发但被过滤的动量票"稀释成"宇宙普通票", 偏向假 ✅ 结论.
                     # readiness manifest 已记录它们, panel 日志只留触发后的被拒候选.
-                    logged_blocked = _plan_layer_blocked_candidates(scan)
+                    logged_blocked = plan_layer_blocked_candidates(scan)
                     # 台账写守卫 (Item 1): 本信号日已有计划的票, 其 plan_eligible
                     # 行必须在日志中存活 — 晚间重跑的数据抖动不得抹掉证据.
                     session_plan_tickers = {
@@ -1323,7 +1315,7 @@ def _resolve_daily_action(
             log_scan_run(
                 signal_date,
                 scan.candidates,
-                _plan_layer_blocked_candidates(scan),
+                plan_layer_blocked_candidates(scan),
                 regime=getattr(scan, "regime", None) or "unknown",
                 funnel=getattr(scan, "funnel", None),
                 snapshot_id=getattr(scan, "snapshot_id", None),
