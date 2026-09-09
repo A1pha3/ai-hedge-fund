@@ -2961,3 +2961,61 @@ def test_exit_advice_row_omits_clause_when_pct_nonfinite(tmp_path):
     row = next(line for line in text.splitlines() if "000909" in line)
     assert "浮" not in row
     assert "影子建议" in row
+
+
+# ---------- R158 Op2: 浮盈亏子句守卫对抗性钉住 (探针实证面) ----------
+
+def test_exit_advice_row_bool_pct_is_omitted(tmp_path):
+    """bool 旁路钉住: isinstance(True, Real)=True, 守卫的 not-bool 排除必须生效
+    (否则未来重构把守卫简化成 isinstance 单判时会静默渲染 浮 +100%)."""
+    import math
+    from dataclasses import replace as dc_replace
+
+    run, _s, _t, _r = _run_with_open_position(tmp_path)
+    truthy = dc_replace(run.open_positions[0], shadow_unrealized_pct=True)
+    view = DailyActionV2Run(run, (), (truthy,), (), ())
+    text = render_daily_action_v2(view)
+    row = next(line for line in text.splitlines() if "000909" in line)
+    assert "浮" not in row
+    assert "影子建议" in row
+    assert not math.isnan(0.0)  # 占位避免 lint 空断言语义漂移
+
+
+def test_exit_advice_row_zero_pct_is_shown_not_omitted(tmp_path):
+    """falsy-zero 钉住: close==entry → 浮 +0.0% 必须显示 (守卫按 None/类型判定,
+    不按真值 — 防未来改成 truthiness 判定时保本持仓静默漏显)."""
+    from dataclasses import replace as dc_replace
+
+    run, _s, _t, _r = _run_with_open_position(tmp_path)
+    zero = dc_replace(run.open_positions[0], shadow_unrealized_pct=0.0)
+    view = DailyActionV2Run(run, (), (zero,), (), ())
+    text = render_daily_action_v2(view)
+    row = next(line for line in text.splitlines() if "000909" in line)
+    assert "浮 +0.0%" in row
+
+
+def test_exit_advice_row_non_real_poison_is_omitted(tmp_path):
+    """非 Real 毒化 (字符串/对象) → 子句省略行不阻断 (isinstance Real 门)."""
+    from dataclasses import replace as dc_replace
+
+    run, _s, _t, _r = _run_with_open_position(tmp_path)
+    for poison in ("5%", object()):
+        poisoned = dc_replace(run.open_positions[0], shadow_unrealized_pct=poison)
+        view = DailyActionV2Run(run, (), (poisoned,), (), ())
+        text = render_daily_action_v2(view)
+        row = next(line for line in text.splitlines() if "000909" in line)
+        assert "浮" not in row
+        assert "影子建议" in row
+
+
+def test_exit_advice_row_shows_pct_alongside_exit_advice(tmp_path):
+    """并存形态钉住: should_exit=True 行同时披露 浮 与 建议次日退出 (决策两输入)."""
+    from dataclasses import replace as dc_replace
+
+    run, _s, _t, _r = _run_with_open_position(tmp_path)
+    exiting = dc_replace(run.open_positions[0], shadow_would_exit_next_open=True)
+    view = DailyActionV2Run(run, (), (exiting,), (), ())
+    text = render_daily_action_v2(view)
+    row = next(line for line in text.splitlines() if "000909" in line)
+    assert "浮 -20.0%" in row
+    assert "建议次日退出" in row

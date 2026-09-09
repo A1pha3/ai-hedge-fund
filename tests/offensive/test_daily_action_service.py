@@ -807,3 +807,27 @@ def test_idempotent_plan_conflict_is_skipped_not_crashed(
     assert any(
         "conflicting idempotent plan skipped" in r.message for r in caplog.records
     )
+
+
+def test_shadow_unrealized_pct_none_on_nan_close(tmp_path, monkeypatch):
+    """NaN 形态与 inf 同族 (R158 Op2 钉住): 毒化 close → 浮盈亏 None 不崩."""
+    sessions = _pnl_sessions()
+    service = _pnl_service(tmp_path, sessions, close=8.0)
+    open_trade(service, "000206", sessions[15])
+
+    import math as _math
+
+    from src.screening.offensive import daily_action_service as mod
+
+    original = mod.DailyActionService._evaluate_shadow_path
+
+    def poisoned(self, trade, as_of, prices):
+        line, should_exit, reason = original(self, trade, as_of, prices)
+        return line, should_exit, reason, _math.nan
+
+    monkeypatch.setattr(
+        mod.DailyActionService, "_evaluate_shadow_path", poisoned
+    )
+    run = service.run(sessions[20], ())
+    view = run.open_positions[0]
+    assert view.shadow_unrealized_pct is None
