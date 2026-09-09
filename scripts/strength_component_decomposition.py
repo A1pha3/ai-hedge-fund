@@ -24,6 +24,15 @@ board_score 池内反向但 n=75 小样本 — 分量结构与聚合层梯度不
   win_loss_stats (含 per-call seeded 聚类 CI)/MIN_CELL_N/
   court_window_from_events/COURT_TABLE/REPORT_DIR 全部 import 自
   winrate_payoff_decomposition, 本模块零新 RNG 零口径 fork。
+
+R154 Op1: counterfactual 反事实节 — 低波轴 (生产公式 0.20 权重 +
+energy_bonus 门) 零权 V1 单旋钮反事实 (池面 + 选股面 top-K), 把 R153
+的区间稳定分量读数桥接到生产面; 探索性诊断非提案。
+R154 Op2: 对 Op1 交付面对抗审查三 pin — ① 读数入口 reset_index 位置
+身份 (非唯一索引下 set(index) 静默错计 entered/left/overlap 的 PoC
+实锤); ② selection k<1 typed 封死 (head(-k) 负数语义会静默选进排序
+尾部); ③ required-column 检查下沉 _aligned_work_frame 单一实现
+(直调同拒, 不再经 analyze 才有守卫)。
 """
 from __future__ import annotations
 
@@ -135,7 +144,10 @@ def counterfactual_pool_readout(
     更多票入新池 (n_new 通常 > n_old), 池面 ΔE 混合了轴反向与稀释两
     种效应 — 判读以下游 counterfactual_selection_readout (无稀释) 为准。
     任一侧 n < MIN_CELL_N → delta_ci None 不冒充 (R153 门槛纪律)。
+    R154 Op2: 入口 reset_index 位置身份规范化 — 非唯一索引下 set(index)
+    会静默错计 entered/left/overlap (PoC 实锤, R153 Op2 隐式前提同族)。
     """
+    work = work.reset_index(drop=True)
     sub = work[work["_cf_strength"].notna()]
     old = sub[sub["trigger_strength"] >= floor]
     new = sub[sub["_cf_strength"] >= floor]
@@ -186,7 +198,13 @@ def counterfactual_selection_readout(
     并计数 (不凑数); 任一侧 picks n < MIN_CELL_N → delta_ci None。
     split_half 镜像 component_split_half 判据 (日序对分, 符号一致性,
     单半 expectancy 缺 → None 不冒充)。
+    R154 Op2: k<1 (含 bool) → ValueError('counterfactual_k_invalid') —
+    head(-k) 的 pandas 负数语义会静默选进排序尾部 (PoC 实锤, 语义反转);
+    入口同步 reset_index 位置身份规范化 (池面同款)。
     """
+    if type(k) is not int or k < 1:
+        raise ValueError("counterfactual_k_invalid")
+    work = work.reset_index(drop=True)
     sub = work[work["_cf_strength"].notna() & (work["trigger_strength"] >= floor)]
     old_by_day: dict[str, list[float]] = {}
     new_by_day: dict[str, list[float]] = {}
@@ -393,7 +411,22 @@ def component_split_half(
 
 
 def _aligned_work_frame(ev: "pd.DataFrame") -> "pd.DataFrame":
-    """生产对齐 + 净收益 + 分量桶列 — analyze 与反事实读数的共享加工 (单一实现)。"""
+    """生产对齐 + 净收益 + 分量桶列 — analyze 与反事实读数的共享加工 (单一实现)。
+
+    R154 Op2: required-column fail-closed 检查下沉至此 (单一实现) —
+    检查原先只在 analyze, _cf_work_frame 直调缺列时裸 KeyError 逃逸
+    (PoC 实锤, R152 Op2 core 列同族); SystemExit 契约 (消息含列名)
+    与 R152 Op2 落地时逐字一致。
+    """
+    required = [
+        *(c for c, _ in COMPONENTS),
+        "trigger_strength",
+        "signal_date",
+        "gross_ret_t10",
+    ]
+    missing = [c for c in required if c not in ev.columns]
+    if missing:
+        raise SystemExit(f"court 事件表缺少必需列: {missing}")
     universe = production_aligned(ev)
     work = universe.copy()
     work["net_ret_t10"] = net_returns(work["gross_ret_t10"].tolist())
@@ -408,21 +441,12 @@ def analyze(ev: "pd.DataFrame") -> dict[str, object]:
     列缺失 = 口径理解错误, SystemExit fail-closed (镜像
     production_aligned 的过滤列纪律 — 静默当作缺失列会渲染全 unknown
     假装分析了)。R152 Op2: 必需列全集 = 五分量 + trigger_strength +
-    signal_date + gross_ret_t10 — 缺 core 列时此前经 _pool_frame/
-    net_returns/component_split_half 裸 KeyError 逃逸 (PoC 实锤),
-    与分量列同入 typed 拒绝。ret 列经 net_returns 统一扣成本。
+    signal_date + gross_ret_t10; 该检查 R154 Op2 起由共享加工面
+    _aligned_work_frame 单一实现承载 (直调同拒)。ret 列经
+    net_returns 统一扣成本。
     R154 Op1: counterfactual 节 — 低波轴零权反事实读数 (池面 + 选股面),
     V1 单旋钮探索性诊断非提案 (宪法 #2)。
     """
-    required = [
-        *(c for c, _ in COMPONENTS),
-        "trigger_strength",
-        "signal_date",
-        "gross_ret_t10",
-    ]
-    missing = [c for c in required if c not in ev.columns]
-    if missing:
-        raise SystemExit(f"court 事件表缺少必需列: {missing}")
     work = _cf_work_frame(ev)
     counterfactual = {
         "available": True,

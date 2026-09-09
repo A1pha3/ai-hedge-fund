@@ -585,3 +585,71 @@ class TestCounterfactualWiring:
         assert "反事实" in body
         payload = json.loads((tmp_path / "strength_component_decomposition_20260401.json").read_text(encoding="utf-8"))
         assert payload["counterfactual"]["available"] is True
+
+
+# ---------------------------------------------------------------------------
+# R154 Op2: 对 Op1 交付面的对抗性审查 pin (位置身份 / k 守卫 / 列检查单一实现)
+# ---------------------------------------------------------------------------
+
+from scripts.strength_component_decomposition import (  # noqa: E402
+    _cf_work_frame,
+    counterfactual_pool_readout as _cf_pool_readout,
+    counterfactual_selection_readout as _cf_selection_readout,
+)
+
+
+class TestCounterfactualAdversarialPins:
+    def test_duplicate_index_membership_counts(self):
+        """PoC-A 回归: 非唯一索引 (pd.concat 不 ignore_index) 下行身份不静默错计。
+
+        修复前 set(index) 身份使 entered/left 静默 = 0 (应 4/4) — 与 R153 Op2
+        四同型换位同族: 隐式前提破坏时产出貌似合理的错误数字。
+        """
+        rows_a = [
+            _cf_row(i, ts=0.58, lv=0.95, ret=-0.10, day=f"2026-06-{d + 1:02d}")
+            for i, d in enumerate(range(4))
+        ]
+        rows_b = [
+            _cf_row(100 + i, ts=0.45, lv=0.05, ret=0.10, day=f"2026-06-{d + 1:02d}")
+            for i, d in enumerate(range(4))
+        ]
+        ev = pd.concat([pd.DataFrame(rows_a), pd.DataFrame(rows_b)])
+        assert not ev.index.is_unique
+        frame = _cf_work_frame(ev)
+        out = _cf_pool_readout(frame, floor=0.50)
+        assert (out["n_old"], out["n_new"], out["entered"], out["left"]) == (4, 4, 4, 4)
+        # 选股面重叠: 两型都需旧资格 (ts≥0.50) — a 型旧 top-1 / cf 跌出,
+        # b 型 cf 升顶 (重复索引下 set(index) 同样会静默错计 overlap)
+        rows_c = [
+            _cf_row(200 + i, ts=0.58, lv=0.95, ret=-0.10, day=f"2026-06-{d + 1:02d}")
+            for i, d in enumerate(range(4))
+        ]
+        rows_d = [
+            _cf_row(300 + i, ts=0.52, lv=0.05, ret=0.10, day=f"2026-06-{d + 1:02d}")
+            for i, d in enumerate(range(4))
+        ]
+        frame2 = _cf_work_frame(pd.concat([pd.DataFrame(rows_c), pd.DataFrame(rows_d)]))
+        sel = _cf_selection_readout(frame2, floor=0.50, k=1)
+        assert sel["days_used"] == 4
+        assert sel["overlap_picks"] == 0  # 旧选 c 型 / 新选 d 型, 不相交
+
+    def test_k_below_one_rejected(self):
+        """PoC-K 回归: k<1 → ValueError typed 封死 (head(-k) 负数语义会静默
+        选进排序尾部 = 语义反转); bool 显式排除 (家族纪律)。"""
+        frame = _cf_work_frame(_cf_selection_fixture(n_days=2))
+        for bad in (0, -3, True):
+            with pytest.raises(ValueError, match="counterfactual_k_invalid"):
+                _cf_selection_readout(frame, floor=0.50, k=bad)
+        ok = _cf_selection_readout(frame, floor=0.50, k=1)  # 合法路径不变
+        assert ok["k"] == 1
+
+    def test_direct_frame_builder_missing_column_fail_closed(self):
+        """PoC-G 回归: _cf_work_frame 直调缺列 → typed SystemExit 含列名
+        (修复前绕过 analyze 检查裸 KeyError 逃逸, R152 Op2 core 列同族);
+        检查下沉 _aligned_work_frame 单一实现 — analyze 与直调同拒。"""
+        ev = _cf_selection_fixture(n_days=2).drop(columns=["board_score"])
+        with pytest.raises(SystemExit, match="board_score"):
+            _cf_work_frame(ev)
+        # analyze 路径同款契约不变 (既有 TestAnatomy 缺列测试零改动的旁证)
+        with pytest.raises(SystemExit, match="board_score"):
+            analyze(ev)
