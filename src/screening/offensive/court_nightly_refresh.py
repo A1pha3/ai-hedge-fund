@@ -68,6 +68,13 @@ DIAGNOSTIC_SCRIPTS: tuple[str, ...] = (
     # 唯一仍靠手动运行的成员 (报告停在最后手动日), 同门接线 (R152/R135 先例);
     # court 数据增长后的 split-half 符号一致性重读由此每夜自动保鲜。
     "scripts/kelly_prior_conditioning_eval.py",
+    # R156 Op1: 最后两个手动面入链 (R155 Op2 登记的 frontier 开放项, 同门
+    # 接线第 4 次) — selection anatomy (R99 top_1 优势恒等归因/带内日内排名
+    # /拥挤度, 强度阈值正交杠杆假设的预注册证据面) 与 exit anatomy (MFE/MAE
+    # /时间到峰 + 诚实止损反事实网格, 8 项清单项 5 止损启用判定输入);
+    # 宿主实测裸跑 10.9s/16.4s ≪ 600s, bare 可跑/无必需参数。
+    "scripts/btst_daily_selection_anatomy.py",
+    "scripts/btst_exit_anatomy.py",
 )
 DIAGNOSTIC_TIMEOUT_S = 600
 

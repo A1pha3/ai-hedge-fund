@@ -164,6 +164,8 @@ class TestNightlyDiagnosticsRefresh:
         # R152 Op1: + strength_component_decomposition (分量级解剖, 同门先例)。
         # R155 Op1: + kelly_prior_conditioning_eval (R15 预注册触发器工具,
         # 唯一仍靠手动运行的成员, 同门接线; bare 可跑/相对 cwd/无必需参数)。
+        # R156 Op1: + selection/exit anatomy (最后两个手动面入链, R155 Op2
+        # 登记的 frontier 开放项; 宿主实测裸跑 10.9s/16.4s ≪ 600s)。
         assert DIAGNOSTIC_SCRIPTS == (
             "scripts/winrate_payoff_decomposition.py",
             "scripts/btst_signal_day_cohort.py",
@@ -173,6 +175,8 @@ class TestNightlyDiagnosticsRefresh:
             "scripts/zero_hit_day_gate_attribution.py",
             "scripts/strength_component_decomposition.py",
             "scripts/kelly_prior_conditioning_eval.py",
+            "scripts/btst_daily_selection_anatomy.py",
+            "scripts/btst_exit_anatomy.py",
         )
 
     def test_build_success_runs_diagnostics_in_order(self, tmp_path):
