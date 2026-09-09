@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import stat
@@ -89,6 +90,9 @@ class MarketBar:
     low: float | None = None
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True)
 class PlanCandidate:
     ticker: str
@@ -151,6 +155,19 @@ class ActionItem:
     planned_weight: float | None = None
 
 
+def _shadow_unrealized_pct(
+    asof_close: float | None, entry_price: float | None
+) -> float | None:
+    """未实现盈亏 = as-of close / entry - 1; 非有限/无效输入一律 None (fail-open)."""
+    if asof_close is None or entry_price is None:
+        return None
+    if not math.isfinite(asof_close) or not math.isfinite(entry_price):
+        return None
+    if entry_price <= 0:
+        return None
+    return asof_close / entry_price - 1.0
+
+
 @dataclass(frozen=True)
 class OpenPositionView(LedgerTrade):
     """Read-only ledger projection with fixed-policy shadow observations."""
@@ -158,6 +175,10 @@ class OpenPositionView(LedgerTrade):
     shadow_exit_line: float | None
     shadow_would_exit_next_open: bool
     shadow_reason: str
+    # 未实现盈亏 = as-of close / raw_entry_price - 1, 与影子退出信号共用同一
+    # 价格帧 (除权免疫调整后同口径) — 单一事实源, 不引入第二价格路径。
+    # insufficient_data 或 close 非有限时 None, 渲染层 fail-open 省略子句。
+    shadow_unrealized_pct: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1150,12 +1171,15 @@ class DailyActionService:
         try:
             result = self._evaluate_shadow_path(trade, as_of, prices)
         except Exception:
-            result = (None, False, "insufficient_data")
+            result = (None, False, "insufficient_data", None)
         return OpenPositionView(
             **vars(trade),
             shadow_exit_line=result[0],
             shadow_would_exit_next_open=result[1],
             shadow_reason=result[2],
+            shadow_unrealized_pct=_shadow_unrealized_pct(
+                result[3], trade.raw_entry_price
+            ),
         )
 
     def _evaluate_shadow_path(
@@ -1163,7 +1187,7 @@ class DailyActionService:
         trade: LedgerTrade,
         as_of: date,
         prices: ShadowPriceSource | None,
-    ) -> tuple[float | None, bool, str]:
+    ) -> tuple[float | None, bool, str, float | None]:
         if (
             trade.state is not TradeState.OPEN
             or trade.entry_date is None
@@ -1171,7 +1195,7 @@ class DailyActionService:
             or not math.isfinite(trade.raw_entry_price)
             or trade.raw_entry_price <= 0
         ):
-            return None, False, "insufficient_data"
+            return None, False, "insufficient_data", None
 
         if prices is None and self.shadow_history is not None:
             history = self.shadow_history(trade.ticker)
@@ -1187,16 +1211,16 @@ class DailyActionService:
                 as_of,
             )
         if frame is None:
-            return None, False, "insufficient_data"
+            return None, False, "insufficient_data", None
         dates = tuple(frame["date"])
         try:
             entry_index = dates.index(trade.entry_date)
             as_of_index = dates.index(as_of)
         except ValueError:
-            return None, False, "insufficient_data"
+            return None, False, "insufficient_data", None
         # Fourteen causal true ranges require a real prior-close context.
         if entry_index < 14 or as_of_index < entry_index:
-            return None, False, "insufficient_data"
+            return None, False, "insufficient_data", None
 
         # 除权免疫 (AGENTS.md 陷阱 15 第三轮): 重放消费的 high/low/close 统一
         # 复权到 entry 日口径 — 否则除权缺口的机械跳降会被 exit 状态机读成
@@ -1215,7 +1239,7 @@ class DailyActionService:
             session = dates[index]
             atr = compute_atr(frame, period=14, at_idx=index + 1)
             if atr is None:
-                return None, False, "insufficient_data"
+                return None, False, "insufficient_data", None
             close = float(frame.iloc[index]["close"])
             decision = evaluate_shadow_exit(
                 state,
@@ -1231,7 +1255,12 @@ class DailyActionService:
             should_exit = decision.should_exit_next_open
             if should_exit:
                 break
-        return state.exit_line, should_exit, decision_reason
+        # 未实现盈亏的 as-of close 直接取帧 (may 早退于 should_exit, 取值仍
+        # 锚定 as_of), 与退出信号同一 (除权免疫调整后的) 帧 — 单一口径。
+        asof_close = float(frame.iloc[as_of_index]["close"])
+        if not math.isfinite(asof_close):
+            asof_close = None
+        return state.exit_line, should_exit, decision_reason, asof_close
 
     @staticmethod
     def _adjust_shadow_frame_for_gaps(

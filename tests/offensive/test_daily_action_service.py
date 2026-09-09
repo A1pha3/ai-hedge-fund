@@ -641,3 +641,169 @@ def test_regime_from_history_missing_date_is_loud_fail_open(caplog):
         label = _regime_from_history("19990101")  # 无记录日期
     assert label == "normal"
     assert any("19990101" in r.message and "normal" in r.message for r in caplog.records)
+
+
+# ---------- R158 Op1: 持仓影子视图未实现盈亏 (与 exit 信号同一价格帧, 单一事实源) ----------
+
+def _pnl_sessions(n: int = 30) -> tuple[date, ...]:
+    start = date(2026, 7, 13)
+    return tuple(start + timedelta(days=i) for i in range(n))
+
+
+def _pnl_service(tmp_path, sessions, close: float) -> DailyActionService:
+    costs = ExecutionCosts(
+        version="test", commission=5.0, tax_rate=0.001, slippage_bps=10.0
+    )
+    repo = LedgerRepository(
+        tmp_path / "shadow_pnl.sqlite3", "shadow-pnl", 100_000, execution_costs=costs
+    )
+    repo.initialize()
+    bar = MarketBar(
+        open=close,
+        close=close,
+        limit_down=close * 0.9,
+        limit_up=close * 1.1,
+        suspended=False,
+        high=close + 0.2,
+        low=close - 0.2,
+    )
+    return DailyActionService(
+        repo,
+        TradingSessionCalendar(sessions),
+        FixedPrices(bar),
+        costs,
+        enforce_manifest_gate=False,
+    )
+
+
+def test_shadow_unrealized_pct_none_when_insufficient_data(service, sessions):
+    """entry 前置不足 14 会话 (insufficient_data) → 浮盈亏 None (fail-open 家族)."""
+    open_trade(service, "000201", sessions[1])
+    run = service.run(sessions[2], ())
+    view = run.open_positions[0]
+    assert view.shadow_reason == "insufficient_data"
+    assert view.shadow_unrealized_pct is None
+
+
+def test_shadow_unrealized_pct_loss_is_asof_close_over_entry(tmp_path):
+    """亏损持仓: 浮盈亏 = as-of close/entry - 1 (同一价格帧单一事实源)."""
+    sessions = _pnl_sessions()
+    service = _pnl_service(tmp_path, sessions, close=8.0)
+    open_trade(service, "000202", sessions[15])
+    run = service.run(sessions[20], ())
+    view = run.open_positions[0]
+    assert view.shadow_unrealized_pct == pytest.approx(-0.20)
+    assert view.shadow_reason == "hold"  # 未激活未跌破: 维持持有
+
+
+def test_shadow_unrealized_pct_profit_while_armed(tmp_path):
+    """盈利持仓 (armed 移动止盈线激活): 浮盈亏与 exit 信号共存不互斥."""
+    sessions = _pnl_sessions()
+    service = _pnl_service(tmp_path, sessions, close=15.0)
+    open_trade(service, "000203", sessions[15])
+    run = service.run(sessions[20], ())
+    view = run.open_positions[0]
+    assert view.shadow_unrealized_pct == pytest.approx(0.50)
+    assert view.shadow_exit_line is not None  # armed
+
+
+def test_shadow_unrealized_pct_read_at_asof_even_when_exit_advised(tmp_path):
+    """退出信号早退 (跌破移动止盈线中断重放): 浮盈亏仍取 as-of close 非中断点."""
+    import pandas as pd
+
+    sessions = _pnl_sessions()
+    closes = {}
+    for i, session in enumerate(sessions):
+        if i <= 15:
+            closes[session] = 10.0
+        elif i <= 17:
+            closes[session] = 12.0  # 越过 entry*1.10 → armed
+        elif i == 18:
+            closes[session] = 11.0  # < trailing line (≈12 - 2.5*0.1) → 早退
+        else:
+            closes[session] = 9.0  # 早退点之后继续下行 (as-of 锚定面)
+    rows = [
+        {
+            "date": session,
+            "high": closes[session] + 0.05,
+            "low": closes[session] - 0.05,
+            "close": closes[session],
+        }
+        for session in sessions
+    ]
+    frame = pd.DataFrame(rows)
+
+    costs = ExecutionCosts(
+        version="test", commission=5.0, tax_rate=0.001, slippage_bps=10.0
+    )
+    repo = LedgerRepository(
+        tmp_path / "shadow_pnl_early.sqlite3",
+        "shadow-pnl-early",
+        100_000,
+        execution_costs=costs,
+    )
+    repo.initialize()
+    service = DailyActionService(
+        repo,
+        TradingSessionCalendar(sessions),
+        lambda _ticker, _session: None,
+        costs,
+        enforce_manifest_gate=False,
+        shadow_history=lambda _ticker: frame,
+    )
+    open_trade(service, "000204", sessions[15])
+    run = service.run(sessions[20], ())
+    view = run.open_positions[0]
+    assert view.shadow_would_exit_next_open is True
+    assert view.shadow_reason == "close_below_trailing_line"
+    # 早退点 close=11.0 (+10%), as-of close=9.0 (-10%) — 必须取 as-of
+    assert view.shadow_unrealized_pct == pytest.approx(-0.10)
+
+
+def test_shadow_unrealized_pct_none_on_nonfinite_close(tmp_path, monkeypatch):
+    """close 非有限 (毒化帧) → 浮盈亏 None, 影子信号照常 fail-open 不崩."""
+    sessions = _pnl_sessions()
+    service = _pnl_service(tmp_path, sessions, close=8.0)
+    open_trade(service, "000205", sessions[15])
+
+    import math as _math
+
+    from src.screening.offensive import daily_action_service as mod
+
+    original = mod.DailyActionService._evaluate_shadow_path
+
+    def poisoned(self, trade, as_of, prices):
+        line, should_exit, reason = original(self, trade, as_of, prices)
+        return line, should_exit, reason, _math.inf
+
+    monkeypatch.setattr(
+        mod.DailyActionService, "_evaluate_shadow_path", poisoned
+    )
+    run = service.run(sessions[20], ())
+    view = run.open_positions[0]
+    assert view.shadow_unrealized_pct is None
+
+
+def test_idempotent_plan_conflict_is_skipped_not_crashed(
+    service, sessions, monkeypatch, caplog
+):
+    """幂等冲突守卫自证 (R158 Op1 rider 收口): except 分支引用了本模块从未
+    定义的 ``logger`` — 冲突真实发生时 NameError 从 handler 裸逃逸, 把
+    『跳过该候选』变成整次运行失败。修复后: warning 落日志 + 候选跳过 + 运行继续。
+    """
+    from src.screening.offensive import daily_action_service as mod
+
+    def conflict(*_args, **_kwargs):
+        raise ValueError("conflicting idempotent plan: provenance mismatch")
+
+    monkeypatch.setattr(
+        type(service.repository), "create_plan_if_absent", conflict
+    )
+    with caplog.at_level(
+        "WARNING", logger="src.screening.offensive.daily_action_service"
+    ):
+        run = service.run(sessions[1], (candidate("000301"),))
+    assert run.new_plans == ()
+    assert any(
+        "conflicting idempotent plan skipped" in r.message for r in caplog.records
+    )

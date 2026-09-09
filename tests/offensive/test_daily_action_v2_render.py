@@ -8,6 +8,7 @@ prefilter→hits 之间此前是黑箱: 0828 零命中日 (85 prefilter→0 命�
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import json
 
@@ -2886,3 +2887,77 @@ def test_stop_readiness_future_only_keys_and_poison_keys_skip_gracefully():
     assert line is not None
     assert "连续 crisis" not in line
     assert "回撤" in line
+
+
+# ---------- R158 Op1: 持仓退出建议行未实现盈亏披露 (纯披露, fail-open) ----------
+
+def _run_with_open_position(tmp_path, *, as_of_index=20, close=8.0):
+    """建仓 (entry sessions[15], 前置 ≥14 会话) → complete_run 带持仓视图.
+
+    自足世界: 独立 ledger/prices (000909 恒价 close), 不依赖 case fixture.
+    """
+    from dataclasses import replace as dc_replace
+
+    sessions = _sessions()
+    prices = {("000909", session): _bar(close) for session in sessions}
+    costs = ExecutionCosts(version="test", commission=5.0, other_fee=10.0)
+    repository = LedgerRepository(
+        tmp_path / "unrealized_pnl.sqlite3",
+        "unrealized-pnl",
+        1_000_000,
+        execution_costs=costs,
+    )
+    repository.initialize()
+    service = DailyActionService(
+        repository,
+        TradingSessionCalendar(sessions),
+        lambda symbol, session: prices.get((symbol, session)),
+        costs,
+        enforce_manifest_gate=False,
+    )
+    entry_date = sessions[15]
+    plan = repository.create_plan(
+        "000909", "btst_breakout", "v2", sessions[14], entry_date, 0.10, 1
+    )
+    repository.settle_plan_at_open(
+        plan.trade_id, entry_date, 10.0, 9.0, 11.0, False, 10.2, 9.8
+    )
+    target = sessions[as_of_index]
+    context = service.advance_lifecycle(target)
+    run = service.complete_run(context, candidates=())
+    return run, sessions, target, dc_replace
+
+
+def test_exit_advice_row_shows_unrealized_pct(tmp_path):
+    """有浮盈亏 → 行内披露「浮 -20.0%」(与 v1 渲染器『浮』标记口径一致)."""
+    run, _sessions, _target, _replace = _run_with_open_position(tmp_path)
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "浮 -20.0%" in text
+
+
+def test_exit_advice_row_omits_clause_when_pct_none(tmp_path):
+    """shadow_unrealized_pct=None (旧构造/数据不足) → 行与修复前逐字节一致."""
+    run, _sessions, _target, dc_replace = _run_with_open_position(tmp_path)
+    stripped = dc_replace(run.open_positions[0], shadow_unrealized_pct=None)
+    view_with = DailyActionV2Run(run, (), run.open_positions, (), ())
+    view_without = DailyActionV2Run(run, (), (stripped,), (), ())
+    text_with = render_daily_action_v2(view_with)
+    text_without = render_daily_action_v2(view_without)
+    row_with = next(line for line in text_with.splitlines() if "000909" in line)
+    row_without = next(line for line in text_without.splitlines() if "000909" in line)
+    assert "浮" not in row_without
+    assert row_without == row_with.replace(" 浮 -20.0%", "")
+
+
+def test_exit_advice_row_omits_clause_when_pct_nonfinite(tmp_path):
+    """毒化 (inf/nan) 浮盈亏 → 子句省略, 行不阻断 (typed-exception 家族纪律)."""
+    import math
+
+    run, _sessions, _target, dc_replace = _run_with_open_position(tmp_path)
+    poisoned = dc_replace(run.open_positions[0], shadow_unrealized_pct=math.inf)
+    view = DailyActionV2Run(run, (), (poisoned,), (), ())
+    text = render_daily_action_v2(view)
+    row = next(line for line in text.splitlines() if "000909" in line)
+    assert "浮" not in row
+    assert "影子建议" in row

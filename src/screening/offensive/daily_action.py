@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+from numbers import Real
 import os
 import re
 from collections.abc import Mapping, Sequence
@@ -3006,11 +3007,18 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     lines.append("")
 
     # ---- 持仓退出建议（影子, 不触发真实交易）----
+    # 未实现盈亏子句 (R158 Op1): 与影子退出信号同一价格帧的 as-of 口径浮盈亏
+    # (「我的仓位现在赚了还是亏了」, v1 渲染器已有需求, v2 迁移曾静默丢失)。
+    # fail-open 家族纪律: 字段缺失/None/非有限 → 子句省略, 行不阻断主视图。
     shadow_rows: list[str] = []
     for trade in run.open_positions:
         label = _pad_to(_label(trade.ticker), _LABEL_WIDTH)
         advice = "建议次日退出" if trade.shadow_would_exit_next_open else "维持持有"
-        shadow_rows.append(f"{label} 影子建议：{advice}")
+        pnl = getattr(trade, "shadow_unrealized_pct", None)
+        pnl_clause = ""
+        if isinstance(pnl, Real) and not isinstance(pnl, bool) and math.isfinite(pnl):
+            pnl_clause = f" 浮 {pnl:+.1%}"
+        shadow_rows.append(f"{label}{pnl_clause} 影子建议：{advice}")
         if verbose:
             debug.append(_debug_shadow_line(trade))
     lines.extend(_render_section("持仓退出建议（影子，不改变默认退出）", shadow_rows))
