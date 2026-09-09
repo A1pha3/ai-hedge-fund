@@ -64,6 +64,10 @@ DIAGNOSTIC_SCRIPTS: tuple[str, ...] = (
     # R152 Op1: 强度分量级解剖 — 成员随诊断面契约扩展 (R133/R135 同门先例),
     # pinned-set 测试同步钉住防再漏接。
     "scripts/strength_component_decomposition.py",
+    # R155 Op1: Kelly 先验条件化评估 (R15) — 胜率/赔率预注册触发器工具中
+    # 唯一仍靠手动运行的成员 (报告停在最后手动日), 同门接线 (R152/R135 先例);
+    # court 数据增长后的 split-half 符号一致性重读由此每夜自动保鲜。
+    "scripts/kelly_prior_conditioning_eval.py",
 )
 DIAGNOSTIC_TIMEOUT_S = 600
 

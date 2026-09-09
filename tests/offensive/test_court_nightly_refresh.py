@@ -162,6 +162,8 @@ class TestNightlyDiagnosticsRefresh:
         # 面的 split-half 判定会被操作员当现状消费; 未来新增诊断脚本漏接
         # 在此当场暴露 (顺序也是契约: status.diagnostics 键序可读性)。
         # R152 Op1: + strength_component_decomposition (分量级解剖, 同门先例)。
+        # R155 Op1: + kelly_prior_conditioning_eval (R15 预注册触发器工具,
+        # 唯一仍靠手动运行的成员, 同门接线; bare 可跑/相对 cwd/无必需参数)。
         assert DIAGNOSTIC_SCRIPTS == (
             "scripts/winrate_payoff_decomposition.py",
             "scripts/btst_signal_day_cohort.py",
@@ -170,6 +172,7 @@ class TestNightlyDiagnosticsRefresh:
             "scripts/stock_feature_attribution.py",
             "scripts/zero_hit_day_gate_attribution.py",
             "scripts/strength_component_decomposition.py",
+            "scripts/kelly_prior_conditioning_eval.py",
         )
 
     def test_build_success_runs_diagnostics_in_order(self, tmp_path):
