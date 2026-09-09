@@ -293,3 +293,80 @@ class TestMainCli:
                 "--report-dir", str(tmp_path / "r"),
                 "--date-str", "20260909",
             ])
+
+
+class TestDeltaCi:
+    """R153 Op1: hi−lo 差的配对 bootstrap 区间 — 接线面 (双桶 n≥MIN_CELL_N)。"""
+
+    def _large_fixture(self, *, n_lo=30, n_hi=30, n_days=6):
+        """board 分量双桶各 ≥MIN_CELL_N, 跨多日; hi 侧强赢 lo 侧强输。"""
+        rows = []
+        i = 0
+        for d in range(n_days):
+            day = f"2026-03-{(d % 28) + 1:02d}"
+            for _ in range(n_lo // n_days + 1):
+                rows.append(_row(
+                    i, strength=0.6, board=0.0, low_vol=0.1, squeeze=0.9,
+                    volume=0.6, rng=0.2, ret=0.09 - 0.0007 * i,
+                ))
+                rows[-1]["signal_date"] = day
+                i += 1
+            for _ in range(n_hi // n_days + 1):
+                rows.append(_row(
+                    i, strength=0.6, board=0.95, low_vol=0.1, squeeze=0.9,
+                    volume=0.6, rng=0.2, ret=-0.02 - 0.0003 * i,
+                ))
+                rows[-1]["signal_date"] = day
+                i += 1
+        return pd.DataFrame(rows)
+
+    def test_delta_ci_present_when_both_cells_large(self):
+        ev = self._large_fixture()
+        payload = analyze(ev)
+        cell = payload["pools"]["all"]["components"]["board_score"]
+        lo_n = cell["buckets"]["<0.50"]["n"]
+        hi_n = cell["buckets"]["≥0.50"]["n"]
+        assert lo_n >= 30 and hi_n >= 30
+        ci = cell["hi_lo_delta_ci"]
+        assert isinstance(ci, dict)
+        assert set(ci) == {"ci_low", "ci_high"}
+        assert ci["ci_low"] <= ci["ci_high"]
+        # 点估计与既有 hi_lo_delta 同号且区间罩住点估计
+        assert cell["hi_lo_delta"] < 0
+        assert ci["ci_low"] <= cell["hi_lo_delta"] <= ci["ci_high"]
+
+    def test_delta_ci_deterministic(self):
+        ev = self._large_fixture()
+        a = json.dumps(analyze(ev), ensure_ascii=False, sort_keys=True)
+        b = json.dumps(analyze(ev), ensure_ascii=False, sort_keys=True)
+        assert a == b
+
+    def test_delta_ci_none_small_cells(self):
+        """8 行 fixture 双桶 n=4 < MIN_CELL_N → delta_ci 全 None 不冒充。"""
+        pools = analyze(_fixture_ev())["pools"]
+        for pool_key in ("all", "ge050", "ge070"):
+            for comp_key, _ in COMPONENTS_ITER:
+                cell = pools[pool_key]["components"][comp_key]
+                assert cell["hi_lo_delta_ci"] is None
+
+    def test_delta_ci_none_all_unknown_component(self):
+        ev = _fixture_ev()
+        ev["range_score"] = float("nan")
+        cell = analyze(ev)["pools"]["all"]["components"]["range_score"]
+        assert cell["hi_lo_delta_ci"] is None
+
+    def test_render_md_interval_and_guard(self):
+        ev = self._large_fixture()
+        md = render_md(analyze(ev))
+        assert "hi−lo" in md
+        assert "[" in md and "]" in md   # 区间形态落进 hi−lo 列
+        # 缺键 payload 不崩 (R142 F2 家族): cell 无 hi_lo_delta_ci 键
+        payload = {"available": True, "pools": {"all": {"components": {
+            "board_score": {"buckets": {}, "hi_lo_delta": 0.01}}}}}
+        assert render_md(payload)  # 不抛异常即可
+
+
+COMPONENTS_ITER = [
+    ("board_score", ""), ("low_vol_score", ""), ("squeeze_score", ""),
+    ("volume_score", ""), ("range_score", ""),
+]

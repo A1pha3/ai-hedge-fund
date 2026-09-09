@@ -244,6 +244,59 @@ def cluster_boot_ci_low(
     return float(np.quantile(means, 1 - ci))
 
 
+def cluster_boot_delta_ci(
+    hi_rets: list[float],
+    hi_days: list[str],
+    lo_rets: list[float],
+    lo_days: list[str],
+    *,
+    ci: float = 0.90,
+    n_boot: int = N_BOOT,
+) -> dict[str, float]:
+    """hi−lo 期望差的按日配对聚类 bootstrap 双侧区间 (R153 Op1)。
+
+    配对 = 每次重采样同一组信号日键, hi/lo 两桶共用同一日采样 — 保留
+    同日内跨桶共同冲击的相关结构; 两桶逐日独立重采样会低估差值方差。
+    日宇宙 = 两桶键的并集 (排序定序); 某 replicate 任一侧抽空则该差值
+    未定义, 拒绝重抽 (总抽次上限 20×n_boot, 超限 = 两桶日历重叠退化,
+    ValueError)。返回 {ci_low, ci_high} = (1−ci)/2 与 1−(1−ci)/2 分位
+    (双侧 90%: 5%/95%) — 差值符号判读需要双侧, 单桶下界语义不适用。
+    任一侧空桶 ValueError (调用方先用 MIN_CELL_N 门槛把关)。
+    per-call seeded RNG (BOOT_SEED) — 同输入逐字节可复现 (R13 纪律)。
+    """
+    if not hi_rets or not lo_rets:
+        raise ValueError("delta_ci_empty_cell")
+    rng = np.random.default_rng(BOOT_SEED)
+    hi_by: dict[str, list[float]] = {}
+    lo_by: dict[str, list[float]] = {}
+    for r, d in zip(hi_rets, hi_days):
+        hi_by.setdefault(d, []).append(r)
+    for r, d in zip(lo_rets, lo_days):
+        lo_by.setdefault(d, []).append(r)
+    keys = sorted(set(hi_by) | set(lo_by))
+    hi_arr = [np.asarray(hi_by.get(d, []), dtype=float) for d in keys]
+    lo_arr = [np.asarray(lo_by.get(d, []), dtype=float) for d in keys]
+    k = len(keys)
+    deltas = np.empty(n_boot)
+    draws = 0
+    for i in range(n_boot):
+        while True:
+            draws += 1
+            if draws > 20 * n_boot:
+                raise ValueError("delta_ci_degenerate_overlap")
+            pick = rng.integers(0, k, k)
+            hi_cat = np.concatenate([hi_arr[j] for j in pick])
+            lo_cat = np.concatenate([lo_arr[j] for j in pick])
+            if hi_cat.size and lo_cat.size:
+                break
+        deltas[i] = hi_cat.mean() - lo_cat.mean()
+    alpha = 1.0 - ci
+    return {
+        "ci_low": float(np.quantile(deltas, alpha / 2)),
+        "ci_high": float(np.quantile(deltas, 1 - alpha / 2)),
+    }
+
+
 def attribution(group: dict[str, object], base: dict[str, object]) -> dict[str, float]:
     """ΔE 的精确恒等分解: 胜率贡献 + 赔付贡献 == ΔE (无残差)。
 

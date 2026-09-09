@@ -3698,3 +3698,65 @@ class TestTrailingWindow:
             },
         }
         assert "近期窗判读" not in render_md(payload_off, "20260908")
+
+
+class TestClusterBootDeltaCi:
+    """R153 Op1: hi−lo 期望差的按日配对聚类 bootstrap 区间 — 纯函数面。"""
+
+    def _two_cell_fixture(self, *, n_days=40, per_day=2):
+        """非对称双桶: hi 桶全正收益 / lo 桶全负收益, 逐行互异, 各自跨多日。"""
+        hi_rets, hi_days, lo_rets, lo_days = [], [], [], []
+        for d in range(n_days):
+            day = f"2026-02-{(d % 28) + 1:02d}-{d:03d}"
+            for j in range(per_day):
+                hi_rets.append(0.08 + 0.001 * (d + j))
+                hi_days.append(day)
+                lo_rets.append(-0.07 - 0.001 * (d + j))
+                lo_days.append(day)
+        return hi_rets, hi_days, lo_rets, lo_days
+
+    def test_deterministic_byte_identical(self):
+        from scripts.winrate_payoff_decomposition import cluster_boot_delta_ci
+
+        hi_rets, hi_days, lo_rets, lo_days = self._two_cell_fixture()
+        a = cluster_boot_delta_ci(
+            hi_rets, hi_days, lo_rets, lo_days, n_boot=200
+        )
+        b = cluster_boot_delta_ci(
+            hi_rets, hi_days, lo_rets, lo_days, n_boot=200
+        )
+        assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+    def test_separated_cells_interval_excludes_zero(self):
+        """hi 全正 / lo 全负 → delta≈+15pp, 双侧区间整体在零右侧。"""
+        from scripts.winrate_payoff_decomposition import cluster_boot_delta_ci
+
+        hi_rets, hi_days, lo_rets, lo_days = self._two_cell_fixture()
+        ci = cluster_boot_delta_ci(hi_rets, hi_days, lo_rets, lo_days, n_boot=400)
+        assert set(ci) == {"ci_low", "ci_high"}
+        assert ci["ci_low"] > 0.10
+        assert ci["ci_low"] <= ci["ci_high"]
+
+    def test_empty_cell_value_error(self):
+        from scripts.winrate_payoff_decomposition import cluster_boot_delta_ci
+
+        with pytest.raises(ValueError, match="empty_cell"):
+            cluster_boot_delta_ci([], [], [-0.01], ["2026-02-01"], n_boot=50)
+        with pytest.raises(ValueError, match="empty_cell"):
+            cluster_boot_delta_ci([0.01], ["2026-02-01"], [], [], n_boot=50)
+
+    def test_disjoint_days_still_resolves_via_rejection(self):
+        """两桶日集完全不相交: 拒绝采样仍收敛, 结果确定且区间有限。"""
+        import math
+
+        from scripts.winrate_payoff_decomposition import cluster_boot_delta_ci
+
+        ci = cluster_boot_delta_ci(
+            [0.05, 0.06, 0.07],
+            ["2026-02-01", "2026-02-02", "2026-02-03"],
+            [-0.04, -0.05],
+            ["2026-03-01", "2026-03-02"],
+            n_boot=300,
+        )
+        assert math.isfinite(ci["ci_low"]) and math.isfinite(ci["ci_high"])
+        assert ci["ci_low"] <= ci["ci_high"]

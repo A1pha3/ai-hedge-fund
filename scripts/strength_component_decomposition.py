@@ -1,9 +1,13 @@
-"""强度分量级解剖 — trigger_strength 五分量的事件级证据面 (R152 Op1).
+"""强度分量级解剖 — trigger_strength 五分量的事件级证据面 (R152 Op1, R153 Op1 扩区间).
 
 动机: 0.50 门槛与 ≥0.70 阈值锚的全部既有证据都建在 trigger_strength
 聚合层 (R141-R149 分解/触发器/近期窗), 「池内哪个分量在做功」从未被
 度量 — day_feature_attribution (R133) 是日层聚合 (结论: 无日层特征
 具备判别资格), 本工具是事件级分量视图, 与其互补不重叠。
+
+R153 Op1: hi−lo 差从点估计升级为配对 (按日联合重采样) 聚类 bootstrap
+双侧区间 (cluster_boot_delta_ci, 单一实现落 winrate_payoff_decomposition)
+— 兑现 R152 Op1 docstring 预注册的「配对 bootstrap 属后续 op」。
 
 Observe 期真实 court 数据快查实证 (生产对齐 n=1677 全成熟, T+10,
 20260909): ≥0.50 池 (n=1147, E=+1.49%) 内低波分量反向区分
@@ -41,6 +45,7 @@ from winrate_payoff_decomposition import (  # noqa: E402
     COURT_TABLE,
     MIN_CELL_N,
     REPORT_DIR,
+    cluster_boot_delta_ci,
     court_window_from_events,
     net_returns,
     production_aligned,
@@ -102,8 +107,11 @@ def component_anatomy(
 
     每格 (pool, component, bucket) 是独立 win_loss_stats 调用 — 日聚类
     CI 由其内建 n≥MIN_CELL_N 门槛给出, 小样本格诚实 None; unknown 桶
-    全量保留 (缺失分量如实显形不剔除)。hi_lo_delta 是点估计 (CI 只按
-    桶披露, 差值区间不做 — 配对 bootstrap 属后续 op)。
+    全量保留 (缺失分量如实显形不剔除)。hi_lo_delta 是点估计;
+    hi_lo_delta_ci 是配对 (按日联合重采样) 聚类 bootstrap 双侧区间
+    (R153 Op1 — 兑现本函数此前「配对 bootstrap 属后续 op」的预注册),
+    双桶 n≥MIN_CELL_N 才给, 否则 None 不冒充; 差值符号判读 (反向分量
+    是否可区分于零) 用区间, 点估计只作方向。
     """
     pools: dict[str, object] = {}
     for pool_key, floor in POOLS:
@@ -111,17 +119,30 @@ def component_anatomy(
         per_component: dict[str, object] = {}
         for comp_key, _label in COMPONENTS:
             buckets: dict[str, object] = {}
+            cells: dict[str, "pd.DataFrame"] = {}
             for bucket in COMPONENT_BUCKETS:
                 cell = sub[sub[f"_comp_{comp_key}"] == bucket]
+                cells[bucket] = cell
                 buckets[bucket] = win_loss_stats(
                     cell[ret_col].tolist(),
                     cell["signal_date"].astype(str).tolist(),
                 )
+            lo_cell, hi_cell = cells["<0.50"], cells["≥0.50"]
+            if len(lo_cell) >= MIN_CELL_N and len(hi_cell) >= MIN_CELL_N:
+                hi_lo_delta_ci: dict[str, float] | None = cluster_boot_delta_ci(
+                    hi_cell[ret_col].tolist(),
+                    hi_cell["signal_date"].astype(str).tolist(),
+                    lo_cell[ret_col].tolist(),
+                    lo_cell["signal_date"].astype(str).tolist(),
+                )
+            else:
+                hi_lo_delta_ci = None
             per_component[comp_key] = {
                 "buckets": buckets,
                 "hi_lo_delta": _hi_lo_delta(
                     buckets["<0.50"], buckets["≥0.50"]
                 ),
+                "hi_lo_delta_ci": hi_lo_delta_ci,
             }
         pools[pool_key] = {
             "floor": None if floor == float("-inf") else floor,
@@ -251,7 +272,8 @@ def render_md(payload: object) -> str:
         (
             "- 纪律: 探索性 in-sample (分界与池划分选自同次观测数据), 只披露"
             "不判定 (宪法 #2); 任何据此的公式/阈值变化 = 新证据世代 owner 决策;"
-            " hi_lo_delta 是点估计, 区间证据看各桶 CI90 下界。"
+            " hi−lo 差区间是配对 (按日联合重采样) bootstrap 双侧 90% 估计,"
+            " 探索性 read-out, 区间证据与各桶 CI90 下界互为侧面。"
         ),
         "",
     ]
@@ -301,13 +323,21 @@ def render_md(payload: object) -> str:
                                     sign = "一致"
                                 elif raw is False:
                                     sign = "翻转"
+                    raw_ci = cell.get("hi_lo_delta_ci")
+                    if isinstance(raw_ci, dict):
+                        ci_cell = (
+                            f"[{_fmt(raw_ci.get('ci_low'))}"
+                            f", {_fmt(raw_ci.get('ci_high'))}]"
+                        )
+                    else:
+                        ci_cell = "—"
                     lines.append(
                         f"| {label} ({comp_key}) "
                         f"| {_fmt_count(lo.get('n'))} / {_fmt(lo.get('expectancy'))}"
                         f" / {_fmt(lo.get('cluster_ci_low_90'))} "
                         f"| {_fmt_count(hi.get('n'))} / {_fmt(hi.get('expectancy'))}"
                         f" / {_fmt(hi.get('cluster_ci_low_90'))} "
-                        f"| {_fmt(cell.get('hi_lo_delta'))} | {sign} |"
+                        f"| {_fmt(cell.get('hi_lo_delta'))} {ci_cell} | {sign} |"
                     )
             lines.append("")
     return "\n".join(lines)
