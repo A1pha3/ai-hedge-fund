@@ -2300,7 +2300,8 @@ def _poisoned_line(
 def _diagnostic_failure_clause(status: dict | None) -> str:
     """夜刷 reconcile/diagnostics 失败子句 (R139 Op1)。
 
-    R133 Op3 起 build 成功后的 reconcile + 五诊断 fail-open 逐脚本刷新, 失败只进
+    R133 Op3 起 build 成功后的 reconcile + 诊断链 fail-open 逐脚本刷新 (R152/R155
+    两度扩链, 成员全集见 court_nightly_refresh.DIAGNOSTIC_SCRIPTS 单一实现), 失败只进
     ``status["reconcile"]``/``status["diagnostics"]``, ok 语义不变 — 若某诊断脚本
     持续失败, 对应报告/账本静默冻结, 而 ok=True、报告日期照样新鲜, 既有两个触发
     条件 (报告陈旧 / ok=False) 均不触发。本子句把每夜步骤结果显形: rc≠0、error
