@@ -1701,8 +1701,14 @@ def _crisis_streak(
     regimes_by_date: Mapping[str, str], as_of: date
 ) -> tuple[int, date | None]:
     """连续 crisis 天数: 从 <= as_of 的最新有标签日向前回溯, 首个非 crisis
-    即停 (连亮语义与触发器账本一致: 中断即清零)。键非 YYYYMMDD 或解析失败
-    的行跳过 (毒化键不参与计数, R150 教训); 无可用标签返回 (0, None)。
+    标签即停。键非 YYYYMMDD 或解析失败的行跳过 (毒化键不参与计数, R150
+    教训); 无可用标签返回 (0, None)。
+
+    语义边界 (R157 Op2 成文): 连续 = 标签序列内连续 — regime 史缺日 (管道
+    漏写/源数据洞) 与节假日不可区分, 跨洞连续性不可本地检测, 缺口风险由
+    regime 管道面覆盖; 触发器账本的『未知不延长连亮』依赖逐刷新快照记录,
+    本读数无逐日快照不可比照, 不声称同语义。只计 crisis 是项 5 注册原文
+    (crisis-specific) 的忠实实现: risk_off 不计入是登记语义不扩面, 非遗漏。
     """
     labeled: list[tuple[date, str]] = []
     for key, label in regimes_by_date.items():
@@ -1739,51 +1745,62 @@ def _render_stop_loss_readiness_line(
     纯披露 (宪法 #2): 本行不进入任何计划/评分/仓位/退出决策路径。fail-open
     家族纪律 (R85/R109/R115/R119/R149 同族): regime 史缺失/无可用标签 →
     streak 子句省略; 回撤不可得/非有限 → 回撤子句省略; 两子句都不可得 →
-    整行省略。测试可注入 regimes_by_date (R10: slot 内无 data/ 工件, 注入
-    保证自足); None 时生产路径经 _load_regime_history() 读取。
+    整行省略; 任意输入畸形 → typed-exception → 整行省略 (镜像
+    _render_trailing_window_line/_render_universe_alignment_line 同款兜底 —
+    披露面永不阻断主视图; R157 Op2: trade_date=datetime 形态 PoC 实锤
+    date<=datetime TypeError 裸逃逸后收口)。测试可注入 regimes_by_date
+    (R10: slot 内无 data/ 工件, 注入保证自足); None 时生产路径经
+    _load_regime_history() 读取。
     """
-    clauses: list[str] = []
+    try:
+        clauses: list[str] = []
 
-    history = _load_regime_history() if regimes_by_date is None else regimes_by_date
-    as_of = getattr(getattr(run, "service_run", None), "trade_date", None)
-    if isinstance(history, Mapping) and history and isinstance(as_of, date):
-        streak, anchor = _crisis_streak(history, as_of)
-        if anchor is not None:
-            anchor_note = (
-                f"（截至 {anchor.month:02d}{anchor.day:02d}）" if anchor < as_of else ""
-            )
-            clauses.append(f"连续 crisis {streak} 日{anchor_note}")
+        history = (
+            _load_regime_history() if regimes_by_date is None else regimes_by_date
+        )
+        as_of = getattr(getattr(run, "service_run", None), "trade_date", None)
+        if isinstance(history, Mapping) and history and isinstance(as_of, date):
+            streak, anchor = _crisis_streak(history, as_of)
+            if anchor is not None:
+                anchor_note = (
+                    f"（截至 {anchor.month:02d}{anchor.day:02d}）"
+                    if anchor < as_of
+                    else ""
+                )
+                clauses.append(f"连续 crisis {streak} 日{anchor_note}")
 
-    valuation = getattr(getattr(run, "service_run", None), "valuation", None)
-    drawdown = getattr(valuation, "drawdown", None)
-    if _is_finite_number(drawdown):
-        margin_pp = (drawdown - _STOP_READINESS_DRAWDOWN_REF) * 100
-        ref_pct = f"{_STOP_READINESS_DRAWDOWN_REF:.0%}"
-        margin_text = f"{margin_pp:+.1f}pp"
-        if margin_pp <= 0:
-            clauses.append(
-                f"回撤 {_format_drawdown(drawdown)}"
-                f"（已触及 {ref_pct} 降仓参考线，余量 {margin_text}）"
-            )
-        else:
-            clauses.append(
-                f"回撤 {_format_drawdown(drawdown)}"
-                f"（距 {ref_pct} 降仓参考线余量 {margin_text}）"
-            )
+        valuation = getattr(getattr(run, "service_run", None), "valuation", None)
+        drawdown = getattr(valuation, "drawdown", None)
+        if _is_finite_number(drawdown):
+            margin_pp = (drawdown - _STOP_READINESS_DRAWDOWN_REF) * 100
+            ref_pct = f"{_STOP_READINESS_DRAWDOWN_REF:.0%}"
+            margin_text = f"{margin_pp:+.1f}pp"
+            if margin_pp <= 0:
+                clauses.append(
+                    f"回撤 {_format_drawdown(drawdown)}"
+                    f"（已触及 {ref_pct} 降仓参考线，余量 {margin_text}）"
+                )
+            else:
+                clauses.append(
+                    f"回撤 {_format_drawdown(drawdown)}"
+                    f"（距 {ref_pct} 降仓参考线余量 {margin_text}）"
+                )
 
-    if not clauses:
+        if not clauses:
+            return None
+        from src.screening.offensive.paper_tracker import _execution_stop_mode
+
+        mode = _execution_stop_mode()
+        mode_note = (
+            f"止损执行模式 {mode}（{'已启用' if mode != 'none' else '登记: 不启用'}）"
+        )
+        return (
+            f"止损启用条件（清单项 5）：{' · '.join(clauses)} · {mode_note} · "
+            "启用判定属 owner — 项 5: 先跑 backtest_exit_strategies.py "
+            "确认当期方向再设 DAILY_ACTION_EXECUTION_STOP"
+        )
+    except (OSError, ValueError, KeyError, TypeError):
         return None
-    from src.screening.offensive.paper_tracker import _execution_stop_mode
-
-    mode = _execution_stop_mode()
-    mode_note = (
-        f"止损执行模式 {mode}（{'已启用' if mode != 'none' else '登记: 不启用'}）"
-    )
-    return (
-        f"止损启用条件（清单项 5）：{' · '.join(clauses)} · {mode_note} · "
-        "启用判定属 owner — 项 5: 先跑 backtest_exit_strategies.py "
-        "确认当期方向再设 DAILY_ACTION_EXECUTION_STOP"
-    )
 
 
 def _render_universe_alignment_line(

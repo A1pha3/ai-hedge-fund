@@ -7,7 +7,7 @@ prefilter→hits 之间此前是黑箱: 0828 零命中日 (85 prefilter→0 命�
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import json
 
@@ -2855,3 +2855,34 @@ def test_stop_readiness_line_renders_after_regime_line(case, monkeypatch):
     assert "连续 crisis 2 日" in lines[stop_idx]
     assert "backtest_exit_strategies.py" in lines[stop_idx]
     assert "DAILY_ACTION_EXECUTION_STOP" in lines[stop_idx]
+
+
+def test_stop_readiness_datetime_trade_date_omitted_not_crash(monkeypatch):
+    """F-a (R157 Op2): trade_date=datetime + 非空 regime 史 → 行省略不裸逃逸。
+
+    service 路径 _plain_date 恒产 date (现行不可达); 本测试钉住防御线:
+    渲染器接受任意 run 对象 (display/legacy 面), date<=datetime 的 TypeError
+    必须被家族同款兜底吞为整行省略 (镜像 trailing/universe_alignment 先例),
+    绝不炸掉整个 --daily-action 渲染。
+    """
+    import src.screening.offensive.daily_action as da
+
+    run = _StubRun(datetime(2026, 8, 20, 18, 0), _StubValuation(-0.05))
+    monkeypatch.setattr(
+        da, "_load_regime_history",
+        lambda: {"20260819": "crisis", "20260820": "crisis"},
+    )
+    assert _render_stop_loss_readiness_line(run) is None
+
+
+def test_stop_readiness_future_only_keys_and_poison_keys_skip_gracefully():
+    """F-j (R157 Op2): history 仅含 > as_of 键 → streak 子句省略, 行由回撤
+    子句托住; 毒化键 (非 YYYYMMDD) 跳过不崩 (R150 教训同族)。
+    """
+    run = _StubRun(date(2026, 8, 20), _StubValuation(-0.05))
+    line = _render_stop_loss_readiness_line(
+        run, regimes_by_date={"20260821": "crisis", "not-a-date": "crisis"},
+    )
+    assert line is not None
+    assert "连续 crisis" not in line
+    assert "回撤" in line
