@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import json
+import sys
+from datetime import date
 
 import pandas as pd
 import pytest
@@ -21,6 +23,7 @@ from scripts.btst_exit_anatomy import (
     anatomy_event,
     detect_corp_action,
     extract_path_bars,
+    main,
     path_anatomy,
     realizable_path,
     render_md,
@@ -440,3 +443,57 @@ class TestUniverseEndToEnd:
         assert "-5%" in text
         assert "regime=normal" in text
         assert "skipped" in text
+
+
+class TestDefaultReportPersistence:
+    """R156 Op2: 裸跑默认落盘 — 全链唯一不产日期报告工件成员的收口。
+
+    Op1 (733b855b) 把本脚本接入 DIAGNOSTIC_SCRIPTS 后, 链面 rc=0 绿但
+    --output-json/--output-md 默认 None 只打印 stdout, R133 建链的报告保鲜
+    目的静默未达成; 修复镜像同门 btst_daily_selection_anatomy 的落盘模式
+    (REPORTS_DIR = data/reports + 日期 stem, 显式路径覆盖保留)。
+    """
+
+    def test_bare_run_writes_dated_reports(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        # slot 自足: 日历与事件表属本地数据资产, main 的日历读取面打桩
+        monkeypatch.setattr(
+            sys.modules["scripts.btst_exit_anatomy"],
+            "load_sessions",
+            lambda *a, **k: [],
+        )
+        monkeypatch.setattr(sys, "argv", ["btst_exit_anatomy.py"])
+        rc = main()
+        assert rc == 0
+        stem = f"exit_anatomy_{date.today():%Y%m%d}"
+        json_path = tmp_path / "data" / "reports" / f"{stem}.json"
+        md_path = tmp_path / "data" / "reports" / f"{stem}.md"
+        assert json_path.exists() and md_path.exists()
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+        assert payload == {}  # 事件表缺失 → 双宇宙跳过, 空载荷也必须落盘
+        assert "written" in capsys.readouterr().out
+
+    def test_explicit_output_paths_override_defaults(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            sys.modules["scripts.btst_exit_anatomy"],
+            "load_sessions",
+            lambda *a, **k: [],
+        )
+        out_json = tmp_path / "custom" / "report.json"
+        out_md = tmp_path / "custom" / "report.md"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "btst_exit_anatomy.py",
+                "--output-json",
+                str(out_json),
+                "--output-md",
+                str(out_md),
+            ],
+        )
+        rc = main()
+        assert rc == 0
+        assert out_json.exists() and out_md.exists()
+        assert not (tmp_path / "data" / "reports").exists()

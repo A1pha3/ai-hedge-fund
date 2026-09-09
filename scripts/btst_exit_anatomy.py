@@ -26,6 +26,8 @@
 
 用法:
     uv run python scripts/btst_exit_anatomy.py               # 双宇宙默认路径
+        # 默认写 data/reports/exit_anatomy_<日期>.{json,md} (R156 Op2: 入链
+        # 成员的报告保鲜面 — 裸跑只打印 stdout 曾使报告史静默缺席)
     uv run python scripts/btst_exit_anatomy.py --output-json PATH --output-md PATH
 """
 
@@ -34,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +70,9 @@ ANATOMY_CAL_START = "20220101"
 RAW_DAILY_DIR = RAW_DIR / "daily"
 EARLY_DAILY_DIR = RESEARCH_DIR / "raw_early" / "daily"
 EVENT_TABLE = RESEARCH_DIR / "event_tables" / "event_table_v1.csv.gz"
+# 报告落盘目录 (R156 Op2, 镜像 btst_daily_selection_anatomy.REPORTS_DIR):
+# 夜度保鲜链的 bare 调用 cwd=仓库根, 相对路径即仓库 data/reports。
+REPORTS_DIR = Path("data/reports")
 EVENT_TABLE_EARLY = RESEARCH_DIR / "event_tables_early" / "event_table_v1.csv.gz"
 
 _REQUIRED_EVENT_COLS = (
@@ -438,6 +444,7 @@ def analyze_universe(
 ) -> dict[str, Any]:
     """单宇宙端到端: 逐事件解剖 (单遍) → 全体/生产对齐/regime 分组聚合。"""
     work = ev[ev["fillable"] == True].copy()  # noqa: E712
+
     def _offset(e: pd.Series) -> int | None:
         v = e["exit_session_t10"]
         if v is None or (isinstance(v, float) and v != v):
@@ -590,13 +597,14 @@ def main() -> int:
         payload[name] = analyze_universe(ev, raw_dir, cal)
 
     body = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1)
-    if args.output_json:
-        args.output_json.parent.mkdir(parents=True, exist_ok=True)
-        args.output_json.write_text(body + "\n", encoding="utf-8")
-    if args.output_md:
-        args.output_md.parent.mkdir(parents=True, exist_ok=True)
-        args.output_md.write_text(render_md(payload) + "\n", encoding="utf-8")
-    print(body if not args.output_json else f"written: {args.output_json}")
+    stem = f"exit_anatomy_{date.today():%Y%m%d}"
+    json_path = args.output_json or REPORTS_DIR / f"{stem}.json"
+    md_path = args.output_md or REPORTS_DIR / f"{stem}.md"
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(body + "\n", encoding="utf-8")
+    md_path.write_text(render_md(payload) + "\n", encoding="utf-8")
+    print(f"written: {json_path} {md_path}")
     return 0
 
 
