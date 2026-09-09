@@ -3760,3 +3760,24 @@ class TestClusterBootDeltaCi:
         )
         assert math.isfinite(ci["ci_low"]) and math.isfinite(ci["ci_high"])
         assert ci["ci_low"] <= ci["ci_high"]
+
+    def test_length_mismatch_typed_rejection(self):
+        """rets/days 长度不齐 → ValueError (换位传参陷阱的 typed 封口)。"""
+        from scripts.winrate_payoff_decomposition import cluster_boot_delta_ci
+
+        with pytest.raises(ValueError, match="delta_ci_length_mismatch"):
+            cluster_boot_delta_ci(
+                [0.05, 0.06],                       # 2 rets
+                ["2026-02-01", "2026-02-02", "2026-02-03"],  # 3 days — 不齐
+                [-0.04, -0.05],
+                ["2026-03-01", "2026-03-02"],
+                n_boot=50,
+            )
+        with pytest.raises(ValueError, match="delta_ci_length_mismatch"):
+            cluster_boot_delta_ci(
+                [0.05, 0.06],
+                ["2026-02-01", "2026-02-02"],
+                [-0.04],
+                ["2026-03-01", "2026-03-02"],       # lo 侧不齐
+                n_boot=50,
+            )

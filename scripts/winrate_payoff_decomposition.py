@@ -263,9 +263,14 @@ def cluster_boot_delta_ci(
     (双侧 90%: 5%/95%) — 差值符号判读需要双侧, 单桶下界语义不适用。
     任一侧空桶 ValueError (调用方先用 MIN_CELL_N 门槛把关)。
     per-call seeded RNG (BOOT_SEED) — 同输入逐字节可复现 (R13 纪律)。
+    R153 Op2: rets/days 长度错配 → ValueError — 四同型 list 位置签名
+    存在换位陷阱 (hi_rets,lo_rets,hi_days,lo_days 错序), zip 按最短静默
+    截断会产出貌似合理的错误区间, 入口 typed 封死。
     """
     if not hi_rets or not lo_rets:
         raise ValueError("delta_ci_empty_cell")
+    if len(hi_rets) != len(hi_days) or len(lo_rets) != len(lo_days):
+        raise ValueError("delta_ci_length_mismatch")
     rng = np.random.default_rng(BOOT_SEED)
     hi_by: dict[str, list[float]] = {}
     lo_by: dict[str, list[float]] = {}

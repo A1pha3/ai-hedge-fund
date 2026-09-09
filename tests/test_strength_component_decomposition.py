@@ -13,6 +13,7 @@ import pandas as pd
 import pytest
 
 from scripts.strength_component_decomposition import (
+    COMPONENTS,
     component_anatomy,
     component_bucket,
     component_split_half,
@@ -345,7 +346,7 @@ class TestDeltaCi:
         """8 行 fixture 双桶 n=4 < MIN_CELL_N → delta_ci 全 None 不冒充。"""
         pools = analyze(_fixture_ev())["pools"]
         for pool_key in ("all", "ge050", "ge070"):
-            for comp_key, _ in COMPONENTS_ITER:
+            for comp_key, _label in COMPONENTS:
                 cell = pools[pool_key]["components"][comp_key]
                 assert cell["hi_lo_delta_ci"] is None
 
@@ -364,9 +365,3 @@ class TestDeltaCi:
         payload = {"available": True, "pools": {"all": {"components": {
             "board_score": {"buckets": {}, "hi_lo_delta": 0.01}}}}}
         assert render_md(payload)  # 不抛异常即可
-
-
-COMPONENTS_ITER = [
-    ("board_score", ""), ("low_vol_score", ""), ("squeeze_score", ""),
-    ("volume_score", ""), ("range_score", ""),
-]
