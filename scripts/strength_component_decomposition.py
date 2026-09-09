@@ -74,6 +74,194 @@ POOLS: tuple[tuple[str, float], ...] = (
     ("ge070", 0.70),
 )
 
+# 生产公式低波权重 (btst_breakout strength: 0.20×五分量和 + energy_bonus,
+# 能量门 = squeeze≥1.0 ∧ low_vol≥0.75) — 本模块镜像该冻结常数做反事实
+# 算术, 不 import src (诊断面与生产面的既有隔离纪律)。
+COUNTERFACTUAL_LOWVOL_WEIGHT = 0.20
+
+# 选股面资格门槛 = 生产入场池 (0.50 门槛, POOLS ge050 同源)。
+PRODUCTION_ENTRY_FLOOR = 0.50
+
+
+def counterfactual_strength(trigger_strength: float, low_vol_score: float) -> float:
+    """V1 单旋钮反事实强度: 清零低波 0.20 权重并重归一化。
+
+    strength' = (trigger_strength − 0.20·low_vol_score)/0.80。重归一化使
+    0.50/0.70 门槛刻度与原公式可比 (分量和归一化到 4 轴); 不封顶 (封顶是
+    第二旋钮, 排序/门槛算术不需要); energy_bonus 原样保留 — bonus 门含
+    低波条件是 V1「只清零权重」最小解释的一部分, 该混杂在 payload
+    bonus_note 如实披露。low_vol 为 NaN 时算术自然传播 NaN (不可计算行
+    由 _attach_counterfactual 标记并从两侧同集比较中排除)。
+    """
+    w = COUNTERFACTUAL_LOWVOL_WEIGHT
+    return (trigger_strength - w * low_vol_score) / (1.0 - w)
+
+
+def _attach_counterfactual(work: "pd.DataFrame") -> "pd.DataFrame":
+    """work 帧附加 _cf_strength 列 + recomputable 计数 (attrs)。
+
+    low_vol_score 非有限 (缺失/NaN/inf/非数值) → _cf_strength = NaN:
+    该行从反事实的池面/选股面两侧同集比较中排除并计数披露 (不虚构
+    归属); trigger_strength 非有限的行同样不可计算 (门槛比较对 NaN
+    自然为 False, 与既有 _pool_frame 纪律一致)。
+    """
+    lv = pd.to_numeric(work["low_vol_score"], errors="coerce")
+    ts = pd.to_numeric(work["trigger_strength"], errors="coerce")
+    lv_finite = lv.map(math.isfinite)
+    ts_finite = ts.map(math.isfinite)
+    w = COUNTERFACTUAL_LOWVOL_WEIGHT
+    work["_cf_strength"] = [
+        (t - w * v) / (1.0 - w) if tf and vf else float("nan")
+        for t, v, tf, vf in zip(ts, lv, ts_finite, lv_finite)
+    ]
+    work.attrs["cf_recomputable_n"] = int(lv_finite.sum())
+    work.attrs["cf_excluded_unknown_n"] = int((~lv_finite).sum())
+    return work
+
+
+def _cf_work_frame(ev: "pd.DataFrame") -> "pd.DataFrame":
+    """生产对齐 + 净收益 + 分量桶 + 反事实列 — 读数入口与 analyze 共享加工。"""
+    work = _aligned_work_frame(ev)
+    return _attach_counterfactual(work)
+
+
+def counterfactual_pool_readout(
+    work: "pd.DataFrame", *, floor: float, ret_col: str = "net_ret_t10"
+) -> dict[str, object]:
+    """池面反事实读数: 固定门槛下旧/新池构成与期望差 (含配对差区间)。
+
+    hi=new 池 (低波零权), lo=旧池 — delta>0 = 清零低波权重后该门槛池
+    更好。两侧只在低波可计算行上比较 (同集)。注意混杂: 重归一化会放行
+    更多票入新池 (n_new 通常 > n_old), 池面 ΔE 混合了轴反向与稀释两
+    种效应 — 判读以下游 counterfactual_selection_readout (无稀释) 为准。
+    任一侧 n < MIN_CELL_N → delta_ci None 不冒充 (R153 门槛纪律)。
+    """
+    sub = work[work["_cf_strength"].notna()]
+    old = sub[sub["trigger_strength"] >= floor]
+    new = sub[sub["_cf_strength"] >= floor]
+    old_idx, new_idx = set(old.index), set(new.index)
+    stats_old = win_loss_stats(
+        old[ret_col].tolist(), old["signal_date"].astype(str).tolist()
+    )
+    stats_new = win_loss_stats(
+        new[ret_col].tolist(), new["signal_date"].astype(str).tolist()
+    )
+    e_old, e_new = stats_old.get("expectancy"), stats_new.get("expectancy")
+    delta_point = (
+        e_new - e_old if e_old is not None and e_new is not None else None
+    )
+    delta_ci = None
+    if len(old) >= MIN_CELL_N and len(new) >= MIN_CELL_N:
+        delta_ci = cluster_boot_delta_ci(
+            new[ret_col].tolist(),
+            new["signal_date"].astype(str).tolist(),
+            old[ret_col].tolist(),
+            old["signal_date"].astype(str).tolist(),
+        )
+    return {
+        "floor": floor,
+        "n_old": int(len(old)),
+        "n_new": int(len(new)),
+        "entered": int(len(new_idx - old_idx)),
+        "left": int(len(old_idx - new_idx)),
+        "stats_old": stats_old,
+        "stats_new": stats_new,
+        "delta_point": delta_point,
+        "delta_ci": delta_ci,
+    }
+
+
+def counterfactual_selection_readout(
+    work: "pd.DataFrame",
+    *,
+    floor: float = PRODUCTION_ENTRY_FLOOR,
+    k: int = 3,
+    ret_col: str = "net_ret_t10",
+) -> dict[str, object]:
+    """选股面反事实读数: 每日 top-K 旧/新排序选集的期望差 (无稀释)。
+
+    资格 = 旧强度 ≥ floor (生产入场池); 每信号日按旧强度 vs 反事实强度
+    各取 top-K (平票以 symbol 升序定序 — 确定性), 差值 = new−old 配对
+    (cluster_boot_delta_ci 按日联合重采样, hi=new 选集)。日候选 < K 跳过
+    并计数 (不凑数); 任一侧 picks n < MIN_CELL_N → delta_ci None。
+    split_half 镜像 component_split_half 判据 (日序对分, 符号一致性,
+    单半 expectancy 缺 → None 不冒充)。
+    """
+    sub = work[work["_cf_strength"].notna() & (work["trigger_strength"] >= floor)]
+    old_by_day: dict[str, list[float]] = {}
+    new_by_day: dict[str, list[float]] = {}
+    overlap = used = skipped = 0
+    for day, g in sub.groupby(sub["signal_date"].astype(str), sort=True):
+        if len(g) < k:
+            skipped += 1
+            continue
+        used += 1
+        go = g.sort_values(
+            ["trigger_strength", "symbol"], ascending=[False, True]
+        ).head(k)
+        gn = g.sort_values(
+            ["_cf_strength", "symbol"], ascending=[False, True]
+        ).head(k)
+        overlap += len(set(go.index) & set(gn.index))
+        old_by_day[day] = go[ret_col].tolist()
+        new_by_day[day] = gn[ret_col].tolist()
+    old_rets = [r for d in sorted(old_by_day) for r in old_by_day[d]]
+    new_rets = [r for d in sorted(new_by_day) for r in new_by_day[d]]
+    old_days = [d for d in sorted(old_by_day) for _ in old_by_day[d]]
+    new_days = [d for d in sorted(new_by_day) for _ in new_by_day[d]]
+    stats_old = win_loss_stats(old_rets, old_days)
+    stats_new = win_loss_stats(new_rets, new_days)
+    e_old, e_new = stats_old.get("expectancy"), stats_new.get("expectancy")
+    delta_ci = None
+    if len(old_rets) >= MIN_CELL_N and len(new_rets) >= MIN_CELL_N:
+        delta_ci = cluster_boot_delta_ci(
+            new_rets, new_days, old_rets, old_days
+        )
+    split_half: dict[str, object] = {"available": False, "reason": "insufficient_days"}
+    if used >= 2:
+        all_days = sorted(old_by_day)
+        half = len(all_days) // 2
+        deltas: dict[str, float | None] = {}
+        for label, day_set in (
+            ("early", set(all_days[:half])),
+            ("late", set(all_days[half:])),
+        ):
+            so = win_loss_stats(
+                [r for d in all_days if d in day_set for r in old_by_day[d]]
+            )
+            sn = win_loss_stats(
+                [r for d in all_days if d in day_set for r in new_by_day[d]]
+            )
+            eo, en = so.get("expectancy"), sn.get("expectancy")
+            deltas[label] = en - eo if eo is not None and en is not None else None
+        early, late = deltas["early"], deltas["late"]
+        split_half = {
+            "available": True,
+            "days_early": half,
+            "days_late": len(all_days) - half,
+            "early_delta": early,
+            "late_delta": late,
+            "sign_consistent": (
+                (early > 0) == (late > 0)
+                if early is not None and late is not None
+                else None
+            ),
+        }
+    return {
+        "k": k,
+        "floor": floor,
+        "days_used": used,
+        "days_skipped": skipped,
+        "overlap_picks": overlap,
+        "stats_old": stats_old,
+        "stats_new": stats_new,
+        "delta_point": (
+            e_new - e_old if e_old is not None and e_new is not None else None
+        ),
+        "delta_ci": delta_ci,
+        "split_half": split_half,
+    }
+
 
 def component_bucket(value: object) -> str:
     """分量值 → 桶 (非数值/NaN/inf → unknown, 不虚构归属)。"""
@@ -204,6 +392,16 @@ def component_split_half(
     return {"available": True, "days_early": half, "days_late": len(all_days) - half, "pools": pools}
 
 
+def _aligned_work_frame(ev: "pd.DataFrame") -> "pd.DataFrame":
+    """生产对齐 + 净收益 + 分量桶列 — analyze 与反事实读数的共享加工 (单一实现)。"""
+    universe = production_aligned(ev)
+    work = universe.copy()
+    work["net_ret_t10"] = net_returns(work["gross_ret_t10"].tolist())
+    for comp_key, _label in COMPONENTS:
+        work[f"_comp_{comp_key}"] = work[comp_key].map(component_bucket)
+    return work
+
+
 def analyze(ev: "pd.DataFrame") -> dict[str, object]:
     """事件表 → 完整分量解剖 payload (生产对齐 × T+10 主 horizon)。
 
@@ -213,6 +411,8 @@ def analyze(ev: "pd.DataFrame") -> dict[str, object]:
     signal_date + gross_ret_t10 — 缺 core 列时此前经 _pool_frame/
     net_returns/component_split_half 裸 KeyError 逃逸 (PoC 实锤),
     与分量列同入 typed 拒绝。ret 列经 net_returns 统一扣成本。
+    R154 Op1: counterfactual 节 — 低波轴零权反事实读数 (池面 + 选股面),
+    V1 单旋钮探索性诊断非提案 (宪法 #2)。
     """
     required = [
         *(c for c, _ in COMPONENTS),
@@ -223,11 +423,31 @@ def analyze(ev: "pd.DataFrame") -> dict[str, object]:
     missing = [c for c in required if c not in ev.columns]
     if missing:
         raise SystemExit(f"court 事件表缺少必需列: {missing}")
-    universe = production_aligned(ev)
-    work = universe.copy()
-    work["net_ret_t10"] = net_returns(work["gross_ret_t10"].tolist())
-    for comp_key, _label in COMPONENTS:
-        work[f"_comp_{comp_key}"] = work[comp_key].map(component_bucket)
+    work = _cf_work_frame(ev)
+    counterfactual = {
+        "available": True,
+        "renormalization": "(trigger_strength − 0.20·low_vol_score)/0.80",
+        "bonus_note": (
+            "energy_bonus 原样保留 (V1 单旋钮: 仅清零低波 0.20 权重;"
+            " 重归一化保持门槛刻度可比, 但会放行更多票入新池 — 池面 ΔE"
+            " 含稀释混杂, 判读看选股面)"
+        ),
+        "recomputable_n": int(work.attrs["cf_recomputable_n"]),
+        "excluded_unknown_n": int(work.attrs["cf_excluded_unknown_n"]),
+        "pools": {
+            name: counterfactual_pool_readout(work, floor=floor)
+            for name, floor in POOLS
+            if name != "all"
+        },
+        "selection": {
+            "k3": counterfactual_selection_readout(
+                work, floor=PRODUCTION_ENTRY_FLOOR, k=3
+            ),
+            "k5": counterfactual_selection_readout(
+                work, floor=PRODUCTION_ENTRY_FLOOR, k=5
+            ),
+        },
+    }
     return {
         "available": True,
         "n": int(len(work)),
@@ -235,6 +455,7 @@ def analyze(ev: "pd.DataFrame") -> dict[str, object]:
         "component_split": COMPONENT_SPLIT,
         "pools": component_anatomy(work),
         "split_half": component_split_half(work),
+        "counterfactual": counterfactual,
     }
 
 
@@ -339,6 +560,93 @@ def render_md(payload: object) -> str:
                         f" / {_fmt(hi.get('cluster_ci_low_90'))} "
                         f"| {_fmt(cell.get('hi_lo_delta'))} {ci_cell} | {sign} |"
                     )
+            lines.append("")
+    cf = payload.get("counterfactual")
+    if isinstance(cf, dict) and cf.get("available") is True:
+        lines.append("## 反事实: 低波轴零权 (V1 单旋钮, 探索性非提案)")
+        lines.append("")
+        lines.append(
+            f"- 口径: strength' = {cf.get('renormalization', '—')};"
+            f" {cf.get('bonus_note', '')}"
+        )
+        lines.append(
+            f"- 低波缺失行 n={_fmt_count(cf.get('excluded_unknown_n'))}"
+            f" 不计入反事实 (两侧同集对比); 可计算 n={_fmt_count(cf.get('recomputable_n'))}。"
+        )
+        lines.append(
+            "- 纪律: 反事实是诊断读数不是公式提案 — 任何权重变化 = 新证据"
+            "世代 owner 决策 (预注册); 池面计数含重归一化稀释混杂, 判读看选股面;"
+            " ΔE 区间是配对 (按日联合重采样) bootstrap 双侧 90% 估计。"
+        )
+        lines.append("")
+        cf_pools = cf.get("pools")
+        if isinstance(cf_pools, dict) and cf_pools:
+            lines.append("| 池面 | n_old→n_new (入/出) | E_old | E_new | ΔE(new−old) [90% CI] |")
+            lines.append("|---|---|---|---|---|")
+            for name in ("ge050", "ge070"):
+                cell = cf_pools.get(name)
+                if not isinstance(cell, dict):
+                    continue
+                old_stats = (
+                    cell.get("stats_old") if isinstance(cell.get("stats_old"), dict) else {}
+                )
+                new_stats = (
+                    cell.get("stats_new") if isinstance(cell.get("stats_new"), dict) else {}
+                )
+                raw_ci = cell.get("delta_ci")
+                ci_cell = (
+                    f"[{_fmt(raw_ci.get('ci_low'))}, {_fmt(raw_ci.get('ci_high'))}]"
+                    if isinstance(raw_ci, dict)
+                    else "—"
+                )
+                lines.append(
+                    f"| {name} "
+                    f"| {_fmt_count(cell.get('n_old'))}→{_fmt_count(cell.get('n_new'))}"
+                    f" ({_fmt_count(cell.get('entered'))}/{_fmt_count(cell.get('left'))}) "
+                    f"| {_fmt(old_stats.get('expectancy'))} "
+                    f"| {_fmt(new_stats.get('expectancy'))} "
+                    f"| {_fmt(cell.get('delta_point'))} {ci_cell} |"
+                )
+            lines.append("")
+        cf_sel = cf.get("selection")
+        if isinstance(cf_sel, dict) and cf_sel:
+            lines.append(
+                "| 选股面 (每日 top-K, ge050 资格) | 天数 (跳过) | 选集重叠"
+                " | E_old | E_new | ΔE [90% CI] | 半窗符号 |"
+            )
+            lines.append("|---|---|---|---|---|---|---|")
+            for key in ("k3", "k5"):
+                cell = cf_sel.get(key)
+                if not isinstance(cell, dict):
+                    continue
+                old_stats = (
+                    cell.get("stats_old") if isinstance(cell.get("stats_old"), dict) else {}
+                )
+                new_stats = (
+                    cell.get("stats_new") if isinstance(cell.get("stats_new"), dict) else {}
+                )
+                raw_ci = cell.get("delta_ci")
+                ci_cell = (
+                    f"[{_fmt(raw_ci.get('ci_low'))}, {_fmt(raw_ci.get('ci_high'))}]"
+                    if isinstance(raw_ci, dict)
+                    else "—"
+                )
+                sh = cell.get("split_half")
+                sign = "—"
+                if isinstance(sh, dict) and sh.get("available") is True:
+                    raw_sign = sh.get("sign_consistent")
+                    if raw_sign is True:
+                        sign = "一致"
+                    elif raw_sign is False:
+                        sign = "翻转"
+                lines.append(
+                    f"| {key} (K={_fmt_count(cell.get('k'))}) "
+                    f"| {_fmt_count(cell.get('days_used'))} ({_fmt_count(cell.get('days_skipped'))}) "
+                    f"| {_fmt_count(cell.get('overlap_picks'))} "
+                    f"| {_fmt(old_stats.get('expectancy'))} "
+                    f"| {_fmt(new_stats.get('expectancy'))} "
+                    f"| {_fmt(cell.get('delta_point'))} {ci_cell} | {sign} |"
+                )
             lines.append("")
     return "\n".join(lines)
 

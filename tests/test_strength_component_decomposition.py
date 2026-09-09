@@ -365,3 +365,223 @@ class TestDeltaCi:
         payload = {"available": True, "pools": {"all": {"components": {
             "board_score": {"buckets": {}, "hi_lo_delta": 0.01}}}}}
         assert render_md(payload)  # 不抛异常即可
+
+
+# ---------------------------------------------------------------------------
+# R154 Op1: 低波轴零权反事实读数 (V1 单旋钮, 探索性非提案)
+# ---------------------------------------------------------------------------
+
+from scripts.strength_component_decomposition import (  # noqa: E402
+    counterfactual_pool_readout,
+    counterfactual_selection_readout,
+    counterfactual_strength,
+)
+
+
+def _cf_row(i, *, ts, lv, ret, day):
+    """反事实 fixture 行: ts/低波/收益全显式, 日期显式 (聚类/半窗可控)。"""
+    r = _row(i, strength=ts, board=0.5, low_vol=lv, squeeze=0.5,
+             volume=0.5, rng=0.5, ret=ret)
+    r["signal_date"] = day
+    return r
+
+
+def _cf_selection_fixture(n_days=12):
+    """选股面主 fixture: 每日 6 行, 旧强度排序选坏 3 行 / 反事实排序选好 3 行。
+
+    坏行 ts 0.85/0.84/0.83 + lv 0.90 → cf ≈0.84/0.825/0.8125 (排序下沉);
+    好行 ts 0.80/0.79/0.78 + lv 0.05 → cf ≈0.99/0.97/0.96 (排序上升)。
+    k=3 旧新选集不相交, ΔE ≈ +0.20 强分离 (CI 必正, 无 bootstrap flake);
+    12 日 × 3 = 36 picks/侧 ≥ MIN_CELL_N=30 → CI 落地。
+    收益逐日微抖动 (R13 教训: 非对称值形态)。
+    """
+    rows = []
+    i = 0
+    for d in range(n_days):
+        day = f"2026-04-{d + 1:02d}"
+        for j, ts in enumerate((0.85, 0.84, 0.83)):
+            rows.append(_cf_row(i, ts=ts, lv=0.90, ret=-0.10 - 0.001 * d, day=day))
+            i += 1
+        for j, ts in enumerate((0.80, 0.79, 0.78)):
+            rows.append(_cf_row(i, ts=ts, lv=0.05, ret=0.10 + 0.001 * d, day=day))
+            i += 1
+    return pd.DataFrame(rows)
+
+
+def _cf_pool_fixture(n_days=16):
+    """池面主 fixture: G/B/N 三行型, 反事实让 G 入池 B 出池, ΔE ≈ +0.10。
+
+    G (好·波动): ts=0.45 (旧池外), lv=0.05 → cf=0.55 (新池内), ret≈+0.10;
+    B (坏·低波): ts=0.58 (旧池内), lv=0.95 → cf=0.4875 (新池外), ret≈-0.10;
+    N (中性): ts=0.70, lv=0.50 → cf=0.75 (双池内), ret≈+0.01。
+    两侧各 2n 行 (n_days≥15 时 ≥MIN_CELL_N=30 → CI 落地)。
+    """
+    rows = []
+    i = 0
+    for d in range(n_days):
+        day = f"2026-05-{d + 1:02d}"
+        rows.append(_cf_row(i, ts=0.45, lv=0.05, ret=0.095 + 0.0007 * d, day=day))
+        i += 1
+        rows.append(_cf_row(i, ts=0.58, lv=0.95, ret=-0.10 - 0.0007 * d, day=day))
+        i += 1
+        rows.append(_cf_row(i, ts=0.70, lv=0.50, ret=0.008 + 0.0002 * d, day=day))
+        i += 1
+    return pd.DataFrame(rows)
+
+
+class TestCounterfactualStrength:
+    def test_exact_arithmetic(self):
+        # (0.75 - 0.20*0.90)/0.80 = 0.7125
+        assert math.isclose(counterfactual_strength(0.75, 0.90), 0.7125,
+                            rel_tol=1e-12, abs_tol=1e-15)
+        # lv=0 → 强度只被重归一化放大
+        assert math.isclose(counterfactual_strength(0.60, 0.0), 0.75,
+                            rel_tol=1e-12, abs_tol=1e-15)
+
+    def test_monotone_decreasing_in_low_vol(self):
+        assert counterfactual_strength(0.7, 0.2) > counterfactual_strength(0.7, 0.8)
+
+    def test_nan_low_vol_not_finite(self):
+        assert math.isnan(counterfactual_strength(0.7, float("nan")))
+
+
+class TestCounterfactualPoolReadout:
+    def test_membership_counts_oracle(self):
+        work = analyze(_cf_pool_fixture())  # 只为复用列加工; 读数函数直接吃 work
+        # analyze 返回 payload 而非 frame — 池面读数经内部加工列, 用专用入口测试
+        from scripts.strength_component_decomposition import _cf_work_frame
+        frame = _cf_work_frame(_cf_pool_fixture())
+        out = counterfactual_pool_readout(frame, floor=0.50)
+        assert out["n_old"] == 32   # B+N 各 16
+        assert out["n_new"] == 32   # G+N 各 16
+        assert out["entered"] == 16  # G 全入
+        assert out["left"] == 16     # B 全出
+        # E 手算: old = (−0.10+0.008)/2 均值档, new = (+0.095+0.008)/2 均值档
+        old_e = out["stats_old"]["expectancy"]
+        new_e = out["stats_new"]["expectancy"]
+        assert old_e < 0 and new_e > 0
+        assert math.isclose(out["delta_point"], new_e - old_e,
+                            rel_tol=1e-9, abs_tol=1e-12)
+        # 两侧 ≥MIN_CELL_N → CI 落地且强分离下界为正 (hi=new, lo=old 语义)
+        ci = out["delta_ci"]
+        assert isinstance(ci, dict) and ci["ci_low"] > 0 and ci["ci_high"] > ci["ci_low"]
+
+    def test_small_cell_no_fake_ci(self):
+        from scripts.strength_component_decomposition import _cf_work_frame
+        frame = _cf_work_frame(_cf_pool_fixture(n_days=3))
+        out = counterfactual_pool_readout(frame, floor=0.50)
+        assert out["n_old"] == 6 and out["n_new"] == 6
+        assert out["delta_ci"] is None  # <MIN_CELL_N 不冒充
+
+    def test_unknown_low_vol_excluded_both_sides(self):
+        from scripts.strength_component_decomposition import _cf_work_frame
+        ev = _cf_pool_fixture(n_days=2)
+        ev.loc[ev.index[0], "low_vol_score"] = float("nan")
+        frame = _cf_work_frame(ev)
+        out = counterfactual_pool_readout(frame, floor=0.50)
+        # 6 行中 1 行低波缺失: recomputable=5 (全表口径), 该行两侧都不计
+        assert frame.attrs["cf_recomputable_n"] == 5
+        assert frame.attrs["cf_excluded_unknown_n"] == 1
+        assert out["n_old"] + out["n_new"] <= 2 * 5
+
+    def test_deterministic(self):
+        from scripts.strength_component_decomposition import _cf_work_frame
+        a = json.dumps(counterfactual_pool_readout(
+            _cf_work_frame(_cf_pool_fixture()), floor=0.50),
+            ensure_ascii=False, sort_keys=True)
+        b = json.dumps(counterfactual_pool_readout(
+            _cf_work_frame(_cf_pool_fixture()), floor=0.50),
+            ensure_ascii=False, sort_keys=True)
+        assert a == b
+
+
+class TestCounterfactualSelectionReadout:
+    def test_rank_flip_oracle(self):
+        from scripts.strength_component_decomposition import _cf_work_frame
+        frame = _cf_work_frame(_cf_selection_fixture())
+        out = counterfactual_selection_readout(frame, floor=0.50, k=3)
+        assert out["days_used"] == 12 and out["days_skipped"] == 0
+        assert out["overlap_picks"] == 0  # 旧选坏 3 行 / 新选好 3 行, 不相交
+        old_e = out["stats_old"]["expectancy"]
+        new_e = out["stats_new"]["expectancy"]
+        assert old_e < 0 and new_e > 0
+        ci = out["delta_ci"]
+        assert isinstance(ci, dict) and ci["ci_low"] > 0
+
+    def test_day_skip_counted(self):
+        from scripts.strength_component_decomposition import _cf_work_frame
+        ev = _cf_selection_fixture()
+        # 砍掉最后一日的 4 行 → 该日只剩 2 行 < k=3, 应跳过并计数
+        last_day = "2026-04-12"
+        drop_idx = ev.index[ev["signal_date"] == last_day][2:]
+        ev = ev.drop(drop_idx)
+        frame = _cf_work_frame(ev)
+        out = counterfactual_selection_readout(frame, floor=0.50, k=3)
+        assert out["days_skipped"] == 1
+        assert out["days_used"] == 11
+
+    def test_split_half_sign_surface(self):
+        from scripts.strength_component_decomposition import _cf_work_frame
+        frame = _cf_work_frame(_cf_selection_fixture())
+        out = counterfactual_selection_readout(frame, floor=0.50, k=3)
+        sh = out["split_half"]
+        assert sh["available"] is True
+        assert sh["sign_consistent"] is True  # 两半同构 → 同号
+
+    def test_small_k_no_fake(self):
+        from scripts.strength_component_decomposition import _cf_work_frame
+        frame = _cf_work_frame(_cf_selection_fixture(n_days=2))
+        out = counterfactual_selection_readout(frame, floor=0.50, k=3)
+        # 2 日 × 6 行 = 12 picks/侧 < MIN_CELL_N → CI None 不冒充
+        assert out["delta_ci"] is None
+
+
+class TestCounterfactualWiring:
+    def test_analyze_payload_keys(self):
+        payload = analyze(_fixture_ev())
+        cf = payload["counterfactual"]
+        assert cf["available"] is True
+        assert "0.20" in cf["renormalization"]
+        assert cf["excluded_unknown_n"] == 0
+        assert set(cf["pools"]) == {"ge050", "ge070"}
+        assert set(cf["selection"]) == {"k3", "k5"}
+        assert cf["selection"]["k3"]["k"] == 3
+        assert cf["selection"]["k5"]["k"] == 5
+
+    def test_analyze_unknown_lowvol_accounting(self):
+        ev = _fixture_ev()
+        ev.loc[ev.index[0], "low_vol_score"] = float("nan")
+        cf = analyze(ev)["counterfactual"]
+        assert cf["excluded_unknown_n"] == 1
+        assert cf["recomputable_n"] == 7
+
+    def test_payload_deterministic(self):
+        a = json.dumps(analyze(_cf_selection_fixture()), ensure_ascii=False, sort_keys=True)
+        b = json.dumps(analyze(_cf_selection_fixture()), ensure_ascii=False, sort_keys=True)
+        assert a == b
+
+    def test_render_includes_counterfactual_section(self):
+        md = render_md(analyze(_cf_selection_fixture()))
+        assert "反事实" in md
+        assert "不是公式提案" in md          # 纪律句
+        assert "稀释" in md                  # 池面混杂披露
+
+    def test_render_missing_key_fail_open(self):
+        # 缺 counterfactual 键 → 零新增字节不崩 (R142 F2 家族)
+        payload = {"available": True, "n": 8, "pools": {}, "split_half": {}}
+        md = render_md(payload)
+        assert "反事实" not in md
+
+    def test_cli_writes_counterfactual(self, tmp_path):
+        court = tmp_path / "event_table_v1.csv.gz"
+        _cf_selection_fixture().to_csv(court, index=False)
+        rc = main([
+            "--court-table", str(court),
+            "--report-dir", str(tmp_path),
+            "--date-str", "20260401",
+        ])
+        assert rc == 0
+        body = (tmp_path / "strength_component_decomposition_20260401.md").read_text(encoding="utf-8")
+        assert "反事实" in body
+        payload = json.loads((tmp_path / "strength_component_decomposition_20260401.json").read_text(encoding="utf-8"))
+        assert payload["counterfactual"]["available"] is True
