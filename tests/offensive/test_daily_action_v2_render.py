@@ -3249,3 +3249,49 @@ def test_release_schedule_line_omitted_when_weight_poisoned(tmp_path):
         view = DailyActionV2Run(run, (), (poisoned,), (), ())
         text = render_daily_action_v2(view)
         assert "释放日程" not in text, f"poison={poison!r} 未被守卫"
+
+
+# ---------- R163 Op2: 释放日程聚合行对抗审查钉住 (F-b 两项) ----------
+
+def test_release_schedule_line_zero_weight_is_shown_not_omitted(tmp_path):
+    """F-b falsy-zero 钉住 (R158 同族): mark_weight=0.0 → 「0% 敞口」必须显示,
+    守卫按 None/类型判定不按真值 — 防 truthiness 重构静默漏显零权重 cohort."""
+    from dataclasses import replace as dc_replace
+
+    run, _s, _t, _r = _run_with_open_position(tmp_path)
+    zero = dc_replace(run.open_positions[0], mark_weight=0.0)
+    view = DailyActionV2Run(run, (), (zero,), (), ())
+    text = render_daily_action_v2(view)
+    line = next(line for line in text.splitlines() if "释放日程" in line)
+    assert "释放 1 只 / 0% 敞口" in line
+    total = run.open_exposure + run.reserved_exposure
+    assert f"约 {total:.0%}" in line
+
+
+def test_release_schedule_line_excludes_maturity_equal_to_as_of(tmp_path):
+    """F-b 边界日钉住: projected_exit_date == as_of (今日到期) 不入未来释放聚合
+    — 今日退出属「完成退出/今日平仓」区, >= 重构会双重计数."""
+    from dataclasses import replace as dc_replace
+
+    run, _s, _t, _r = _run_with_open_position(tmp_path)
+    today = dc_replace(
+        run.open_positions[0], projected_exit_date=run.trade_date
+    )
+    view = DailyActionV2Run(run, (), (today,), (), ())
+    text = render_daily_action_v2(view)
+    assert "释放日程" not in text
+    assert "敞口：" in text
+
+
+def test_release_schedule_line_excludes_past_maturity(tmp_path):
+    """F-b 过期日钉住: projected_exit_date < as_of (陈旧渲染面) 不入未来释放
+    聚合, 与 R159 过期日只显日期的行级子句互不串扰."""
+    from dataclasses import replace as dc_replace
+
+    run, sessions, _t, _r = _run_with_open_position(tmp_path)
+    past = dc_replace(
+        run.open_positions[0], projected_exit_date=sessions[18]
+    )
+    view = DailyActionV2Run(run, (), (past,), (), ())
+    text = render_daily_action_v2(view)
+    assert "释放日程" not in text
