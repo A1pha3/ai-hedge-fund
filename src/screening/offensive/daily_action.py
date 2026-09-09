@@ -2741,6 +2741,79 @@ def _maturity_clause(maturity: Any, as_of: Any) -> str:
     return f" 到期 {maturity.month}/{maturity.day}"
 
 
+def _release_schedule_clause(
+    positions: Any,
+    open_exposure: Any,
+    reserved_exposure: Any,
+    as_of: Any,
+) -> str | None:
+    """到期释放日程聚合行 (R162 Op1, v1 C-DAILY-ACTION-POSITION-VISIBILITY 第三项
+    迁移恢复) — 前瞻回答「最近到期日释放多少敞口 / 释放后是否降回上限内可恢复出
+    新仓」: per-row 到期子句 (R159) 只给单仓日期, 同日 cohort 合计与 cap 恢复只能
+    operator 对持仓区逐行心算 (0831 cohort 五仓 9/14 同日释放形态)。
+
+    v1『最近到期』聚合行同款语义: 仅统计未来到期 (days>0), 最近到期日 cohort
+    合计。敞口基数沿用 v2 敞口行两项口径 (持仓 mark + 待成交计划 — 待成交不因
+    释放消失, 从合计扣减才诚实), 释放侧用 mark_weight 与 mark 口径总敞口同基准。
+    fail-open 家族 (R157/R158/R159 同款): as_of 非 date (含 datetime 子类) /
+    无未来到期 / cohort 任一 mark_weight 或敞口非有限实数 → None, 渲染层省略
+    整行, 主视图不受影响。
+    """
+    if not isinstance(as_of, date) or isinstance(as_of, datetime):
+        return None
+    if not isinstance(positions, (list, tuple)):
+        return None
+    try:
+        dated: list[tuple[date, Any]] = []
+        for position in positions:
+            maturity = getattr(position, "projected_exit_date", None)
+            if (
+                isinstance(maturity, date)
+                and not isinstance(maturity, datetime)
+                and maturity > as_of
+            ):
+                dated.append((maturity, position))
+        if not dated:
+            return None
+        soonest = min(maturity for maturity, _position in dated)
+        cohort = [position for maturity, position in dated if maturity == soonest]
+        weights: list[float] = []
+        for position in cohort:
+            weight = getattr(position, "mark_weight", None)
+            if (
+                not isinstance(weight, Real)
+                or isinstance(weight, bool)
+                or not math.isfinite(weight)
+            ):
+                return None
+            weights.append(float(weight))
+        if not (
+            isinstance(open_exposure, Real)
+            and not isinstance(open_exposure, bool)
+            and math.isfinite(open_exposure)
+            and isinstance(reserved_exposure, Real)
+            and not isinstance(reserved_exposure, bool)
+            and math.isfinite(reserved_exposure)
+        ):
+            return None
+        release_pct = sum(weights)
+        total_exposure = float(open_exposure) + float(reserved_exposure)
+        after_exposure = max(0.0, total_exposure - release_pct)
+        days = (soonest - as_of).days
+        cap_note = (
+            f"（仍超 {_MAX_PORTFOLO_PCT:.0%} 上限，需继续等待）"
+            if after_exposure > _MAX_PORTFOLO_PCT + 1e-9
+            else "（降回上限内，可恢复出新仓）"
+        )
+        return (
+            f"释放日程：最近到期 {soonest.month}/{soonest.day}（剩{days}天）"
+            f"释放 {len(cohort)} 只 / {release_pct:.0%} 敞口"
+            f" → 约 {after_exposure:.0%}{cap_note}"
+        )
+    except (TypeError, ValueError, KeyError, OSError):
+        return None
+
+
 def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> str:
     """Render the daily operator view — one track regardless of ``verbose``.
 
@@ -3213,6 +3286,12 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
             f"敞口：持仓 {open_exposure:.0%} + 待成交计划 {reserved_exposure:.0%} "
             f"= {total_exposure:.0%} / {_MAX_PORTFOLO_PCT:.0%} 上限{at_cap}"
         )
+        # 到期释放日程聚合行 (R162 Op1): 敞口行的前瞻补全 — 当前约束何时松开.
+        release_clause = _release_schedule_clause(
+            run.open_positions, open_exposure, reserved_exposure, as_of
+        )
+        if release_clause:
+            lines.append(release_clause)
 
     # ---- verbose 诊断区: 中文含义为主行, raw audit 码收进方括号附录 ----
     if run.service_run.block_reason and verbose:

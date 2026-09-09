@@ -914,3 +914,62 @@ def test_maturity_date_independent_of_shadow_frame(service, sessions):
     assert view.projected_exit_date == service.calendar.nth_holding_session(
         sessions[1], 10
     )
+
+
+# ---------- R162 Op1: OpenPositionView.mark_weight (释放日程聚合行的同基准权重) ----------
+
+def test_mark_weight_equals_open_exposure_for_single_position(tmp_path):
+    """mark_weight = mark 市值 / valuation.nav — 与 service_run.open_exposure
+    同一快照同分母 (单持仓时两者恒等, 聚合行减法同基准)."""
+    sessions = _pnl_sessions()
+    service = _pnl_service(tmp_path, sessions, close=8.0)
+    plan = service.repository.create_plan(
+        "000909", "btst_breakout", "v2", sessions[14], sessions[15], 0.10, 1
+    )
+    service.repository.settle_plan_at_open(
+        plan.trade_id, sessions[15], 10.0, 9.0, 11.0, False, 10.5, 9.5
+    )
+    run = service.run(sessions[20], ())
+    view = next(t for t in run.open_positions if t.ticker == "000909")
+    assert view.mark_weight is not None
+    assert view.mark_weight == run.open_exposure
+
+
+def test_mark_weight_none_when_duplicate_open_trades_share_ticker(tmp_path):
+    """同 ticker 多笔 open → 市值按 ticker 聚合不可逐笔归因 → None (诚实缺位,
+    不把聚合值拆给每一笔伪造逐笔权重)."""
+    sessions = _pnl_sessions()
+    service = _pnl_service(tmp_path, sessions, close=8.0)
+    for signal, entry in ((sessions[14], sessions[15]), (sessions[13], sessions[14])):
+        plan = service.repository.create_plan(
+            "000909", "btst_breakout", "v2", signal, entry, 0.05, 1
+        )
+        service.repository.settle_plan_at_open(
+            plan.trade_id, entry, 10.0, 9.0, 11.0, False, 10.5, 9.5
+        )
+    run = service.run(sessions[20], ())
+    views = [t for t in run.open_positions if t.ticker == "000909"]
+    assert len(views) == 2
+    assert all(t.mark_weight is None for t in views)
+
+
+def test_mark_weight_defaults_to_none_for_old_construction():
+    """旧构造点 (未传 mark_weight) → None 默认, 向后兼容不破坏既有调用."""
+    from src.screening.offensive.daily_action_service import (
+        OpenPositionView,
+        PlanProvenance,
+    )
+
+    view = OpenPositionView(
+        trade_id="t", ticker="000909", setup="btst_breakout", setup_version="v2",
+        signal_date=date(2026, 9, 1), planned_entry_date=date(2026, 9, 2),
+        planned_weight=0.10, priority=1, state=TradeState.OPEN,
+        execution_mode=None, fill_source=None, entry_date=date(2026, 9, 2),
+        raw_entry_price=10.0, quantity=100, exit_trigger_date=None,
+        exit_date=None, raw_exit_price=None, highest_close=None,
+        exit_line=None, last_evaluated_date=None, forced_exit_target_date=None,
+        provenance=PlanProvenance.legacy_unverified(),
+        shadow_exit_line=None, shadow_would_exit_next_open=False,
+        shadow_reason="hold",
+    )
+    assert view.mark_weight is None

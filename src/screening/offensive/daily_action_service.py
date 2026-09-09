@@ -190,6 +190,12 @@ class OpenPositionView(LedgerTrade):
     # 从交易日历推导; entry 缺失 / 日历覆盖不足 / 未知 setup → None,
     # 渲染层 fail-open 省略子句。
     projected_exit_date: date | None = None
+    # 当前市值权重 = 该持仓 mark 市值 / valuation.nav (R162 Op1): 与
+    # service_run.open_exposure 同一快照同分母, 释放日程聚合行用它做同基准减法
+    # — planned_weight 是计划时权重随价格漂移, 与 mark 口径总敞口相减会混基准。
+    # nav 非正/非有限 / 市值缺失或非有限 / 同 ticker 多笔 open → None,
+    # 渲染层 fail-open 省略聚合行。
+    mark_weight: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1153,8 +1159,30 @@ class DailyActionService:
     ) -> DailyActionRun:
         open_trades = tuple(self.repository.open_trades())
         _, values, _ = self._snapshot(as_of)
+        nav = float(valuation.nav)
+        # 同 ticker 多笔 open 时 values 按 ticker 聚合, 不可逐笔归因 → 该 ticker
+        # 不发权重 (诚实缺位, 不把聚合值拆给每一笔伪造逐笔权重)。
+        open_ticker_counts: dict[str, int] = {}
+        for trade in open_trades:
+            if trade.state is TradeState.OPEN:
+                open_ticker_counts[trade.ticker] = (
+                    open_ticker_counts.get(trade.ticker, 0) + 1
+                )
+        mark_weights: dict[str, float] = {}
+        if nav > 0 and math.isfinite(nav):
+            for ticker, count in open_ticker_counts.items():
+                value = values.get(ticker)
+                if (
+                    count == 1
+                    and isinstance(value, Real)
+                    and not isinstance(value, bool)
+                    and math.isfinite(value)
+                ):
+                    mark_weights[ticker] = value / nav
         positions = tuple(
-            self._shadow_position_view(trade, as_of, shadow_prices)
+            self._shadow_position_view(
+                trade, as_of, shadow_prices, mark_weights.get(trade.ticker)
+            )
             for trade in open_trades
             if trade.state is TradeState.OPEN
         )
@@ -1181,6 +1209,7 @@ class DailyActionService:
         trade: LedgerTrade,
         as_of: date,
         prices: ShadowPriceSource | None,
+        mark_weight: float | None = None,
     ) -> OpenPositionView:
         """Project one trade through the challenger without writing ledger state."""
         try:
@@ -1196,6 +1225,7 @@ class DailyActionService:
                 result[3], trade.raw_entry_price
             ),
             projected_exit_date=self._projected_exit_date(trade),
+            mark_weight=mark_weight,
         )
 
     def _projected_exit_date(self, trade: LedgerTrade) -> date | None:

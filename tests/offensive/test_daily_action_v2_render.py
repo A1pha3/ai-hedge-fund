@@ -3145,3 +3145,107 @@ def test_maturity_clause_past_date_shows_date_only():
 
     assert _maturity_clause(date(2026, 9, 1), date(2026, 9, 10)) == " 到期 9/1"
     assert _maturity_clause(date(2026, 9, 14), date(2026, 9, 10)) == " 到期 9/14（剩4天）"
+
+
+# ---------- R162 Op1: 到期释放日程聚合行 (v1 C-DAILY-ACTION-POSITION-VISIBILITY 第三项迁移恢复) ----------
+
+def test_release_schedule_line_shows_soonest_cohort(tmp_path):
+    """单仓未来到期 → 聚合行披露日期/只数/释放敞口/剩余敞口 + cap 恢复提示;
+    释放敞口与 open_exposure 同基准 (单持仓时相等), after = 持仓+待成交 − 释放."""
+    run, _sessions, _t, _r = _run_with_open_position(tmp_path)
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    line = next(line for line in text.splitlines() if "释放日程" in line)
+    assert "最近到期 9/10（剩4天）" in line
+    assert "释放 1 只 / " in line
+    weight = run.open_positions[0].mark_weight
+    assert f"{weight:.0%} 敞口" in line
+    total = run.open_exposure + run.reserved_exposure
+    assert f"约 {max(0.0, total - weight):.0%}" in line
+    assert "（降回上限内，可恢复出新仓）" in line
+
+
+def test_release_schedule_line_aggregates_same_date_cohort(tmp_path):
+    """同日多仓 cohort → 只数与释放敞口按 cohort 合计 (0831 五仓 9/14 形态)."""
+    from dataclasses import replace as dc_replace
+
+    run, _s, _t, _r = _run_with_open_position(tmp_path)
+    first = run.open_positions[0]
+    second = dc_replace(first, trade_id="t-second")
+    view = DailyActionV2Run(run, (), (first, second), (), ())
+    text = render_daily_action_v2(view)
+    line = next(line for line in text.splitlines() if "释放日程" in line)
+    assert "释放 2 只 / " in line
+    assert f"{2 * first.mark_weight:.0%} 敞口" in line
+
+
+def test_release_schedule_line_prefers_earliest_of_two_dates(tmp_path):
+    """双未来日期 → 只聚合最近到期日 cohort, 晚到期仓不入本次释放."""
+    from dataclasses import replace as dc_replace
+
+    run, sessions, _t, _r = _run_with_open_position(tmp_path)
+    first = run.open_positions[0]
+    later = dc_replace(
+        first, trade_id="t-later", projected_exit_date=sessions[25], mark_weight=0.2
+    )
+    view = DailyActionV2Run(run, (), (first, later), (), ())
+    text = render_daily_action_v2(view)
+    line = next(line for line in text.splitlines() if "释放日程" in line)
+    assert "最近到期 9/10" in line
+    assert "释放 1 只 / " in line
+
+
+def test_release_schedule_line_omitted_when_no_future_maturity(tmp_path):
+    """全部持仓 projected_exit_date=None (旧构造/日历不足) → 聚合行整体省略,
+    敞口行与主视图不受影响 (fail-open 家族钉住)."""
+    from dataclasses import replace as dc_replace
+
+    run, _s, _t, _r = _run_with_open_position(tmp_path)
+    stripped = dc_replace(run.open_positions[0], projected_exit_date=None)
+    view = DailyActionV2Run(run, (), (stripped,), (), ())
+    text = render_daily_action_v2(view)
+    assert "释放日程" not in text
+    assert "敞口：" in text
+
+
+def test_release_schedule_line_over_cap_clause_includes_reserved_base(tmp_path):
+    """after = 持仓 + 待成交 − 释放 (待成交不因释放消失) → 仍超上限子句;
+    reserved 计入基数的钉住 (0.5+0.25−0.10=0.65 > 60%)."""
+    from dataclasses import replace as dc_replace
+
+    run, _s, _t, _r = _run_with_open_position(tmp_path)
+    service_run = dc_replace(
+        run, open_exposure=0.5, reserved_exposure=0.25
+    )
+    position = dc_replace(run.open_positions[0], mark_weight=0.10)
+    view = DailyActionV2Run(service_run, (), (position,), (), ())
+    text = render_daily_action_v2(view)
+    line = next(line for line in text.splitlines() if "释放日程" in line)
+    assert "约 65%" in line
+    assert "（仍超 60% 上限，需继续等待）" in line
+
+
+def test_release_schedule_line_omitted_for_datetime_trade_date(tmp_path):
+    """service_run.trade_date=datetime (R157 F-a 同款形态) → 聚合行省略,
+    主视图不阻断 (家族纪律: 披露面永不炸主视图)."""
+    from dataclasses import replace as dc_replace
+
+    run, _s, _t, _r = _run_with_open_position(tmp_path)
+    stale_service_run = dc_replace(run, trade_date=datetime(2026, 9, 6, 18, 0))
+    view = DailyActionV2Run(stale_service_run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "释放日程" not in text
+    assert "000909" in text
+
+
+def test_release_schedule_line_omitted_when_weight_poisoned(tmp_path):
+    """cohort 任一 mark_weight 非有限实数 (nan/bool/字符串) → 聚合行整体省略
+    (诚实缺位优于错误聚合, R158 毒化守卫同族)."""
+    from dataclasses import replace as dc_replace
+
+    run, _s, _t, _r = _run_with_open_position(tmp_path)
+    for poison in (float("nan"), True, "5%", None):
+        poisoned = dc_replace(run.open_positions[0], mark_weight=poison)
+        view = DailyActionV2Run(run, (), (poisoned,), (), ())
+        text = render_daily_action_v2(view)
+        assert "释放日程" not in text, f"poison={poison!r} 未被守卫"
