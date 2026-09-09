@@ -153,6 +153,11 @@ class ActionItem:
     # "计划哪天入场 / 权重多少", 而非仅给出内部调试码. 可选字段兼容旧构造点.
     planned_entry_date: date | None = None
     planned_weight: float | None = None
+    # 默认退出合约到期日 (R159 Op2 F-a): pending_exit / maximum_holding_session
+    # item 携带台账持久化或日历同源的 T+10 target, 渲染层仅在「退出计划」区
+    # 披露 (延迟退出延期后日期不可靠, 完成退出已结算 — 语义区隔)。可选字段
+    # 向后兼容旧构造点, None → 渲染省略子句。
+    target_exit_date: date | None = None
 
 
 def _shadow_unrealized_pct(
@@ -925,7 +930,11 @@ class DailyActionService:
                 self.repository.mark_exit_pending(
                     trade.trade_id, as_of, forced_exit_target_date=target
                 )
-                self._exit_plans.append(self._item(trade, "maximum_holding_session"))
+                self._exit_plans.append(
+                    self._item(
+                        trade, "maximum_holding_session", target_exit_date=target
+                    )
+                )
 
     def _create_capacity_safe_plans(
         self,
@@ -1527,7 +1536,12 @@ class DailyActionService:
         self._skipped.append(self._item(plan, reason))
 
     @staticmethod
-    def _item(trade: LedgerTrade, reason: str) -> ActionItem:
+    def _item(
+        trade: LedgerTrade,
+        reason: str,
+        *,
+        target_exit_date: date | None = None,
+    ) -> ActionItem:
         execution = trade.execution_mode.value if trade.execution_mode else "pending"
         source = trade.fill_source.value if trade.fill_source else "pending"
         return ActionItem(
@@ -1538,6 +1552,13 @@ class DailyActionService:
             source,
             planned_entry_date=trade.planned_entry_date,
             planned_weight=trade.planned_weight,
+            # 显式参数优先 (maximum_holding_session 的 mark 发生在 read 之后,
+            # trade 对象上的 forced_exit_target_date 已陈旧), 否则回退台账值。
+            target_exit_date=(
+                target_exit_date
+                if target_exit_date is not None
+                else trade.forced_exit_target_date
+            ),
         )
 
     @staticmethod

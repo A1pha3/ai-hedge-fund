@@ -3079,3 +3079,69 @@ def test_exit_advice_row_maturity_survives_datetime_trade_date(tmp_path):
     row = next(line for line in text.splitlines() if "000909" in line)
     assert "到期" not in row
     assert "影子建议" in row
+
+
+# ---------- R159 Op2: 退出计划区到期子句 (F-a) + 过期日形态钉住 (F-c) ----------
+
+def _run_with_exit_plan(tmp_path, *, with_date=True):
+    """在 Op1 自足世界上叠加一条退出计划 item (day-9 视图)."""
+    from dataclasses import replace as dc_replace
+
+    from src.screening.offensive.daily_action_service import ActionItem
+
+    run, sessions, _target, _r = _run_with_open_position(tmp_path)
+    item = ActionItem(
+        "t-fa", "000909", "maximum_holding_session", "pending", "pending",
+        target_exit_date=sessions[24] if with_date else None,
+    )
+    service_run = dc_replace(run, exit_plans=(item,))
+    return run, service_run, sessions
+
+
+def test_exit_plan_row_shows_maturity_date(tmp_path):
+    """F-a: 退出计划行披露「到期 M/D（剩N天）」— day-9/10 退出窗口的日期可见性."""
+    run, service_run, _sessions = _run_with_exit_plan(tmp_path)
+    view = DailyActionV2Run(service_run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    section = text.split("退出计划（")[1]
+    row = next(line for line in section.splitlines() if "000909" in line)
+    assert "到期 9/10（剩4天）" in row
+
+
+def test_exit_plan_row_omits_maturity_when_none(tmp_path):
+    """target_exit_date=None (旧构造点) → 退出计划行与修复前逐字节一致."""
+    run, service_run, _sessions = _run_with_exit_plan(tmp_path, with_date=False)
+    view = DailyActionV2Run(service_run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    section = text.split("退出计划（")[1]
+    row = next(line for line in section.splitlines() if "000909" in line)
+    assert "到期" not in row
+    assert "000909" in row
+
+
+def test_deferred_exit_row_never_shows_maturity_clause(tmp_path):
+    """语义区隔钉住: 延迟退出行不加日期子句 — 延期后 target 日期不可靠,
+    即使 item 意外携带 target_exit_date 也不渲染 (防未来管道误扩散)."""
+    from dataclasses import replace as dc_replace
+
+    from src.screening.offensive.daily_action_service import ActionItem
+
+    run, _sessions, target, _r = _run_with_open_position(tmp_path)
+    item = ActionItem(
+        "t-def", "000909", "unknown_queue", "pending", "pending",
+        target_exit_date=target,
+    )
+    service_run = dc_replace(run, deferred_exits=(item,))
+    view = DailyActionV2Run(service_run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    section = text.split("延迟退出")[1]
+    row = next(line for line in section.splitlines() if "000909" in line)
+    assert "到期" not in row
+
+
+def test_maturity_clause_past_date_shows_date_only():
+    """F-c 钉住: 过期日 (days<0, 陈旧渲染面) 只披露日期不显负数天数."""
+    from src.screening.offensive.daily_action import _maturity_clause
+
+    assert _maturity_clause(date(2026, 9, 1), date(2026, 9, 10)) == " 到期 9/1"
+    assert _maturity_clause(date(2026, 9, 14), date(2026, 9, 10)) == " 到期 9/14（剩4天）"

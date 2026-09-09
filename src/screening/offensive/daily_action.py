@@ -3181,7 +3181,14 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
             continue
         rows: list[str] = []
         for item in items:
-            rows.append(_pad_to(_label(item.ticker), _LABEL_WIDTH))
+            # 到期子句仅「退出计划」区 (R159 Op2 F-a): day-9/10 退出窗口的
+            # 日期可见性; 延迟退出延期后日期不可靠, 其余区无日期语义。
+            clause = ""
+            if title == "退出计划":
+                clause = _maturity_clause(
+                    getattr(item, "target_exit_date", None), as_of
+                )
+            rows.append(f"{_pad_to(_label(item.ticker), _LABEL_WIDTH)}{clause}")
             if verbose:
                 debug.append(_debug_action_item_line(item))
         lines.extend(_render_section(f"{title}（{len(items)}）", rows))

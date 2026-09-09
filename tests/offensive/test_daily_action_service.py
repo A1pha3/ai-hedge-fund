@@ -875,3 +875,42 @@ def test_projected_exit_date_none_for_unknown_setup_policy(tmp_path):
     run = service.run(sessions[20], ())
     view = next(t for t in run.open_positions if t.ticker == "000209")
     assert view.projected_exit_date is None
+
+
+# ---------- R159 Op2: 退出计划区到期日管道 (F-a) + Op1 钉住缺口 (F-b) ----------
+
+def test_exit_plan_item_carries_target_exit_date(service, sessions):
+    """F-a: maximum_holding_session item 必须携带 T+10 target — mark 发生在
+    read 之后, 调用点显式传 target (否则 day-9 视图缺日期)."""
+    trade = open_trade(service, "000211", sessions[1])
+    session_nine = service.calendar.nth_holding_session(trade.entry_date, 9)
+    run = service.run(session_nine, ())
+    assert run.exit_plans[0].reason == "maximum_holding_session"
+    assert run.exit_plans[0].target_exit_date == service.calendar.nth_holding_session(
+        trade.entry_date, 10
+    )
+
+
+def test_pending_exit_item_carries_target_exit_date(service, sessions):
+    """F-a: pending_exit (第 9 会话后重渲染) item 携带台账持久化 target."""
+    trade = open_trade(service, "000212", sessions[1])
+    session_nine = service.calendar.nth_holding_session(trade.entry_date, 9)
+    service.run(session_nine, ())  # day-9 首评: mark_exit_pending
+    run = service.run(session_nine, ())  # 同日重渲染: pending_exit 分支
+    assert run.exit_plans[0].reason == "pending_exit"
+    assert run.exit_plans[0].target_exit_date == service.calendar.nth_holding_session(
+        trade.entry_date, 10
+    )
+
+
+def test_maturity_date_independent_of_shadow_frame(service, sessions):
+    """F-b 钉住 (000977 生产形态): 影子价格帧不足 (insufficient_data) 不影响到
+    期日披露 — 日历路径与影子价格路径独立, 双披露互不拖垮."""
+    open_trade(service, "000213", sessions[1])
+    run = service.run(sessions[2], ())
+    view = run.open_positions[0]
+    assert view.shadow_reason == "insufficient_data"
+    assert view.shadow_unrealized_pct is None
+    assert view.projected_exit_date == service.calendar.nth_holding_session(
+        sessions[1], 10
+    )
