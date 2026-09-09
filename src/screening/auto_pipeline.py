@@ -1053,7 +1053,7 @@ def _capture_setup_evidence_after_publication(
     )
 
     try:
-        capture_setup_evidence_for_publication(
+        written = capture_setup_evidence_for_publication(
             manifest.trade_date,
             reports_dir=Path(reports_dir),
             data_dir=Path(data_dir),
@@ -1065,6 +1065,21 @@ def _capture_setup_evidence_after_publication(
             "--daily-action 面 fail-closed 兜底",
             exc_info=True,
         )
+        return
+    if written is None:
+        # healthy 发布后 loader 重验失败 (mid-run 缓存漂移形态): 当日证据未被
+        # 捕获, 覆盖哨点将继续报该日断层 — 可诊断事件必须可见, 不静默。
+        logger.warning(
+            "[Auto] setup 信号证据捕获跳过: canonical 重验未通过 (%s) — "
+            "当日证据未被捕获, 请核查当日缓存/清单状态",
+            manifest.trade_date,
+        )
+        return
+    logger.info(
+        "[Auto] setup 信号证据已捕获: %s (signal_date=%s)",
+        written,
+        manifest.trade_date,
+    )
 
 
 def _daily_readiness_publication_payload(publication: object) -> dict[str, Any]:

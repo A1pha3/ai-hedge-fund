@@ -245,13 +245,13 @@ def test_publication_capture_wiring_healthy_attempt_and_error_triad(
 ) -> None:
     from src.screening import auto_pipeline
 
-    calls: list[tuple[date, Path, Path]] = []
+    calls: list[tuple[date, Path, Path, Path]] = []
     monkeypatch.setattr(
         "src.screening.offensive.setup_evidence_capture.capture_setup_evidence_for_publication",
         lambda signal_date, *, reports_dir, data_dir, out_dir=None: calls.append(
-            (signal_date, Path(reports_dir), Path(data_dir))
+            (signal_date, Path(reports_dir), Path(data_dir), Path(out_dir))
         )
-        or (reports_dir / "x.jsonl"),
+        or (Path(out_dir) / "x.jsonl"),
     )
 
     healthy = types.SimpleNamespace(
@@ -260,7 +260,14 @@ def test_publication_capture_wiring_healthy_attempt_and_error_triad(
     auto_pipeline._capture_setup_evidence_after_publication(
         healthy, reports_dir=tmp_path / "reports", data_dir=tmp_path / "data"
     )
-    assert calls == [(SIGNAL_DATE, tmp_path / "reports", tmp_path / "data")]
+    assert calls == [
+        (
+            SIGNAL_DATE,
+            tmp_path / "reports",
+            tmp_path / "data",
+            tmp_path / "reports" / "setup_output_log",
+        )
+    ]
 
     attempt = types.SimpleNamespace(status="attempt", manifest=None)
     auto_pipeline._capture_setup_evidence_after_publication(
@@ -278,3 +285,43 @@ def test_publication_capture_wiring_healthy_attempt_and_error_triad(
     auto_pipeline._capture_setup_evidence_after_publication(
         healthy, reports_dir=tmp_path / "reports", data_dir=tmp_path / "data"
     )  # 异常被吞并 (advisory), 绝不阻断 --auto
+
+
+def test_publication_capture_logs_success_and_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """F-a 观测性: 成功 info / healthy 后重验跳过 warning — 夜刷日志可判读。"""
+    import logging
+
+    from src.screening import auto_pipeline
+
+    written = tmp_path / "setup_output_log" / "20260713.jsonl"
+    monkeypatch.setattr(
+        "src.screening.offensive.setup_evidence_capture.capture_setup_evidence_for_publication",
+        lambda *a, **k: written,
+    )
+    healthy = types.SimpleNamespace(
+        status="healthy", manifest=types.SimpleNamespace(trade_date=SIGNAL_DATE)
+    )
+    with caplog.at_level(logging.INFO, logger="src.screening.auto_pipeline"):
+        auto_pipeline._capture_setup_evidence_after_publication(
+            healthy, reports_dir=tmp_path, data_dir=tmp_path
+        )
+    assert any(
+        "setup 信号证据已捕获" in r.getMessage() and r.levelno == logging.INFO
+        for r in caplog.records
+    )
+
+    caplog.clear()
+    monkeypatch.setattr(
+        "src.screening.offensive.setup_evidence_capture.capture_setup_evidence_for_publication",
+        lambda *a, **k: None,
+    )
+    with caplog.at_level(logging.INFO, logger="src.screening.auto_pipeline"):
+        auto_pipeline._capture_setup_evidence_after_publication(
+            healthy, reports_dir=tmp_path, data_dir=tmp_path
+        )
+    assert any(
+        "捕获跳过" in r.getMessage() and r.levelno == logging.WARNING
+        for r in caplog.records
+    )
