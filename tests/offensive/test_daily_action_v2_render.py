@@ -17,6 +17,7 @@ from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
 from src.screening.offensive.daily_action import (
     DailyActionV2Run,
     ScanFunnel,
+    _render_stop_loss_readiness_line,
     render_daily_action_v2,
 )
 from src.screening.offensive.daily_action_service import (
@@ -2717,3 +2718,140 @@ def test_prior_drift_line_old_report_keeps_legacy_format(tmp_path, monkeypatch):
     assert line is not None
     assert "（20260904，n=" in line
     assert "覆盖至" not in line
+
+
+# ---------- R157 Op1: 止损启用条件读数行 (项 5 判定输入日度合取显形) ----------
+
+def _stop_view(case, regime=None):
+    """构造带 fresh 台账估值的 v2 run (回撤 0.0) 与其 as_of。
+
+    regime 默认 None (行省略形态); 位置断言测试传 "crisis" 显形 Regime 行。
+    """
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    return DailyActionV2Run(run, (), run.open_positions, (), (), regime=regime), as_of
+
+
+class _StubValuation:
+    def __init__(self, drawdown):
+        self.drawdown = drawdown
+
+
+class _StubServiceRun:
+    def __init__(self, trade_date, valuation):
+        self.trade_date = trade_date
+        self.valuation = valuation
+
+
+class _StubRun:
+    def __init__(self, trade_date, valuation):
+        self.service_run = _StubServiceRun(trade_date, valuation)
+
+
+def test_stop_readiness_crisis_streak_counts_consecutive_days(case):
+    """锚日在内的连续 crisis 天数逐日累计 (3 日 crisis → 3)。"""
+    view, as_of = _stop_view(case)
+    line = _render_stop_loss_readiness_line(
+        view, regimes_by_date={
+            "20260818": "crisis", "20260819": "crisis", "20260820": "crisis",
+        },
+    )
+    assert "连续 crisis 3 日" in line
+
+
+def test_stop_readiness_crisis_streak_resets_on_interruption(case):
+    """回溯遇首个非 crisis 即停 — 连亮语义与触发器账本一致。"""
+    view, _as_of = _stop_view(case)
+    line = _render_stop_loss_readiness_line(
+        view, regimes_by_date={
+            "20260818": "crisis", "20260819": "normal", "20260820": "crisis",
+        },
+    )
+    assert "连续 crisis 1 日" in line
+
+
+def test_stop_readiness_stale_anchor_discloses_cutoff_date(case):
+    """regime 史滞后于今日 (最新标签 0819) → 截至日响亮披露, 不冒充今日读数。"""
+    view, _as_of = _stop_view(case)
+    line = _render_stop_loss_readiness_line(
+        view, regimes_by_date={"20260818": "crisis", "20260819": "crisis"},
+    )
+    assert "连续 crisis 2 日（截至 0819）" in line
+
+
+def test_stop_readiness_zero_streak_disclosed_when_no_crisis(case):
+    """全 normal 史 → 连续 crisis 0 日照实显示 (触发行不静默省略)。"""
+    view, _as_of = _stop_view(case)
+    line = _render_stop_loss_readiness_line(
+        view, regimes_by_date={"20260819": "normal", "20260820": "normal"},
+    )
+    assert "连续 crisis 0 日" in line
+
+
+def test_stop_readiness_drawdown_margin_signed_against_reference():
+    """余量 = drawdown − (−15%): 0% 回撤 → +15.0pp; 越线 → 已触及措辞。"""
+    as_of = date(2026, 8, 20)
+    fresh = _StubRun(as_of, _StubValuation(0.0))
+    line = _render_stop_loss_readiness_line(fresh, regimes_by_date={})
+    assert "回撤 0.0%（距 -15% 降仓参考线余量 +15.0pp）" in line
+
+    breached = _StubRun(as_of, _StubValuation(-0.16))
+    line = _render_stop_loss_readiness_line(breached, regimes_by_date={})
+    assert "已触及 -15% 降仓参考线，余量 -1.0pp" in line
+
+
+def test_stop_readiness_nonfinite_drawdown_clause_omitted():
+    """NaN 回撤子句省略 (R119 数值守卫家族), streak 子句不受牵连。"""
+    as_of = date(2026, 8, 20)
+    run = _StubRun(as_of, _StubValuation(float("nan")))
+    line = _render_stop_loss_readiness_line(
+        run, regimes_by_date={"20260820": "crisis"},
+    )
+    assert line is not None
+    assert "连续 crisis 1 日" in line
+    assert "回撤" not in line
+
+
+def test_stop_readiness_both_inputs_missing_line_omitted():
+    """regime 史空 + 估值缺 → 整行省略 (fail-open, 不出残行)。"""
+    run = _StubRun(date(2026, 8, 20), None)
+    assert _render_stop_loss_readiness_line(run, regimes_by_date={}) is None
+
+
+def test_stop_readiness_stop_mode_disclosed(case, monkeypatch):
+    """登记状态如实双面: 默认 none (不启用) / 显式启用时反照 env。"""
+    view, _as_of = _stop_view(case)
+    line = _render_stop_loss_readiness_line(
+        view, regimes_by_date={"20260820": "crisis"},
+    )
+    assert "止损执行模式 none（登记: 不启用）" in line
+
+    monkeypatch.setenv("DAILY_ACTION_EXECUTION_STOP", "atr_k2")
+    line = _render_stop_loss_readiness_line(
+        view, regimes_by_date={"20260820": "crisis"},
+    )
+    assert "止损执行模式 atr_k2（已启用）" in line
+
+
+def test_stop_readiness_line_renders_after_regime_line(case, monkeypatch):
+    """整链接线: render_daily_action_v2 中行位于 Regime 行之后, 协议指针在行内。"""
+    view, _as_of = _stop_view(case, regime="crisis")
+    import src.screening.offensive.daily_action as da
+
+    monkeypatch.setattr(
+        da, "_load_regime_history",
+        lambda: {"20260819": "crisis", "20260820": "crisis"},
+    )
+    text = render_daily_action_v2(view)
+    lines = text.splitlines()
+    regime_idx = next(
+        i for i, l in enumerate(lines) if l.startswith("Regime：")
+    )
+    stop_idx = next(
+        i for i, l in enumerate(lines) if l.startswith("止损启用条件（清单项 5）")
+    )
+    assert stop_idx > regime_idx
+    assert "连续 crisis 2 日" in lines[stop_idx]
+    assert "backtest_exit_strategies.py" in lines[stop_idx]
+    assert "DAILY_ACTION_EXECUTION_STOP" in lines[stop_idx]
