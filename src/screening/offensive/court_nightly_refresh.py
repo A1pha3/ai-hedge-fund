@@ -93,6 +93,12 @@ DIAGNOSTIC_SCRIPTS: tuple[str, ...] = (
     # 剂量反应); 两种走向 (稳健→决策级/脆弱→降格) 都推进证据质量, 同门接线
     # (R133/R135/R166/R168 先例), pinned-set 测试同步钉住防再漏接。
     "scripts/regime_run_contrast_robustness.py",
+    # R172 Op1: 超额收益 beta/selection 恒等分解 (工作线证据的机制归属面) —
+    # 净收益 = 等权全市场 open→open 基准 + 超额 (与 court 执行口径同窗, 顺延
+    # 语义一致), 回答 d1_run 罚分与全体池优势多少是市场 beta 多少是 selection;
+    # 逐候选窗口重算 gross 逐位自检 (窗口约定漂移 fail-closed); 同门接线
+    # (R133/R135/R166/R168/R170 先例), pinned-set 测试同步钉住防再漏接。
+    "scripts/regime_excess_return_decomposition.py",
 )
 DIAGNOSTIC_TIMEOUT_S = 600
 
