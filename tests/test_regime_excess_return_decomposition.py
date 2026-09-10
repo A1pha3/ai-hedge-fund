@@ -478,6 +478,19 @@ class TestStrengthDecomposition:
         for bucket in ("<0.50", "0.50-0.60", "0.60-0.70", "≥0.70", "unknown"):
             resid = groups[bucket].get("identity_residual")
             assert resid is None or resid <= 1e-12
+        # t8 桶级数值面同精确 (R175 N-h: 单 horizon 精确值曾留缺口)
+        groups8 = payload["decomposition"]["t8"]["strength"]["buckets"]
+        bench_b8 = _external_bench(world, BLIP_DAY, 8)
+        bench_r8 = _external_bench(world, RUN_DAY, 8)
+        expected_strong8 = (
+            20 * ((0.10 - cost - bench_b8) + (-0.04 - cost - bench_r8)) / 40
+        )
+        expected_weak8 = (
+            20 * ((0.06 - cost - bench_b8) + (-0.07 - cost - bench_r8)) / 40
+        )
+        assert groups8["≥0.70"]["n"] == 40
+        assert abs(groups8["≥0.70"]["e_excess"] - expected_strong8) < 1e-12
+        assert abs(groups8["<0.50"]["e_excess"] - expected_weak8) < 1e-12
 
     def test_threshold_contrast_survives_in_excess_space(self, tmp_path):
         """selection 世界: ≥0.70 vs <0.50 超额对比 CI 下界 > 0 (正值 = 强度优势)."""
@@ -504,6 +517,18 @@ class TestStrengthDecomposition:
         assert buckets["0.60-0.70"]["n"] == 1
         assert buckets["≥0.70"]["n"] == 1
         assert buckets["unknown"]["n"] == 1
+
+    def test_strength_decomposition_does_not_mutate_rows(self):
+        """非突变钉住 (R175 N-g: analyze 内调用序依赖 — strength 面恰最后
+        调用曾使原地突变不可见; 未来调用序变化即在此暴露)。"""
+        rows = pd.DataFrame({
+            "net": [0.01], "bench": [0.0], "excess": [0.01],
+            "signal_date": [BLIP_DAY], "group": ["d1_blip"],
+            "strength": [0.75],
+        })
+        before = rows.copy()
+        strength_decomposition(rows)
+        pd.testing.assert_frame_equal(rows, before)
 
     def test_strength_column_missing_fails_closed(self, tmp_path):
         world = _world()
