@@ -382,3 +382,108 @@ class TestAnalyzeRenderMain:
         with pytest.raises(SystemExit) as exc_info:  # RegimeProximityError 族
             analyze(_world(nets, regimes), tmp_path / "nope.json")
         assert "regime_history" in str(exc_info.value)
+
+
+class TestAdversarialPinsR171:
+    """R171 Op2 对抗收口: 变异探针有牙实证后的四枚形态钉住.
+
+    探针定谳 (隔离 slot 实跑): M-b ('<'→'<=', 20 passed 无牙实锤) 与
+    M-c (run_labels 反序 insert(0), 41 passed 无牙实锤) 为真实钉住缺口;
+    M-a (share 分母 N→参与日数) 与 M-d (_delta_point 轴 fork→proximity)
+    意外有牙 (分别被 top1 精确值 oracle / 极端世界秩测试间接钉住, M-d
+    3 failed) — 仍补直连 oracle 钉住作防御纵深 (实现正确仅因实现正确
+    无测试保障 = R167/R169 同族教训)。
+
+    审查排除项成文: placebo eps 平手容差只影响与观测精确平手的移位计数
+    (方向保守: 只会抬高 p, 不制造假极端); 离散经验分位 sorted[floor(q·
+    (m−1))] 无插值已由确定性字节测试覆盖; 翻符号方向谓词与 threshold/剂量
+    分桶边界已有牙 (互换即 RED, 审查期复证)。
+    """
+
+    def test_min_cell_n_boundary_kept_exact(self):
+        """P-b: kept==MIN_CELL_N 恰边界必须产出 delta_without (不是 None).
+
+        '<'→'<=' 变异探针无牙实证 (20 passed) 后钉住: run 侧 31 样本跨
+        两日 (1+30), 剔除单样本日后 kept=30 恰在门槛上 — 合法剔除。
+        """
+        regimes = {
+            "20260101": "crisis",
+            "20260102": "crisis",    # run A=2 → 0103
+            "20260106": "crisis",
+            "20260107": "crisis",    # run B=2 → 0108
+            "20260111": "risk_off",  # blip → 0112
+            **{f"202601{d:02d}": "normal" for d in (3, 4, 5, 8, 9, 10, 12, 13, 14, 15)},
+        }
+        nets = {
+            "20260103": [-0.02],                       # 单样本日 (被剔除日)
+            "20260108": [-0.05] * MIN_CELL_N,          # kept 恰 == MIN_CELL_N
+            "20260112": [0.03] * MIN_CELL_N,
+        }
+        rows = _rows(_world(nets, regimes), regimes)
+        result = influence_leave_one_day_out(rows)
+        assert result["n_days"] == 2
+        by_date = {st["date"]: st for st in result["top_days"]}
+        assert by_date["20260103"]["delta_without"] is not None
+
+    def test_run_labels_nearest_first_order(self):
+        """P-c: run_labels 自近及远序钉住 (混合连跑双 label 才有区分度).
+
+        既有钉住形态全同 label ('crisis','crisis') 或单 label ('risk_off',)
+        — 反序变异 (insert(0)) 在 41 测下存活; 混合连跑钉住后 RED。
+        label_decomposition 的 'risk_off' in run_labels 判属对序不敏感,
+        故该序契约此前零消费零钉住 — 本测试使其成为显式契约。
+        """
+        from scripts.regime_blocked_run_conditioning import run_geometry
+
+        regimes = {
+            "20260101": "risk_off",
+            "20260102": "crisis",   # 混合连跑 (近端 crisis, 远端 risk_off) → 0103
+            **{f"202601{d:02d}": "normal" for d in range(3, 16)},
+        }
+        assert run_geometry("20260103", SESSIONS, regimes)[3] == ("crisis", "risk_off")
+
+    def test_delta_point_matches_r168_group_table_oracle(self):
+        """P-d: placebo 点估计与 R168 group table 外部 oracle 逐值一致.
+
+        k=0 恒等只证 placebo 内部自洽 (同轴错则双双放行); 本测试把
+        _delta_point 直接钉在 blocked-run 轴的 group 列算术上 — 轴 fork
+        (proximity 单维替代) 不再依赖间接的世界工程读数才暴露。
+        """
+        nets = {"20260103": [-0.05, -0.05], "20260106": [0.03, 0.03]}
+        rows = _rows(_world(nets, REGIMES), REGIMES)
+        expected = (
+            rows.loc[rows["group"] == "d1_blip", "net"].mean()
+            - rows.loc[rows["group"] == "d1_run", "net"].mean()
+        )
+        from scripts.regime_run_contrast_robustness import _delta_point
+
+        assert _delta_point(rows, SESSIONS, dict(REGIMES)) == pytest.approx(expected)
+
+    def test_share_sums_to_one_telescoping(self):
+        """P-a 排除项的显式化: 份额全和恒 1 (telescoping) 多日世界钉住.
+
+        M-a 探针 (分母 N→参与日数) 实为有牙 — top1 精确值 oracle 间接
+        钉住 (1 failed 实证); 本测试把可加性本身升为显式契约, 多日世界
+        下 Σshare == 1 逐值断言。
+        """
+        regimes = {
+            "20260101": "crisis",
+            "20260102": "crisis",    # run A=2 → 0103
+            "20260106": "crisis",
+            "20260107": "crisis",
+            "20260108": "crisis",    # run B=3 → 0109
+            "20260113": "risk_off",  # blip → 0114
+            **{f"202601{d:02d}": "normal" for d in (3, 4, 5, 9, 10, 11, 12, 14, 15)},
+        }
+        nets = {
+            "20260103": [0.04] * 5,
+            "20260109": [-0.50] * (MIN_CELL_N + 1),
+            "20260114": [0.03] * MIN_CELL_N,
+        }
+        rows = _rows(_world(nets, regimes), regimes)
+        result = influence_leave_one_day_out(rows)
+        total_share = sum(
+            st["share"] for st in result["top_days"]  # top3 含全部参与日时
+            if st["share"] is not None
+        ) if result["n_days"] <= 3 else None
+        assert total_share == pytest.approx(1.0)
