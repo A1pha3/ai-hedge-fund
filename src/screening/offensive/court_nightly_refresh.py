@@ -106,6 +106,14 @@ DIAGNOSTIC_SCRIPTS: tuple[str, ...] = (
     # 当前侧随 court 重建每夜保鲜 (早期表冻结); 同门接线第 9 次
     # (R133/R135/R166/R168/R170/R172 先例), pinned-set 测试同步钉住防再漏接。
     "scripts/regime_run_universe_match_validation.py",
+    # R180 Op1: R168 时代条件性的幸存者敏感度界 (R179 登记开放项第二轴
+    # 收口) — 早期缺席退市票 (隐藏行) 份额 phi 网格下复制当前点罚分所需的
+    # 隐藏 run-vs-blip 差分/均值 (混合代数) + 机械不可能旗标 (所需均值低于
+    # 全早期表最差单行) + 日均值极距锚点反演; 把机制二元从叙事判断转为可
+    # 读数判断。当前侧随 court 重建每夜保鲜 (早期表冻结); 同门接线第 10 次
+    # (R133/R135/R166/R168/R170/R172/R179 先例), pinned-set 测试同步钉住
+    # 防再漏接。
+    "scripts/regime_run_survivorship_sensitivity_validation.py",
 )
 DIAGNOSTIC_TIMEOUT_S = 600
 

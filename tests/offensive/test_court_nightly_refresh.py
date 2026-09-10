@@ -177,6 +177,9 @@ class TestNightlyDiagnosticsRefresh:
         # R179 Op1: + regime_run_universe_match_validation (R168 时代条件性的
         # 宇宙构成判别: 当前表限制到早期票集后同轴重跑, 机械判别构成伪影
         # vs 行为/幸存者残余; 同门接线第 9 次)。
+        # R180 Op1: + regime_run_survivorship_sensitivity_validation (R179
+        # 登记开放项第二轴: 幸存者偏差反事实敏感度界 — 隐藏退市票行复制当
+        # 前罚分所需差分/均值网格 + 机械不可能旗标; 同门接线第 10 次)。
         assert DIAGNOSTIC_SCRIPTS == (
             "scripts/winrate_payoff_decomposition.py",
             "scripts/btst_signal_day_cohort.py",
@@ -193,6 +196,7 @@ class TestNightlyDiagnosticsRefresh:
             "scripts/regime_run_contrast_robustness.py",
             "scripts/regime_excess_return_decomposition.py",
             "scripts/regime_run_universe_match_validation.py",
+            "scripts/regime_run_survivorship_sensitivity_validation.py",
         )
 
     def test_build_success_runs_diagnostics_in_order(self, tmp_path):
