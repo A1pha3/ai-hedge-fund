@@ -209,6 +209,7 @@ def analyze(ev: pd.DataFrame, history_path: Path) -> dict[str, object]:
             "blocked_regimes": list(BLOCKED_REGIMES),
             "groups": {g: GROUP_LABELS[g] for g in TABLE_GROUPS},
             "run_definition": "结束于最后阻断日的连续阻断日计数 (被 normal 日打断重新计)",
+            "run_censoring": "窗口起点即阻断日时 run 从 sessions[0] 起计 — 右删失下界 (真 run 可能早于窗口); 真实窗口起点 normal, 理论形态",
             "preregistered": "2026-09-10 (探索性 in-sample, 与 gap>5% 轴同款纪律)",
         },
         "court_window": court_window_from_events(ev),
@@ -348,6 +349,7 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
         "- 本报告是诊断证据, 不是参数变更提案; blip/run 分化不构成任何自动 gate 行为。",
         "- 连跑危机后首日深负的机制归因 (隔夜风险偏好/流动性/反转效应) 属 owner 判读门;",
         "  强度桶 × 连跑组的交互读数只披露 (多重比较未校正, 探索性 in-sample)。",
+        "- 窗口起点即阻断日时连跑计数右删失 (下界语义, 见 axis_definition.run_censoring);",
         "- 复现: `uv run python scripts/regime_blocked_run_conditioning.py` "
         "(固定 bootstrap 种子, 同输入逐字节可复现)。",
         "",

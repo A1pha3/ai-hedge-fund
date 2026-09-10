@@ -94,7 +94,7 @@ def _simple_events() -> pd.DataFrame:
         "20260103": [-0.05, -0.05],   # d1_run (距 0102 阻断尾日 1 会话, run=2)
         "20260104": [0.02],           # d2_run (距 0102 尾日 2 会话)
         "20260106": [0.03, 0.03],     # d1_blip (距 0105 单日闪断 1 会话, run=1)
-        "20260108": [0.01],           # d3p_blip
+        "20260108": [0.01, -0.02],    # d3p_blip (含输家 → payoff 格 0.50)
         "20260115": [0.0],            # d6p (距 0105 共 8 会话)
     }
     rows = [
@@ -279,10 +279,10 @@ class TestAnalyzeAssemblies:
     def test_residual_ex_d1_run_exact_arithmetic(self, tmp_path):
         payload = analyze(_simple_events(), _history(tmp_path))
         resid = payload["residual_ex_d1_run_t10"]
-        # 全体净收益: [−5,−5,+2,+3,+3,+1,0] → 剔 d1_run (−5,−5) 后
-        # n=5, E=(2+3+3+1+0)/5=1.8%
-        assert resid["n"] == 5
-        assert resid["expectancy"] == pytest.approx(0.018)
+        # 全体净收益: [−5,−5,+2,+3,+3,+1,−2,0] → 剔 d1_run (−5,−5) 后
+        # n=6, E=(2+3+3+1−2+0)/6=7/6%
+        assert resid["n"] == 6
+        assert resid["expectancy"] == pytest.approx(7 / 600)
 
     def test_split_half_undecidable_on_tiny_world(self, tmp_path):
         # fixture 世界任一半 n<MIN_CELL_N → 不可判定形态 (只判定资格不授权)
@@ -325,6 +325,32 @@ class TestDeterminismAndRender:
         broken["tables"]["t10"].pop("d1_run")
         md = render_md(broken, "20260910")
         assert "—" in md
+
+
+class TestAdversarialPinsR169:
+    """Op2 对抗性审查收口: F-a payoff 比率形态钉住 (R167 同款变异有牙) +
+    F-b 窗口起点连跑右删失披露."""
+
+    def test_render_payoff_ratio_form_pinned(self, tmp_path):
+        payload = analyze(_simple_events(), _history(tmp_path))
+        md = render_md(payload, "20260910")
+        # d3p_blip: avg_win=+1% / avg_loss=−2% → payoff=0.50 比率形态
+        # (行级精确断言: payoff 单元格后随 E 列 — 胜率列 +50.00% 合法共存,
+        #  裸子串断言会撞形; _ratio→_fmt 变异使 payoff 格变 '+50.00%' 即 RED)
+        row = next(
+            ln for ln in md.splitlines() if "d3p_blip (距 3-5 会话" in ln
+        )
+        assert "| 2 | +50.00% | +1.00% | -2.00% | 0.50 | -0.50% | — |" in row
+
+    def test_window_start_run_censoring_documented(self, tmp_path):
+        sessions = ["20260501", "20260502", "20260503"]
+        labels = {"20260501": "crisis", "20260502": "normal", "20260503": "normal"}
+        # 窗口起点即阻断日: run 从 sessions[0] 起计 = 右删失下界 (文档化规则)
+        assert blocked_run_group("20260502", sessions, labels) == "d1_blip"
+        assert blocked_run_group("20260503", sessions, labels) == "d2_blip"
+        payload = analyze(_simple_events(), _history(tmp_path))
+        assert "右删失" in payload["axis_definition"]["run_censoring"]
+        assert "右删失" in render_md(payload, "20260910")
 
 
 class TestFailClosed:
