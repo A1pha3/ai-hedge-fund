@@ -33,6 +33,7 @@ from scripts.regime_excess_return_decomposition import (
     horizon_rows_with_benchmark,
     main,
     render_md,
+    strength_decomposition,
 )
 from scripts.regime_blocked_run_conditioning import run_groups
 from scripts.regime_proximity_conditioning import load_regime_history
@@ -120,11 +121,26 @@ def _gross(world: dict[str, "pd.Series"], day: str, offset: int, ts: str) -> flo
     return float(world[out_s][ts]) / float(world[_entry(day)][ts]) - 1
 
 
+STRONG, WEAK = 0.75, 0.45  # ≥0.70 / <0.50
+
+
+def _strength_uniform(_ts: str) -> float:
+    return STRONG  # 既有测试默认: 全体强强度 (桶轴退化)
+
+
+def _strength_mixed(ts: str) -> float:
+    """桶测试映射: 每日前 20 只强 (≥0.70), 后 20 只弱 (<0.50) — 同日混桶
+    (错位免疫: 桶值错排即翻转精确值)。"""
+    num = int(ts[1:])  # 0 基编号: B000..B019 强 / B020..B039 弱 (对齐 [:20] 切分)
+    return STRONG if num < 20 else WEAK
+
+
 def _event_row(ts: str, day: str, gross10: float, gross8: float,
-               *, off10: float = 10.0, off8: float = 8.0) -> dict:
+               *, off10: float = 10.0, off8: float = 8.0,
+               strength: float = STRONG) -> dict:
     return {
         "symbol": ts, "ts_code": f"{ts}.SZ", "signal_date": day,
-        "regime": "normal", "trigger_strength": 0.75, "signal_close": 10.0,
+        "regime": "normal", "trigger_strength": strength, "signal_close": 10.0,
         "gap_t1_open": 0.0, "fillable": True, "t1_unbuyable": False,
         "t1_missing_bar": False, "degraded": False, "industry_missing": False,
         "industry_name": "测试", "st_name": False, "excluded_ticker": False,
@@ -135,16 +151,17 @@ def _event_row(ts: str, day: str, gross10: float, gross8: float,
 
 
 def _event_table(world: dict[str, "pd.Series"], *, off10: float = 10.0,
-                 off8: float = 8.0) -> pd.DataFrame:
+                 off8: float = 8.0,
+                 strength_of=_strength_uniform) -> pd.DataFrame:
     rows = [
         _event_row(ts, BLIP_DAY, _gross(world, BLIP_DAY, int(off10), ts),
                    _gross(world, BLIP_DAY, int(off8), ts),
-                   off10=off10, off8=off8)
+                   off10=off10, off8=off8, strength=strength_of(ts))
         for ts in BLIP
     ] + [
         _event_row(ts, RUN_DAY, _gross(world, RUN_DAY, int(off10), ts),
                    _gross(world, RUN_DAY, int(off8), ts),
-                   off10=off10, off8=off8)
+                   off10=off10, off8=off8, strength=strength_of(ts))
         for ts in RUN
     ]
     return pd.DataFrame(rows)
@@ -414,6 +431,92 @@ class TestDeterminismAndRender:
         ev = _event_table(world)
         payload = analyze(ev, _history(tmp_path), _opens(world), SESSIONS)
         assert payload["label_consistency"]["mismatch_count"] == 0
+
+
+def _bucket_world() -> dict[str, "pd.Series"]:
+    """桶测试世界: 强桶跑赢市场、弱桶跑输市场 (两日 × 两 horizon 独立取值):
+    blip 市场 110/108, 强 113/110, 弱 105/106; run 市场 90/95, 强 92/96,
+    弱 85/93。"""
+    world = _world()
+    strong, weak = BLIP[:20], BLIP[20:]
+    for ts in strong:
+        world[_exit(BLIP_DAY, 10)][ts] = 113.0
+        world[_exit(BLIP_DAY, 8)][ts] = 110.0
+    for ts in weak:
+        world[_exit(BLIP_DAY, 10)][ts] = 105.0
+        world[_exit(BLIP_DAY, 8)][ts] = 106.0
+    strong, weak = RUN[:20], RUN[20:]
+    for ts in strong:
+        world[_exit(RUN_DAY, 10)][ts] = 92.0
+        world[_exit(RUN_DAY, 8)][ts] = 96.0
+    for ts in weak:
+        world[_exit(RUN_DAY, 10)][ts] = 85.0
+        world[_exit(RUN_DAY, 8)][ts] = 93.0
+    return world
+
+
+class TestStrengthDecomposition:
+    def test_bucket_excess_exact_external_oracle(self, tmp_path):
+        """桶级 E_excess 与外部 oracle 1e-12 精确 (同日混桶, 错位即翻转)."""
+        world = _bucket_world()
+        ev = _event_table(world, strength_of=_strength_mixed)
+        payload = analyze(ev, _history(tmp_path), _opens(world), SESSIONS)
+        groups = payload["decomposition"]["t10"]["strength"]["buckets"]
+        bench_b = _external_bench(world, BLIP_DAY, 10)
+        bench_r = _external_bench(world, RUN_DAY, 10)
+        cost = ROUNDTRIP_COST
+        expected_strong = (
+            20 * ((0.13 - cost - bench_b) + (-0.08 - cost - bench_r)) / 40
+        )
+        expected_weak = (
+            20 * ((0.05 - cost - bench_b) + (-0.15 - cost - bench_r)) / 40
+        )
+        assert groups["≥0.70"]["n"] == 40
+        assert groups["<0.50"]["n"] == 40
+        assert abs(groups["≥0.70"]["e_excess"] - expected_strong) < 1e-12
+        assert abs(groups["<0.50"]["e_excess"] - expected_weak) < 1e-12
+        for bucket in ("<0.50", "0.50-0.60", "0.60-0.70", "≥0.70", "unknown"):
+            resid = groups[bucket].get("identity_residual")
+            assert resid is None or resid <= 1e-12
+
+    def test_threshold_contrast_survives_in_excess_space(self, tmp_path):
+        """selection 世界: ≥0.70 vs <0.50 超额对比 CI 下界 > 0 (正值 = 强度优势)."""
+        world = _bucket_world()
+        ev = _event_table(world, strength_of=_strength_mixed)
+        payload = analyze(ev, _history(tmp_path), _opens(world), SESSIONS)
+        tc = payload["decomposition"]["t10"]["strength"]["threshold_contrast"]
+        assert tc["excess"]["ci_low"] > 0
+        assert tc["raw"]["ci_low"] > 0
+        assert tc["excess"]["n_hi_strength"] == 40
+        assert tc["excess"]["n_lo_strength"] == 40
+
+    def test_bucket_boundaries_route_single_implementation(self):
+        """分桶边界走 strength_bucket 单一实现: 0.50/0.60/0.70 左闭右开 +
+        NaN → unknown (工具内自造分桶即在此暴露)。"""
+        rows = pd.DataFrame({
+            "net": [0.0] * 5, "bench": [0.0] * 5, "excess": [0.0] * 5,
+            "signal_date": [BLIP_DAY] * 5, "group": ["d1_blip"] * 5,
+            "strength": [0.4999, 0.50, 0.60, 0.70, float("nan")],
+        })
+        buckets = strength_decomposition(rows)["buckets"]
+        assert buckets["<0.50"]["n"] == 1
+        assert buckets["0.50-0.60"]["n"] == 1
+        assert buckets["0.60-0.70"]["n"] == 1
+        assert buckets["≥0.70"]["n"] == 1
+        assert buckets["unknown"]["n"] == 1
+
+    def test_strength_column_missing_fails_closed(self, tmp_path):
+        world = _world()
+        ev = _event_table(world)
+        ev = ev.drop(columns=["trigger_strength"])
+        u, prox = _rows(world, ev, tmp_path)
+        with pytest.raises(SystemExit, match="strength_column_missing"):
+            horizon_rows_with_benchmark(u, 10, prox, _opens(world), SESSIONS)
+
+    def test_render_strength_section_survival(self):
+        payload = {"schema_version": 1, "decomposition": {}, "benchmark_integrity": {}}
+        md = render_md(payload, "20260910")
+        assert "强度分桶" in md  # 渲染存活: 缺 strength 面不崩, 表头在场
 
 
 class TestMainEndToEnd:

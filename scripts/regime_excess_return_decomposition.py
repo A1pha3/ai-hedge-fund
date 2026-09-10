@@ -13,12 +13,16 @@ bench = 等权全市场 (raw daily 快照全体) open→open 收益, 与 court �
 daily 重算 gross 必须与事件表列一致, 不一致 = 窗口约定漂移, fail-closed 不
 产报告。
 
-三面披露 (t10 主 horizon + t8):
+四面披露 (t10 主 horizon + t8):
 1. 分组恒等分解 (d1_blip / d1_run / 全体池): n / E_net / E_bench / E_excess
    / 胜率 (净与超额两口径 — 超额胜率 = 跑赢市场率)。
 2. d1_blip vs d1_run 决定性对比: 净/超额两空间并排 (grouped_delta 单一实现,
    per-call seeded RNG)。
 3. 基准完整性: 自检 mismatch 数 / 基准对名单数 min/median / 覆盖率。
+4. 强度分桶 × 恒等分解 (R174): strength_bucket 单一实现分桶 (左闭右开
+   0.50/0.60/0.70), 桶表与 regime 表同算术; ≥0.70 vs <0.50 阈值选择对比
+   净/超额两空间 — 回答强度阈值的优势是 selection 还是 beta (与 regime
+   blip 纯 beta 形成互补双轴)。
 
 纯诊断 (宪法 #2: 只披露不判定; 任何 gate 行为变化 = owner 决策 + 新证据世
 代)。基准含候选自身 (~1/5400 权重, 可忽略); 等权 buy-hold 基准不等于市值
@@ -57,6 +61,10 @@ from scripts.winrate_payoff_decomposition import (
     court_window_from_events,
     production_aligned,
     win_loss_stats,
+)
+from src.screening.offensive.threshold_trigger import (
+    ALL_STRENGTH_BUCKETS,
+    strength_bucket,
 )
 
 REPORT_STEM = "regime_excess_return_decomposition"
@@ -131,6 +139,8 @@ def horizon_rows_with_benchmark(
     off_col = f"exit_session_t{horizon}"
     if gross_col not in u.columns or off_col not in u.columns:
         raise _fail(f"court_columns_missing:{gross_col}/{off_col}")
+    if "trigger_strength" not in u.columns:
+        raise _fail("strength_column_missing")
     sub = u[u[gross_col].notna()].copy()
     bad_offset = sub[sub[off_col].isna()]
     if len(bad_offset):
@@ -159,6 +169,7 @@ def horizon_rows_with_benchmark(
             raise _fail(f"benchmark_selfcheck_mismatch:{ts}:{sig}")
         checked += 1
         net = gross - ROUNDTRIP_COST
+        raw_strength = r["trigger_strength"]
         rows.append(
             {
                 "net": net,
@@ -166,6 +177,9 @@ def horizon_rows_with_benchmark(
                 "excess": net - bench,
                 "signal_date": sig,
                 "group": prox.get(sig, "unknown"),
+                "strength": (
+                    None if pd.isna(raw_strength) else float(raw_strength)
+                ),
             }
         )
     pair_sizes = [n for _, n in cache.values()]
@@ -181,13 +195,17 @@ def horizon_rows_with_benchmark(
     return pd.DataFrame(rows), integrity
 
 
-def group_decomposition(df: pd.DataFrame) -> dict[str, object]:
+def group_decomposition(
+    df: pd.DataFrame,
+    group_order: tuple[str, ...] = GROUP_ORDER,
+) -> dict[str, object]:
     """分组恒等分解: E_net = E_bench + E_excess (逐组 _IDENTITY_TOL 内显式核对).
 
-    'all' = 全体池对照行。胜率给净/超额两口径 (超额胜率 = 跑赢市场率)。
+    'all' = 全体池对照行 (仅 regime 轴有); 桶轴 (R174) 传 ALL_STRENGTH_BUCKETS
+    复用同算术。胜率给净/超额两口径 (超额胜率 = 跑赢市场率)。
     """
     out: dict[str, object] = {}
-    for group in GROUP_ORDER:
+    for group in group_order:
         cell = df if group == "all" else df[df["group"] == group]
         days = cell["signal_date"].astype(str).tolist()
         net_st = win_loss_stats(cell["net"].astype(float).tolist(), days)
@@ -216,20 +234,49 @@ def group_decomposition(df: pd.DataFrame) -> dict[str, object]:
     return out
 
 
-def contrast_spaces(df: pd.DataFrame) -> dict[str, object]:
-    """d1_blip vs d1_run 决定性对比: 净/超额两空间并排 (grouped_delta 单一实现).
+def two_space_contrast(
+    df: pd.DataFrame,
+    hi_group: str,
+    lo_group: str,
+    *,
+    n_hi_key: str,
+    n_lo_key: str,
+) -> dict[str, object]:
+    """任意 hi/lo 两组的净/超额两空间并排对比 (grouped_delta 单一实现).
 
-    任一侧 n<MIN_CELL_N → 区间 None (R153 纪律, 门槛把关后才进 delta CI)。
-    列视图只取 (值, 信号日, 组) 三列再统一改名 — 原地 rename 会产生重复列名
-    (net 与 excess 改名后同名), 后续取列静默变形。
+    正值 = hi 侧优势。任一侧 n<MIN_CELL_N → 区间 None (R153 纪律, 门槛把关
+    后才进 delta CI)。列视图只取 (值, 信号日, 组) 三列再统一改名 — 原地
+    rename 会产生重复列名 (net 与 excess 改名后同名), 后续取列静默变形。
     """
     out: dict[str, object] = {}
     for space, col in (("raw", "net"), ("excess", "excess")):
         view = df[[col, "signal_date", "group"]].rename(columns={col: "net"})
         out[space] = grouped_delta(
-            view, "d1_blip", "d1_run", n_hi_key="n_blip", n_lo_key="n_run"
+            view, hi_group, lo_group, n_hi_key=n_hi_key, n_lo_key=n_lo_key
         )
     return out
+
+
+def contrast_spaces(df: pd.DataFrame) -> dict[str, object]:
+    """d1_blip vs d1_run 决定性对比 (two_space_contrast 参数化委托)."""
+    return two_space_contrast(
+        df, "d1_blip", "d1_run", n_hi_key="n_blip", n_lo_key="n_run"
+    )
+
+
+def strength_decomposition(rows: pd.DataFrame) -> dict[str, object]:
+    """强度分桶 × 恒等分解 (R174): 桶归属走 strength_bucket 单一实现
+    (左闭右开 0.50/0.60/0.70, NaN/None → unknown), 桶表复用 group_decomposition
+    同算术; ≥0.70 vs <0.50 阈值选择对比两空间 (正值 = 强度优势)."""
+    view = rows.copy()
+    view["group"] = view["strength"].map(strength_bucket)
+    return {
+        "buckets": group_decomposition(view, ALL_STRENGTH_BUCKETS),
+        "threshold_contrast": two_space_contrast(
+            view, "≥0.70", "<0.50",
+            n_hi_key="n_hi_strength", n_lo_key="n_lo_strength",
+        ),
+    }
 
 
 def analyze(
@@ -251,6 +298,7 @@ def analyze(
         by_h[f"t{h}"] = {
             "groups": group_decomposition(rows),
             "contrast": contrast_spaces(rows),
+            "strength": strength_decomposition(rows),
         }
         if integrity is None:
             integrity = integ
@@ -337,6 +385,40 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
                 f"| {_fmt(g.get('winrate_net'))} "
                 f"| {_fmt(g.get('winrate_excess'))} | {resid_s} |"
             )
+        strength = cell.get("strength") or {}
+        buckets = strength.get("buckets") or {}
+        lines.append("### 强度分桶 × 恒等分解 (桶归属 = strength_bucket 单一实现)")
+        lines.append("")
+        lines.append("| 桶 | n | E_net | E_bench | E_excess | 胜率(净) | 胜率(超额) | 恒等残差 |")
+        lines.append("|---|---|---|---|---|---|---|---|")
+        for bucket in ALL_STRENGTH_BUCKETS:
+            g = buckets.get(bucket) or {}
+            resid = g.get("identity_residual")
+            resid_s = (
+                "—"
+                if resid is None
+                else ("OK" if resid <= _IDENTITY_TOL else f"{resid:.2e}")
+            )
+            lines.append(
+                f"| {bucket} | {g.get('n', '—')} "
+                f"| {_fmt(g.get('e_net'))} | {_fmt(g.get('e_bench'))} "
+                f"| {_fmt(g.get('e_excess'))} "
+                f"| {_fmt(g.get('winrate_net'))} "
+                f"| {_fmt(g.get('winrate_excess'))} | {resid_s} |"
+            )
+        tc = strength.get("threshold_contrast") or {}
+        tc_raw = tc.get("raw") or {}
+        tc_ex = tc.get("excess") or {}
+        lines.append("")
+        lines.append(
+            f"阈值选择对比 ≥0.70 vs <0.50 ({h}): 净空间 Δ "
+            f"{_fmt(tc_raw.get('ci_low'))}..{_fmt(tc_raw.get('ci_high'))} "
+            f"(n hi={tc_raw.get('n_hi_strength', '—')}/lo="
+            f"{tc_raw.get('n_lo_strength', '—')}) · 超额空间 Δ "
+            f"{_fmt(tc_ex.get('ci_low'))}..{_fmt(tc_ex.get('ci_high'))} "
+            f"(正值 = 强度优势; 超额空间存活 = selection 证据, 跨零 = 降格)"
+        )
+        lines.append("")
         contrast = cell.get("contrast") or {}
         raw = contrast.get("raw") or {}
         ex = contrast.get("excess") or {}
