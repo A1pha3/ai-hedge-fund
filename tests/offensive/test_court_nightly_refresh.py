@@ -168,6 +168,8 @@ class TestNightlyDiagnosticsRefresh:
         # 登记的 frontier 开放项; 宿主实测裸跑 10.9s/16.4s ≪ 600s)。
         # R166 Op1: + regime_proximity_conditioning (邻近度轴 d1/d2_5/d6p,
         # owner 胜率/赔率工作线新维度; 同门接线第 5 次)。
+        # R168 Op1: + regime_blocked_run_conditioning (距离 × 前导阻断连跑
+        # 长度, d1_blip/d1_run 二维权; 同门接线第 6 次)。
         assert DIAGNOSTIC_SCRIPTS == (
             "scripts/winrate_payoff_decomposition.py",
             "scripts/btst_signal_day_cohort.py",
@@ -180,6 +182,7 @@ class TestNightlyDiagnosticsRefresh:
             "scripts/btst_daily_selection_anatomy.py",
             "scripts/btst_exit_anatomy.py",
             "scripts/regime_proximity_conditioning.py",
+            "scripts/regime_blocked_run_conditioning.py",
         )
 
     def test_build_success_runs_diagnostics_in_order(self, tmp_path):

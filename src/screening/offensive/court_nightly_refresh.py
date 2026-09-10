@@ -81,6 +81,12 @@ DIAGNOSTIC_SCRIPTS: tuple[str, ...] = (
     # n=801 vs d2_5 +1.23%, split-half 跨半一致); 同门接线 (R133/R135 先例),
     # pinned-set 测试同步钉住防再漏接。
     "scripts/regime_proximity_conditioning.py",
+    # R168 Op1: regime 阻断连跑条件化诊断 (邻近度轴的二维深化) — 距离 × 前导
+    # 阻断连跑长度 (单日闪断 d1_blip vs 连续危机 d1_run), 回答 d1 罚分属连跑
+    # 危机机制还是任何阻断后首日机制 (Observe 探针: blip +1.77% vs run −5.74%,
+    # 配对差 CI [+2.49%,+11.94%] 越零 — 工作线首个决定性对比); 同门接线
+    # (R133/R135/R166 先例), pinned-set 测试同步钉住防再漏接。
+    "scripts/regime_blocked_run_conditioning.py",
 )
 DIAGNOSTIC_TIMEOUT_S = 600
 

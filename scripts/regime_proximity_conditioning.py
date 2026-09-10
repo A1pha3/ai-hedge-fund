@@ -175,27 +175,52 @@ def residual_pool(u: pd.DataFrame, prox: dict[str, str]) -> dict[str, object]:
     return stats
 
 
+def grouped_delta(
+    rows: pd.DataFrame,
+    hi_group: str,
+    lo_group: str,
+    *,
+    n_hi_key: str = "n_hi",
+    n_lo_key: str = "n_lo",
+) -> dict[str, object]:
+    """hi vs lo 任意两组的配对聚类差区间 (正值 = lo 侧罚分).
+
+    R168 Op1 泛化: d1_vs_d2_5_delta 的组参数化单一实现 (调用方可用键名
+    保持各自 payload 契约)。任一侧 n<MIN_CELL_N → 区间 None (R153 纪律:
+    门槛把关后才进 delta CI)。
+    """
+    hi = rows[rows["group"] == hi_group]
+    lo = rows[rows["group"] == lo_group]
+    if len(hi) < MIN_CELL_N or len(lo) < MIN_CELL_N:
+        return {"ci_low": None, "ci_high": None, n_hi_key: int(len(hi)), n_lo_key: int(len(lo))}
+    ci = cluster_boot_delta_ci(
+        hi["net"].tolist(), hi["signal_date"].tolist(),
+        lo["net"].tolist(), lo["signal_date"].tolist(),
+    )
+    return {"ci_low": ci["ci_low"], "ci_high": ci["ci_high"], n_hi_key: int(len(hi)), n_lo_key: int(len(lo))}
+
+
 def d1_vs_d2_5_delta(rows: pd.DataFrame) -> dict[str, object]:
     """d1 vs d2_5 配对聚类差区间 (hi=d2_5, lo=d1 — 正值 = d1 罚分).
 
     任一侧 n<MIN_CELL_N → 区间 None (R153 纪律: 门槛把关后才进 delta CI)。
+    R168 Op1 起委托 grouped_delta 泛化实现 (键名/键序保持 R166 payload 契约)。
     """
-    d1 = rows[rows["group"] == "d1"]
-    d25 = rows[rows["group"] == "d2_5"]
-    if len(d1) < MIN_CELL_N or len(d25) < MIN_CELL_N:
-        return {"ci_low": None, "ci_high": None, "n_d1": int(len(d1)), "n_d2_5": int(len(d25))}
-    ci = cluster_boot_delta_ci(
-        d25["net"].tolist(), d25["signal_date"].tolist(),
-        d1["net"].tolist(), d1["signal_date"].tolist(),
-    )
-    return {"ci_low": ci["ci_low"], "ci_high": ci["ci_high"], "n_d1": int(len(d1)), "n_d2_5": int(len(d25))}
+    out = grouped_delta(rows, "d2_5", "d1", n_hi_key="n_d2_5", n_lo_key="n_d1")
+    return {"ci_low": out["ci_low"], "ci_high": out["ci_high"], "n_d1": out["n_d1"], "n_d2_5": out["n_d2_5"]}
 
 
-def split_half_verdict(rows: pd.DataFrame) -> dict[str, object]:
-    """d1 罚分跨半稳定性 (参与日按日期序对半分 — zero_hit_day 同款切分).
+def split_half_stability(
+    rows: pd.DataFrame,
+    hi_group: str,
+    lo_group: str,
+) -> dict[str, object]:
+    """hi/lo 任意两组的罚分跨半稳定性 (参与日按日期序对半分 — zero_hit_day 同款切分).
 
     R15 合取判据镜像: 方向跨半一致才"具备资格", 任一半 n<MIN_CELL_N →
     不可判定; 判定的是资格不是授权 (判读属 owner 评估门)。
+    penalty = E(hi) − E(lo) (正值 = lo 侧罚分)。
+    R168 Op1 泛化: split_half_verdict 的组参数化单一实现。
     """
     days = sorted(rows["signal_date"].unique())
     if len(days) < 2:
@@ -206,22 +231,22 @@ def split_half_verdict(rows: pd.DataFrame) -> dict[str, object]:
         ("前半", rows[rows["signal_date"] < cut]),
         ("后半", rows[rows["signal_date"] >= cut]),
     ):
-        d1 = sub[sub["group"] == "d1"]["net"]
-        d25 = sub[sub["group"] == "d2_5"]["net"]
-        e1 = float(d1.mean()) if len(d1) else None
-        e2 = float(d25.mean()) if len(d25) else None
+        lo = sub[sub["group"] == lo_group]["net"]
+        hi = sub[sub["group"] == hi_group]["net"]
+        e_lo = float(lo.mean()) if len(lo) else None
+        e_hi = float(hi.mean()) if len(hi) else None
         halves.append(
             {
                 "half": name,
-                "n_d1": int(len(d1)),
-                "n_d2_5": int(len(d25)),
-                "e_d1": e1,
-                "e_d2_5": e2,
-                "penalty": (e2 - e1) if (e1 is not None and e2 is not None) else None,
-                "decidable": e1 is not None
-                and e2 is not None
-                and len(d1) >= MIN_CELL_N
-                and len(d25) >= MIN_CELL_N,
+                "n_lo": int(len(lo)),
+                "n_hi": int(len(hi)),
+                "e_lo": e_lo,
+                "e_hi": e_hi,
+                "penalty": (e_hi - e_lo) if (e_lo is not None and e_hi is not None) else None,
+                "decidable": e_lo is not None
+                and e_hi is not None
+                and len(lo) >= MIN_CELL_N
+                and len(hi) >= MIN_CELL_N,
             }
         )
     penalties = [h["penalty"] for h in halves if h["decidable"]]
@@ -234,8 +259,38 @@ def split_half_verdict(rows: pd.DataFrame) -> dict[str, object]:
     return {"verdict": verdict, "consistent": consistent, "halves": halves}
 
 
-def strength_cross(u: pd.DataFrame, prox: dict[str, str]) -> list[dict[str, object]]:
-    """强度桶 × 邻近度交叉 (t10; n<MIN_CELL_N 只披露不判定 — R131 同门)."""
+def split_half_verdict(rows: pd.DataFrame) -> dict[str, object]:
+    """d1 罚分跨半稳定性 (参与日按日期序对半分 — zero_hit_day 同款切分).
+
+    R15 合取判据镜像: 方向跨半一致才"具备资格", 任一半 n<MIN_CELL_N →
+    不可判定; 判定的是资格不是授权 (判读属 owner 评估门)。
+    R168 Op1 起委托 split_half_stability 泛化实现 (键名保持 R166 payload 契约)。
+    """
+    generic = split_half_stability(rows, "d2_5", "d1")
+    renamed_halves = [
+        {
+            "half": h["half"],
+            "n_d1": h["n_lo"],
+            "n_d2_5": h["n_hi"],
+            "e_d1": h["e_lo"],
+            "e_d2_5": h["e_hi"],
+            "penalty": h["penalty"],
+            "decidable": h["decidable"],
+        }
+        for h in generic["halves"]
+    ]
+    return {"verdict": generic["verdict"], "consistent": generic["consistent"], "halves": renamed_halves}
+
+
+def strength_cross(
+    u: pd.DataFrame,
+    prox: dict[str, str],
+    groups: tuple[str, ...] = ("d1", "d2_5"),
+) -> list[dict[str, object]]:
+    """强度桶 × 邻近度交叉 (t10; n<MIN_CELL_N 只披露不判定 — R131 同门).
+
+    R168 Op1 起组集合参数化 (默认 ("d1","d2_5") 保持 R166 行为逐字节不变)。
+    """
     col = HORIZON_COLS[PRIMARY_HORIZON]
     sub = u[u[col].notna()]
     nets = net_returns(sub[col].astype(float).tolist())
@@ -251,7 +306,7 @@ def strength_cross(u: pd.DataFrame, prox: dict[str, str]) -> list[dict[str, obje
     rows["bucket"] = rows["strength"].map(strength_bucket)
     out = []
     for bucket in ALL_STRENGTH_BUCKETS:
-        for group in ("d1", "d2_5"):
+        for group in groups:
             cell = rows[(rows["bucket"] == bucket) & (rows["group"] == group)]
             stats = win_loss_stats(cell["net"].tolist(), cell["signal_date"].tolist())
             out.append({"bucket": bucket, "group": group, **stats})
