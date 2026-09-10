@@ -2747,17 +2747,20 @@ def _release_schedule_clause(
     reserved_exposure: Any,
     as_of: Any,
 ) -> str | None:
-    """到期释放日程聚合行 (R162 Op1, v1 C-DAILY-ACTION-POSITION-VISIBILITY 第三项
-    迁移恢复) — 前瞻回答「最近到期日释放多少敞口 / 释放后是否降回上限内可恢复出
-    新仓」: per-row 到期子句 (R159) 只给单仓日期, 同日 cohort 合计与 cap 恢复只能
-    operator 对持仓区逐行心算 (0831 cohort 五仓 9/14 同日释放形态)。
+    """到期释放日程聚合行 (R162 Op1 恢复, R164 Op1 多期扩展) — 前瞻回答「各到期
+    日各释放多少敞口 / 全部敞口何时恢复出新仓」: per-row 到期子句 (R159) 只给单仓
+    日期, 同日 cohort 合计、跨日复合扣减与 cap 恢复只能 operator 对持仓区逐行心算
+    (0831 cohort 五仓 9/14 + 9/15 + 9/21 三期释放形态)。
 
-    v1『最近到期』聚合行同款语义: 仅统计未来到期 (days>0), 最近到期日 cohort
-    合计。敞口基数沿用 v2 敞口行两项口径 (持仓 mark + 待成交计划 — 待成交不因
-    释放消失, 从合计扣减才诚实), 释放侧用 mark_weight 与 mark 口径总敞口同基准。
-    fail-open 家族 (R157/R158/R159 同款): as_of 非 date (含 datetime 子类) /
-    无未来到期 / cohort 任一 mark_weight 或敞口非有限实数 → None, 渲染层省略
-    整行, 主视图不受影响。
+    首段保持 v1『最近到期』聚合行逐字节同款语义: 仅统计未来到期 (days>0), 最近
+    到期日 cohort 合计; 其后各到期日按升序追加『；M/D 释放 N 只 / X% 敞口 → 约
+    Y%』, after 按累计释放复合扣减 (待成交计划不因释放消失, 从合计扣减才诚实),
+    释放侧用 mark_weight 与 mark 口径总敞口同基准。cap 注记恰出现一次, 落在首个
+    降回上限的段; 无任何段恢复时落在末段 (单 cohort 场景因此与 v1 逐字节一致)。
+    fail-open 家族 (R157/R158/R159/R162 同款): as_of 非 date (含 datetime 子类) /
+    无未来到期 / 任一未来 cohort 的 mark_weight 或敞口非有限实数 → None, 渲染层
+    省略整行, 主视图不受影响 — 守卫覆盖全部 cohort (诚实缺位优于干净 cohort 的
+    局部聚合残缺数字)。
     """
     if not isinstance(as_of, date) or isinstance(as_of, datetime):
         return None
@@ -2775,10 +2778,8 @@ def _release_schedule_clause(
                 dated.append((maturity, position))
         if not dated:
             return None
-        soonest = min(maturity for maturity, _position in dated)
-        cohort = [position for maturity, position in dated if maturity == soonest]
-        weights: list[float] = []
-        for position in cohort:
+        weights_by_date: dict[date, list[float]] = {}
+        for maturity, position in sorted(dated, key=lambda item: item[0]):
             weight = getattr(position, "mark_weight", None)
             if (
                 not isinstance(weight, Real)
@@ -2786,7 +2787,7 @@ def _release_schedule_clause(
                 or not math.isfinite(weight)
             ):
                 return None
-            weights.append(float(weight))
+            weights_by_date.setdefault(maturity, []).append(float(weight))
         if not (
             isinstance(open_exposure, Real)
             and not isinstance(open_exposure, bool)
@@ -2796,20 +2797,34 @@ def _release_schedule_clause(
             and math.isfinite(reserved_exposure)
         ):
             return None
-        release_pct = sum(weights)
         total_exposure = float(open_exposure) + float(reserved_exposure)
-        after_exposure = max(0.0, total_exposure - release_pct)
-        days = (soonest - as_of).days
-        cap_note = (
-            f"（仍超 {_MAX_PORTFOLO_PCT:.0%} 上限，需继续等待）"
-            if after_exposure > _MAX_PORTFOLO_PCT + 1e-9
-            else "（降回上限内，可恢复出新仓）"
-        )
-        return (
-            f"释放日程：最近到期 {soonest.month}/{soonest.day}（剩{days}天）"
-            f"释放 {len(cohort)} 只 / {release_pct:.0%} 敞口"
-            f" → 约 {after_exposure:.0%}{cap_note}"
-        )
+        cap_ceiling = _MAX_PORTFOLO_PCT + 1e-9
+        segments: list[str] = []
+        recovered = False
+        cumulative_release = 0.0
+        for index, (maturity, weights) in enumerate(weights_by_date.items()):
+            release_pct = sum(weights)
+            cumulative_release += release_pct
+            after_exposure = max(0.0, total_exposure - cumulative_release)
+            if index == 0:
+                days = (maturity - as_of).days
+                segment = (
+                    f"释放日程：最近到期 {maturity.month}/{maturity.day}（剩{days}天）"
+                    f"释放 {len(weights)} 只 / {release_pct:.0%} 敞口"
+                )
+            else:
+                segment = (
+                    f"；{maturity.month}/{maturity.day} "
+                    f"释放 {len(weights)} 只 / {release_pct:.0%} 敞口"
+                )
+            segment += f" → 约 {after_exposure:.0%}"
+            if not recovered and after_exposure <= cap_ceiling:
+                segment += "（降回上限内，可恢复出新仓）"
+                recovered = True
+            segments.append(segment)
+        if not recovered:
+            segments[-1] += f"（仍超 {_MAX_PORTFOLO_PCT:.0%} 上限，需继续等待）"
+        return "".join(segments)
     except (TypeError, ValueError, KeyError, OSError):
         return None
 

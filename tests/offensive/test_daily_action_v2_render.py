@@ -3295,3 +3295,126 @@ def test_release_schedule_line_excludes_past_maturity(tmp_path):
     view = DailyActionV2Run(run, (), (past,), (), ())
     text = render_daily_action_v2(view)
     assert "释放日程" not in text
+
+
+# ---------- R164 Op1: 释放日程多期扩展 (R163 登记不修①: 全日程表) ----------
+
+def test_release_schedule_line_shows_all_future_cohorts(tmp_path):
+    """双未来日期 → 首段保持『最近到期』逐字节同款语义, 第二段按升序追加
+    后续 cohort 复合扣减 (after = 总敞口 − 累计释放), 不再只显最近一期."""
+    from dataclasses import replace as dc_replace
+
+    run, sessions, _t, _r = _run_with_open_position(tmp_path)
+    first = run.open_positions[0]
+    later = dc_replace(
+        first, trade_id="t-later", projected_exit_date=sessions[25], mark_weight=0.2
+    )
+    view = DailyActionV2Run(run, (), (first, later), (), ())
+    text = render_daily_action_v2(view)
+    line = next(line for line in text.splitlines() if "释放日程" in line)
+    total = run.open_exposure + run.reserved_exposure
+    first_weight = first.mark_weight
+    after1 = max(0.0, total - first_weight)
+    after2 = max(0.0, total - first_weight - 0.2)
+    assert (
+        f"释放日程：最近到期 9/10（剩4天）释放 1 只 / {first_weight:.0%} 敞口"
+        f" → 约 {after1:.0%}（降回上限内，可恢复出新仓）"
+    ) in line
+    later_day = f"{sessions[25].month}/{sessions[25].day}"
+    assert f"；{later_day} 释放 1 只 / 20% 敞口 → 约 {after2:.0%}" in line
+
+
+def test_release_schedule_line_cap_note_follows_recovery_segment(tmp_path):
+    """首段释放后仍超上限 → 注记不落首段, 落在首个降回上限的段 (恢复时点
+    在多期日程上显形 — 操作员看到的是哪一期恢复出新仓)."""
+    from dataclasses import replace as dc_replace
+
+    run, sessions, _t, _r = _run_with_open_position(tmp_path)
+    service_run = dc_replace(run, open_exposure=0.5, reserved_exposure=0.25)
+    first = dc_replace(run.open_positions[0], mark_weight=0.10)
+    later = dc_replace(
+        first, trade_id="t-later", projected_exit_date=sessions[25], mark_weight=0.30
+    )
+    view = DailyActionV2Run(service_run, (), (first, later), (), ())
+    text = render_daily_action_v2(view)
+    line = next(line for line in text.splitlines() if "释放日程" in line)
+    assert "→ 约 65%；" in line
+    later_day = f"{sessions[25].month}/{sessions[25].day}"
+    assert f"；{later_day} 释放 1 只 / 30% 敞口 → 约 35%（降回上限内，可恢复出新仓）" in line
+
+
+def test_release_schedule_line_never_recovers_note_on_last_segment(tmp_path):
+    """全程不恢复 → 『仍超上限，需继续等待』注记只落末段, 首段无注记
+    (数字继续可见, 注记恰出现一次)."""
+    from dataclasses import replace as dc_replace
+
+    run, sessions, _t, _r = _run_with_open_position(tmp_path)
+    service_run = dc_replace(run, open_exposure=0.5, reserved_exposure=0.25)
+    first = dc_replace(run.open_positions[0], mark_weight=0.05)
+    later = dc_replace(
+        first, trade_id="t-later", projected_exit_date=sessions[25], mark_weight=0.05
+    )
+    view = DailyActionV2Run(service_run, (), (first, later), (), ())
+    text = render_daily_action_v2(view)
+    line = next(line for line in text.splitlines() if "释放日程" in line)
+    later_day = f"{sessions[25].month}/{sessions[25].day}"
+    assert f"释放 1 只 / 5% 敞口 → 约 70%；{later_day} 释放 1 只 / 5% 敞口 → 约 65%（仍超 60% 上限，需继续等待）" in line
+    assert line.count("仍超 60% 上限") == 1
+
+
+def test_release_schedule_line_poisoned_later_cohort_omits_line(tmp_path):
+    """后续 cohort 任一 mark_weight 毒化 → 整行省略 (R162 最近 cohort 守卫
+    纪律的自然扩员: 诚实缺位优于『干净 cohort 局部聚合』的残缺数字)."""
+    from dataclasses import replace as dc_replace
+
+    run, sessions, _t, _r = _run_with_open_position(tmp_path)
+    for poison in (float("nan"), True, "5%", None):
+        first = run.open_positions[0]
+        later = dc_replace(
+            first,
+            trade_id="t-later",
+            projected_exit_date=sessions[25],
+            mark_weight=poison,
+        )
+        view = DailyActionV2Run(run, (), (first, later), (), ())
+        text = render_daily_action_v2(view)
+        assert "释放日程" not in text, f"poison={poison!r} 未被守卫"
+
+
+def test_release_schedule_line_later_cohort_aggregates_same_date(tmp_path):
+    """后续到期日同日多仓 → 该段按 cohort 合计只数与释放敞口 (0831 形态
+    在后续期位的同款语义)."""
+    from dataclasses import replace as dc_replace
+
+    run, sessions, _t, _r = _run_with_open_position(tmp_path)
+    first = run.open_positions[0]
+    later_a = dc_replace(
+        first, trade_id="t-later-a", projected_exit_date=sessions[25], mark_weight=0.2
+    )
+    later_b = dc_replace(
+        first, trade_id="t-later-b", projected_exit_date=sessions[25], mark_weight=0.2
+    )
+    view = DailyActionV2Run(run, (), (first, later_a, later_b), (), ())
+    text = render_daily_action_v2(view)
+    line = next(line for line in text.splitlines() if "释放日程" in line)
+    later_day = f"{sessions[25].month}/{sessions[25].day}"
+    assert f"；{later_day} 释放 2 只 / 40% 敞口" in line
+
+
+def test_release_schedule_line_later_cohort_zero_weight_shown(tmp_path):
+    """后续 cohort falsy-zero 钉住 (R163 同族): 0.0 → 『0% 敞口』必须显示,
+    after 不受零释放影响."""
+    from dataclasses import replace as dc_replace
+
+    run, sessions, _t, _r = _run_with_open_position(tmp_path)
+    first = run.open_positions[0]
+    later = dc_replace(
+        first, trade_id="t-later", projected_exit_date=sessions[25], mark_weight=0.0
+    )
+    view = DailyActionV2Run(run, (), (first, later), (), ())
+    text = render_daily_action_v2(view)
+    line = next(line for line in text.splitlines() if "释放日程" in line)
+    total = run.open_exposure + run.reserved_exposure
+    later_day = f"{sessions[25].month}/{sessions[25].day}"
+    assert f"；{later_day} 释放 1 只 / 0% 敞口" in line
+    assert f"→ 约 {total - first.mark_weight:.0%}" in line
