@@ -272,6 +272,21 @@ def test_sensitivity_grid_world_b_hetero_no_impossible(tmp_path: Path) -> None:
     assert obs["day_mean_spread"] == pytest.approx(0.0435 - (-0.084))
     assert payload["anchor_inversion"]["required_hidden_share_point"] is not None
 
+    # P-p 钉住: targets.current_ci_low 的源是 current_ci.ci_low (非 ci_high)
+    # — 精确相等断言 (非 approx): 同质/异质 fixture 的 CI 都退化为点
+    # (双簇 bootstrap), 宽度仅浮点噪声 ~1e-17, approx 容差会吞掉 low/high
+    # 差异 (R13/R178 同族 fixture 对称掩盖教训); 精确相等下源互换即刻暴露.
+    ci_low = obs["current_ci"]["ci_low"]
+    assert payload["targets"]["current_ci_low"] == ci_low
+    ci_high = obs["current_ci"]["ci_high"]
+    assert ci_low is not None and ci_high is not None
+    grid_b = {row["phi"]: row for row in payload["sensitivity_grid"]}
+    cl_row = grid_b[0.5]["to_current_ci_low"]
+    expected_cl = (ci_low - 0.5 * p_obs) / 0.5
+    assert (
+        cl_row["required_hidden_differential"] == pytest.approx(expected_cl)
+    )
+
 
 def test_world_c_no_gap_to_explain(tmp_path: Path) -> None:
     """World C (P_cur=0.04 < P_obs=0.10): 无点差解释需求 — 单调性假形态."""
@@ -539,3 +554,75 @@ def test_nightly_chain_membership() -> None:
     from src.screening.offensive.court_nightly_refresh import DIAGNOSTIC_SCRIPTS
 
     assert "scripts/regime_run_survivorship_sensitivity_validation.py" in DIAGNOSTIC_SCRIPTS
+
+
+# ---------------------------------------------------------------------------
+# R180 Op2 对抗审查钉住 — 探针实锤的无牙缺口 (P-f/P-j/P-k/P-l/P-p)
+# ---------------------------------------------------------------------------
+def test_phi_grid_literal_preregistered() -> None:
+    """P-k 钉住: phi 网格是预注册披露参数 — 字面漂移 (0.10→0.12) 即暴露.
+
+    PHI_GRID 是载荷与渲染的共享常量, 测试经同一 symbol 消费时字面漂移
+    不可见 (自引用); 网格点集本身是轴定义的一部分, 逐值钉死.
+    """
+    from scripts.regime_run_survivorship_sensitivity_validation import (
+        PHI_GRID as _GRID,
+    )
+
+    assert _GRID == (0.05, 0.10, 0.15, 0.20, 0.30, 0.50)
+
+
+def test_render_grid_row_column_order_and_exact_values(tmp_path: Path) -> None:
+    """P-j 钉住: 渲染网格列序 (delta_h 列在 level 列左) + 精确形态.
+
+    R171 M-f / R177 P-j / R178 P-j / R179 P-j 同族显示面缺口第四次复活 —
+    列互换或值漂移在此当场暴露 (点目标三列子串精确锚定).
+    """
+    from scripts.regime_run_survivorship_sensitivity_validation import render_md
+
+    current, early = _world(cur_blip=0.25)
+    payload = _payload(tmp_path, current, early)
+    text = render_md(payload, "20260911")
+    # World A (同质): phi=0.50 行 — delta_h=+50.00% 在 level=-45.65% 之前
+    assert "| 0.50 | 40 | +50.00% | -45.65% | ⚠ |" in text
+    assert "| 0.05 | 4 | +410.00% | -405.65% | ⚠ |" in text
+    # 互换形态 (探针 P-j 的输出形态) 不得出现
+    assert "| 0.50 | 40 | -45.65% | +50.00% |" not in text
+
+
+def test_row_min_full_era_anchor_and_asymmetric_pool(tmp_path: Path) -> None:
+    """P-f + P-l 钉住: row_min 锚点覆盖全时代 (d2 极端行) + 非对称池计数.
+
+    P-f: 极端行在 d1 池之外 (d2_blip, 独立信号日) — 全时代最差单行
+    -0.6065 显著低于 d1 池内最小值 -0.0565; 锚点面收缩 (d1_run 池) 在此
+    当场暴露 (不可能区从 [0.05,0.10] 扩成全网格).
+    P-l: 池计数非对称 (blip 40 / run 35) — n_blip/n_run 互换在此暴露.
+    """
+    current, early = _world(cur_blip=0.25)
+    run_idx = early[early["symbol"].str.contains("_d1_run_")].index[:5]
+    early = early.drop(run_idx)
+    extreme = _single_row("d2_blip", "e_d2_blip_extreme", "20260104", -0.60)
+    early = pd.concat([early, pd.DataFrame([extreme])], ignore_index=True)
+    payload = _payload(tmp_path, current, early)
+
+    obs = payload["observed"]
+    assert obs["row_min"] == pytest.approx(-0.60 - COST)
+    pool = payload["pool"]
+    assert pool["n_blip"] == 40
+    assert pool["n_run"] == 35
+    assert pool["n_pool"] == 75
+    # 锚点面: 阈值 = e_blip − row_min = 0.65; delta_h 网格
+    # 1.367/0.687/1.433/1.100/0.767/0.500 → 不可能区恰为 [0.05..0.30]
+    # (P-f 收缩后 row_min=-0.0565 → 阈值=0.10 → 全网格燃烧 — 即刻暴露)
+    assert payload["verdict"]["impossible_region_phi"] == [
+        0.05, 0.10, 0.15, 0.20, 0.30,
+    ]
+    # 锚点反演: spread = 0.0435 − (−0.6065) = 0.65 > target=0.30
+    assert obs["day_mean_spread"] == pytest.approx(0.0435 - (-0.60 - COST))
+    inv = payload["anchor_inversion"]
+    assert inv["required_hidden_share_point"] == pytest.approx(0.20 / 0.55)
+    # φ=0.50 处 level=-0.4565 > row_min=-0.6065 → 旗标假 (与 World A 相反形态)
+    grid = {row["phi"]: row for row in payload["sensitivity_grid"]}
+    assert (
+        grid[0.5]["to_current_point"]["level_below_row_min_impossible"] is False
+    )
