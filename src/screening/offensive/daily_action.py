@@ -1730,6 +1730,87 @@ def _crisis_streak(
     return streak, labeled[-1][0]
 
 
+_REENTRY_EVIDENCE_AS_OF = "2026-09-10"
+
+
+def _render_reentry_proximity_line(
+    run: Any,
+    regimes_by_date: Mapping[str, str] | None = None,
+) -> str | None:
+    """重入邻近度披露行 (R176 Op1): d1 信号日的 blip/run 形态区分。
+
+    R168 决定性对比 (d1_blip +1.77%/胜率 53.7% vs d1_run −5.74%/30.8%,
+    配对聚类差 CI90 [+2.49%,+11.94%] 清晰越零) 与 R166 邻近度轴 (d1
+    E=−1.43%, 占生产对齐池 49%) 此前只存在于夜刷诊断报告 — regime gate
+    只拦阻断日自身, 危机后首个 normal 信号日的 BUY 视图与平常逐字节相同,
+    而 crisis↔normal 翻转期 (2026-09) 重入决策迫近。会话算术 =
+    regime_session_geometry.run_geometry 单一实现 (与邻近度/连跑诊断工具
+    同源 — 操作员看到的形态即证据轴的形态)。
+
+    形态边界预注册 2026-09-11: 只披露 dist==1 (决定性对比所在轴); d2+ 不
+    披露 (R168: d2_run 已恢复 +1.87%, 无决定性结构)。注册证据数字 (R168
+    截至 2026-09-10) 是 static 标注 — 陈旧由显式 as-of 日期自暴露, 当期
+    数字走夜刷 regime_blocked_run_conditioning 报告指针。
+
+    纯披露 (宪法 #2): 本行不进入任何计划/评分/仓位/退出决策路径; 任何
+    重入条件收紧 = 策略行为变化 = owner 决策 + 新证据世代。fail-open
+    家族纪律 (R85/R109/R115/R149/R157 同族): regime 史缺失/为空/trade_date
+    非 date 形态 → 整行省略; 非 d1 形态 (blocked/d2+/no_prior/unknown) →
+    整行省略; 任意输入畸形 → typed-exception → 整行省略。测试可注入
+    regimes_by_date (R10: slot 内无 data/ 工件, 注入保证自足); None 时
+    生产路径经 _load_regime_history() 读取。
+    """
+    try:
+        from src.screening.offensive.regime_session_geometry import run_geometry
+
+        history = (
+            _load_regime_history() if regimes_by_date is None else regimes_by_date
+        )
+        as_of = getattr(getattr(run, "service_run", None), "trade_date", None)
+        if (
+            not isinstance(history, Mapping)
+            or not history
+            or not isinstance(as_of, date)
+        ):
+            return None
+        labels = {str(key): str(value) for key, value in history.items()}
+        form, dist, run_len, run_labels = run_geometry(
+            as_of.strftime("%Y%m%d"), sorted(labels), labels
+        )
+        if form != "normal" or dist != 1:
+            return None
+        evidence = (
+            f"注册证据（R168，截至 {_REENTRY_EVIDENCE_AS_OF}）；当期数字见夜刷 "
+            "regime_blocked_run_conditioning 报告"
+        )
+        if run_len >= 2:
+            parts: list[str] = []
+            ordered = list(run_labels)
+            i = 0
+            while i < len(ordered):
+                j = i
+                while j < len(ordered) and ordered[j] == ordered[i]:
+                    j += 1
+                n = j - i
+                parts.append(ordered[i] if n == 1 else f"{ordered[i]}×{n}")
+                i = j
+            stretch = "/".join(parts)
+            return (
+                f"重入邻近度：d1_run 形态（距上一阻断日 1 个会话；前导连跑 "
+                f"{run_len} 日：{stretch}）— {evidence}：该形态历史深负"
+                f"（E=-5.74%，胜率 30.8%），单日闪断后 d1_blip 反为正"
+                f"（E=+1.77%，胜率 53.7%），配对差 CI90 [+2.49%,+11.94%] 越零。"
+                f"纯披露不判定（宪法 #2）"
+            )
+        return (
+            f"重入邻近度：d1_blip 形态（距上一阻断日 1 个会话；前导阻断 1 日）"
+            f"— {evidence}：该形态历史为正（E=+1.77%，胜率 53.7%），与连跑后 "
+            f"d1_run（-5.74%/30.8%）相反。纯披露不判定（宪法 #2）"
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def _render_stop_loss_readiness_line(
     run: Any,
     regimes_by_date: Mapping[str, str] | None = None,
@@ -2913,6 +2994,14 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
             else "（⚠ 该 regime 阻断新仓，今日不应有新计划）"
         )
         lines.append(f"Regime：{run.regime}{gate_note}")
+        lines.append("")
+    # 重入邻近度披露行 (R176 Op1): d1 信号日 blip/run 形态区分 — R168 决定性
+    # 对比此前只在夜刷诊断报告, 操作员在危机后首个 normal 信号日的视图与
+    # 平常逐字节相同。fail-open 家族 (输入缺失/非 d1 形态整行省略),
+    # 披露不是行为改变 (宪法 #2)。
+    reentry_line = _render_reentry_proximity_line(run)
+    if reentry_line:
+        lines.append(reentry_line)
         lines.append("")
     # 止损启用条件读数行 (R157 Op1, 清单项 5): 两个启用判读输入 (连续 crisis
     # 天数 / 回撤相对 -15% 参考线余量) 的日度合取显形 — 此前分居本行 (单日

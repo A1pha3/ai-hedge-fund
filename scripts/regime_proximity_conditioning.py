@@ -49,6 +49,10 @@ from src.screening.offensive.threshold_trigger import (
     ALL_STRENGTH_BUCKETS,
     strength_bucket,
 )
+from src.screening.offensive.regime_session_geometry import (
+    BLOCKED_REGIMES,
+    is_blocked as _is_blocked,
+)
 
 COURT_TABLE_DEFAULT = Path("data/research/btst_court/event_tables/event_table_v1.csv.gz")
 REGIME_HISTORY_DEFAULT = Path("data/reports/regime_history.json")
@@ -59,7 +63,6 @@ PRIMARY_HORIZON = 10
 CONTRAST_HORIZONS = (5,)
 HORIZON_COLS = {10: "gross_ret_t10", 5: "gross_ret_t5"}
 
-BLOCKED_REGIMES = ("crisis", "risk_off")
 PROXIMITY_ORDER: tuple[str, ...] = ("d1", "d2_5", "d6p", "no_prior", "unknown")
 TABLE_GROUPS: tuple[str, ...] = (*PROXIMITY_ORDER, "blocked")  # blocked 参照行恒 n=0 (gate 不变量可见化)
 UNKNOWN_GROUP = "unknown"
@@ -75,10 +78,6 @@ GROUP_LABELS: dict[str, str] = {
 
 class RegimeProximityError(SystemExit):
     """输入缺失/畸形 — typed fail-closed, 绝不产空报告冒充成功."""
-
-
-def _is_blocked(label: object) -> bool:
-    return label in BLOCKED_REGIMES
 
 
 def proximity_group(signal_date: str, sessions: list[str], labels: dict[str, str]) -> str:

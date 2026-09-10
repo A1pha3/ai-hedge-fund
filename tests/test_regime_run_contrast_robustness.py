@@ -23,6 +23,7 @@ R168 的 d1_blip vs d1_run 配对聚类差是工作线首个统计决定性对�
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -367,8 +368,11 @@ class TestAnalyzeRenderMain:
             "--report-dir", str(tmp_path),
         ])
         assert rc == 0
-        assert (tmp_path / f"{REPORT_STEM}_20260910.md").exists()
-        assert (tmp_path / f"{REPORT_STEM}_20260910.json").exists()
+        # 工具 main 无 --date 参数 (家族旁支), 报告日 = 当时钟 — 断言与工具同钟,
+        # 消除硬编码日期的跨日轮转失败 (2026-09-11 实锤)
+        report_day = date.today().strftime("%Y%m%d")
+        assert (tmp_path / f"{REPORT_STEM}_{report_day}.md").exists()
+        assert (tmp_path / f"{REPORT_STEM}_{report_day}.json").exists()
 
     def test_empty_universe_typed(self, tmp_path):
         empty = pd.DataFrame([_event_row("20260103", "normal", 0.0, symbol="X")])

@@ -62,6 +62,10 @@ from scripts.winrate_payoff_decomposition import (
     win_loss_stats,
 )
 from src.screening.offensive.threshold_trigger import ALL_STRENGTH_BUCKETS
+from src.screening.offensive.regime_session_geometry import (
+    is_blocked as _is_blocked,
+    run_geometry,
+)
 
 REPORT_STEM = "regime_blocked_run_conditioning"
 
@@ -93,44 +97,6 @@ GROUP_LABELS: dict[str, str] = {
 
 class RegimeBlockedRunError(SystemExit):
     """输入缺失/畸形 — typed fail-closed, 绝不产空报告冒充成功."""
-
-
-def _is_blocked(label: object) -> bool:
-    return label in BLOCKED_REGIMES
-
-
-def run_geometry(
-    signal_date: str, sessions: list[str], labels: dict[str, str]
-) -> tuple[str, int, int, tuple[str, ...]]:
-    """信号日 → (形态, 距离, 前导连跑长度, 连跑 label 序) 会话索引算术.
-
-    R170 Op1 原地泛化 (blocked_run_group 的单一实现上移, 算术逐字保留):
-    - 形态: "blocked" 自身即阻断日 / "unknown" 不在会话序 / "no_prior"
-      窗口内无阻断日 / "normal" 有前导阻断日;
-    - dist = 信号日索引 − 最后一个阻断日索引 (≥1; 非 normal 形态为 0);
-    - run = 结束于该阻断日的连续阻断日计数 (被 normal 日打断重新计,
-      更早的阻断段不延伸); run_labels 为该段自近及远的 label 序;
-    - 距离/连跑 → 组名映射见 blocked_run_group (本函数不编码组名)。
-    """
-    index = {s: i for i, s in enumerate(sessions)}
-    idx = index.get(signal_date)
-    if idx is None:
-        return ("unknown", 0, 0, ())
-    if _is_blocked(labels.get(signal_date, "")):
-        return ("blocked", 0, 0, ())
-    j = idx - 1
-    while j >= 0 and not _is_blocked(labels.get(sessions[j], "")):
-        j -= 1
-    if j < 0:
-        return ("no_prior", 0, 0, ())
-    run = 0
-    k = j
-    run_labels: list[str] = []
-    while k >= 0 and _is_blocked(labels.get(sessions[k], "")):
-        run += 1
-        run_labels.append(labels.get(sessions[k], ""))
-        k -= 1
-    return ("normal", idx - j, run, tuple(run_labels))
 
 
 def blocked_run_group(

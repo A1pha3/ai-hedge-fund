@@ -8,6 +8,7 @@ prefilter→hits 之间此前是黑箱: 0828 零命中日 (85 prefilter→0 命�
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from types import SimpleNamespace
 from pathlib import Path
 
 import json
@@ -18,6 +19,7 @@ from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
 from src.screening.offensive.daily_action import (
     DailyActionV2Run,
     ScanFunnel,
+    _render_reentry_proximity_line,
     _render_stop_loss_readiness_line,
     render_daily_action_v2,
 )
@@ -3449,3 +3451,123 @@ def test_release_schedule_line_later_cohort_zero_weight_shown(tmp_path):
     later_day = f"{sessions[25].month}/{sessions[25].day}"
     assert f"；{later_day} 释放 1 只 / 0% 敞口" in line
     assert f"→ 约 {total - first.mark_weight:.0%}" in line
+
+
+# ---------- R176 Op1: d1 重入邻近度披露行 ----------
+
+def _reentry_history():
+    """3 日 crisis 连跑后首个 normal 信号日 (d1_run) 的注入史."""
+    return {
+        "20260817": "normal",
+        "20260818": "crisis",
+        "20260819": "crisis",
+        "20260820": "crisis",
+        "20260821": "normal",
+    }
+
+
+def test_reentry_line_d1_run_renders_registered_evidence():
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=_reentry_history())
+    assert line is not None
+    assert "d1_run 形态" in line
+    assert "前导连跑 3 日：crisis×3" in line
+    assert "E=-5.74%" in line
+    assert "E=+1.77%" in line
+    assert "CI90 [+2.49%,+11.94%]" in line
+    assert "截至 2026-09-10" in line
+    assert "纯披露不判定" in line
+
+
+def test_reentry_line_d1_blip_variant():
+    history = dict(_reentry_history(), **{"20260819": "normal"})
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=history)
+    assert line is not None
+    assert "d1_blip 形态" in line
+    assert "前导阻断 1 日" in line
+    assert "E=+1.77%" in line
+    assert "纯披露不判定" in line
+
+
+def test_reentry_line_mixed_stretch_labels():
+    history = {
+        "20260818": "risk_off",
+        "20260819": "crisis",
+        "20260820": "crisis",
+        "20260821": "normal",
+    }
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=history)
+    assert line is not None
+    assert "crisis×2/risk_off" in line
+
+
+def test_reentry_line_omitted_on_non_d1_forms():
+    # d2 日
+    history = dict(_reentry_history(), **{"20260821": "normal", "20260824": "normal"})
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 24)))
+    assert _render_reentry_proximity_line(run, regimes_by_date=history) is None
+    # 阻断日自身 (gate 行已覆盖)
+    blocked_run = SimpleNamespace(
+        service_run=SimpleNamespace(trade_date=date(2026, 8, 20))
+    )
+    assert (
+        _render_reentry_proximity_line(blocked_run, regimes_by_date=_reentry_history())
+        is None
+    )
+    # 窗口内无阻断日
+    calm = {d: "normal" for d in _reentry_history()}
+    calm_run = SimpleNamespace(
+        service_run=SimpleNamespace(trade_date=date(2026, 8, 21))
+    )
+    assert _render_reentry_proximity_line(calm_run, regimes_by_date=calm) is None
+    # 信号日不在会话序
+    ghost_run = SimpleNamespace(
+        service_run=SimpleNamespace(trade_date=date(2026, 9, 30))
+    )
+    assert (
+        _render_reentry_proximity_line(ghost_run, regimes_by_date=_reentry_history())
+        is None
+    )
+
+
+def test_reentry_line_fail_open_family():
+    # 缺史
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    assert _render_reentry_proximity_line(run, regimes_by_date=None) is None
+    assert _render_reentry_proximity_line(run, regimes_by_date={}) is None
+    # trade_date 非 date 形态 (R157 Op2 同族输入契约)
+    str_run = SimpleNamespace(service_run=SimpleNamespace(trade_date="20260821"))
+    assert (
+        _render_reentry_proximity_line(str_run, regimes_by_date=_reentry_history())
+        is None
+    )
+    none_run = SimpleNamespace(service_run=SimpleNamespace(trade_date=None))
+    assert (
+        _render_reentry_proximity_line(none_run, regimes_by_date=_reentry_history())
+        is None
+    )
+    # service_run 缺失
+    assert _render_reentry_proximity_line(SimpleNamespace(), regimes_by_date=_reentry_history()) is None
+
+
+def test_reentry_line_end_to_end_in_report(case, monkeypatch):
+    """报告级集成: d1_run 日 render_daily_action_v2 输出含披露行."""
+    from src.screening.offensive import daily_action as da
+
+    # case fixture as_of = 2026-08-20: 3 日危机连跑后的首个 normal 信号日 (d1_run)
+    history = {
+        "20260817": "crisis",
+        "20260818": "crisis",
+        "20260819": "crisis",
+        "20260820": "normal",
+    }
+    monkeypatch.setattr(da, "_load_regime_history", lambda: history)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    assert "重入邻近度：d1_run 形态" in text
+    assert "纯披露不判定" in text
