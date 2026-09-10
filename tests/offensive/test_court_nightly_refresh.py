@@ -166,6 +166,8 @@ class TestNightlyDiagnosticsRefresh:
         # 唯一仍靠手动运行的成员, 同门接线; bare 可跑/相对 cwd/无必需参数)。
         # R156 Op1: + selection/exit anatomy (最后两个手动面入链, R155 Op2
         # 登记的 frontier 开放项; 宿主实测裸跑 10.9s/16.4s ≪ 600s)。
+        # R166 Op1: + regime_proximity_conditioning (邻近度轴 d1/d2_5/d6p,
+        # owner 胜率/赔率工作线新维度; 同门接线第 5 次)。
         assert DIAGNOSTIC_SCRIPTS == (
             "scripts/winrate_payoff_decomposition.py",
             "scripts/btst_signal_day_cohort.py",
@@ -177,6 +179,7 @@ class TestNightlyDiagnosticsRefresh:
             "scripts/kelly_prior_conditioning_eval.py",
             "scripts/btst_daily_selection_anatomy.py",
             "scripts/btst_exit_anatomy.py",
+            "scripts/regime_proximity_conditioning.py",
         )
 
     def test_build_success_runs_diagnostics_in_order(self, tmp_path):

@@ -75,6 +75,12 @@ DIAGNOSTIC_SCRIPTS: tuple[str, ...] = (
     # 宿主实测裸跑 10.9s/16.4s ≪ 600s, bare 可跑/无必需参数。
     "scripts/btst_daily_selection_anatomy.py",
     "scripts/btst_exit_anatomy.py",
+    # R166 Op1: regime 邻近度条件化诊断 (owner 胜率/赔率工作线新轴) — 信号日
+    # 按距上一阻断日 (crisis|risk_off) 的会话数分桶 (d1/d2_5/d6p), 回答 normal
+    # 池聚合 E 是否为 d1 翻转日与 d2+ 稳定日的混合 (Observe 探针: d1 E=-1.43%
+    # n=801 vs d2_5 +1.23%, split-half 跨半一致); 同门接线 (R133/R135 先例),
+    # pinned-set 测试同步钉住防再漏接。
+    "scripts/regime_proximity_conditioning.py",
 )
 DIAGNOSTIC_TIMEOUT_S = 600
 
