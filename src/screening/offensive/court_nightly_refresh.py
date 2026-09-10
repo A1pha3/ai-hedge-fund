@@ -99,6 +99,13 @@ DIAGNOSTIC_SCRIPTS: tuple[str, ...] = (
     # 逐候选窗口重算 gross 逐位自检 (窗口约定漂移 fail-closed); 同门接线
     # (R133/R135/R166/R168/R170 先例), pinned-set 测试同步钉住防再漏接。
     "scripts/regime_excess_return_decomposition.py",
+    # R179 Op1: R168 时代条件性的宇宙构成判别 (R178 登记开放项第一轴收口) —
+    # 当前表限制到早期表 symbol 全集 (构成匹配视图) 后同轴重跑, 机械判别
+    # 『时代差是构成伪影还是行为/幸存者残余』 (Observe 探针: 匹配后罚分
+    # +7.09pp CI [+1.96,+11.93] ≈ 全宇宙 +7.51pp — 构成轴初判不解释);
+    # 当前侧随 court 重建每夜保鲜 (早期表冻结); 同门接线第 9 次
+    # (R133/R135/R166/R168/R170/R172 先例), pinned-set 测试同步钉住防再漏接。
+    "scripts/regime_run_universe_match_validation.py",
 )
 DIAGNOSTIC_TIMEOUT_S = 600
 

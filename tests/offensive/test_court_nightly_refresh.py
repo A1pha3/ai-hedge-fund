@@ -174,6 +174,9 @@ class TestNightlyDiagnosticsRefresh:
         # 稳健性审计: placebo/LOO 影响度/定义敏感度; 同门接线第 7 次)。
         # R172 Op1: + regime_excess_return_decomposition (净收益的 beta/selection
         # 恒等分解: 等权全市场 open→open 基准, 窗口逐位自检; 同门接线第 8 次)。
+        # R179 Op1: + regime_run_universe_match_validation (R168 时代条件性的
+        # 宇宙构成判别: 当前表限制到早期票集后同轴重跑, 机械判别构成伪影
+        # vs 行为/幸存者残余; 同门接线第 9 次)。
         assert DIAGNOSTIC_SCRIPTS == (
             "scripts/winrate_payoff_decomposition.py",
             "scripts/btst_signal_day_cohort.py",
@@ -189,6 +192,7 @@ class TestNightlyDiagnosticsRefresh:
             "scripts/regime_blocked_run_conditioning.py",
             "scripts/regime_run_contrast_robustness.py",
             "scripts/regime_excess_return_decomposition.py",
+            "scripts/regime_run_universe_match_validation.py",
         )
 
     def test_build_success_runs_diagnostics_in_order(self, tmp_path):
