@@ -1761,6 +1761,11 @@ def _render_reentry_proximity_line(
     生产路径经 _load_regime_history() 读取。
     """
     try:
+        # 门权威抑制 (R177 Op2, P-j 设计缺口收口): gate 视角说今日阻断 (crisis/
+        # risk_off) 时, 报告已有 Regime ⚠行 — 历史分类与快照 regime 分歧 (史缺失/
+        # 陈旧) 下重入建议是矛盾噪声, 整行省略。只作用披露行 (宪法 #2)。
+        if getattr(run, "regime", None) in _REGIME_GATE_BLOCK_REGIMES:
+            return None
         from src.screening.offensive.regime_session_geometry import run_geometry
 
         history = (

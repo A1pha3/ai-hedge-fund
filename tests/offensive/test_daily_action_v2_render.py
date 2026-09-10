@@ -3571,3 +3571,55 @@ def test_reentry_line_end_to_end_in_report(case, monkeypatch):
     text = render_daily_action_v2(view)
     assert "重入邻近度：d1_run 形态" in text
     assert "纯披露不判定" in text
+
+
+def test_reentry_line_run_two_boundary_is_d1_run():
+    """P-d 钉住 (R177 Op2): run_len==2 是 d1_run (R168 定义 run≥2) — 恰是
+    2026-09-09+09-10 连续 crisis 的真实形态; `>=2 → >=3` 变异曾无牙放行,
+    会把该形态误判 d1_blip 渲染『为正』证据."""
+    history = {
+        "20260819": "crisis",
+        "20260820": "crisis",
+        "20260821": "normal",
+    }
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=history)
+    assert line is not None
+    assert "d1_run 形态" in line
+    assert "前导连跑 2 日：crisis×2" in line
+
+
+def test_reentry_line_coerces_non_string_history_keys():
+    """P-h 钉住 (R177 Op2): 非字符串键 (如 int YYYYMMDD) 经 str 强制照常渲染 —
+    丢强制的变异曾无牙放行 (整行静默省略)."""
+    history = {
+        20260819: "crisis",
+        20260820: "crisis",
+        20260821: "normal",
+    }
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=history)
+    assert line is not None
+    assert "d1_run 形态" in line
+
+
+def test_reentry_line_suppressed_when_gate_regime_blocks():
+    """P-j 钉住 (R177 Op2): gate 视角今日阻断 (crisis/risk_off) → 整行省略 —
+    历史≠快照分歧下『⚠阻断新仓』+『重入邻近度』矛盾双行不可达 (门权威语义)."""
+    history = {
+        "20260817": "crisis",
+        "20260818": "crisis",
+        "20260819": "crisis",
+        "20260820": "normal",
+    }
+    for blocked in ("crisis", "risk_off"):
+        run = SimpleNamespace(
+            regime=blocked, service_run=SimpleNamespace(trade_date=date(2026, 8, 20))
+        )
+        assert _render_reentry_proximity_line(run, regimes_by_date=history) is None
+    # normal / None (legacy 构造) 不抑制 — 历史分类照常决定
+    for regime in ("normal", None):
+        run = SimpleNamespace(
+            regime=regime, service_run=SimpleNamespace(trade_date=date(2026, 8, 20))
+        )
+        assert _render_reentry_proximity_line(run, regimes_by_date=history) is not None
