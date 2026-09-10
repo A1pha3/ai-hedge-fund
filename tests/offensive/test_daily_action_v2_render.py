@@ -3322,6 +3322,37 @@ def test_release_schedule_line_shows_all_future_cohorts(tmp_path):
     ) in line
     later_day = f"{sessions[25].month}/{sessions[25].day}"
     assert f"；{later_day} 释放 1 只 / 20% 敞口 → 约 {after2:.0%}" in line
+    assert line.count("降回上限内") == 1
+
+
+def test_release_schedule_line_orders_descending_input_positions(tmp_path):
+    """F-a 排序钉住: 乱序 (降序) 持仓输入 → 升序日程渲染, 首段保持『最近到期』
+    语义 (剩N天口径/字样/注记落点三重绑定 index==0=最早到期日), 三段复合算术
+    逐段钉住 — 摘掉 sorted() 或错置 index==0 的重构在此 RED."""
+    from dataclasses import replace as dc_replace
+
+    run, sessions, _t, _r = _run_with_open_position(tmp_path)
+    service_run = dc_replace(run, open_exposure=0.5, reserved_exposure=0.25)
+    base = run.open_positions[0]
+    early = dc_replace(
+        base, trade_id="t-early", projected_exit_date=sessions[24], mark_weight=0.10
+    )
+    mid = dc_replace(
+        base, trade_id="t-mid", projected_exit_date=sessions[25], mark_weight=0.30
+    )
+    late = dc_replace(
+        base, trade_id="t-late", projected_exit_date=sessions[26], mark_weight=0.05
+    )
+    view = DailyActionV2Run(service_run, (), (late, mid, early), (), ())
+    text = render_daily_action_v2(view)
+    line = next(line for line in text.splitlines() if "释放日程" in line)
+    assert line == (
+        "释放日程：最近到期 9/10（剩4天）释放 1 只 / 10% 敞口 → 约 65%；"
+        "9/11 释放 1 只 / 30% 敞口 → 约 35%（降回上限内，可恢复出新仓）；"
+        "9/12 释放 1 只 / 5% 敞口 → 约 30%"
+    )
+    assert line.count("最近到期") == 1
+    assert line.count("降回上限内") == 1
 
 
 def test_release_schedule_line_cap_note_follows_recovery_segment(tmp_path):
