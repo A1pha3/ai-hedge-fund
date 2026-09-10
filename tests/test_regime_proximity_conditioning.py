@@ -18,6 +18,7 @@ import pytest
 
 from scripts.regime_proximity_conditioning import (
     GROUP_LABELS,
+    _ratio,
     MIN_CELL_N,
     PROXIMITY_ORDER,
     REGIME_HISTORY_DEFAULT,
@@ -323,6 +324,68 @@ class TestFmtFalsyZero:
         for g in PROXIMITY_ORDER:
             assert g in GROUP_LABELS
         assert "blocked" in GROUP_LABELS
+
+
+class TestPayoffRatioAndRenderSurvival:
+    """R167 Op2 F-a 钉住: payoff 比率语义 + 渲染防御面."""
+
+    def test_ratio_formatting(self):
+        assert _ratio(0.9852) == "0.99"
+        assert _ratio(1.0) == "1.00"
+        assert _ratio(1.22) == "1.22"
+        assert _ratio(None) == "—"
+        assert _ratio(float("nan")) == "—"
+        assert _ratio(True) == "—"
+
+    @staticmethod
+    def _cell(row: str, idx: int) -> str:
+        return row.split("|")[idx].strip()
+
+    def test_md_payoff_column_is_ratio(self, tmp_path):
+        """端到端: MD 表 payoff 列 (第 6 列) 为纯比率无 '%' 形态.
+
+        小世界数值: d1 组单笔全胜 → payoff 未定义 '—' (win_loss_stats 契约);
+        d2_5 组 (净 0.02/-0.02/0.03) avg_win 0.025 / avg_loss −0.02 → '1.25';
+        修复前该列渲染 '+125.00%' 即 F-a 缺陷形态。
+        """
+        ev = _simple_events()
+        table = tmp_path / "event_table.csv"
+        ev.to_csv(table, index=False)
+        history = tmp_path / "regime_history.json"
+        history.write_text(json.dumps(REGIMES), encoding="utf-8")
+        payload = analyze(pd.read_csv(table), history)
+        md = render_md(payload, "20260910")
+        t10_section = md.split("## t10")[1].split("## t5")[0]
+        rows = {
+            self._cell(ln, 1): ln
+            for ln in t10_section.splitlines()
+            if ln.startswith("| d") or ln.startswith("| blocked") or ln.startswith("| no") or ln.startswith("| unknown")
+        }
+        d1_row = rows["d1 (距阻断日 1 会话)"]
+        d25_row = rows["d2_5 (2-5 会话)"]
+        assert self._cell(d1_row, 6) == "—"  # 单笔全胜 → payoff 未定义
+        assert self._cell(d25_row, 6) == "1.25"
+        for ln in (d1_row, d25_row):
+            assert "%" not in self._cell(ln, 6)  # F-a 修复: 比率列零百分比形态
+            assert "%" in self._cell(ln, 7)  # E 列仍为百分比语义
+
+    def test_render_survives_missing_group_key(self):
+        """防御面: tables 缺任意组键 → 整行 '—' 不崩 (dict.get 单一守卫)."""
+        payload = {
+            "court_window": {"start": "20250702", "end": "20260909"},
+            "aligned_n": 5,
+            "tables": {"t10": {"d1": {"n": 1, "winrate": 1.0, "avg_win": 0.1,
+                                      "avg_loss": -0.05, "payoff": 2.0,
+                                      "expectancy": 0.1}},
+                       "t5": {}},
+            "residual_pool_t10": {},
+            "d1_vs_d2_5_delta_t10": {"ci_low": None, "n_d1": 0, "n_d2_5": 0},
+            "split_half": {"verdict": "不可判定 (任一半 n<30)", "halves": []},
+            "strength_cross_t10": [],
+            "label_consistency": {"checked": 0, "mismatch_count": 0},
+        }
+        md = render_md(payload, "20260910")
+        assert md.count("| —") >= 5  # 缺键组整行 '—'
 
 
 class TestAnalyzeEndToEnd:

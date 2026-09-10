@@ -312,6 +312,21 @@ def _fmt(v: object, pct: bool = True) -> str:
     return f"{v:+.2%}" if pct else f"{v:,.0f}"
 
 
+def _ratio(v: object) -> str:
+    """payoff (avg_win/|avg_loss|) 是比率不是百分比 — R167 Op2 F-a 修复.
+
+    winrate 工具同列渲染纯比率 (1.22); 走 _fmt(pct=True) 会把 0.99 渲成
+    '+99.00%' 被操作员误读为收益率。缺失/毒化 → '—' (R158 家族)。
+    """
+    if (
+        not isinstance(v, (int, float))
+        or isinstance(v, bool)
+        or (isinstance(v, float) and not math.isfinite(v))
+    ):
+        return "—"
+    return f"{v:.2f}"
+
+
 def render_md(payload: dict[str, object], date_str: str) -> str:
     """操作员/owner 人读面 — 纪律句 + 组表 + 判读输入 + 一致性核查."""
     lines: list[str] = []
@@ -343,7 +358,7 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
             lines.append(
                 f"| {GROUP_LABELS[group]} | {_fmt(s.get('n'), pct=False)} "
                 f"| {_fmt(s.get('winrate'))} | {_fmt(s.get('avg_win'))} "
-                f"| {_fmt(s.get('avg_loss'))} | {_fmt(s.get('payoff'))} "
+                f"| {_fmt(s.get('avg_loss'))} | {_ratio(s.get('payoff'))} "
                 f"| {_fmt(s.get('expectancy'))} | {_fmt(s.get('cluster_ci_low_90'))} |"
             )
         lines.append("")
