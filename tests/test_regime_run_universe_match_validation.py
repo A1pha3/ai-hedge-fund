@@ -426,23 +426,24 @@ def test_main_end_to_end_writes_reports_and_stdout(
 
 
 def test_main_double_run_byte_identical(tmp_path: Path) -> None:
-    """同输入双跑报告逐字节一致 (R13 家族, e2e 面)."""
+    """同输入双跑报告逐字节一致 (R13 家族, e2e 面) — 两次跑写不同 out-dir
+    后跨目录逐字节比较 (同目录覆盖写只证稳定, 不证两次独立运行相等)."""
     current, early = _world()
     p = _write_inputs(tmp_path, current, early)
-    argv = [
+    base_argv = [
         "--court-table", str(p["court"]),
         "--early-court-table", str(p["early"]),
         "--regime-history", str(p["history"]),
         "--current-manifest", str(p["cm"]),
         "--early-manifest", str(p["em"]),
-        "--out-dir", str(tmp_path / "out"),
         "--date", "20260911",
     ]
-    assert main(argv) == 0
-    assert main(argv) == 0
+    assert main([*base_argv, "--out-dir", str(tmp_path / "run1")]) == 0
+    assert main([*base_argv, "--out-dir", str(tmp_path / "run2")]) == 0
     for name in (f"{REPORT_STEM}_20260911.md", f"{REPORT_STEM}_20260911.json"):
-        blob = (tmp_path / "out" / name).read_bytes()
-        assert blob  # 非空且两次覆盖写后仍稳定 (同一字节串)
+        blob1 = (tmp_path / "run1" / name).read_bytes()
+        blob2 = (tmp_path / "run2" / name).read_bytes()
+        assert blob1 and blob1 == blob2
 
 
 def test_main_missing_input_typed(tmp_path: Path) -> None:
@@ -465,3 +466,48 @@ def test_default_paths_are_reused_single_definitions() -> None:
     assert m.EARLY_TABLE_DEFAULT is x.EARLY_TABLE_DEFAULT
     assert m.CURRENT_MANIFEST_DEFAULT is x.CURRENT_MANIFEST_DEFAULT
     assert m.EARLY_MANIFEST_DEFAULT is x.EARLY_MANIFEST_DEFAULT
+
+
+# ---------------------------------------------------------------------------
+# R179 Op2 对抗审查钉住 — 12 探针 9 有牙 / 3 无牙; 无牙三处牙齿化
+# (P-f symbol str 化 / P-g 渲染点罚分轴序 / P-j _fmt 丢符号位 —
+# R171 M-f / R177 P-j / R178 P-j 同族显示面缺口第三次在新工具复活)
+# ---------------------------------------------------------------------------
+class TestAdversarialPinsR179:
+    def test_pin_render_point_penalty_rows_exact_and_ordered(
+        self, tmp_path: Path
+    ) -> None:
+        """P-g/P-j 钉住: 点罚分表三行精确值 (带符号) 且轴序
+        current_full → current_matched → early (行序反转 / 符号位丢失即 RED)."""
+        current, early = _world()
+        payload = _payload(tmp_path, current, early)
+        text = render_md(payload, "20260911")
+        # fixture oracle: full = 0.11 − (−0.11) = +22.00%;
+        # matched = 0.10 − (−0.10) = +20.00%; early = 0.05 − 0.04 = +1.00%
+        assert "| current_full | +22.00% |" in text
+        assert "| current_matched | +20.00% |" in text
+        assert "| early | +1.00% |" in text
+        i_full = text.index("| current_full |")
+        i_matched = text.index("| current_matched |")
+        i_early = text.index("| early |")
+        assert i_full < i_matched < i_early
+
+    def test_pin_symbol_membership_across_int_str_dtype(
+        self, tmp_path: Path
+    ) -> None:
+        """P-f 钉住: 早期表 symbol 列 int64 (全数字票被 pd.read_csv 推断成
+        int, '000959'→959 前导零丢失) × 当前表 object 列 (混合票保持
+        '000959' 原样字符串) — str 化是跨 dtype 成员资格的唯一保障; 删除
+        astype(str) 即零交集 typed 拒绝 (变异重放 RED 形态)。"""
+        early = _rows(prefix="e_", blip_gross=0.05, run_gross=0.04)
+        early = early.assign(
+            symbol=pd.Series([959 + i for i in range(len(early))], dtype="int64")
+        )
+        current = _rows(prefix="e_", blip_gross=0.10, run_gross=-0.10)
+        current = current.assign(
+            symbol=[str(959 + i % len(early)) for i in range(len(current))]
+        )
+        payload = _payload(tmp_path, current, early)
+        um = payload["universe_match"]
+        assert um["current_rows_matched"] == len(current)  # str 化后全命中
+        assert um["early_symbols"] == len(early)
