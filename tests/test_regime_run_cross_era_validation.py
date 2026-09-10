@@ -80,8 +80,14 @@ def _event_rows(
     run_gross: float,
     days_per_group: int = 2,
     rows_per_day: int = 20,
+    gross5: float | None = None,
 ) -> pd.DataFrame:
-    """d1_blip/d1_run 两组合成行 (含全部生产过滤列, 与 R168 测试同构)."""
+    """d1_blip/d1_run 两组合成行 (含全部生产过滤列, 与 R168 测试同构).
+
+    gross5=None (默认) → t5 与 t10 同值 (旧测试 oracle 语义不变);
+    显式传入即非对称 fixture — R178 Op2 P-h 钉住用 (t10/t5 对称时
+    horizon 错表不可检, 是探针实锤的 fixture 盲区)。
+    """
     group_days = {
         "d1_blip": ["20260106", "20260113"],
         "d1_run": ["20260103", "20260110"],
@@ -89,6 +95,7 @@ def _event_rows(
     rows: list[dict] = []
     for group, days in group_days.items():
         gross = blip_gross if group == "d1_blip" else run_gross
+        gross_t5 = gross if gross5 is None else gross5
         for day in days[:days_per_group]:
             for i in range(rows_per_day):
                 blocked = False
@@ -112,7 +119,7 @@ def _event_rows(
                         "excluded_ticker": False,
                         "price_ge_3": True,
                         "gate_blocked": blocked,
-                        "gross_ret_t5": gross,
+                        "gross_ret_t5": gross_t5,
                         "exit_session_t5": 5.0,
                         "gross_ret_t10": gross,
                         "exit_session_t10": 10.0,
@@ -447,3 +454,82 @@ def test_early_table_default_points_at_early_window() -> None:
     """默认早期表路径钉死在 2022-24 事件表 (防未来重构静默漂移)."""
     assert "event_tables_early" in str(EARLY_TABLE_DEFAULT)
     assert str(EARLY_TABLE_DEFAULT).endswith("event_table_v1.csv.gz")
+
+
+# ---------------------------------------------------------------------------
+# 对抗审查钉住 (R178 Op2) — 13 探针 scratch 实跑 9 有牙 / 4 无牙, 无牙收口
+# ---------------------------------------------------------------------------
+def test_load_manifest_fingerprint_malformed_entry_typed(tmp_path: Path) -> None:
+    """P-f: 指纹值非字符串 (畸形条目) 必须 typed 拒绝 — 变异删除逐条
+    类型检查后旧测试全绿放行 (无牙实锤: 畸形条目形态零覆盖)."""
+    p = tmp_path / "bad.json"
+    p.write_text(
+        json.dumps(
+            {"formula_fingerprint": {"btst_breakout_sha256": 123}},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        RegimeRunCrossEraValidationError, match="manifest_fingerprint_malformed"
+    ):
+        load_manifest_fingerprint(p)
+
+
+def test_group_table_horizon_is_t10_not_t5(tmp_path: Path) -> None:
+    """P-h: 组表必须来自 t10 — t5/t10 同值对称时 horizon 错表不可检
+    (探针实锤的 fixture 盲区); 非对称 fixture 下 t10 oracle 精确钉死.
+
+    gross_ret_t10 = +2% / gross_ret_t5 = −3%: 若组表被错接到 t5,
+    d1_run E = −0.0365 ≠ t10 oracle −0.0565 → RED。
+    """
+    history, cur_m, early_m = _era_inputs(tmp_path)
+    payload = cross_era_payload(
+        _event_rows(blip_gross=0.02, run_gross=-0.05, gross5=-0.03),
+        _event_rows(blip_gross=0.02, run_gross=0.02, gross5=-0.03),
+        history,
+        cur_m,
+        early_m,
+    )
+    eras = payload["eras"]
+    assert eras["current"]["group_table"]["d1_run"]["expectancy"] == pytest.approx(
+        -0.05 - 0.0065
+    )
+    assert eras["current"]["group_table"]["d1_blip"]["expectancy"] == pytest.approx(
+        0.02 - 0.0065
+    )
+
+
+def test_group_table_winrate_exact_values(tmp_path: Path) -> None:
+    """P-i: 组表 winrate 键必须携带真实值 (全赢/全输 fixture 精确钉死) —
+    变异静默置 None 后旧测试零捕获 (无牙实锤: winrate 值零钉住)."""
+    history, cur_m, early_m = _era_inputs(tmp_path)
+    payload = cross_era_payload(
+        _event_rows(blip_gross=0.02, run_gross=-0.05),
+        _event_rows(blip_gross=0.02, run_gross=0.02),
+        history,
+        cur_m,
+        early_m,
+    )
+    cur = payload["eras"]["current"]["group_table"]
+    assert cur["d1_blip"]["winrate"] == pytest.approx(1.0)
+    assert cur["d1_run"]["winrate"] == pytest.approx(0.0)
+    # label 一致性双时代齐备 (此前只钉 early 侧 — current 侧同场补钉)
+    assert payload["eras"]["current"]["label_consistency"]["mismatch_count"] == 0
+
+
+def test_percent_rendering_carries_sign(tmp_path: Path) -> None:
+    """P-j: 百分比渲染必须带符号位 ('+7.00%' 非 '7.00%') — _fmt 丢 '+'
+    后旧测试零捕获 (无牙实锤: 显示格式零钉住, R171 M-f 同族缺口复活面)."""
+    history, cur_m, early_m = _era_inputs(tmp_path)
+    payload = cross_era_payload(
+        _event_rows(blip_gross=0.02, run_gross=-0.05),
+        _event_rows(blip_gross=0.02, run_gross=0.02),
+        history,
+        cur_m,
+        early_m,
+    )
+    md = render_md(payload, "20260911")
+    assert "| current | +7.00% |" in md
+    # 早期两组同 gross → 点罚分 0 → 渲染 '+0.00%' (带符号零形态同钉)
+    assert "| early | +0.00% |" in md
