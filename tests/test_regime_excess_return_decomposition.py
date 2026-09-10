@@ -403,7 +403,11 @@ class TestDeterminismAndRender:
         md = render_md(payload, "20260910")
         assert "+0.00%" in md  # falsy-zero 显示, 不是 '—'
         assert "OK" in md  # 恒等残差 0 → OK
-        assert "140" in md  # 名单数是计数不是百分比 (R171 F-a 同款形态纪律)
+        # 名单数是计数不是百分比 (R171 F-a 同款形态纪律) — 精确形态 + 百分比
+        # 伪影缺席双面钉住 (子串断言 "140" 会被 "+14000.00%" 撞形, R173 M-f)
+        assert "min 140 / median 150.0" in md
+        assert "14000" not in md
+        assert "15000" not in md
 
     def test_label_consistency_passes(self, tmp_path):
         world = _world()
@@ -413,7 +417,7 @@ class TestDeterminismAndRender:
 
 
 class TestMainEndToEnd:
-    def test_main_writes_reports_and_binding(self, tmp_path):
+    def test_main_writes_reports_and_binding(self, tmp_path, capsys):
         world = _world()
         ev = _event_table(world)
         court_csv = tmp_path / "court.csv"
@@ -443,3 +447,13 @@ class TestMainEndToEnd:
             (report_dir / f"{REPORT_STEM}_20260910.json").read_text()
         )
         assert payload["benchmark_integrity"]["selfcheck_mismatch"] == 0
+        # stdout 契约面钉住 (R173 M-h: 键路径断裂曾静默 [None,None] 全绿放行) —
+        # 纯 beta 世界两组 excess 恒 −cost → 对比差 CI 两端 ≈ 0 (超额优势消失)
+        stdout = json.loads(capsys.readouterr().out)
+        assert stdout["aligned_n"] == 2 * N_CAND
+        assert stdout["rows_with_benchmark"] == 2 * N_CAND
+        ci = stdout["excess_delta_ci_t10"]
+        assert len(ci) == 2
+        for v in ci:
+            assert v is not None
+            assert abs(v) < 1e-9
