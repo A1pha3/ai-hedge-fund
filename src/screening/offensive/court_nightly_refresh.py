@@ -87,6 +87,12 @@ DIAGNOSTIC_SCRIPTS: tuple[str, ...] = (
     # 配对差 CI [+2.49%,+11.94%] 越零 — 工作线首个决定性对比); 同门接线
     # (R133/R135/R166 先例), pinned-set 测试同步钉住防再漏接。
     "scripts/regime_blocked_run_conditioning.py",
+    # R170 Op1: d1_run 决定性对比的规格稳健性审计 (owner 重入规则决策的证据
+    # 质量面) — 循环移位精确置换 placebo (穷举零 RNG 时序识别力) / leave-one-
+    # day-out 影响集中度 (脆弱性) / 定义替代敏感度 (run≥3 阈值/label 分解/
+    # 剂量反应); 两种走向 (稳健→决策级/脆弱→降格) 都推进证据质量, 同门接线
+    # (R133/R135/R166/R168 先例), pinned-set 测试同步钉住防再漏接。
+    "scripts/regime_run_contrast_robustness.py",
 )
 DIAGNOSTIC_TIMEOUT_S = 600
 

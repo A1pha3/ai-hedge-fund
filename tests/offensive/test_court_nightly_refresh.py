@@ -170,6 +170,8 @@ class TestNightlyDiagnosticsRefresh:
         # owner 胜率/赔率工作线新维度; 同门接线第 5 次)。
         # R168 Op1: + regime_blocked_run_conditioning (距离 × 前导阻断连跑
         # 长度, d1_blip/d1_run 二维权; 同门接线第 6 次)。
+        # R170 Op1: + regime_run_contrast_robustness (d1_run 决定性对比的规格
+        # 稳健性审计: placebo/LOO 影响度/定义敏感度; 同门接线第 7 次)。
         assert DIAGNOSTIC_SCRIPTS == (
             "scripts/winrate_payoff_decomposition.py",
             "scripts/btst_signal_day_cohort.py",
@@ -183,6 +185,7 @@ class TestNightlyDiagnosticsRefresh:
             "scripts/btst_exit_anatomy.py",
             "scripts/regime_proximity_conditioning.py",
             "scripts/regime_blocked_run_conditioning.py",
+            "scripts/regime_run_contrast_robustness.py",
         )
 
     def test_build_success_runs_diagnostics_in_order(self, tmp_path):
