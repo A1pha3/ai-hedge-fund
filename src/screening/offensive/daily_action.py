@@ -1478,6 +1478,7 @@ _PRIOR_DRIFT_REPORTS_DIR = Path("data/reports")
 # 夜刷 exit_anatomy 报告目录默认值 (R181 Op1): 止损当期方向读数的读取面。
 # 测试经 monkeypatch 隔离 (R120b 家族: 渲染测试不得读宿主真实报告)。
 _EXIT_ANATOMY_REPORTS_DIR = Path("data/reports")
+_RUN_CONDITIONING_REPORTS_DIR = Path("data/reports")
 
 # 证据新鲜度告警阈值 (R115 Op2): 正常节律 = 分解报告每晚刷新覆盖前一交易日,
 # --daily-action (~15:05, 夜刷之前) 距最新报告 ≤1 个交易日; ≥2 = 至少一夜
@@ -1739,6 +1740,7 @@ _REENTRY_EVIDENCE_AS_OF = "2026-09-10"
 def _render_reentry_proximity_line(
     run: Any,
     regimes_by_date: Mapping[str, str] | None = None,
+    run_conditioning_reports_dir: str | Path | None = None,
 ) -> str | None:
     """重入邻近度披露行 (R176 Op1): d1 信号日的 blip/run 形态区分。
 
@@ -1751,17 +1753,23 @@ def _render_reentry_proximity_line(
     同源 — 操作员看到的形态即证据轴的形态)。
 
     形态边界预注册 2026-09-11: 只披露 dist==1 (决定性对比所在轴); d2+ 不
-    披露 (R168: d2_run 已恢复 +1.87%, 无决定性结构)。注册证据数字 (R168
-    截至 2026-09-10) 是 static 标注 — 陈旧由显式 as-of 日期自暴露, 当期
-    数字走夜刷 regime_blocked_run_conditioning 报告指针。
+    披露 (R168: d2_run 已恢复 +1.87%, 无决定性结构)。
+
+    R182 Op1 当期读数子句: R176 原设计行内只渲染注册证据静态值 + 夜刷
+    报告指针, 与 R181 项 5 止损方向当期化建立的原则不对称 (判定时刻判定
+    输入应行内可见) — 现夜刷报告在场且形状合法时行内渲染当期读数
+    (t10 净口径, 报告日期自暴露), 注册证据压缩为锚 (轴边界预注册日期);
+    报告缺失/损坏/未来日期/形状不符 → 回退注册证据静态行 (注册对比仍是
+    有效证据, 只是 dated — 不以读数缺席抹掉已注册发现)。
 
     纯披露 (宪法 #2): 本行不进入任何计划/评分/仓位/退出决策路径; 任何
     重入条件收紧 = 策略行为变化 = owner 决策 + 新证据世代。fail-open
     家族纪律 (R85/R109/R115/R149/R157 同族): regime 史缺失/为空/trade_date
     非 date 形态 → 整行省略; 非 d1 形态 (blocked/d2+/no_prior/unknown) →
     整行省略; 任意输入畸形 → typed-exception → 整行省略。测试可注入
-    regimes_by_date (R10: slot 内无 data/ 工件, 注入保证自足); None 时
-    生产路径经 _load_regime_history() 读取。
+    regimes_by_date 与 run_conditioning_reports_dir (R10: slot 内无 data/
+    工件, 注入保证自足); None 时生产路径经 _load_regime_history()/
+    _RUN_CONDITIONING_REPORTS_DIR 读取。
     """
     try:
         # 门权威抑制 (R177 Op2, P-j 设计缺口收口): gate 视角说今日阻断 (crisis/
@@ -1787,6 +1795,47 @@ def _render_reentry_proximity_line(
         )
         if form != "normal" or dist != 1:
             return None
+        from src.screening.offensive.gap_disclosure import (
+            latest_run_conditioning_report,
+            reentry_readings_clause,
+            report_filename_date,
+        )
+
+        live_clause: str | None = None
+        found = latest_run_conditioning_report(
+            Path(run_conditioning_reports_dir)
+            if run_conditioning_reports_dir is not None
+            else _RUN_CONDITIONING_REPORTS_DIR
+        )
+        if found is not None:
+            report_path, payload = found
+            live_clause = reentry_readings_clause(
+                payload, report_filename_date(report_path) or ""
+            )
+        if live_clause is not None:
+            registered = "注册证据 R168（轴边界预注册 2026-09-10）："
+            if run_len >= 2:
+                parts: list[str] = []
+                ordered = list(run_labels)
+                i = 0
+                while i < len(ordered):
+                    j = i
+                    while j < len(ordered) and ordered[j] == ordered[i]:
+                        j += 1
+                    n = j - i
+                    parts.append(ordered[i] if n == 1 else f"{ordered[i]}×{n}")
+                    i = j
+                stretch = "/".join(parts)
+                return (
+                    f"重入邻近度：d1_run 形态（距上一阻断日 1 个会话；前导连跑 "
+                    f"{run_len} 日：{stretch}）— {live_clause} — {registered}"
+                    f"同对比当时已决定性。纯披露不判定（宪法 #2）"
+                )
+            return (
+                f"重入邻近度：d1_blip 形态（距上一阻断日 1 个会话；前导阻断 1 日）"
+                f"— {live_clause} — {registered}d1_run 同对比中反为深负。"
+                f"纯披露不判定（宪法 #2）"
+            )
         evidence = (
             f"注册证据（R168，截至 {_REENTRY_EVIDENCE_AS_OF}）；当期数字见夜刷 "
             "regime_blocked_run_conditioning 报告"

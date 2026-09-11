@@ -3827,3 +3827,152 @@ def test_stop_readiness_direction_clause_explicit_dir_param(case, tmp_path):
     )
     assert line is not None
     assert "当期方向（exit_anatomy 20260910" in line
+
+
+# ---------- R182 Op1: 重入行当期读数子句 ----------
+
+
+@pytest.fixture(autouse=True)
+def _isolated_run_conditioning_dir(tmp_path, monkeypatch):
+    """重入当期读数读取面默认隔离 (R120b 家族, R181 同款): 渲染测试绝不读
+    宿主真实夜刷报告, 保证 slot (无 data/) 与宿主 (报告在场) 断言路径一致;
+    既有 R176 静态行测试因此恒走回退路径。"""
+    import src.screening.offensive.daily_action as da
+
+    target = tmp_path / "run_conditioning_reports"
+    target.mkdir()
+    monkeypatch.setattr(da, "_RUN_CONDITIONING_REPORTS_DIR", target)
+    return target
+
+
+def _write_run_conditioning_fixture(reports_dir, date_str="20260910"):
+    """非对称夜刷报告 fixture (数字取自真实 20260910 读数形态)。"""
+    payload = {
+        "tables": {
+            "t10": {
+                "d1_run": {
+                    "n": 341,
+                    "expectancy": -0.057425,
+                    "winrate": 0.30792,
+                    "cluster_ci_low_90": -0.084515,
+                },
+                "d1_blip": {
+                    "n": 460,
+                    "expectancy": 0.017710,
+                    "winrate": 0.536957,
+                    "cluster_ci_low_90": -0.007072,
+                },
+            }
+        },
+        "run_deltas_t10": {
+            "d1_run_vs_blip": {
+                "ci_low": 0.024943,
+                "ci_high": 0.119363,
+                "n_blip": 460,
+                "n_run": 341,
+            }
+        },
+        "split_half_d1": {"consistent": True},
+    }
+    path = Path(reports_dir) / f"regime_blocked_run_conditioning_{date_str}.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_reentry_line_live_readings_render_d1_run(_isolated_run_conditioning_dir):
+    """夜刷报告在场 → 行内当期读数 (报告日期自暴露) + 注册证据压缩为锚。"""
+    _write_run_conditioning_fixture(_isolated_run_conditioning_dir)
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=_reentry_history())
+    assert line is not None
+    assert "d1_run 形态（距上一阻断日 1 个会话；前导连跑 3 日：crisis×3）" in line
+    assert (
+        "当期读数（夜刷 regime_blocked_run_conditioning 20260910 · t10 净口径）："
+        "d1_run E=-5.74%/胜率 30.8%（n=341）· d1_blip E=+1.77%/53.7%（n=460）· "
+        "配对差 CI90 [+2.49%,+11.94%]（正值=run 罚分） · split-half 跨半一致"
+    ) in line
+    assert "注册证据 R168（轴边界预注册 2026-09-10）：同对比当时已决定性" in line
+    assert "纯披露不判定（宪法 #2）" in line
+    # 静态数字与旧指针不再出现 (当期读数取代其职责)
+    assert "截至 2026-09-10" not in line
+    assert "当期数字见夜刷" not in line
+
+
+def test_reentry_line_live_readings_render_d1_blip(_isolated_run_conditioning_dir):
+    history = dict(_reentry_history(), **{"20260819": "normal"})
+    _write_run_conditioning_fixture(_isolated_run_conditioning_dir)
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=history)
+    assert line is not None
+    assert "d1_blip 形态（距上一阻断日 1 个会话；前导阻断 1 日）" in line
+    assert "d1_run E=-5.74%" in line
+    assert "注册证据 R168（轴边界预注册 2026-09-10）：d1_run 同对比中反为深负" in line
+
+
+def test_reentry_line_static_fallback_when_no_report(_isolated_run_conditioning_dir):
+    """报告缺席 → 注册证据静态行逐字节回退 (R176 原行为, 不以读数缺席抹掉
+    已注册发现)。"""
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=_reentry_history())
+    assert line is not None
+    assert "注册证据（R168，截至 2026-09-10）；当期数字见夜刷" in line
+    assert "E=-5.74%，胜率 30.8%" in line
+    assert "当期读数" not in line
+
+
+def test_reentry_line_corrupt_report_falls_back_to_static(
+    _isolated_run_conditioning_dir,
+):
+    (Path(_isolated_run_conditioning_dir) / "regime_blocked_run_conditioning_20260910.json").write_text(
+        "{broken", encoding="utf-8"
+    )
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=_reentry_history())
+    assert line is not None
+    assert "注册证据（R168，截至 2026-09-10）" in line
+    assert "当期读数" not in line
+
+
+def test_reentry_line_malformed_payload_falls_back_to_static(
+    _isolated_run_conditioning_dir,
+):
+    """报告在场但形状不符 (n=0) → 子句拒绝 → 静态回退 (不渲染部分垃圾)。"""
+    import json as _json
+
+    path = (
+        Path(_isolated_run_conditioning_dir)
+        / "regime_blocked_run_conditioning_20260910.json"
+    )
+    payload = {
+        "tables": {"t10": {"d1_run": {"n": 0, "expectancy": 0.0, "winrate": 0.5},
+                           "d1_blip": {"n": 10, "expectancy": 0.0, "winrate": 0.5}}},
+        "run_deltas_t10": {"d1_run_vs_blip": {"ci_low": 0.0, "ci_high": 0.1,
+                                              "n_blip": 10, "n_run": 0}},
+    }
+    path.write_text(_json.dumps(payload), encoding="utf-8")
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=_reentry_history())
+    assert line is not None
+    assert "当期读数" not in line
+
+
+def test_reentry_line_explicit_dir_param_seam_pinned(
+    _isolated_run_conditioning_dir, tmp_path
+):
+    """显式 run_conditioning_reports_dir 注入缝活着 (R181 Op2 P-m 同族钉住):
+    参数路径独立于模块常量隔离, 参数目录的报告照常消费。"""
+    other = tmp_path / "other_reports"
+    other.mkdir()
+    _write_run_conditioning_fixture(other)
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(
+        run, regimes_by_date=_reentry_history(), run_conditioning_reports_dir=other
+    )
+    assert line is not None
+    assert "当期读数（夜刷 regime_blocked_run_conditioning 20260910" in line
+    # 模块常量隔离目录仍空 → 默认路径仍回退
+    default_line = _render_reentry_proximity_line(
+        run, regimes_by_date=_reentry_history()
+    )
+    assert default_line is not None
+    assert "当期读数" not in default_line

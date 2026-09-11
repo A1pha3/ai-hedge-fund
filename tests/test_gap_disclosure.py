@@ -607,3 +607,184 @@ def test_stop_direction_clause_empty_report_date_rejected():
     纯函数契约独立成立)。"""
     payload = _exit_anatomy_payload()
     assert gap_disclosure.stop_direction_clause(payload, "crisis", "") is None
+
+
+# ---------- R182 Op1: d1 重入邻近度当期读数子句 ----------
+
+
+def _run_conditioning_payload():
+    """非对称 fixture (R180 P-l 家族): run/blip 两侧读数逐值不同, 桶互换
+    变异必然被抓; 数字取自真实夜刷 20260910 读数形态。"""
+    return {
+        "tables": {
+            "t10": {
+                "d1_run": {
+                    "n": 341,
+                    "expectancy": -0.057425,
+                    "winrate": 0.30792,
+                    "cluster_ci_low_90": -0.084515,
+                },
+                "d1_blip": {
+                    "n": 460,
+                    "expectancy": 0.017710,
+                    "winrate": 0.536957,
+                    "cluster_ci_low_90": -0.007072,
+                },
+            }
+        },
+        "run_deltas_t10": {
+            "d1_run_vs_blip": {
+                "ci_low": 0.024943,
+                "ci_high": 0.119363,
+                "n_blip": 460,
+                "n_run": 341,
+            }
+        },
+        "split_half_d1": {"consistent": True},
+    }
+
+
+def test_reentry_readings_clause_exact_render():
+    clause = gap_disclosure.reentry_readings_clause(
+        _run_conditioning_payload(), "20260910"
+    )
+    assert clause == (
+        "当期读数（夜刷 regime_blocked_run_conditioning 20260910 · t10 净口径）："
+        "d1_run E=-5.74%/胜率 30.8%（n=341）· d1_blip E=+1.77%/53.7%（n=460）· "
+        "配对差 CI90 [+2.49%,+11.94%]（正值=run 罚分） · split-half 跨半一致"
+    )
+
+
+def test_reentry_readings_clause_bucket_swap_changes_render():
+    """run/blip 两侧读数互换 → 渲染逐值不同 (R180 P-l 对称 fixture 盲区防)。"""
+    payload = _run_conditioning_payload()
+    t10 = payload["tables"]["t10"]
+    t10["d1_run"], t10["d1_blip"] = t10["d1_blip"], t10["d1_run"]
+    delta = payload["run_deltas_t10"]["d1_run_vs_blip"]
+    delta["n_blip"], delta["n_run"] = delta["n_run"], delta["n_blip"]
+    clause = gap_disclosure.reentry_readings_clause(payload, "20260910")
+    assert clause is not None
+    assert "d1_run E=+1.77%/胜率 53.7%（n=460）" in clause
+    assert "d1_blip E=-5.74%/30.8%（n=341）" in clause
+
+
+def test_reentry_readings_clause_ci_crossing_zero_rendered():
+    """ci_low 越零 (罚分衰减/消失形态) 原样渲染 — 判定关键结构变化可见。"""
+    payload = _run_conditioning_payload()
+    payload["run_deltas_t10"]["d1_run_vs_blip"].update(
+        ci_low=-0.012, ci_high=0.045
+    )
+    clause = gap_disclosure.reentry_readings_clause(payload, "20260910")
+    assert clause is not None
+    assert "配对差 CI90 [-1.20%,+4.50%]" in clause
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda p: "not-a-dict",
+        lambda p: p.pop("tables"),
+        lambda p: p["tables"].pop("t10"),
+        lambda p: p["tables"].update(t10=[]),
+        lambda p: p["tables"]["t10"].pop("d1_run"),
+        lambda p: p["tables"]["t10"].pop("d1_blip"),
+        lambda p: p["tables"]["t10"].update(d1_run=[]),
+        lambda p: p["tables"]["t10"]["d1_run"].pop("n"),
+        lambda p: p["tables"]["t10"]["d1_run"].update(n=0),
+        lambda p: p["tables"]["t10"]["d1_run"].update(n=-1),
+        lambda p: p["tables"]["t10"]["d1_run"].update(n=True),
+        lambda p: p["tables"]["t10"]["d1_run"].update(n="341"),
+        lambda p: p["tables"]["t10"]["d1_blip"].update(n=False),
+        lambda p: p["tables"]["t10"]["d1_run"].pop("expectancy"),
+        lambda p: p["tables"]["t10"]["d1_run"].update(expectancy=float("nan")),
+        lambda p: p["tables"]["t10"]["d1_run"].update(winrate=float("inf")),
+        lambda p: p["tables"]["t10"]["d1_blip"].update(expectancy=None),
+        lambda p: p["tables"]["t10"]["d1_blip"].update(winrate="0.5"),
+        lambda p: p.pop("run_deltas_t10"),
+        lambda p: p["run_deltas_t10"].pop("d1_run_vs_blip"),
+        lambda p: p["run_deltas_t10"].update(d1_run_vs_blip=[]),
+        lambda p: p["run_deltas_t10"]["d1_run_vs_blip"].pop("ci_low"),
+        lambda p: p["run_deltas_t10"]["d1_run_vs_blip"].update(ci_low=None),
+        lambda p: p["run_deltas_t10"]["d1_run_vs_blip"].update(
+            ci_high=float("nan")
+        ),
+        lambda p: p["run_deltas_t10"]["d1_run_vs_blip"].update(
+            ci_low=0.13, ci_high=0.12
+        ),
+        lambda p: p["run_deltas_t10"]["d1_run_vs_blip"].update(n_run=340),
+        lambda p: p["run_deltas_t10"]["d1_run_vs_blip"].update(n_blip=459),
+        lambda p: p["run_deltas_t10"]["d1_run_vs_blip"].pop("n_run"),
+    ],
+)
+def test_reentry_readings_clause_shape_fail_closed(mutate):
+    payload = _run_conditioning_payload()
+    replaced = mutate(payload)
+    result = gap_disclosure.reentry_readings_clause(
+        payload if replaced is None else replaced, "20260910"
+    )
+    assert result is None
+
+
+def test_reentry_readings_clause_empty_report_date_rejected():
+    """report_date 空 (无日期的证据声明) → None (R181 P-j 同族)。"""
+    assert gap_disclosure.reentry_readings_clause(
+        _run_conditioning_payload(), ""
+    ) is None
+    assert gap_disclosure.reentry_readings_clause(
+        _run_conditioning_payload(), None
+    ) is None
+
+
+def test_reentry_readings_clause_split_half_optional_segments():
+    """split-half 缺位/consistent 非 bool → 段省略其余照常; False → 翻转词。"""
+    payload = _run_conditioning_payload()
+    payload.pop("split_half_d1")
+    clause = gap_disclosure.reentry_readings_clause(payload, "20260910")
+    assert clause is not None
+    assert "split-half" not in clause
+    assert "配对差 CI90 [+2.49%,+11.94%]" in clause
+
+    payload = _run_conditioning_payload()
+    payload["split_half_d1"] = {"consistent": "true"}
+    clause = gap_disclosure.reentry_readings_clause(payload, "20260910")
+    assert clause is not None
+    assert "split-half" not in clause
+
+    payload = _run_conditioning_payload()
+    payload["split_half_d1"] = {"consistent": False}
+    clause = gap_disclosure.reentry_readings_clause(payload, "20260910")
+    assert clause is not None
+    assert clause.endswith("split-half 跨半翻转")
+
+
+def test_latest_run_conditioning_report_selects_latest_dated(tmp_path):
+    for date_str in ("20260909", "20260910"):
+        path = tmp_path / f"regime_blocked_run_conditioning_{date_str}.json"
+        path.write_text(
+            json.dumps(_run_conditioning_payload()), encoding="utf-8"
+        )
+    found = gap_disclosure.latest_run_conditioning_report(tmp_path)
+    assert found is not None
+    assert found[0].name.endswith("20260910.json")
+    assert isinstance(found[1], dict)
+
+
+def test_latest_run_conditioning_report_future_dated_rejected(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(gap_disclosure, "_today", lambda: dt.date(2026, 9, 10))
+    path = tmp_path / "regime_blocked_run_conditioning_20990101.json"
+    path.write_text(
+        json.dumps(_run_conditioning_payload()), encoding="utf-8"
+    )
+    assert gap_disclosure.latest_run_conditioning_report(tmp_path) is None
+
+
+def test_latest_run_conditioning_report_corrupt_no_fallback(tmp_path):
+    (tmp_path / "regime_blocked_run_conditioning_20260909.json").write_text(
+        json.dumps(_run_conditioning_payload()), encoding="utf-8"
+    )
+    (tmp_path / "regime_blocked_run_conditioning_20260910.json").write_text(
+        "{broken", encoding="utf-8"
+    )
+    assert gap_disclosure.latest_run_conditioning_report(tmp_path) is None

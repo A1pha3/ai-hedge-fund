@@ -238,6 +238,12 @@ def _finite_number(value: object) -> bool:
     )
 
 
+def _valid_sample_count(value: object) -> bool:
+    """样本计数谓词 (int 且非 bool 且 >0) — 0 行桶不能冒充证据 (R181 Op2
+    n_included=0 拒绝同族); bool 是 int 子类须显式排除。"""
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
 def stop_direction_clause(
     payload: object,
     regime_label: object,
@@ -333,6 +339,113 @@ def stop_direction_clause(
         clause += f"，跳空穿越 {int(n_gap)}"
     clause += "）"
     return clause
+
+
+# 公开单一常量 (R137 Op2 同纪律): 读取体 glob 与渲染/测试同源, 字面量多处
+# 并存时 glob 演化会让各面静默分叉 (一侧拒一侧看不见)。
+RUN_CONDITIONING_REPORT_GLOB = "regime_blocked_run_conditioning_*.json"
+_RUN_CONDITIONING_GLOB = RUN_CONDITIONING_REPORT_GLOB
+
+
+def latest_run_conditioning_report(
+    reports_dir: str | Path = Path("data/reports"),
+) -> tuple[Path, dict] | None:
+    """最新 regime 阻断连跑条件化报告的唯一读取家 (R182 Op1)。
+
+    与 latest_exit_anatomy_report 同构 (形状守卫/字典序新鲜/未来日期
+    拒绝/损坏 None 不回退旧报告 — 不以陈旧数字冒充当前证据), 经
+    _latest_dated_report 单一实现只换 glob。
+    """
+    return _latest_dated_report(reports_dir, _RUN_CONDITIONING_GLOB)
+
+
+def reentry_readings_clause(payload: object, report_date: str) -> str | None:
+    """d1 重入邻近度当期读数子句 (R182 Op1) — 夜刷阻断连跑条件化的操作员面。
+
+    修复的不对称: R176 重入行把 owner 指向夜刷 regime_blocked_run_conditioning
+    报告看「当期数字」, 行内只渲染 R168 注册证据静态值 (as-of 自暴露) — 与
+    R181 项 5 止损方向当期化建立的原则相反 (判定时刻判定输入应行内可见)。
+    crisis↔normal 翻转期 (2026-09) 重入决策现场每周出现, 首个 normal 信号日
+    操作员不应再手动打开夜刷报告。
+
+    口径如实标注: 读数是 t10 净口径 (毛收益 − 往返 0.65%, 工具同式);
+    配对差 = blip − run (正值 = run 罚分在场); as-of 日期自暴露 (文件名
+    日期段由调用方透传, 陈旧可见不冒充)。
+
+    纯函数 + fail-closed 形状守卫 (R85/R115/R119 家族): payload/tables/d1
+    双行形状不符、n 缺失或 ≤0 或 bool (0 行不能冒充证据)、E/胜率非有限、
+    配对差 CI 缺失或非有限或 ci_low > ci_high (结构非法)、delta 池计数与
+    组行 n 不一致 (键↔内容交叉, R44/R47 家族)、report_date 空 (无日期的
+    证据声明不渲染) → None (渲染侧回退注册证据静态行, 不渲染部分垃圾)。
+    split-half 判读是可选段: consistent 非 bool (缺位/畸形) → 该段省略,
+    其余读数照常。
+    """
+    if not report_date or not isinstance(report_date, str):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    tables = payload.get("tables")
+    if not isinstance(tables, dict):
+        return None
+    t10 = tables.get("t10")
+    if not isinstance(t10, dict):
+        return None
+    run_row = t10.get("d1_run")
+    blip_row = t10.get("d1_blip")
+    if not isinstance(run_row, dict) or not isinstance(blip_row, dict):
+        return None
+    n_run = run_row.get("n")
+    n_blip = blip_row.get("n")
+    if not _valid_sample_count(n_run) or not _valid_sample_count(n_blip):
+        return None
+    run_e = run_row.get("expectancy")
+    run_wr = run_row.get("winrate")
+    blip_e = blip_row.get("expectancy")
+    blip_wr = blip_row.get("winrate")
+    if not (
+        _finite_number(run_e)
+        and _finite_number(run_wr)
+        and _finite_number(blip_e)
+        and _finite_number(blip_wr)
+    ):
+        return None
+    run_deltas = payload.get("run_deltas_t10")
+    if not isinstance(run_deltas, dict):
+        return None
+    delta = run_deltas.get("d1_run_vs_blip")
+    if not isinstance(delta, dict):
+        return None
+    ci_low = delta.get("ci_low")
+    ci_high = delta.get("ci_high")
+    if not _finite_number(ci_low) or not _finite_number(ci_high):
+        return None
+    if ci_low > ci_high:
+        return None
+    # 键↔内容交叉 (R44/R47 家族): 配对差声明的池计数与组行 n 分叉 = 工件
+    # 内部矛盾, 整子句拒绝不假装 (渲染矛盾读数比不渲染更有害)。
+    if delta.get("n_run") != n_run or delta.get("n_blip") != n_blip:
+        return None
+    split_token = ""
+    split_half = payload.get("split_half_d1")
+    if isinstance(split_half, dict) and isinstance(
+        split_half.get("consistent"), bool
+    ):
+        verdict = "跨半一致" if split_half["consistent"] else "跨半翻转"
+        split_token = f" · split-half {verdict}"
+
+    def _pct(value: float) -> str:
+        return f"{value * 100:+.2f}%"
+
+    def _wr(value: float) -> str:
+        return f"{value * 100:.1f}%"
+
+    return (
+        f"当期读数（夜刷 regime_blocked_run_conditioning {report_date} · "
+        f"t10 净口径）：d1_run E={_pct(run_e)}/胜率 {_wr(run_wr)}"
+        f"（n={int(n_run)}）· d1_blip E={_pct(blip_e)}/{_wr(blip_wr)}"
+        f"（n={int(n_blip)}）· 配对差 CI90 "
+        f"[{_pct(ci_low)},{_pct(ci_high)}]（正值=run 罚分）{split_token}"
+    )
 
 
 def gap_bucket(gap: float | None) -> str:
