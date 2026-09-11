@@ -382,6 +382,89 @@ def _make_ledger(tmp_path, rows):
     return p
 
 
+class TestR187DataWindow:
+    """R187 Op1: 对账载荷增发 data_window (事件表 signal_date min/max 数据真相).
+
+    R186 Op1『请求态窗口冒充数据覆盖』家族收口的消费面续 — 本链 summary 的
+    court_window 来自 manifest 请求窗 (_court_window_from_manifest), 被宇宙
+    对齐行/对账 MD 报告行渲染成 court 证据覆盖 (今日实录 20250701..20260911
+    vs 表真相 20250702..20260909)。钉住: 载荷增发 data_window + 消费面优先
+    渲染数据真相 + 旧载荷 (键缺席) 形状逐字节不变。
+    """
+
+    def _recon(self):
+        court_rows = [
+            {"ts_code": "301234.SZ", "signal_date": 20260807, "strength": 0.43},
+            {"ts_code": "601212.SH", "signal_date": 20260821, "strength": 0.655},
+        ]
+        journal = [_journal_buy("20260807", "301234", strength=0.50)]
+        inputs = _inputs(
+            court_rows,
+            sessions=["20260807", "20260821"],
+            regime={"20260807": "normal", "20260821": "normal"},
+            panel=["20260807", "20260821"],
+        )
+        return reconcile(journal, inputs)
+
+    def test_payload_carries_data_window_when_provided(self):
+        payload = summary_payload(
+            self._recon(),
+            court_window=("20250701", "20260911"),
+            data_window=("20250702", "20260909"),
+        )
+        assert payload["data_window"] == {"start": "20250702", "end": "20260909"}
+        # 请求窗字段原样保留 (outside_window 分类窗语义 + 旧消费面兼容)
+        assert payload["court_window"] == {"start": "20250701", "end": "20260911"}
+
+    def test_payload_omits_data_window_when_none(self):
+        payload = summary_payload(
+            self._recon(), court_window=("20250701", "20260911"), data_window=None
+        )
+        assert "data_window" not in payload
+
+    def test_alignment_summary_carries_data_window_when_provided(self):
+        summary = build_alignment_summary(
+            self._recon(),
+            court_window=("20250701", "20260911"),
+            data_window=("20250702", "20260909"),
+            summary_date="20260912",
+        )
+        assert summary["data_window"] == {"start": "20250702", "end": "20260909"}
+        assert summary["court_window"] == {"start": "20250701", "end": "20260911"}
+
+    def test_alignment_summary_omits_data_window_when_none(self):
+        summary = build_alignment_summary(
+            self._recon(),
+            court_window=None,
+            data_window=None,
+            summary_date="20260912",
+        )
+        assert "data_window" not in summary
+        assert "court_window" not in summary
+
+    def test_render_md_prefers_data_window(self):
+        payload = summary_payload(
+            self._recon(),
+            court_window=("20250701", "20260911"),
+            data_window=("20250702", "20260909"),
+        )
+        text = render_md(payload)
+        assert "court 窗口: 20250702..20260909" in text
+        assert "20260911" not in text
+
+    def test_render_md_falls_back_to_court_window(self):
+        payload = summary_payload(
+            self._recon(), court_window=("20250701", "20260911"), data_window=None
+        )
+        assert "court 窗口: 20250701..20260911" in render_md(payload)
+
+    def test_render_md_omits_window_line_when_both_absent(self):
+        payload = summary_payload(self._recon(), court_window=None, data_window=None)
+        # 『窗口行』形态是 "court 窗口: s..e"; 分类图例 "T0 不在 court 窗口内"
+        # 含同词, 不能作全文断言。
+        assert "court 窗口: " not in render_md(payload)
+
+
 class TestLedgerUnion:
     def test_load_ledger_buys_normalizes_and_nets_realized(self, tmp_path):
         p = _make_ledger(tmp_path, [

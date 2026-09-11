@@ -53,6 +53,8 @@ from typing import Any, Iterable, Mapping, Sequence
 
 import pandas as pd
 
+from scripts.winrate_payoff_decomposition import court_window_from_events
+
 JOURNAL_PATH = Path("data/paper_trading/journal.jsonl")
 LEDGER_PATH = Path("data/paper_trading_v2/ledger.sqlite3")
 COURT_TABLE_PATH = Path("data/research/btst_court/event_tables/event_table_v1.csv.gz")
@@ -663,7 +665,12 @@ def realization_gap_summary(
     }
 
 
-def summary_payload(recon: Reconciliation, *, court_window: tuple[str, str] | None) -> dict[str, Any]:
+def summary_payload(
+    recon: Reconciliation,
+    *,
+    court_window: tuple[str, str] | None,
+    data_window: tuple[str, str] | None = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "class_counts": dict(recon.class_counts),
         "total_buys": len(recon.records),
@@ -698,6 +705,11 @@ def summary_payload(recon: Reconciliation, *, court_window: tuple[str, str] | No
     }
     if court_window is not None:
         payload["court_window"] = {"start": court_window[0], "end": court_window[1]}
+    if data_window is not None:
+        # R187 Op1: 数据内容窗口 (事件表 signal_date min/max) — manifest 请求窗
+        # (court_window) 是分类语义不是覆盖陈述, 操作员渲染面以数据真相优先
+        # (R141 Op3 成文), 旧载荷 (键缺席) 形状逐字节不变。
+        payload["data_window"] = {"start": data_window[0], "end": data_window[1]}
     gap = realization_gap_summary(recon.matched_records)
     if gap is not None:
         payload["realization_gap"] = gap
@@ -709,6 +721,7 @@ def build_alignment_summary(
     *,
     court_window: tuple[str, str] | None,
     summary_date: str,
+    data_window: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     """操作员对齐行的 canonical 摘要 (R118 Op1)。
 
@@ -734,6 +747,9 @@ def build_alignment_summary(
     }
     if court_window is not None:
         summary["court_window"] = {"start": court_window[0], "end": court_window[1]}
+    if data_window is not None:
+        # R187 Op1: 同 summary_payload — 宇宙对齐行窗口子句的数据真相来源。
+        summary["data_window"] = {"start": data_window[0], "end": data_window[1]}
     gap = realization_gap_summary(recon.matched_records)
     if gap is not None:
         summary["realization_gap"] = gap
@@ -769,7 +785,18 @@ def render_md(payload: Mapping[str, Any]) -> str:
         "(paper realized = T+1 open 滑点→T+h close; court gross = T+1 open→T+h open — 锚点本异, 只比方向)。",
         "",
     ]
-    if "court_window" in payload:
+    data_block = payload.get("data_window")
+    has_data_window = (
+        isinstance(data_block, dict)
+        and isinstance(data_block.get("start"), str) and data_block.get("start")
+        and isinstance(data_block.get("end"), str) and data_block.get("end")
+    )
+    if has_data_window:
+        # R187 Op1: 数据内容真相优先 (R141 Op3 成文『覆盖至=数据窗口末端』);
+        # 请求窗 (court_window) 是分类语义不是覆盖陈述。
+        lines.append(f"court 窗口: {data_block['start']}..{data_block['end']}")
+        lines.append("")
+    elif "court_window" in payload:
         lines.append(
             f"court 窗口: {payload['court_window']['start']}..{payload['court_window']['end']}"
         )
@@ -1037,6 +1064,16 @@ def main(argv: list[str] | None = None) -> int:
     if window is None:
         raise SystemExit("court manifest 缺失或无 window — 无法定窗, fail-closed")
     window_sessions = [d for d in calendar_days if window[0] <= d <= window[1]]
+    # R187 Op1: 数据内容窗口 = 事件表 signal_date min/max (court_window_from_events
+    # 单一实现复用, R141 Op3); manifest 窗是请求态 (R130 Op1 成文非数据内容),
+    # 只保留 outside_window 分类语义。空表两端 None → 不附带 (不冒充)。
+    content_window = court_window_from_events(court_table)
+    data_window = (
+        (content_window["start"], content_window["end"])
+        if isinstance(content_window.get("start"), str) and content_window.get("start")
+        and isinstance(content_window.get("end"), str) and content_window.get("end")
+        else None
+    )
 
     inputs = build_classification_inputs(
         court_table=court_table,
@@ -1045,7 +1082,7 @@ def main(argv: list[str] | None = None) -> int:
         panel_dates=panel_dates,
     )
     recon = reconcile(journal, inputs, extra_buys=extra_buys)
-    payload = summary_payload(recon, court_window=window)
+    payload = summary_payload(recon, court_window=window, data_window=data_window)
     attach_divergence_diagnosis(
         payload, recon, raw_dir=args.panel_dir.parent, regime_labels=regime_labels
     )
@@ -1063,7 +1100,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.summary_json is not None:
         write_alignment_summary(
             args.summary_json,
-            build_alignment_summary(recon, court_window=window, summary_date=stamp),
+            build_alignment_summary(
+                recon,
+                court_window=window,
+                data_window=data_window,
+                summary_date=stamp,
+            ),
         )
         print(f"alignment summary: {args.summary_json}")
     print(json.dumps(payload["class_counts"], ensure_ascii=False))

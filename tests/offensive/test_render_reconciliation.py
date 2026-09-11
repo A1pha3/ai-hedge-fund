@@ -24,6 +24,8 @@ from src.screening.offensive.daily_action_service import (
     PlanCandidate,
 )
 from src.screening.offensive.execution_adjuster import ExecutionCosts
+from src.screening.offensive.ledger_repository import LedgerRepository
+from src.screening.offensive.trade_lifecycle import TradeState
 
 
 @pytest.fixture(autouse=True)
@@ -34,8 +36,6 @@ def _isolate_alignment_summary(tmp_path, monkeypatch):
     from src.screening.offensive import daily_action as _da
 
     monkeypatch.setattr(_da, "_ALIGNMENT_SUMMARY_PATH", tmp_path / "no-alignment.json")
-from src.screening.offensive.ledger_repository import LedgerRepository
-from src.screening.offensive.trade_lifecycle import TradeState
 
 
 def _sessions() -> tuple[date, ...]:
@@ -441,3 +441,51 @@ def test_alignment_line_realization_gap_direction_malformed_omits_direction_only
         assert line is not None, f"line must survive: {bad_direction!r}"
         assert "court 同票假想期望 -8.34%" in line, f"numbers must stay: {bad_direction!r}"
         assert "方向一致" not in line, f"direction must be omitted: {bad_direction!r}"
+
+
+# ---------------------------------------------------------------------------
+# R187 Op1: 宇宙对齐行 court 窗口子句真值化 (数据内容真相优先, 请求窗回退)
+# ---------------------------------------------------------------------------
+
+def test_alignment_line_prefers_data_window_over_request_window(tmp_path):
+    """data_window (表 signal_date min/max 数据真相) 在场 → 窗口子句渲染数据
+    真相, 请求态 court_window 值不同也不再出行 (R186 家族消费面续)."""
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary_with_gap(
+        court_window={"start": "20250701", "end": "20260911"},
+        data_window={"start": "20250702", "end": "20260909"},
+    )
+    path = _write_alignment(tmp_path, payload)
+    line = da._render_universe_alignment_line(path)
+    assert line is not None
+    assert "court 窗口 20250702..20260909" in line
+    assert "20260911" not in line
+
+
+@pytest.mark.parametrize(
+    "poison",
+    [
+        "not-a-dict",
+        20260909,
+        True,
+        {"start": "2025-07-02", "end": "20260909"},
+        {"start": "20250702", "end": 20260909},
+        {"start": 20250702, "end": "20260909"},
+        {"start": True, "end": "20260909"},
+        {"start": "2025070", "end": "20260909"},
+    ],
+)
+def test_alignment_line_malformed_data_window_falls_back(tmp_path, poison):
+    """data_window 畸形 → 弃用落 court_window 回退分支, 渲染与修复前逐字节
+    一致 (fail-open 接线家族纪律, R186 _court_coverage_end 同族)."""
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary_with_gap(
+        court_window={"start": "20250701", "end": "20260904"},
+        data_window=poison,
+    )
+    path = _write_alignment(tmp_path, payload)
+    line = da._render_universe_alignment_line(path)
+    assert line is not None
+    assert "court 窗口 20250701..20260904" in line

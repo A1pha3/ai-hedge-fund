@@ -2027,8 +2027,11 @@ def _render_universe_alignment_line(
     fail-open 家族纪律 (R85/R87/R92/R109/R115/R119 同族): summary 缺失/
     损坏/形状不符 → 整行省略, 不假装有对账; stores 块缺失/畸形 → 分
     store 子句省略 (旧 summary 逐字节回退旧行); 子句数据缺失 (realized
-    未平仓/窗口缺失) → 对应子句省略。本行是披露不是行为改变 — 不进入
-    任何计划/评分/仓位/退出决策路径。
+    未平仓/窗口缺失) → 对应子句省略。R187 Op1: 窗口子句数据内容真相优先
+    (data_window = 事件表 signal_date min/max), 请求态 court_window 仅旧
+    summary 回退 — 此前渲染 manifest 请求窗冒充数据覆盖, 与同屏先验漂移
+    行/执行面缺口行『覆盖至=数据窗口末端』相差 1-2 会话 (R186 家族残余面)。
+    本行是披露不是行为改变 — 不进入任何计划/评分/仓位/退出决策路径。
     """
     path = Path(summary_path) if summary_path is not None else _ALIGNMENT_SUMMARY_PATH
     try:
@@ -2065,7 +2068,25 @@ def _render_universe_alignment_line(
         if future
         else f"宇宙对齐（对账 {report_date}"
     )
-    window = data.get("court_window")
+    # R187 Op1: 窗口子句 = 数据内容真相优先 — summary 的 data_window (对账链
+    # R187 Op1 起增发, 事件表 signal_date min/max, R141 Op3 成文『覆盖至=数据
+    # 窗口末端』同族) 优先; 请求态 court_window (manifest 请求窗, R130 Op1 成文
+    # 非数据内容) 仅旧 summary 回退, 回退分支无新增守卫与修复前逐字节一致
+    # (fail-open 接线家族纪律, R186 _court_coverage_end 同族)。data_window 形状
+    # 非法 (非 dict/start 或 end 非 8 位数字串 — 含 bool/int 毒化) → 弃用并落
+    # 回退; 两者均缺 → 子句省略 (修复前行为)。
+    data_truth = data.get("data_window")
+    window = (
+        data_truth
+        if isinstance(data_truth, dict)
+        and isinstance(data_truth.get("start"), str)
+        and _DATE_8_RE.fullmatch(data_truth["start"]) is not None
+        and isinstance(data_truth.get("end"), str)
+        and _DATE_8_RE.fullmatch(data_truth["end"]) is not None
+        else None
+    )
+    if window is None:
+        window = data.get("court_window")
     if (
         isinstance(window, dict)
         and isinstance(window.get("start"), str) and window.get("start")
