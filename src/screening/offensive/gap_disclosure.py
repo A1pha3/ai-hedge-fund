@@ -244,6 +244,61 @@ def _valid_sample_count(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
+# R188 Op1: split_half.pooled (聚合罚分跨半读数) 的消费面字段 — 执行面行文
+# 自身的问题是聚合层 (『高开>5% 子集历史期望』), 该块是其直答读数; 与分桶
+# 合取 verdict (split_stable, R15 镜像) 并列披露互不替代。
+_POOLED_PENALTY_NUMBER_FIELDS = (
+    "penalty_first",
+    "penalty_second",
+    "e_hi_first",
+    "e_hi_second",
+)
+_POOLED_PENALTY_COUNT_FIELDS = ("n_hi_first", "n_hi_second")
+
+
+def parse_pooled_penalty(raw: object) -> dict[str, object] | None:
+    """split_half.pooled 严格形状守卫 (R188 Op1) — 全字段合法才解析, 否则 None。
+
+    pooled 是纯增量键 (旧报告缺席 → None); 任一字段畸形 (bool 毒化/非有限
+    数/缺失/负计数) → 整块拒绝 (半真披露比无披露更有害), 消费行子句省略。
+    """
+    if not isinstance(raw, dict):
+        return None
+    consistent = raw.get("consistent")
+    if not isinstance(consistent, bool):
+        return None
+    parsed: dict[str, object] = {"consistent": consistent}
+    for key in _POOLED_PENALTY_NUMBER_FIELDS:
+        value = raw.get(key)
+        if not _finite_number(value):
+            return None
+        parsed[key] = float(value)  # type: ignore[arg-type]
+    for key in _POOLED_PENALTY_COUNT_FIELDS:
+        value = raw.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return None
+        parsed[key] = value
+    return parsed
+
+
+def pooled_penalty_clause(pooled: object) -> str:
+    """执行面行聚合罚分子句 (R188 Op1) — pooled 缺席/畸形 → 空串 (行逐字节不变)。
+
+    同号/异号措辞由 consistent bool 驱动; 判读语义属 owner (宪法 #2),
+    子句只把聚合层读数与 R15 分桶 verdict 并列显形。
+    """
+    parsed = parse_pooled_penalty(pooled)
+    if parsed is None:
+        return ""
+    same = "同号" if parsed["consistent"] else "异号"
+    return (
+        f" · 聚合罚分两半 {parsed['penalty_first'] * 100:+.2f}pp"
+        f"/{parsed['penalty_second'] * 100:+.2f}pp {same}"
+        f"（高开子集期望 {parsed['e_hi_first']:+.2%}/{parsed['e_hi_second']:+.2%}"
+        f" · n {parsed['n_hi_first']}/{parsed['n_hi_second']}）"
+    )
+
+
 def stop_direction_clause(
     payload: object,
     regime_label: object,
@@ -587,6 +642,13 @@ def gap_execution_reference(
         consistent = split.get("consistent_count")
         if isinstance(judgable, int) and isinstance(consistent, int) and judgable > 0:
             split_stable = consistent == judgable
+    # R188 Op1: 聚合罚分块严格守卫消费 — 缺席 (旧报告)/畸形 → None, 消费行
+    # 子句省略 (fail-open 接线家族纪律, 与修复前逐字节一致)。
+    pooled_ref: dict[str, object] | None = None
+    if isinstance(split, dict):
+        parsed = parse_pooled_penalty(split.get("pooled"))
+        if parsed is not None:
+            pooled_ref = parsed
     total_n = None
     horizons = aligned.get("horizons")
     if isinstance(horizons, dict):
@@ -612,5 +674,6 @@ def gap_execution_reference(
         "n_lo": int(lo_n),
         "e_lo": lo_we / lo_n,
         "split_stable": split_stable,
+        "pooled": pooled_ref,
         "total_n": total_n,
     }

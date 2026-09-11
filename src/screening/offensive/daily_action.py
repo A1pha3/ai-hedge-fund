@@ -2226,7 +2226,10 @@ def _render_gap_reference_line(
     证据缺失/损坏 → 整行省略 (fail-open, 镜像 R85 触发器状态行)。
     本行是披露不是行为改变 — 不改变任何计划创建/评分/仓位/退出决策。
     """
-    from src.screening.offensive.gap_disclosure import gap_execution_reference
+    from src.screening.offensive.gap_disclosure import (
+        gap_execution_reference,
+        pooled_penalty_clause,
+    )
 
     base = reports_dir if reports_dir is not None else Path("data/reports")
     reference = gap_execution_reference(base)
@@ -2239,6 +2242,10 @@ def _render_gap_reference_line(
         split_note = "罚分跨半不一致（R15 判据: 条件化证据不足）"
     else:
         split_note = "跨半稳定性未判定"
+    # R188 Op1: 聚合罚分子句 — split_note 是分桶合取 verdict (R15 镜像, 增量
+    # 判别层), 本子句是聚合层 (行文自身的『高开>5% 子集期望』问题) 的直答
+    # 读数; pooled 缺席 (旧报告)/畸形 → 空串, 行与修复前逐字节一致。
+    pooled_clause = pooled_penalty_clause(reference.get("pooled"))
     total = (
         f"，生产对齐 n={reference['total_n']}" if reference["total_n"] else ""
     )
@@ -2255,7 +2262,7 @@ def _render_gap_reference_line(
         f"执行面缺口参考（{evidence_span}{total}）："
         f"T+1 开盘高开>5% 子集历史期望 {reference['e_hi']:+.2%}"
         f"（n={reference['n_hi']}） vs ≤5% {reference['e_lo']:+.2%}"
-        f"（n={reference['n_lo']}）· {split_note} — 竞价后高开>5% 时可对照"
+        f"（n={reference['n_lo']}）· {split_note}{pooled_clause} — 竞价后高开>5% 时可对照"
         f"该历史子集期望；仅披露参考，不改变计划与执行决策"
     )
 

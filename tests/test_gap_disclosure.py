@@ -142,6 +142,72 @@ class TestGapExecutionReference:
         ref = gap_execution_reference(tmp_path)
         assert ref["split_stable"] is False
 
+    # --- R188 Op1: 聚合罚分跨半读数 (split_half.pooled 严格守卫消费) ---
+
+    @staticmethod
+    def _pooled(consistent=True):
+        return {
+            "penalty_first": 0.0563,
+            "penalty_second": 0.0313,
+            "e_hi_first": -0.049,
+            "e_hi_second": -0.0286,
+            "n_hi_first": 91,
+            "n_hi_second": 67,
+            "consistent": consistent,
+        }
+
+    @staticmethod
+    def _payload_with_pooled(pooled, consistent_count=2):
+        payload = _report_json(consistent_count=consistent_count)
+        split = payload["universes"]["production_aligned"]["gap_anatomy"]["split_half"]
+        if pooled is not None:
+            split["pooled"] = pooled
+        return payload
+
+    def test_pooled_fields_passed_through(self, tmp_path):
+        _write_report(tmp_path, payload=self._payload_with_pooled(self._pooled()))
+        ref = gap_execution_reference(tmp_path)
+        assert ref["pooled"]["consistent"] is True
+        assert ref["pooled"]["penalty_first"] == pytest.approx(0.0563, abs=1e-12)
+        assert ref["pooled"]["penalty_second"] == pytest.approx(0.0313, abs=1e-12)
+        assert ref["pooled"]["e_hi_first"] == pytest.approx(-0.049, abs=1e-12)
+        assert ref["pooled"]["n_hi_first"] == 91
+        assert ref["pooled"]["n_hi_second"] == 67
+        # 既有键零变化
+        assert ref["split_stable"] is False  # consistent_count=2 < judgable 4
+
+    def test_pooled_absent_old_report_none(self, tmp_path):
+        _write_report(tmp_path)
+        ref = gap_execution_reference(tmp_path)
+        assert ref["pooled"] is None
+        assert ref["split_stable"] is True
+
+    def test_pooled_non_dict_none(self, tmp_path):
+        _write_report(tmp_path, payload=self._payload_with_pooled("pooled"))
+        assert gap_execution_reference(tmp_path)["pooled"] is None
+
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            pytest.param(lambda p: p.update(consistent=1), id="consistent-int"),
+            pytest.param(lambda p: p.update(consistent=None), id="consistent-none"),
+            pytest.param(lambda p: p.update(penalty_first=True), id="penalty-bool"),
+            pytest.param(lambda p: p.update(penalty_second="0.03"), id="penalty-str"),
+            pytest.param(lambda p: p.update(e_hi_first=None), id="e-hi-none"),
+            pytest.param(
+                lambda p: p.update(e_hi_second=float("nan")), id="e-hi-nan"),
+            pytest.param(lambda p: p.update(n_hi_first=True), id="n-hi-bool"),
+            pytest.param(lambda p: p.update(n_hi_second=-1), id="n-hi-negative"),
+            pytest.param(lambda p: p.pop("penalty_first"), id="penalty-missing"),
+            pytest.param(lambda p: p.pop("n_hi_second"), id="n-hi-missing"),
+        ],
+    )
+    def test_pooled_malformed_guards(self, tmp_path, mutate):
+        pooled = self._pooled()
+        mutate(pooled)
+        _write_report(tmp_path, payload=self._payload_with_pooled(pooled))
+        assert gap_execution_reference(tmp_path)["pooled"] is None
+
 
 class TestRenderGapLine:
     def _line(self, tmp_path):
@@ -166,6 +232,53 @@ class TestRenderGapLine:
         line = self._line(tmp_path)
         assert line is not None
         assert "跨半不一致" in line
+
+    # --- R188 Op1: 聚合罚分子句渲染 (fail-open 家族纪律) ---
+
+    def test_pooled_clause_rendered_same_sign(self, tmp_path):
+        payload = _report_json(consistent_count=2)
+        payload["universes"]["production_aligned"]["gap_anatomy"]["split_half"][
+            "pooled"] = TestGapExecutionReference._pooled(consistent=True)
+        _write_report(tmp_path, payload=payload)
+        line = self._line(tmp_path)
+        assert line is not None
+        assert "聚合罚分两半 +5.63pp/+3.13pp 同号" in line
+        assert "高开子集期望 -4.90%/-2.86%" in line
+        assert " · n 91/67" in line
+
+    def test_pooled_clause_flip_wording(self, tmp_path):
+        payload = _report_json(consistent_count=2)
+        payload["universes"]["production_aligned"]["gap_anatomy"]["split_half"][
+            "pooled"] = TestGapExecutionReference._pooled(consistent=False)
+        _write_report(tmp_path, payload=payload)
+        line = self._line(tmp_path)
+        assert line is not None
+        assert "聚合罚分两半 +5.63pp/+3.13pp 异号" in line
+
+    def test_pooled_absent_line_byte_identical(self, tmp_path):
+        """旧报告 (无 pooled 键) → 行与修复前逐字节一致 (fail-open 接线家族)。"""
+        _write_report(tmp_path, payload=_report_json(consistent_count=2))
+        line = self._line(tmp_path)
+        assert line is not None
+        assert "聚合罚分" not in line
+        ref = gap_execution_reference(tmp_path)
+        expected = (
+            f"执行面缺口参考（court 证据构建 20260901，生产对齐 n=1921）："
+            f"T+1 开盘高开>5% 子集历史期望 {ref['e_hi']:+.2%}"
+            f"（n={ref['n_hi']}） vs ≤5% {ref['e_lo']:+.2%}"
+            f"（n={ref['n_lo']}）· 罚分跨半不一致（R15 判据: 条件化证据不足）"
+            f" — 竞价后高开>5% 时可对照该历史子集期望；仅披露参考，不改变计划与执行决策"
+        )
+        assert line == expected
+
+    def test_pooled_malformed_line_omits_clause(self, tmp_path):
+        payload = _report_json(consistent_count=2)
+        split = payload["universes"]["production_aligned"]["gap_anatomy"]["split_half"]
+        split["pooled"] = {"consistent": "yes", "penalty_first": 0.05}
+        _write_report(tmp_path, payload=payload)
+        line = self._line(tmp_path)
+        assert line is not None
+        assert "聚合罚分" not in line
 
 
 def test_gap_reference_ignores_non_dated_lookalike_files(tmp_path):

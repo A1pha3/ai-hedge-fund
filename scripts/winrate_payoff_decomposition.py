@@ -655,6 +655,34 @@ def _gap_split_half(work: pd.DataFrame) -> dict[str, object]:
         entry["judgable"] = judgable
         entry["direction_consistent"] = consistent
         buckets.append(entry)
+    # R188 Op1: 聚合 (全强度池化) 罚分跨半读数 — 执行面行文自身的问题是聚合层
+    # (『高开>5% 子集历史期望』), 分桶合取 verdict 回答的是增量判别层, 两层
+    # 不可互替。同一 _penalty 单一实现; consistent 判定逐半逐侧 MIN_CELL_N
+    # 门槛 (分桶面『桶内合计 n』口径允许小样本 hi 侧驱动符号 — R188 Observe
+    # 实录 0.60-0.70 第二半 n_hi=11 — 聚合面不继承该弱点), 任一半任一侧
+    # 不足或缺侧 → consistent None 不冒充方向。纯增量键, 既有键零变化。
+    pooled: dict[str, object] = {"consistent": None}
+    pooled_penalties: list[float] = []
+    for name in ("first", "second"):
+        pen, n_hi, n_lo = _penalty(halves[name], "net_ret_t10")
+        hi = (
+            halves[name][halves[name]["gap_t1_open"] > GAP_HIGH_THRESHOLD][
+                "net_ret_t10"
+            ].dropna()
+        )
+        lo = (
+            halves[name][halves[name]["gap_t1_open"] <= GAP_HIGH_THRESHOLD][
+                "net_ret_t10"
+            ].dropna()
+        )
+        pooled[f"penalty_{name}"] = pen
+        pooled[f"e_hi_{name}"] = float(hi.mean()) if len(hi) else None
+        pooled[f"n_hi_{name}"] = int(len(hi))
+        pooled[f"n_lo_{name}"] = int(len(lo))
+        if pen is not None and n_hi >= MIN_CELL_N and n_lo >= MIN_CELL_N:
+            pooled_penalties.append(pen)
+    if len(pooled_penalties) == 2:
+        pooled["consistent"] = (pooled_penalties[0] > 0) == (pooled_penalties[1] > 0)
     if judgable_count == 0:
         verdict = "样本不足 — 无半区两侧 n≥门槛的可判定桶, 不支持稳定性判定"
     elif consistent_count == judgable_count:
@@ -672,6 +700,7 @@ def _gap_split_half(work: pd.DataFrame) -> dict[str, object]:
         "close_anchor_penalty_stable": (
             all(ca_consistent) if ca_consistent else None
         ),
+        "pooled": pooled,
         "verdict_hint": verdict,
     }
 

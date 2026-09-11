@@ -1826,6 +1826,68 @@ class TestGapSplitHalf:
         assert b["ca_penalty_first"] == pytest.approx(0.04 - (-0.03 + 0.02), abs=1e-12)
         assert b["ca_penalty_second"] == pytest.approx(0.04 - (-0.02 + 0.02), abs=1e-12)
 
+    # --- R188 Op1: 聚合 (全强度池化) 罚分跨半读数 ---------------------------
+    # 执行面行文自身的问题是聚合层 (『高开>5% 子集历史期望』), 分桶合取
+    # verdict 回答的是增量判别层, 两层不可互替。聚合 consistent 判定逐半
+    # 逐侧 MIN_CELL_N 门槛 — 分桶面允许小样本 hi 侧驱动合取翻转的教训
+    # (R188 Observe 实录 0.60-0.70 第二半 n_hi=11) 不得在聚合面重演。
+
+    def _pooled_split(self, penalties, n_low, n_high):
+        return self._split(self._rows(penalties, n_low=n_low, n_high=n_high))
+
+    def test_pooled_penalty_direction_consistent(self):
+        pooled = self._pooled_split((-0.03, -0.02), n_low=32, n_high=32)["pooled"]
+        assert pooled["consistent"] is True
+        assert pooled["penalty_first"] == pytest.approx(0.01 - (-0.03), abs=1e-12)
+        assert pooled["penalty_second"] == pytest.approx(0.01 - (-0.02), abs=1e-12)
+        assert pooled["e_hi_first"] == pytest.approx(-0.03, abs=1e-12)
+        assert pooled["e_hi_second"] == pytest.approx(-0.02, abs=1e-12)
+        assert pooled["n_hi_first"] == 32 and pooled["n_hi_second"] == 32
+
+    def test_pooled_direction_flip_disclosed(self):
+        pooled = self._pooled_split((-0.03, 0.05), n_low=32, n_high=32)["pooled"]
+        assert pooled["consistent"] is False
+        assert pooled["penalty_second"] == pytest.approx(0.01 - 0.05, abs=1e-12)
+        # 聚合面与分桶面互不替代: 分桶合取此时也翻转, 两层读数并列
+        assert "过拟合风险" in self._pooled_split((-0.03, 0.05), 32, 32)["verdict_hint"]
+
+    def test_pooled_small_hi_side_not_judged(self):
+        # 第二半 hi 侧 n=3 < MIN_CELL_N: penalty 可算但 consistent None;
+        # 对照面 — 同一形态分桶面因『桶内合计 n』口径恰可判定 (后者正是
+        # 小样本 hi 侧驱动合取的弱点, 聚合面逐侧门槛不继承)。
+        sh = self._pooled_split((-0.03, -0.02), n_low=32, n_high=3)
+        pooled = sh["pooled"]
+        assert pooled["penalty_second"] is not None
+        assert pooled["consistent"] is None
+        bucket = next(x for x in sh["buckets"] if x["strength_bucket"] == "≥0.70")
+        assert bucket["judgable"] is True
+
+    def test_pooled_missing_hi_side_none(self):
+        # 第二半无高开行 → penalty_second None → consistent None 不冒充方向
+        frame = self._rows(penalties=(-0.03, -0.02), n_low=32, n_high=32)
+        import pandas as pd
+        second_hi = (frame["signal_date"].str.startswith("2026-04")) & (
+            frame["gap_t1_open"] == 0.07)
+        frame = frame[~second_hi].reset_index(drop=True)
+        pooled = self._split(frame)["pooled"]
+        assert pooled["penalty_second"] is None
+        assert pooled["consistent"] is None
+        assert pooled["n_hi_second"] == 0
+
+    def test_pooled_existing_keys_unchanged(self):
+        """pooled 是纯增量键 — 既有键与分桶 verdict 逻辑零变化。"""
+        sh = self._pooled_split((-0.03, -0.02), n_low=32, n_high=32)
+        for key in ("split_date", "buckets", "judgable_count", "consistent_count",
+                    "close_anchor_penalty_stable", "verdict_hint"):
+            assert key in sh
+        assert sh["judgable_count"] == 1 and sh["consistent_count"] == 1
+        assert "具备进一步评估资格" in sh["verdict_hint"]
+
+    def test_pooled_deterministic_across_calls(self):
+        a = self._pooled_split((-0.03, 0.05), n_low=32, n_high=32)
+        b = self._pooled_split((-0.03, 0.05), n_low=32, n_high=32)
+        assert json.dumps(a["pooled"]) == json.dumps(b["pooled"])
+
     def test_mounted_in_gap_anatomy_and_rendered(self):
         import pandas as pd
         from scripts.winrate_payoff_decomposition import decompose, render_md
