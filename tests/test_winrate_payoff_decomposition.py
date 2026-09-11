@@ -1999,6 +1999,17 @@ class TestGapSplitHalf:
             " +5.63pp/+3.13pp 同号（高开子集期望 -4.90%/-2.86% · n 91/67）"
         ) in md
 
+    def test_render_md_pooled_bullet_flip_wording(self):
+        """MD 面异号形态直接钉住 (R189 Op2: 措辞翻转/truthy 探针牙在渲染面确定性化)。"""
+        pooled = dict(self._POOLED_FIXTURE)
+        pooled["consistent"] = False
+        md = self._render_with_pooled(pooled)
+        assert (
+            "- **聚合罚分 (全强度池化, 执行面行直答层)**: 聚合罚分两半"
+            " +5.63pp/+3.13pp 异号（高开子集期望 -4.90%/-2.86% · n 91/67）"
+        ) in md
+        assert "同号（高开子集期望" not in md
+
     def test_render_md_pooled_bullet_single_implementation_no_drift(self):
         """MD 列表项正文与操作员子句同源 (pooled_penalty_body 单一实现)。"""
         from src.screening.offensive.gap_disclosure import (
