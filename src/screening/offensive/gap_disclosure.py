@@ -204,6 +204,125 @@ def latest_signal_day_cohort_report(
     return _latest_dated_report(reports_dir, _COHORT_REPORT_GLOB)
 
 
+# 公开单一常量 (R137 Op2 同纪律): 读取体 glob 与渲染/测试同源, 字面量多处
+# 并存时 glob 演化会让各面静默分叉 (一侧拒一侧看不见)。
+EXIT_ANATOMY_REPORT_GLOB = "exit_anatomy_*.json"
+_EXIT_ANATOMY_GLOB = EXIT_ANATOMY_REPORT_GLOB
+
+# 止损当期方向读数承认的 regime 标签集 (与 regime_history 三态同源;
+# unknown/缺失 = 数据缺口, 不冒充证据)。
+_STOP_DIRECTION_REGIME_LABELS = ("crisis", "normal", "risk_off")
+
+# 止损档键形状 ("−5%" / "-12.5%"); 形状外的键不进最佳档选择 (防畸形键冒充)。
+_STOP_TIER_RE = re.compile(r"^-?\d+(?:\.\d+)?%$")
+
+
+def latest_exit_anatomy_report(
+    reports_dir: str | Path = Path("data/reports"),
+) -> tuple[Path, dict] | None:
+    """最新退出解剖报告的唯一读取家 (R181 Op1)。
+
+    与 latest_signal_day_cohort_report 同构 (形状守卫/字典序新鲜/未来日期
+    拒绝/损坏 None 不回退旧报告 — 不以陈旧数字冒充当前证据), 经
+    _latest_dated_report 单一实现只换 glob。
+    """
+    return _latest_dated_report(reports_dir, _EXIT_ANATOMY_GLOB)
+
+
+def _finite_number(value: object) -> bool:
+    """有限数值谓词 (bool 显式排除; NaN/inf 排除) — 本模块局部守卫。"""
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def stop_direction_clause(
+    payload: object,
+    regime_label: object,
+    report_date: str,
+) -> str | None:
+    """项 5 当期止损方向子句 (R181 Op1) — 夜刷 exit_anatomy 止损反事实的操作员面。
+
+    修复的失实: 操作员止损启用条件行把 owner 指向 backtest_exit_strategies.py
+    「确认当期方向」, 而该工具输入冻结在 journal 恢复样本 (2026-01-15→07-06),
+    按构造回答不了「当期」; 当期方向证据是夜刷 btst_exit_anatomy 的
+    production×regime 止损反事实网格 (诚实成交语义: 跳空按 open 成交)。
+
+    口径如实标注: by_regime 桶建在当前表全候选上 (非 production_aligned
+    过滤), 措辞固定「生产表/<label>/全候选」; as-of 日期自暴露 (文件名日期段
+    由调用方透传, 陈旧可见不冒充)。最佳档 = 有限 Δ 中最大者 (键按档位深度
+    升序遍历 + 严格大于, 平局取更浅档, 确定); 键非「-N%」形态或 Δ 非有限的
+    档跳过。
+
+    纯函数 + fail-open (R85/R115/R119 家族): payload/桶/网格形状不符、基准
+    或最佳 Δ 非有限、n 缺失、标签不在三态集 → None (不假装有证据, 渲染侧
+    整子句省略, 绝不渲染部分垃圾)。
+    """
+    if regime_label not in _STOP_DIRECTION_REGIME_LABELS:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    production = payload.get("production")
+    if not isinstance(production, dict):
+        return None
+    by_regime = production.get("by_regime")
+    if not isinstance(by_regime, dict):
+        return None
+    bucket = by_regime.get(regime_label)
+    if not isinstance(bucket, dict):
+        return None
+    n_total = bucket.get("n_included")
+    if not _finite_number(n_total) or n_total < 0:
+        return None
+    base = bucket.get("base")
+    base_mean = base.get("mean_net") if isinstance(base, dict) else None
+    if not _finite_number(base_mean):
+        return None
+    grid = bucket.get("stop_grid")
+    if not isinstance(grid, dict) or not grid:
+        return None
+    best_tier: str | None = None
+    best_delta: float | None = None
+    best_entry: dict | None = None
+    for tier, entry in grid.items():
+        if not isinstance(tier, str) or not _STOP_TIER_RE.match(tier):
+            continue
+        if not isinstance(entry, dict):
+            continue
+        delta = entry.get("delta_vs_base")
+        if not _finite_number(delta):
+            continue
+        if best_delta is None or delta > best_delta:
+            best_tier, best_delta, best_entry = tier, float(delta), entry
+    if best_tier is None or best_entry is None or best_delta is None:
+        return None
+    best_mean = best_entry.get("mean_net")
+    n_stopped = best_entry.get("n_stopped")
+    n_gap = best_entry.get("n_gap_through")
+
+    def _pct(value: float) -> str:
+        return f"{value * 100:+.2f}%"
+
+    def _pp(value: float) -> str:
+        return f"{value * 100:+.2f}pp"
+
+    clause = (
+        f"当期方向（exit_anatomy {report_date} · 生产表/{regime_label}/全候选，"
+        f"n={int(n_total)}）：基准 {_pct(base_mean)} · 最佳止损档 {best_tier}"
+        f"（Δ{_pp(best_delta)}"
+    )
+    if _finite_number(best_mean):
+        clause += f"，档内 {_pct(best_mean)}"
+    if _finite_number(n_stopped):
+        clause += f"，触发 {int(n_stopped)}/{int(n_total)}"
+    if _finite_number(n_gap):
+        clause += f"，跳空穿越 {int(n_gap)}"
+    clause += "）"
+    return clause
+
+
 def gap_bucket(gap: float | None) -> str:
     """T+1 开盘缺口分桶 — 左闭右开, 缺失诚实 unknown (不假装知道)。"""
     if gap is None or (isinstance(gap, float) and math.isnan(gap)):

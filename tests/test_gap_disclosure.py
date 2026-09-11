@@ -341,3 +341,215 @@ class TestSharedReaderFutureDateGuard:
         found = latest_decomposition_report(tmp_path)
         assert found is not None
         assert found[0].name.endswith("20260901.json")
+
+
+# ---------- R181 Op1: 项 5 当期止损方向子句 (夜刷 exit_anatomy 的操作员面) ----------
+
+def _exit_anatomy_payload():
+    """非对称双 regime 夹具 (R180 P-l 教训: 对称值会掩盖桶互换/键互换)。
+
+    crisis 桶最佳档 -5% (Δ+0.90pp); normal 桶最佳档 -8% 且 n/基准全不同 —
+    桶互换、档互换、n 互换任一变异都必然改变断言读数。
+    """
+    return {
+        "early": {"by_regime": {"crisis": {"n_included": 1}}},
+        "production": {
+            "by_regime": {
+                "crisis": {
+                    "n_included": 132,
+                    "base": {"mean_net": -0.05506869208225434, "n": 132},
+                    "stop_grid": {
+                        "-5%": {
+                            "delta_vs_base": 0.009027072247123666,
+                            "mean_net": -0.04604161983513067,
+                            "n": 132,
+                            "n_stopped": 114,
+                            "n_gap_through": 49,
+                        },
+                        "-8%": {
+                            "delta_vs_base": -0.004216352983654442,
+                            "mean_net": -0.05928504506590878,
+                            "n": 132,
+                            "n_stopped": 96,
+                            "n_gap_through": 24,
+                        },
+                        "-10%": {
+                            "delta_vs_base": -0.002180029415038906,
+                            "mean_net": -0.057248721497293244,
+                            "n": 132,
+                            "n_stopped": 80,
+                            "n_gap_through": 19,
+                        },
+                    },
+                },
+                "normal": {
+                    "n_included": 217,
+                    "base": {"mean_net": 0.0005123, "n": 217},
+                    "stop_grid": {
+                        "-5%": {
+                            "delta_vs_base": -0.0104,
+                            "mean_net": -0.0044,
+                            "n": 217,
+                            "n_stopped": 31,
+                            "n_gap_through": 9,
+                        },
+                        "-8%": {
+                            "delta_vs_base": 0.0027,
+                            "mean_net": 0.0031,
+                            "n": 217,
+                            "n_stopped": 12,
+                            "n_gap_through": 3,
+                        },
+                    },
+                },
+            }
+        },
+    }
+
+
+def test_stop_direction_clause_exact_render():
+    clause = gap_disclosure.stop_direction_clause(
+        _exit_anatomy_payload(), "crisis", "20260910"
+    )
+    assert clause == (
+        "当期方向（exit_anatomy 20260910 · 生产表/crisis/全候选，n=132）："
+        "基准 -5.51% · 最佳止损档 -5%（Δ+0.90pp，档内 -4.60%，触发 114/132，"
+        "跳空穿越 49）"
+    )
+
+
+def test_stop_direction_clause_regime_asymmetry_guard():
+    """normal 桶读数与 crisis 逐值不同 — 桶互换变异必然被抓。"""
+    clause = gap_disclosure.stop_direction_clause(
+        _exit_anatomy_payload(), "normal", "20260910"
+    )
+    assert clause is not None
+    assert "生产表/normal/全候选，n=217" in clause
+    assert "基准 +0.05%" in clause
+    assert "最佳止损档 -8%（Δ+0.27pp，档内 +0.31%，触发 12/217，跳空穿越 3）" in clause
+
+
+def test_stop_direction_clause_unknown_and_missing_labels():
+    payload = _exit_anatomy_payload()
+    assert gap_disclosure.stop_direction_clause(payload, "unknown", "20260910") is None
+    assert gap_disclosure.stop_direction_clause(payload, None, "20260910") is None
+    assert gap_disclosure.stop_direction_clause(payload, "risk_off", "20260910") is None
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda p: "not-a-dict",
+        lambda p: p.pop("production"),
+        lambda p: p["production"].pop("by_regime"),
+        lambda p: p["production"]["by_regime"].pop("crisis"),
+        lambda p: p["production"]["by_regime"]["crisis"].pop("n_included"),
+        lambda p: p["production"]["by_regime"]["crisis"].update(n_included=-1),
+        lambda p: p["production"]["by_regime"]["crisis"].update(n_included="132"),
+        lambda p: p["production"]["by_regime"]["crisis"].pop("base"),
+        lambda p: p["production"]["by_regime"]["crisis"]["base"].update(
+            mean_net=float("nan")
+        ),
+        lambda p: p["production"]["by_regime"]["crisis"].update(stop_grid={}),
+        lambda p: p["production"]["by_regime"]["crisis"].update(stop_grid=[]),
+        lambda p: p["production"]["by_regime"]["crisis"]["stop_grid"].update(
+            {
+                "-5%": {"delta_vs_base": float("nan")},
+                "-8%": {"delta_vs_base": float("inf")},
+                "-10%": {"delta_vs_base": None},
+            }
+        ),
+    ],
+)
+def test_stop_direction_clause_shape_fail_open(mutate):
+    payload = _exit_anatomy_payload()
+    replaced = mutate(payload)
+    result = gap_disclosure.stop_direction_clause(
+        payload if replaced is None else replaced, "crisis", "20260910"
+    )
+    assert result is None
+
+
+def test_stop_direction_clause_skips_malformed_tier_and_nonfinite_delta():
+    """形状外键 (-7x%/bogus) 与非有限 Δ 档跳过; 最佳档在剩余有限档中选。"""
+    payload = _exit_anatomy_payload()
+    grid = payload["production"]["by_regime"]["crisis"]["stop_grid"]
+    grid["-7x%"] = {"delta_vs_base": 9.9, "mean_net": 0.0}
+    grid["bogus"] = {"delta_vs_base": 8.8, "mean_net": 0.0}
+    grid["-5%"]["delta_vs_base"] = float("nan")
+    clause = gap_disclosure.stop_direction_clause(payload, "crisis", "20260910")
+    assert clause is not None
+    # 剩余有限档中 -10% (Δ-0.22pp) 优于 -8% (Δ-0.42pp)
+    assert "最佳止损档 -10%（Δ-0.22pp" in clause
+    assert "-7x%" not in clause
+    assert "bogus" not in clause
+
+
+def test_stop_direction_clause_falsy_zero_rendered_not_dashed():
+    """0.0 是读数不是缺位 (R158 家族): Δ+0.00pp / 基准 +0.00% 原样渲染。"""
+    payload = {
+        "production": {
+            "by_regime": {
+                "crisis": {
+                    "n_included": 40,
+                    "base": {"mean_net": 0.0},
+                    "stop_grid": {
+                        "-5%": {"delta_vs_base": -0.01, "mean_net": -0.01},
+                        "-8%": {"delta_vs_base": 0.0, "mean_net": 0.0},
+                    },
+                }
+            }
+        }
+    }
+    clause = gap_disclosure.stop_direction_clause(payload, "crisis", "20260910")
+    assert clause == (
+        "当期方向（exit_anatomy 20260910 · 生产表/crisis/全候选，n=40）："
+        "基准 +0.00% · 最佳止损档 -8%（Δ+0.00pp，档内 +0.00%）"
+    )
+
+
+def test_stop_direction_clause_optional_segments_omitted_gracefully():
+    """档内均值/触发数/跳空缺位 → 对应段省略, 其余读数照常 (不渲染半假句)。"""
+    payload = {
+        "production": {
+            "by_regime": {
+                "crisis": {
+                    "n_included": 55,
+                    "base": {"mean_net": -0.02},
+                    "stop_grid": {"-5%": {"delta_vs_base": 0.013}},
+                }
+            }
+        }
+    }
+    clause = gap_disclosure.stop_direction_clause(payload, "crisis", "20260910")
+    assert clause == (
+        "当期方向（exit_anatomy 20260910 · 生产表/crisis/全候选，n=55）："
+        "基准 -2.00% · 最佳止损档 -5%（Δ+1.30pp）"
+    )
+
+
+def _write_exit_anatomy(tmp_path, date_str, payload=None):
+    path = tmp_path / f"exit_anatomy_{date_str}.json"
+    path.write_text(
+        json.dumps(_exit_anatomy_payload() if payload is None else payload),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_latest_exit_anatomy_report_selects_latest_dated(tmp_path):
+    _write_exit_anatomy(tmp_path, "20260909")
+    _write_exit_anatomy(tmp_path, "20260910")
+    found = gap_disclosure.latest_exit_anatomy_report(tmp_path)
+    assert found is not None
+    assert found[0].name.endswith("20260910.json")
+    assert isinstance(found[1], dict)
+
+
+def test_latest_exit_anatomy_report_future_dated_rejected(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        gap_disclosure, "_today", lambda: dt.date(2026, 9, 10)
+    )
+    _write_exit_anatomy(tmp_path, "20260909")
+    _write_exit_anatomy(tmp_path, "20990101")
+    assert gap_disclosure.latest_exit_anatomy_report(tmp_path) is None

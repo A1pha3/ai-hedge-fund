@@ -3623,3 +3623,191 @@ def test_reentry_line_suppressed_when_gate_regime_blocks():
             regime=regime, service_run=SimpleNamespace(trade_date=date(2026, 8, 20))
         )
         assert _render_reentry_proximity_line(run, regimes_by_date=history) is not None
+
+
+# ---------- R181 Op1: 止损当期方向子句 (项 5 判定输入当期化, 纯披露) ----------
+
+def _write_exit_anatomy_fixture(reports_dir, date_str="20260910"):
+    """非对称 fixture: crisis 最佳档 -5%/Δ+0.90pp, normal 最佳档 -8%/Δ+0.27pp
+    (R180 P-l/P-p 教训: 对称值掩盖桶互换与目标源互换)。"""
+    payload = {
+        "production": {
+            "by_regime": {
+                "crisis": {
+                    "n_included": 132,
+                    "base": {"mean_net": -0.05506869208225434, "n": 132},
+                    "stop_grid": {
+                        "-5%": {
+                            "delta_vs_base": 0.009027072247123666,
+                            "mean_net": -0.04604161983513067,
+                            "n": 132,
+                            "n_stopped": 114,
+                            "n_gap_through": 49,
+                        },
+                        "-8%": {
+                            "delta_vs_base": -0.004216352983654442,
+                            "mean_net": -0.05928504506590878,
+                            "n": 132,
+                            "n_stopped": 96,
+                            "n_gap_through": 24,
+                        },
+                    },
+                },
+                "normal": {
+                    "n_included": 217,
+                    "base": {"mean_net": 0.0005123, "n": 217},
+                    "stop_grid": {
+                        "-8%": {
+                            "delta_vs_base": 0.0027,
+                            "mean_net": 0.0031,
+                            "n": 217,
+                            "n_stopped": 12,
+                            "n_gap_through": 3,
+                        },
+                    },
+                },
+            }
+        }
+    }
+    path = Path(reports_dir) / f"exit_anatomy_{date_str}.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+@pytest.fixture(autouse=True)
+def _isolated_exit_anatomy_dir(tmp_path, monkeypatch):
+    """止损当期方向读取面默认隔离 (R120b 家族): 渲染测试绝不读宿主真实报告,
+    保证 slot (无 data/) 与宿主 (报告在场) 断言路径逐字节一致。"""
+    import src.screening.offensive.daily_action as da
+
+    target = tmp_path / "exit_anatomy_reports"
+    target.mkdir()
+    monkeypatch.setattr(da, "_EXIT_ANATOMY_REPORTS_DIR", target)
+    return target
+
+
+def test_stop_readiness_direction_clause_renders_nightly_reading(
+    case, _isolated_exit_anatomy_dir
+):
+    """as_of 当日 regime 标签匹配夜刷报告 → 当期方向子句逐字节渲染。"""
+    _write_exit_anatomy_fixture(_isolated_exit_anatomy_dir)
+    view, _as_of = _stop_view(case)
+    line = _render_stop_loss_readiness_line(
+        view,
+        regimes_by_date={"20260819": "crisis", "20260820": "crisis"},
+    )
+    assert line is not None
+    assert (
+        "当期方向（exit_anatomy 20260910 · 生产表/crisis/全候选，n=132）："
+        "基准 -5.51% · 最佳止损档 -5%（Δ+0.90pp，档内 -4.60%，触发 114/132，"
+        "跳空穿越 49）"
+    ) in line
+    assert "连续 crisis 2 日 · " in line
+
+
+def test_stop_readiness_direction_clause_matches_as_of_label(
+    case, _isolated_exit_anatomy_dir
+):
+    """as_of 标签为 normal → 读 normal 桶 (标签匹配, 非 crisis 桶硬编码)。"""
+    _write_exit_anatomy_fixture(_isolated_exit_anatomy_dir)
+    view, _as_of = _stop_view(case)
+    line = _render_stop_loss_readiness_line(
+        view, regimes_by_date={"20260820": "normal"}
+    )
+    assert line is not None
+    assert "生产表/normal/全候选，n=217" in line
+    assert "最佳止损档 -8%（Δ+0.27pp，档内 +0.31%，触发 12/217，跳空穿越 3）" in line
+    assert "crisis/全候选" not in line
+
+
+def test_stop_readiness_direction_clause_omitted_without_report(case):
+    """夜刷报告缺席 (slot 形态) → 方向子句省略, 行由 streak 托住不消失。"""
+    view, _as_of = _stop_view(case)
+    line = _render_stop_loss_readiness_line(
+        view, regimes_by_date={"20260820": "crisis"}
+    )
+    assert line is not None
+    assert "当期方向（exit_anatomy" not in line
+    assert "连续 crisis 1 日" in line
+    assert "证据未就绪" in line
+
+
+def test_stop_readiness_direction_clause_omitted_when_label_unknown(case):
+    """as_of 标签 unknown (数据缺口) → 不冒充证据, 子句省略。"""
+    view, _as_of = _stop_view(case)
+    line = _render_stop_loss_readiness_line(
+        view, regimes_by_date={"20260820": "unknown"}
+    )
+    assert line is not None
+    assert "当期方向（exit_anatomy" not in line
+
+
+def test_stop_readiness_direction_clause_requires_as_of_label(
+    case, _isolated_exit_anatomy_dir
+):
+    """as_of 当日标签缺失 (regime 史滞后) → 方向子句省略 — 按构造不可达形态
+    (标签存在 ⇒ streak 锚存在) 的反向面: 不用昨日的 regime 匹配今日读数。"""
+    _write_exit_anatomy_fixture(_isolated_exit_anatomy_dir)
+    view, _as_of = _stop_view(case)
+    line = _render_stop_loss_readiness_line(
+        view, regimes_by_date={"20260821": "crisis"}
+    )
+    assert line is not None
+    assert "连续 crisis" not in line
+    assert "当期方向（exit_anatomy" not in line
+    assert "回撤" in line
+
+
+def test_stop_readiness_direction_clause_corrupt_report_omitted(case):
+    """最新报告损坏 → None 不回退旧报告 (读取家契约), 子句省略不炸。"""
+    import src.screening.offensive.daily_action as da
+
+    view, _as_of = _stop_view(case)
+    (da._EXIT_ANATOMY_REPORTS_DIR / "exit_anatomy_20260910.json").write_text(
+        "{broken", encoding="utf-8"
+    )
+    (da._EXIT_ANATOMY_REPORTS_DIR / "exit_anatomy_20260909.json").write_text(
+        json.dumps({"production": {"by_regime": {"crisis": {}}}}), encoding="utf-8"
+    )
+    line = _render_stop_loss_readiness_line(
+        view, regimes_by_date={"20260820": "crisis"}
+    )
+    assert line is not None
+    assert "当期方向（exit_anatomy" not in line
+
+
+def test_stop_readiness_pointer_names_both_evidence_faces(case):
+    """指针措辞双面化: backtest 工具=样本期方向, 夜刷读数=当期方向 (R181 失实修正)。"""
+    view, _as_of = _stop_view(case)
+    line = _render_stop_loss_readiness_line(
+        view, regimes_by_date={"20260820": "crisis"}
+    )
+    assert line is not None
+    assert "backtest_exit_strategies.py 回答样本期方向（journal 恢复样本，非当期）" in line
+    assert "当期方向见夜刷 exit_anatomy 止损反事实" in line
+    assert "DAILY_ACTION_EXECUTION_STOP" in line
+    # 旧措辞 (把样本期工具当「确认当期方向」的入口) 防回归
+    assert "先跑 backtest_exit_strategies.py 确认当期方向" not in line
+
+
+def test_stop_readiness_direction_clause_in_full_render_after_regime_line(
+    case, monkeypatch
+):
+    """整链接线: 方向子句在完整 --daily-action 渲染中随止损行出现, 行位于
+    Regime 行之后。"""
+    import src.screening.offensive.daily_action as da
+
+    view, _as_of = _stop_view(case, regime="crisis")
+    monkeypatch.setattr(
+        da, "_load_regime_history",
+        lambda: {"20260819": "crisis", "20260820": "crisis"},
+    )
+    _write_exit_anatomy_fixture(da._EXIT_ANATOMY_REPORTS_DIR)
+    text = render_daily_action_v2(view)
+    lines = text.splitlines()
+    regime_idx = next(i for i, l in enumerate(lines) if l.startswith("Regime："))
+    stop_idx = next(
+        i for i, l in enumerate(lines) if l.startswith("止损启用条件（清单项 5）")
+    )
+    assert stop_idx > regime_idx
+    assert "当期方向（exit_anatomy 20260910" in lines[stop_idx]

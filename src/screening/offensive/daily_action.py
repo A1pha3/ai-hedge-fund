@@ -1475,6 +1475,9 @@ def complete_daily_action_v2(
 _PRIOR_DRIFT_MIN_ER_PP = 0.25
 _PRIOR_DRIFT_MIN_WR_PP = 1.0
 _PRIOR_DRIFT_REPORTS_DIR = Path("data/reports")
+# 夜刷 exit_anatomy 报告目录默认值 (R181 Op1): 止损当期方向读数的读取面。
+# 测试经 monkeypatch 隔离 (R120b 家族: 渲染测试不得读宿主真实报告)。
+_EXIT_ANATOMY_REPORTS_DIR = Path("data/reports")
 
 # 证据新鲜度告警阈值 (R115 Op2): 正常节律 = 分解报告每晚刷新覆盖前一交易日,
 # --daily-action (~15:05, 夜刷之前) 距最新报告 ≤1 个交易日; ≥2 = 至少一夜
@@ -1819,6 +1822,7 @@ def _render_reentry_proximity_line(
 def _render_stop_loss_readiness_line(
     run: Any,
     regimes_by_date: Mapping[str, str] | None = None,
+    exit_anatomy_reports_dir: str | Path | None = None,
 ) -> str | None:
     """止损启用条件读数行 (清单项 5): 两个启用判读输入的日度合取显形。
 
@@ -1829,15 +1833,24 @@ def _render_stop_loss_readiness_line(
     日度可见 — 0902-0903 曾连续 2 日 crisis, 0909 再入 crisis, 逐日拼读
     才能发现启用条件逼近。
 
+    R181 Op1 当期方向子句: 指针原措辞让 owner 跑 backtest_exit_strategies.py
+    「确认当期方向」, 但该工具输入冻结在 journal 恢复样本 (2026-01-15→07-06),
+    按构造回答不了「当期」; 当期方向证据是夜刷 btst_exit_anatomy 的
+    production×regime 止损反事实网格 (诚实成交语义), 现以 as_of 当日 regime
+    标签匹配读取 (exit_anatomy 20260910 · 生产表/<label>/全候选), as-of 日期
+    自暴露, 陈旧可见。提取装配经 gap_disclosure.stop_direction_clause 单一
+    实现 (fail-closed 形状守卫在读取家)。
+
     纯披露 (宪法 #2): 本行不进入任何计划/评分/仓位/退出决策路径。fail-open
     家族纪律 (R85/R109/R115/R119/R149 同族): regime 史缺失/无可用标签 →
-    streak 子句省略; 回撤不可得/非有限 → 回撤子句省略; 两子句都不可得 →
-    整行省略; 任意输入畸形 → typed-exception → 整行省略 (镜像
+    streak 子句省略; 回撤不可得/非有限 → 回撤子句省略; 夜刷报告缺失/损坏/
+    标签不匹配 → 当期方向子句省略; 全部子句都不可得 → 整行省略; 任意输入畸形
+    → typed-exception → 整行省略 (镜像
     _render_trailing_window_line/_render_universe_alignment_line 同款兜底 —
     披露面永不阻断主视图; R157 Op2: trade_date=datetime 形态 PoC 实锤
-    date<=datetime TypeError 裸逃逸后收口)。测试可注入 regimes_by_date
-    (R10: slot 内无 data/ 工件, 注入保证自足); None 时生产路径经
-    _load_regime_history() 读取。
+    date<=datetime TypeError 裸逃逸后收口)。测试可注入 regimes_by_date 与
+    exit_anatomy_reports_dir (R10: slot 内无 data/ 工件, 注入保证自足);
+    None 时生产路径经 _load_regime_history()/_EXIT_ANATOMY_REPORTS_DIR 读取。
     """
     try:
         clauses: list[str] = []
@@ -1873,6 +1886,33 @@ def _render_stop_loss_readiness_line(
                     f"（距 {ref_pct} 降仓参考线余量 {margin_text}）"
                 )
 
+        label = (
+            history.get(as_of.strftime("%Y%m%d"))
+            if isinstance(history, Mapping) and history and isinstance(as_of, date)
+            else None
+        )
+        if label is not None:
+            from src.screening.offensive.gap_disclosure import (
+                latest_exit_anatomy_report,
+                report_filename_date,
+                stop_direction_clause,
+            )
+
+            found = latest_exit_anatomy_report(
+                Path(exit_anatomy_reports_dir)
+                if exit_anatomy_reports_dir is not None
+                else _EXIT_ANATOMY_REPORTS_DIR
+            )
+            if found is not None:
+                report_path, payload = found
+                clause = stop_direction_clause(
+                    payload,
+                    label,
+                    report_filename_date(report_path) or "",
+                )
+                if clause:
+                    clauses.append(clause)
+
         if not clauses:
             return None
         from src.screening.offensive.paper_tracker import _execution_stop_mode
@@ -1883,8 +1923,10 @@ def _render_stop_loss_readiness_line(
         )
         return (
             f"止损启用条件（清单项 5）：{' · '.join(clauses)} · {mode_note} · "
-            "启用判定属 owner — 项 5: 先跑 backtest_exit_strategies.py "
-            "确认当期方向再设 DAILY_ACTION_EXECUTION_STOP"
+            "启用判定属 owner（项 5）— backtest_exit_strategies.py 回答"
+            "样本期方向（journal 恢复样本，非当期），当期方向见夜刷 exit_anatomy "
+            "止损反事实（上列读数缺失即证据未就绪，不猜测）；两面齐备再设 "
+            "DAILY_ACTION_EXECUTION_STOP"
         )
     except (OSError, ValueError, KeyError, TypeError):
         return None
