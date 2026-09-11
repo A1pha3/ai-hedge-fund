@@ -4298,3 +4298,24 @@ def test_freshness_line_quiet_when_data_window_fresh(tmp_path, monkeypatch):
     line = _da2._render_evidence_freshness_line(
         _date(2026, 8, 31), calendar_sessions=_freshness_sessions())
     assert line is None
+
+
+def test_trigger_line_coverage_nondict_data_window_falls_back(case, tmp_path, monkeypatch):
+    """R186 Op2 (P14 盲区钉住, R177 P-d/R182 P-x/R185 P15 同族): data_window
+    本体非 dict (str/list 毒化账本) → fallback 仍生效且与修复前逐字节一致。
+    牙的确定性: fallback 判定若是 `data_window is not None` (收窄分支, 可通过
+    全部既有测试), str.get 会以 AttributeError 逃逸 typed-exception 家族炸穿
+    整个日报渲染 — 本钉子使该收窄变异 RED (R185 Op2 P15 手法: isinstance
+    分支的牙必须是断言而非 TypeError 偶然)."""
+    _patch_day_cohort_ledger(monkeypatch, tmp_path / "day_cohort_absent.jsonl")
+    rec = _trigger_rec("20260911", c1_lit=True, c2_lit=False, window_end="20260911")
+    rec["court"]["data_window"] = "poisoned-string"
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [rec]))
+    text = _render_with_ledger(case, monkeypatch, None)
+    assert "court 覆盖至 20260911" in text
+
+    rec2 = _trigger_rec("20260911", c1_lit=True, c2_lit=False, window_end="20260910")
+    rec2["court"]["data_window"] = ["poisoned-list"]
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [rec2]))
+    text2 = _render_with_ledger(case, monkeypatch, None)
+    assert "court 覆盖至 20260910" in text2
