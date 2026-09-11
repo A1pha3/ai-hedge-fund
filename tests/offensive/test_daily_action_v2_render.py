@@ -4403,3 +4403,64 @@ def test_freshness_line_old_format_request_window_display_honest(tmp_path, monke
     assert "court 请求窗至 20260827" in line
     assert "court 覆盖至" not in line
     assert "覆盖停滞" not in line
+
+
+def test_trigger_line_coverage_empty_request_window_omitted(case, tmp_path, monkeypatch):
+    """R190 Op2 (P04 盲区钉住): 旧形态记录 window_end 空串 → request 回退分支
+    truthy 守卫拒绝 → 读数 None → 覆盖子句省略 (不渲染『court 请求窗至 』垃圾
+    尾巴, 也不冒充覆盖)."""
+    rec = _trigger_rec("20260911", c1_lit=True, c2_lit=False, window_end="")
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [rec]))
+    _patch_day_cohort_ledger(monkeypatch, tmp_path / "day_cohort_absent.jsonl")
+    text = _render_with_ledger(case, monkeypatch, None)
+    assert "court 请求窗至" not in text
+    assert "court 覆盖至" not in text
+    assert "强度阈值触发器" in text  # 行本体照常 (仅覆盖子句省略)
+
+
+def test_freshness_line_data_truth_display_without_stall(tmp_path, monkeypatch):
+    """R190 Op2 (P06 数据半盲区钉住): 报告陈旧 + 数据真相新鲜 (停滞不触发) →
+    elif 分支按 data 来源渲染『court 覆盖至 X』— R190 Op1 新分支的数据真相
+    正面 (R139 A1 停滞族只覆盖停滞分支, elif 显示此前无钉)."""
+    from datetime import date as _date
+
+    from src.screening.offensive import daily_action as _da
+
+    base = _write_decomposition_report(tmp_path, date="20260827")
+    _patch_drift_reports_dir(monkeypatch, base)
+    rec = _trigger_rec("20260827", c1_lit=True, c2_lit=False, window_end="20260828")
+    rec["court"]["data_window"] = {"start": "20250702", "end": "20260828"}
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [rec]))
+    monkeypatch.setattr(
+        _da, "_COURT_REFRESH_STATUS_PATH", tmp_path / "no-status.json")
+    line = _da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions())
+    assert line is not None
+    assert "陈旧 2 个交易日" in line  # 报告陈旧兜底出行
+    assert "court 覆盖至 20260828" in line  # 数据真相 elif 显示
+    assert "覆盖停滞" not in line  # 数据真相落后 1 交易日 = 合法空日零噪声
+
+
+def test_freshness_line_coverage_reads_latest_record(tmp_path, monkeypatch):
+    """R190 Op2 (P10 盲区钉住): 多记录账本 → 覆盖读数取最新记录 (records[-1])
+    — 陈旧记录的数据真相不参与停滞判定与显示 (与账本最后判定同源 last 语义;
+    既有 freshness fixture 全部单记录, records[-1] 选择面此前零覆盖)."""
+    from datetime import date as _date
+
+    from src.screening.offensive import daily_action as _da
+
+    base = _write_decomposition_report(tmp_path, date="20260828")
+    _patch_drift_reports_dir(monkeypatch, base)
+    old_rec = _trigger_rec("20260826", c1_lit=True, c2_lit=False, window_end="20260820")
+    old_rec["court"]["data_window"] = {"start": "20250702", "end": "20260820"}
+    new_rec = _trigger_rec("20260828", c1_lit=True, c2_lit=False, window_end="20260827")
+    new_rec["court"]["data_window"] = {"start": "20250702", "end": "20260827"}
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [old_rec, new_rec]))
+    monkeypatch.setattr(
+        _da, "_COURT_REFRESH_STATUS_PATH", tmp_path / "no-status.json")
+    line = _da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions())
+    assert line is not None
+    assert "触发器账本最后判定 20260828" in line
+    assert "court 覆盖停滞 2 个交易日（最后覆盖 20260827）" in line
+    assert "最后覆盖 20260820" not in line
