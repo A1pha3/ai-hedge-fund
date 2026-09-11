@@ -198,6 +198,8 @@ class TestGapExecutionReference:
                 lambda p: p.update(e_hi_second=float("nan")), id="e-hi-nan"),
             pytest.param(lambda p: p.update(n_hi_first=True), id="n-hi-bool"),
             pytest.param(lambda p: p.update(n_hi_second=-1), id="n-hi-negative"),
+            pytest.param(lambda p: p.update(n_hi_first=0), id="n-hi-zero"),
+            pytest.param(lambda p: p.update(n_hi_second=0), id="n-hi-second-zero"),
             pytest.param(lambda p: p.pop("penalty_first"), id="penalty-missing"),
             pytest.param(lambda p: p.pop("n_hi_second"), id="n-hi-missing"),
         ],
@@ -254,6 +256,20 @@ class TestRenderGapLine:
         line = self._line(tmp_path)
         assert line is not None
         assert "聚合罚分两半 +5.63pp/+3.13pp 异号" in line
+
+    def test_pooled_clause_full_span_separator_pinned(self, tmp_path):
+        """子句在场面两侧分隔符逐字节锚 (R188 Op2 P16 钉子): note 尾 + 『 · 』 +
+        子句 + 『）』 + 『 — 竞价后』全段子串 — 分隔符/空格漂移变异 RED。"""
+        payload = _report_json(consistent_count=2)
+        payload["universes"]["production_aligned"]["gap_anatomy"]["split_half"][
+            "pooled"] = TestGapExecutionReference._pooled(consistent=True)
+        _write_report(tmp_path, payload=payload)
+        line = self._line(tmp_path)
+        assert line is not None
+        assert (
+            "条件化证据不足） · 聚合罚分两半 +5.63pp/+3.13pp 同号"
+            "（高开子集期望 -4.90%/-2.86% · n 91/67） — 竞价后高开>5%"
+        ) in line
 
     def test_pooled_absent_line_byte_identical(self, tmp_path):
         """旧报告 (无 pooled 键) → 行与修复前逐字节一致 (fail-open 接线家族)。"""

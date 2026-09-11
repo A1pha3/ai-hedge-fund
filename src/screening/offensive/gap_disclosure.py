@@ -275,7 +275,10 @@ def parse_pooled_penalty(raw: object) -> dict[str, object] | None:
         parsed[key] = float(value)  # type: ignore[arg-type]
     for key in _POOLED_PENALTY_COUNT_FIELDS:
         value = raw.get(key)
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        # R188 Op2 P09b 钉子: >0 (镜像 _valid_sample_count『0 行桶不能冒充
+        # 证据』) — consistent=bool 与 count=0 是自相矛盾载荷 (生产者契约:
+        # consistent 非 None 蕴含两侧 n≥MIN_CELL_N), 报告损坏/篡改形态整块拒绝。
+        if not _valid_sample_count(value):
             return None
         parsed[key] = value
     return parsed

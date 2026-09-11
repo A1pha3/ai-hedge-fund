@@ -1888,6 +1888,41 @@ class TestGapSplitHalf:
         b = self._pooled_split((-0.03, 0.05), n_low=32, n_high=32)
         assert json.dumps(a["pooled"]) == json.dumps(b["pooled"])
 
+    def test_pooled_zero_penalty_sign_semantics(self):
+        """零罚分符号语义 (R188 Op2 P03 钉子): consistent 用严格 >0 —
+        罚分恰为零归『非正』: 单零对正罚分 = 异号 (False); 双零 = 同号
+        (True, False==False)。>= 变异 (零冒充正号) 下本测试 RED。"""
+        import pandas as pd
+
+        def day_rows(sd, gap, net, n):
+            return [
+                {"signal_date": sd, "trigger_strength": 0.90, "gap_t1_open": gap,
+                 "gross_ret_t10": net + 0.0065, "ret_close_anchor_t10": net + 0.02}
+                for _ in range(n)
+            ]
+
+        # 第一半 hi 与 lo 同净值 → penalty_first 恰为 0.0; 第二半 +0.03 > 0
+        rows = (
+            day_rows("20260310", 0.07, 0.02, 32)
+            + day_rows("20260311", 0.01, 0.02, 32)
+            + day_rows("20260312", 0.07, -0.02, 32)
+            + day_rows("20260313", 0.01, 0.01, 32)
+        )
+        pooled = self._split(pd.DataFrame(rows).astype({"signal_date": str}))["pooled"]
+        assert pooled["penalty_first"] == 0.0
+        assert pooled["penalty_second"] != 0.0
+        assert pooled["consistent"] is False
+        # 双零形态: (0>0)==(0>0) → True 同号
+        rows2 = (
+            day_rows("20260310", 0.07, 0.02, 32)
+            + day_rows("20260311", 0.01, 0.02, 32)
+            + day_rows("20260312", 0.07, 0.02, 32)
+            + day_rows("20260313", 0.01, 0.02, 32)
+        )
+        pooled2 = self._split(pd.DataFrame(rows2).astype({"signal_date": str}))["pooled"]
+        assert pooled2["penalty_first"] == 0.0 and pooled2["penalty_second"] == 0.0
+        assert pooled2["consistent"] is True
+
     def test_mounted_in_gap_anatomy_and_rendered(self):
         import pandas as pd
         from scripts.winrate_payoff_decomposition import decompose, render_md
