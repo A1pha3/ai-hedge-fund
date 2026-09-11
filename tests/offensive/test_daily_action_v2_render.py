@@ -150,8 +150,8 @@ def test_trigger_state_line_renders_conditions_and_streaks(case, tmp_path, monke
     view = DailyActionV2Run(run, (), run.open_positions, (), ())
     text = render_daily_action_v2(view)
     assert "强度阈值触发器" in text
-    assert "条件① ≥0.70 桶 CI>0 已亮（连亮 2）" in text
-    assert "条件② 0.50-0.60 转负 未亮（连亮 0）" in text
+    assert "条件① ≥0.70 桶 CI>0 已亮（连亮 2 · CI90 下界 +0.23% · n=315）" in text
+    assert "条件② 0.50-0.60 转负 未亮（连亮 0 · E +0.97% · n=303）" in text
     assert "合取未武装" in text
     assert "court 覆盖至 20260830" in text
     assert "账本 2 条" in text
@@ -282,7 +282,7 @@ def test_trigger_state_line_renders_060_anchor_clause(case, tmp_path, monkeypatc
     run = service.complete_run(context, candidates=())
     view = DailyActionV2Run(run, (), run.open_positions, (), ())
     text = render_daily_action_v2(view)
-    assert "0.60 锚条件③ 0.60-0.70 桶 CI>0 已亮（连亮 2）" in text
+    assert "0.60 锚条件③ 0.60-0.70 桶 CI>0 已亮（连亮 2 · CI90 下界 +0.07% · n=340）" in text
     assert "0.60 锚合取③∧②已武装 → 0.50→0.60 上调评估就绪" in text
 
 
@@ -307,6 +307,60 @@ def test_trigger_state_line_060_unarmed_and_old_ledger_forms(case, tmp_path, mon
     text = render_daily_action_v2(view)
     assert "0.60 锚条件③ 无记录（R100 前旧账本）" in text
     assert "已武装" not in text.split("强度阈值触发器")[1]
+
+
+# ---------- R185 Op1: 触发器行当前读数子句 (判定输入当期化第四 armed 决策点) ----------
+
+def test_trigger_state_line_degrades_without_stat_readings(case, tmp_path, monkeypatch):
+    """账本行缺 stat/n (旧形态/手工构造) → 判定文本与 R184 交付逐字节一致."""
+    rec = _trigger_rec("20260830", c1_lit=True, c2_lit=False)
+    rec["condition_1"] = {"lit": True, "judged": True}
+    rec["condition_2"] = {"lit": False, "judged": True}
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [rec]))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    line = next(ln for ln in text.splitlines() if ln.startswith("强度阈值触发器"))
+    assert "条件① ≥0.70 桶 CI>0 已亮（连亮 1）" in line
+    assert "条件② 0.50-0.60 转负 未亮（连亮 0）" in line
+    assert "· CI90 下界" not in line
+    assert "· E " not in line
+
+
+def test_trigger_state_line_survives_poisoned_stat_readings(case, tmp_path, monkeypatch):
+    """bool n / 字符串 stat → 该条件读数子句省略, 渲染不炸 (形状守卫纵深)."""
+    rec = _trigger_rec("20260830", c1_lit=True, c2_lit=False)
+    rec["condition_1"] = {"lit": True, "judged": True, "n": True, "stat": 0.0023}
+    rec["condition_2"] = {"lit": False, "judged": True, "n": 303, "stat": "0.0097"}
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [rec]))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    line = next(ln for ln in text.splitlines() if ln.startswith("强度阈值触发器"))
+    assert "条件① ≥0.70 桶 CI>0 已亮（连亮 1）" in line
+    assert "条件② 0.50-0.60 转负 未亮（连亮 0）" in line
+
+
+def test_day_cohort_trigger_line_degrades_without_stat_readings(case, tmp_path, monkeypatch):
+    """日层族同款降级: 无 stat/n → 判定文本与 R184 交付逐字节一致."""
+    rec = _day_cohort_rec("20260905", c1_lit=False, c2_lit=True)
+    rec["strong_bucket"] = {"lit": False, "judged": True}
+    rec["mid_buckets"] = {"lit": True, "judged": True}
+    _patch_day_cohort_ledger(monkeypatch, _day_cohort_ledger(tmp_path, [rec]))
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    line = next(ln for ln in text.splitlines() if ln.startswith("日层 cohort 触发器"))
+    assert "条件C1 20+ 桶 CI>0 未亮（连亮 0）" in line
+    assert "条件C2 中间桶(4-9/10-19)转负 已亮（连亮 1）" in line
+    assert "· CI90 下界" not in line
+    assert "· 中间桶最大 E" not in line
 
 
 # ---------- R109 Op1: 先验漂移披露行 + 触发器行 max 连亮/K 读数 ----------
@@ -2089,8 +2143,8 @@ def test_day_cohort_trigger_line_renders_conditions(case, tmp_path, monkeypatch)
     view = DailyActionV2Run(run, (), run.open_positions, (), ())
     text = render_daily_action_v2(view)
     assert "日层 cohort 触发器" in text
-    assert "条件C1 20+ 桶 CI>0 未亮（连亮 0）" in text
-    assert "条件C2 中间桶(4-9/10-19)转负 已亮（连亮 2）" in text
+    assert "条件C1 20+ 桶 CI>0 未亮（连亮 0 · CI90 下界 -1.70% · n=864）" in text
+    assert "条件C2 中间桶(4-9/10-19)转负 已亮（连亮 2 · 中间桶最大 E -1.10% · n=293）" in text
     assert "日层合取未武装（连亮 0）" in text
     assert "历史最多日层合取连亮 0" in text
     assert "court 覆盖至 20260905" in text
@@ -2268,7 +2322,7 @@ def test_trigger_state_line_poisoned_condition_renders_unjudged(case, tmp_path, 
         text = render_daily_action_v2(view)
         assert "强度阈值触发器" in text  # 整行不炸 (fail-open 家族)
         assert "条件① ≥0.70 桶 CI>0 样本不足未判定" in text  # 毒化格降级未判定
-        assert "条件② 0.50-0.60 转负 未亮（连亮 0）" in text  # 非毒化格照常
+        assert "条件② 0.50-0.60 转负 未亮（连亮 0 · E +0.97% · n=303）" in text  # 非毒化格照常
         assert "court 覆盖至 20260830" in text  # 覆盖子句不受牵连
 
 
@@ -2370,7 +2424,7 @@ def test_trigger_state_line_discloses_folded_duplicates(case, tmp_path, monkeypa
     run = service.complete_run(context, candidates=())
     text = render_daily_action_v2(DailyActionV2Run(run, (), run.open_positions, (), ()))
     assert "账本 2 条 · 折叠同数据重复观测 1 条" in text
-    assert "条件① ≥0.70 桶 CI>0 已亮（连亮 1）" in text  # 重复观测不膨胀连亮
+    assert "条件① ≥0.70 桶 CI>0 已亮（连亮 1 · CI90 下界 +0.23% · n=315）" in text  # 重复观测不膨胀连亮
 
 
 def test_trigger_state_line_clean_ledger_has_no_fold_clause(case, tmp_path, monkeypatch):
@@ -2399,7 +2453,7 @@ def test_day_cohort_trigger_line_discloses_folded_duplicates(case, tmp_path, mon
     run = service.complete_run(context, candidates=())
     text = render_daily_action_v2(DailyActionV2Run(run, (), run.open_positions, (), ()))
     assert "账本 2 条 · 折叠同数据重复观测 1 条" in text
-    assert "条件C2 中间桶(4-9/10-19)转负 已亮（连亮 1）" in text
+    assert "条件C2 中间桶(4-9/10-19)转负 已亮（连亮 1 · 中间桶最大 E -1.10% · n=293）" in text
 
 
 def test_future_dated_poison_guarded_evidence_but_flagged_freshness(

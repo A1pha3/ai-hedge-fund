@@ -135,6 +135,32 @@ def condition_lit(rec: dict, key: str) -> bool | None:
     return None if cond is None else cond.get("lit")
 
 
+def format_condition_reading(cond: object) -> str | None:
+    """行内条件当前读数格式化 (R185 Op1): judged 行的 stat/n 渲染为
+    「+0.23% · n=315」形态 — 两族触发器操作员行内联渲染的单一实现
+    (判定输入当期化第四 armed 决策点: lit 布尔把「+0.06% 刀刃态」与
+    「+1.0% 稳健态」折叠成同一「已亮」, owner 的 K 注册时机决策取决于
+    该裕度)。
+
+    stat 的语义 (CI90 下界 / 桶 E / 中间桶最大 E) 由调用方的标注标签
+    承担, 本函数只做数值形状守卫与格式化: 条件值非 dict / judged 非
+    True / stat 缺失或 bool 或非有限 / n 非 ≥1 int (bool 排除 —
+    True==1 冒充 +100% 同族) → None (调用方降级为既有判定文本, 行
+    逐字节不变 — fail-open 接线家族纪律)。
+    """
+    if not isinstance(cond, dict) or cond.get("judged") is not True:
+        return None
+    stat = cond.get("stat")
+    if isinstance(stat, bool) or not isinstance(stat, (int, float)):
+        return None
+    if not math.isfinite(stat):
+        return None
+    n = cond.get("n")
+    if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+        return None
+    return f"{stat:+.2%} · n={n}"
+
+
 def court_content_digest(court: object) -> str | None:
     """从 court 绑定读取数据状态摘要 (R130 Op1)。
 
@@ -671,6 +697,7 @@ __all__ = [
     "load_trigger_ledger",
     "condition_dict",
     "condition_lit",
+    "format_condition_reading",
     "court_content_digest",
     "court_data_state_equal",
     "collapse_adjacent_same_court_state",

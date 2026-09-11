@@ -40,6 +40,67 @@ def test_load_missing_file_returns_empty(tmp_path):
     assert tt.load_trigger_ledger(tmp_path / "none.jsonl") == []
 
 
+# ---------- R185 Op1: 行内条件当前读数格式化 (两族触发器行共享单一实现) ----------
+
+def test_format_condition_reading_renders_stat_and_n():
+    assert (
+        tt.format_condition_reading(
+            {"judged": True, "lit": True, "n": 343, "stat": 0.000614}
+        )
+        == "+0.06% · n=343"
+    )
+
+
+def test_format_condition_reading_negative_zero_and_int_stat():
+    assert (
+        tt.format_condition_reading({"judged": True, "n": 864, "stat": -0.017})
+        == "-1.70% · n=864"
+    )
+    assert (
+        tt.format_condition_reading({"judged": True, "n": 30, "stat": 0})
+        == "+0.00% · n=30"
+    )
+    assert (
+        tt.format_condition_reading({"judged": True, "n": 293, "stat": -0.011})
+        == "-1.10% · n=293"
+    )
+
+
+def test_format_condition_reading_malformed_inputs_degrade_to_none():
+    poisoned = [
+        None,
+        "corrupted",
+        42,
+        {"judged": False, "n": 10, "stat": 0.1},      # 未判定
+        {"judged": True, "n": 10},                    # stat 缺失
+        {"judged": True, "n": 10, "stat": True},      # bool stat
+        {"judged": True, "n": 10, "stat": "0.1"},     # 字符串 stat
+        {"judged": True, "n": True, "stat": 0.1},     # bool n (True==1 冒充)
+        {"judged": True, "n": 0, "stat": 0.1},        # n=0
+        {"judged": True, "n": -3, "stat": 0.1},       # 负 n
+        {"judged": True, "stat": 0.1},                # n 缺失
+    ]
+    for cond in poisoned:
+        assert tt.format_condition_reading(cond) is None, cond
+
+
+def test_format_condition_reading_nonfinite_stat_degrades_to_none():
+    # 非有限 stat 经严格 JSON 装载不可达 (R150 毒化行 advisory 跳过), 本守卫
+    # 是直接调用者的纵深防线 (R113 Op2 同纪律)。
+    assert (
+        tt.format_condition_reading(
+            {"judged": True, "n": 10, "stat": float("inf")}
+        )
+        is None
+    )
+    assert (
+        tt.format_condition_reading(
+            {"judged": True, "n": 10, "stat": float("nan")}
+        )
+        is None
+    )
+
+
 def test_load_sorts_by_date_and_skips_corrupt(tmp_path):
     path = _write(tmp_path, [_rec("20260831"), _rec("20260829")])
     # 追加一行垃圾与一行空行 — advisory 跳过

@@ -2414,6 +2414,12 @@ def _render_trigger_state_line() -> str | None:
     权限, 阈值评估是 owner 预注册动作)。R112 Op1 起 K 子句经
     k_qualification_disclosure 单一事实源: owner 预注册 K 后披露资格连亮
     与达标态, 未注册/损坏形态分别保持默认句/明语披露。
+
+    R185 Op1 当前读数子句: judged 条件行内渲染最新账本行 stat/n (CI90 下界 /
+    E, 语义标签逐条件标注) — lit 布尔把刀刃态与稳健态折叠成同一「已亮」,
+    owner 的 K 注册时机决策取决于该裕度 (判定输入当期化第四 armed 决策点);
+    stat/n 缺失或形状非法 → 该子句省略, 判定文本与 R184 交付逐字节一致
+    (fail-open 接线家族纪律)。
     """
     try:
         from src.screening.offensive import threshold_trigger as _tt
@@ -2432,15 +2438,22 @@ def _render_trigger_state_line() -> str | None:
         c3_raw = _tt.condition_dict(latest, "condition_3") or {}
         c1_judged = bool(c1_raw.get("judged"))
         c2_judged = bool(c2_raw.get("judged"))
+
+        def _reading(cond: dict, label: str) -> str:
+            # R185 Op1: 当前读数子句 (stat/n, 语义标签逐条件标注) — 形状
+            # 非法/缺失返回空串, 判定文本逐字节不变 (fail-open 家族)。
+            reading = _tt.format_condition_reading(cond)
+            return f" · {label} {reading}" if reading else ""
+
         c1 = (
             f"条件① ≥0.70 桶 CI>0 {'已亮' if c1_raw.get('lit') else '未亮'}"
-            f"（连亮 {stab['condition_1_streak']}）"
+            f"（连亮 {stab['condition_1_streak']}{_reading(c1_raw, 'CI90 下界')}）"
             if c1_judged
             else "条件① ≥0.70 桶 CI>0 样本不足未判定"
         )
         c2 = (
             f"条件② 0.50-0.60 转负 {'已亮' if c2_raw.get('lit') else '未亮'}"
-            f"（连亮 {stab['condition_2_streak']}）"
+            f"（连亮 {stab['condition_2_streak']}{_reading(c2_raw, 'E')}）"
             if c2_judged
             else "条件② 0.50-0.60 转负 样本不足未判定"
         )
@@ -2453,7 +2466,8 @@ def _render_trigger_state_line() -> str | None:
         else:
             c3 = (
                 f"0.60 锚条件③ 0.60-0.70 桶 CI>0 {'已亮' if c3_raw.get('lit') else '未亮'}"
-                f"（连亮 {stab.get('condition_3_streak', 0)}）"
+                f"（连亮 {stab.get('condition_3_streak', 0)}"
+                f"{_reading(c3_raw, 'CI90 下界')}）"
             )
         armed = latest.get("conjunction_armed") is True
         conj = (
@@ -2514,6 +2528,11 @@ def _render_day_cohort_trigger_line() -> str | None:
     不复制逻辑), 披露条件C1/C2 判定、连亮、合取武装态、历史最多合取连亮
     与 court 覆盖。
 
+    R185 Op1 当前读数子句: judged 条件行内渲染 stat/n (C1 CI90 下界 /
+    C2 中间桶最大 E — 落账侧 stat=两桶期望的 max, n=两桶 n 的 min), 判定
+    输入当期化第四 armed 决策点; 缺失/形状非法 → 子句省略逐字节回退
+    (fail-open 家族)。
+
     fail-open 家族纪律 (R85/R87/R92/R109/R115 同族): 账本缺失/空 → 整行
     省略 (判定面未建立是稳态); 行内条件值非 dict (Op2 守卫后的剩余形态)
     或统计缺失 → 该格按未判定披露 (不假装知道, R119 双层形状守卫);
@@ -2529,19 +2548,31 @@ def _render_day_cohort_trigger_line() -> str | None:
         latest = records[-1]
         stab = _ct.cohort_trigger_stability(records)
 
-        def _cond_clause(key: str, label: str, streak_key: str) -> str:
+        def _cond_clause(
+            key: str, label: str, streak_key: str, reading_label: str
+        ) -> str:
             raw = latest.get(key)
             if not isinstance(raw, dict) or not raw.get("judged"):
                 return f"{label} 样本不足未判定"
             lit = raw.get("lit") is True
             streak = int(stab.get(streak_key) or 0)
-            return f"{label} {'已亮' if lit else '未亮'}（连亮 {streak}）"
+            # R185 Op1: 当前读数子句 (stat/n, 语义标签逐条件标注) — 形状
+            # 非法/缺失该子句省略, 判定文本逐字节不变 (fail-open 家族)。
+            reading = _ct.format_condition_reading(raw)
+            reading_note = f" · {reading_label} {reading}" if reading else ""
+            return f"{label} {'已亮' if lit else '未亮'}（连亮 {streak}{reading_note}）"
 
         c1 = _cond_clause(
-            "strong_bucket", "条件C1 20+ 桶 CI>0", "strong_bucket_streak"
+            "strong_bucket",
+            "条件C1 20+ 桶 CI>0",
+            "strong_bucket_streak",
+            "CI90 下界",
         )
         c2 = _cond_clause(
-            "mid_buckets", "条件C2 中间桶(4-9/10-19)转负", "mid_buckets_streak"
+            "mid_buckets",
+            "条件C2 中间桶(4-9/10-19)转负",
+            "mid_buckets_streak",
+            "中间桶最大 E",
         )
         armed = latest.get("conjunction_armed") is True
         conj = (
