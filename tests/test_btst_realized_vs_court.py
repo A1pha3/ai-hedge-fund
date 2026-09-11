@@ -464,6 +464,72 @@ class TestR187DataWindow:
         # 含同词, 不能作全文断言。
         assert "court 窗口: " not in render_md(payload)
 
+    def test_data_window_emitted_without_court_window(self):
+        # R187 Op2 P11 钉住: data_window 增发不依赖 court_window 在场 —
+        # 生产上 manifest 窗缺席即 fail-closed (两者并存恒成立), 但组合语义
+        # 不应被隐式耦合 (增发嵌套进 court_window 检查下 = 键名漂移盲区)。
+        payload = summary_payload(
+            self._recon(), court_window=None, data_window=("20250702", "20260909")
+        )
+        assert payload["data_window"] == {"start": "20250702", "end": "20260909"}
+        assert "court_window" not in payload
+        summary = build_alignment_summary(
+            self._recon(),
+            court_window=None,
+            data_window=("20250702", "20260909"),
+            summary_date="20260912",
+        )
+        assert summary["data_window"] == {"start": "20250702", "end": "20260909"}
+        assert "court_window" not in summary
+        assert "court 窗口: 20250702..20260909" in render_md(payload)
+
+
+class TestR187Op2RenderMdMalformedDataWindow:
+    """R187 Op2: render_md 面 data_window 形状守卫钉住。
+
+    Op1 只钉了对齐行消费面的畸形回退 (参数化); render_md 面的 has_data_window
+    守卫此前无值钉住 — P04' 变异 (end 检查改 True) 实跑无牙实证: 畸形
+    data_window 会把非 str 值直拼进窗口行。守卫契约: 非 dict / 任一端非
+    非空 str / 任一端非数字串 → 整块弃用, 落 court_window 现行分支。
+    """
+
+    def _recon(self):
+        court_rows = [
+            {"ts_code": "301234.SZ", "signal_date": 20260807, "strength": 0.43},
+        ]
+        journal = [_journal_buy("20260807", "301234", strength=0.50)]
+        inputs = _inputs(
+            court_rows,
+            sessions=["20260807"],
+            regime={"20260807": "normal"},
+            panel=["20260807"],
+        )
+        return reconcile(journal, inputs)
+
+    @pytest.mark.parametrize(
+        "poison",
+        [
+            "not-a-dict",
+            20260909,
+            True,
+            {"start": "20250702", "end": 20260909},
+            {"start": 20250702, "end": "20260909"},
+            {"start": "20250702", "end": ""},
+        ],
+    )
+    def test_render_md_malformed_data_window_falls_back(self, poison):
+        """守卫契约 = isinstance dict + 两端非空 str (8 位形状由生产者
+        court_window_from_events + 消费面对齐行面 _DATE_8_RE 守卫, render_md
+        面不重复); 类型毒化 → 整块弃用落 court_window 现行分支逐字节。"""
+        payload = {
+            "class_counts": dict.fromkeys(CLASSES, 0),
+            "total_buys": 1,
+            "court_window": {"start": "20250701", "end": "20260904"},
+            "data_window": poison,
+        }
+        assert "court 窗口: 20250701..20260904" in render_md(payload)
+        assert "data_window" in payload  # 载荷原样 (渲染面不裁剪)
+
 
 class TestLedgerUnion:
     def test_load_ledger_buys_normalizes_and_nets_realized(self, tmp_path):

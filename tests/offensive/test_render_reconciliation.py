@@ -474,6 +474,11 @@ def test_alignment_line_prefers_data_window_over_request_window(tmp_path):
         {"start": 20250702, "end": "20260909"},
         {"start": True, "end": "20260909"},
         {"start": "2025070", "end": "20260909"},
+        # R187 Op2 P08 钉住: end 8 位形状检查有独立牙 — 此前 end 毒化全为
+        # 非 str 形态 (被 isinstance str 挡住, fullmatch(end) 的牙是偶然),
+        # 「str 但非 8 位」end 形态拆除 fullmatch(end) 变异下零覆盖。
+        {"start": "20250702", "end": "2026090"},
+        {"start": "20250702", "end": "20260909x"},
     ],
 )
 def test_alignment_line_malformed_data_window_falls_back(tmp_path, poison):
@@ -489,3 +494,18 @@ def test_alignment_line_malformed_data_window_falls_back(tmp_path, poison):
     line = da._render_universe_alignment_line(path)
     assert line is not None
     assert "court 窗口 20250701..20260904" in line
+
+
+def test_alignment_line_data_window_without_court_window(tmp_path):
+    """R187 Op2 P12 钉住: data_window 独立在场 (旧 summary 无 court_window 键)
+    → 数据真相子句照常出行, 不隐式依赖回退键在场。"""
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary_with_gap(
+        court_window=None,
+        data_window={"start": "20250702", "end": "20260909"},
+    )
+    path = _write_alignment(tmp_path, payload)
+    line = da._render_universe_alignment_line(path)
+    assert line is not None
+    assert "court 窗口 20250702..20260909" in line
