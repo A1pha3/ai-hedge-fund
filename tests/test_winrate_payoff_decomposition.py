@@ -1099,6 +1099,7 @@ class TestAdversarialAuditR84Op1:
         (tables / "manifest_v1.json").write_text("not json at all", encoding="utf-8")
         b = court_binding(table, rows=7)
         assert b == {"window_start": None, "window_end": None,
+                     "data_window": {"start": None, "end": None},
                      "rows": 7, "formula_fingerprint": None,
                      "content_digest": None, "universe_audit_complete": None}
         # manifest 非 dict (JSON 数组)
@@ -1123,7 +1124,9 @@ class TestAdversarialAuditR84Op1:
         }), encoding="utf-8")
         b = court_binding(table, rows=99)
         assert b == {"window_start": None,
-                     "window_end": "20260831", "rows": 99,
+                     "window_end": "20260831",
+                     "data_window": {"start": None, "end": None},
+                     "rows": 99,
                      "formula_fingerprint": fp,
                      "content_digest": None, "universe_audit_complete": None}
 
@@ -1183,7 +1186,10 @@ class TestWindowStartIdentity:
         }), encoding="utf-8")
         b = court_binding(table, rows=99)
         assert b == {"window_start": "20250102",
-                     "window_end": "20260831", "rows": 99,
+                     "window_end": "20260831",
+                     # R186 Op1: 表不可读 (b"x") → 数据内容窗口退化 None, 不冒充
+                     "data_window": {"start": None, "end": None},
+                     "rows": 99,
                      "formula_fingerprint": "aa" * 32,
                      "content_digest": None, "universe_audit_complete": None}
 
@@ -3781,3 +3787,59 @@ class TestClusterBootDeltaCi:
                 ["2026-03-01", "2026-03-02"],       # lo 侧不齐
                 n_boot=50,
             )
+
+
+# ---------- R186 Op1: court_binding data_window (『覆盖至』写面数据真相) ----------
+
+class TestCourtBindingDataWindowR186:
+    """R186 Op1: court_binding 增 data_window (signal_date min/max) —
+    R141 Op3『同屏矛盾』陷阱 (请求窗领先 signal_date max 数日, 同屏
+    『覆盖至』两说) 的写面收口; 请求态 window 保留供窗口审计 (R130 双轨)."""
+
+    def _table(self, tmp_path, dates):
+        import pandas as pd
+        table = tmp_path / "court.csv.gz"
+        pd.DataFrame({"signal_date": dates, "x": range(len(dates))}).to_csv(
+            table, index=False, compression="gzip")
+        return table
+
+    def test_data_window_equals_signal_date_minmax(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import court_binding
+        table = self._table(tmp_path, ["20250702", "20250702", "20260827", "20260909"])
+        b = court_binding(table, rows=4)
+        assert b["data_window"] == {"start": "20250702", "end": "20260909"}
+
+    def test_data_window_unreadable_table_degrades_none(self, tmp_path):
+        from scripts.winrate_payoff_decomposition import court_binding
+        table = tmp_path / "court.csv.gz"
+        table.write_bytes(b"x")
+        b = court_binding(table, rows=1)
+        assert b["data_window"] == {"start": None, "end": None}
+        assert b["content_digest"] is None
+
+    def test_data_window_missing_column_degrades_none(self, tmp_path):
+        """signal_date 列缺失 (最小列 fixture / schema drift) → None 不冒充."""
+        import pandas as pd
+        from scripts.winrate_payoff_decomposition import court_binding
+        table = tmp_path / "court.csv.gz"
+        pd.DataFrame({"a": [1, 2]}).to_csv(table, index=False, compression="gzip")
+        b = court_binding(table, rows=2)
+        assert b["data_window"] == {"start": None, "end": None}
+
+    def test_data_window_non_date8_shapes_rejected(self, tmp_path):
+        """ISO 短横/浮点形态 → 8 位数字串守卫拒绝, None 不带毒上穿."""
+        from scripts.winrate_payoff_decomposition import court_binding
+        table = self._table(tmp_path, ["2026-01-02", "20260909.0"])
+        b = court_binding(table, rows=2)
+        assert b["data_window"] == {"start": None, "end": None}
+
+    def test_data_window_not_part_of_data_state_identity(self):
+        """前进门身份只认 content_digest (R130 Op1) — data_window/请求窗
+        差异不构成数据前进, 折叠语义零变化 (A2 钉子)."""
+        from scripts.winrate_payoff_decomposition import court_data_state_equal
+        base = {"content_digest": "sha256:" + "ab" * 32}
+        left = {**base, "window_end": "20260911",
+                "data_window": {"start": "20250702", "end": "20260909"}}
+        right = {**base, "window_end": "20260912",
+                 "data_window": {"start": None, "end": None}}
+        assert court_data_state_equal(left, right) is True

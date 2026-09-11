@@ -2403,6 +2403,31 @@ def _render_day_cohort_line(
         return None
 
 
+def _court_coverage_end(court: Any) -> str | None:
+    """触发器/告警行『court 覆盖至』端点单一实现 (R186 Op1)。
+
+    数据内容真相优先: 账本 court 绑定的 ``data_window.end`` (R186 Op1 起
+    court_binding 随快照落盘, 事件表 signal_date max) — R141 Op3 成文
+    『覆盖至=数据窗口末端』语义; 请求态 ``window_end`` (manifest 请求窗,
+    R130 Op1 成文非数据内容) 仅作旧账本记录回退, 回退分支无新增守卫与
+    修复前渲染逐字节一致 (fail-open 接线家族纪律)。data_window 形状非法
+    (非 dict/end 非 8 位数字串 — 含 bool/int 毒化) → 弃用并落回退; 两者
+    均缺 → None (子句省略, 不虚构)。三个消费面 (强度阈值行/日层 cohort 行/
+    freshness 告警行) 共用本实现, 同屏覆盖陈述恒同源。
+    """
+    if not isinstance(court, dict):
+        return None
+    data_window = court.get("data_window")
+    if isinstance(data_window, dict):
+        value = data_window.get("end")
+        if isinstance(value, str) and _DATE_8_RE.fullmatch(value) is not None:
+            return value
+    value = court.get("window_end")
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
 def _render_trigger_state_line() -> str | None:
     """预注册强度阈值触发器的操作员状态行 (R85 Op1)。
 
@@ -2482,11 +2507,11 @@ def _render_trigger_state_line() -> str | None:
             else f"0.60 锚合取未武装（连亮 {stab.get('conjunction_060_streak', 0)}）"
         )
         court = latest.get("court")
-        coverage = (
-            f" · court 覆盖至 {court.get('window_end')}"
-            if isinstance(court, dict) and court.get("window_end")
-            else ""
-        )
+        # R186 Op1: 覆盖端点 = 数据内容真相 (data_window.end) 优先, 请求态
+        # window_end 仅旧记录回退 (_court_coverage_end 单一实现); R141 Op3
+        # 『同屏矛盾』陷阱 (请求窗可领先 signal_date max 数日) 的渲染面收口。
+        coverage = _court_coverage_end(court)
+        coverage_text = f" · court 覆盖至 {coverage}" if coverage else ""
         anchor = latest.get("anchor") or "production_aligned/t10"
         # 历史最多合取连亮 + K 未预注册 (R109 Op1; R120 措辞加合取限定 — 与条件①连亮
         # 是不同量纲, 无限定词时『已亮（连亮 3）… 历史最多连亮 0』被操作员判读为自相矛盾): threshold_trigger 已计算
@@ -2510,7 +2535,7 @@ def _render_trigger_state_line() -> str | None:
         return (
             f"强度阈值触发器（{anchor} · 账本 {stab['records']} 条{fold_note}）：{c1} · {c2} · {conj}；"
             f"{c3} · {conj_060} · 历史最多合取连亮 {max_streak} · 历史最多 060 锚合取连亮 {max_streak_060}"
-            f"{coverage} · {k_note}"
+            f"{coverage_text} · {k_note}"
         )
     except (OSError, ValueError, KeyError, TypeError):
         # R129 Op3 纵深防御 (R126 Op3 日层行同构, fail-open 家族):
@@ -2582,11 +2607,11 @@ def _render_day_cohort_trigger_line() -> str | None:
         )
         max_streak = int(stab.get("max_conjunction_streak") or 0)
         court = latest.get("court")
-        coverage = (
-            f" · court 覆盖至 {court.get('window_end')}"
-            if isinstance(court, dict) and court.get("window_end")
-            else ""
-        )
+        # R186 Op1: 覆盖端点 = 数据内容真相 (data_window.end) 优先, 请求态
+        # window_end 仅旧记录回退 (_court_coverage_end 单一实现); R141 Op3
+        # 『同屏矛盾』陷阱 (请求窗可领先 signal_date max 数日) 的渲染面收口。
+        coverage = _court_coverage_end(court)
+        coverage_text = f" · court 覆盖至 {coverage}" if coverage else ""
         anchor = latest.get("anchor") or "production_aligned/t10/cohort_size"
         # R129 Op1: K 子句经 cohort_k_qualification_disclosure 单一事实源 —
         # 未注册态缺席句即本行旧硬编码尾句 (逐字节, 零现行为变化);
@@ -2596,7 +2621,7 @@ def _render_day_cohort_trigger_line() -> str | None:
         fold_note = f" · 折叠同数据重复观测 {folded} 条" if folded > 0 else ""
         return (
             f"日层 cohort 触发器（{anchor} · 账本 {stab['records']} 条{fold_note}）："
-            f"{c1} · {c2} · {conj} · 历史最多日层合取连亮 {max_streak}{coverage}"
+            f"{c1} · {c2} · {conj} · 历史最多日层合取连亮 {max_streak}{coverage_text}"
             f" · {k_note}"
         )
     except (OSError, ValueError, KeyError, TypeError):
@@ -2763,9 +2788,10 @@ def _render_evidence_freshness_line(
         records = _tt.load_trigger_ledger()
         if records:
             ledger_last = str(records[-1].get("date"))
-            court = records[-1].get("court")
-            if isinstance(court, dict) and court.get("window_end"):
-                window_end = str(court["window_end"])
+            # R186 Op1: 覆盖端点 = 数据内容真相优先 (_court_coverage_end 单一
+            # 实现) — 覆盖渲染 (下文) 与覆盖停滞距离计算 (下文) 同源; 请求态
+            # window_end 只会虚增新鲜度 (R139 Op3 停滞判定晚触发同族)。
+            window_end = _court_coverage_end(records[-1].get("court"))
 
         status = None
         status_file = (

@@ -1441,7 +1441,13 @@ def court_binding(court_table: Path, rows: int) -> dict[str, object]:
     window_start/window_end 同为**请求态**而非数据内容 (R130 Op1 成文):
     非交易日重建只推进请求窗而事件表零变化, 故前进门身份
     (court_data_state_equal) 只认 content_digest; 本函数保留 window
-    字段供操作员『court 覆盖至 X』披露与窗口审计。
+    字段供窗口审计。操作员『court 覆盖至 X』披露自 R186 Op1 起以
+    data_window (数据内容真相) 为准, 请求态仅作旧账本记录回退 —
+    R141 Op3『同屏矛盾』陷阱 (请求窗与 signal_date max 相差数日,
+    同屏『覆盖至』两说) 的写面收口。
+    data_window: 事件表 signal_date min/max (court_window_from_events
+    单一实现), 每值经 ledger_date_str_valid 8 位数字串形状守卫; 表不可读/
+    空表/形状非法 → 对应值 None (不冒充, content_digest 同款退化语义)。
     universe_audit_complete: manifest 宇宙审计覆盖闭合
     (days_checked + empty_days == window.sessions) → True; 键全在但不
     闭合 → False; 键缺失/畸形/manifest 损坏 → None (旧形态无 empty_days
@@ -1469,6 +1475,7 @@ def court_binding(court_table: Path, rows: int) -> dict[str, object]:
         if isinstance(fingerprints, dict):
             value = fingerprints.get("btst_breakout_sha256")
             fingerprint = value if isinstance(value, str) else None
+    table_df = None
     try:
         table_df = pd.read_csv(court_table)
         content_digest = "sha256:" + hashlib.sha256(
@@ -1476,6 +1483,20 @@ def court_binding(court_table: Path, rows: int) -> dict[str, object]:
         ).hexdigest()
     except Exception:  # noqa: BLE001 - 表不可读 → None (不假装知道, 与 manifest 损坏同语义)
         content_digest = None
+    # R186 Op1: 数据内容窗口 (signal_date min/max) — 『court 覆盖至』披露的
+    # 数据真相; 请求态 window 保留供窗口审计 (R130 Op1 双轨成文)。形状非
+    # 8 位数字串 → None (ledger_date_str_valid 单一实现, 与账本行键同防线)。
+    data_window: dict[str, object] = {"start": None, "end": None}
+    if table_df is not None:
+        try:
+            content_window = court_window_from_events(table_df)
+        except (KeyError, TypeError, ValueError):
+            # signal_date 列缺失/畸形 (schema drift / 最小列 fixture) →
+            # 不冒充: 与表不可读同款退化语义, 绝不带毒上穿
+            content_window = {}
+        for key in ("start", "end"):
+            value = content_window.get(key)
+            data_window[key] = value if ledger_date_str_valid(value) else None
     universe_audit_complete = None
     audit = manifest.get("universe_audit") if isinstance(manifest, dict) else None
     if isinstance(audit, dict) and isinstance(window, dict):
@@ -1494,6 +1515,7 @@ def court_binding(court_table: Path, rows: int) -> dict[str, object]:
     return {
         "window_start": window_start,
         "window_end": window_end,
+        "data_window": data_window,
         "rows": int(rows),
         "formula_fingerprint": fingerprint,
         "content_digest": content_digest,
