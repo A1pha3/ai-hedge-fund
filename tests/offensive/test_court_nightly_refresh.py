@@ -227,6 +227,20 @@ class TestNightlyDiagnosticsRefresh:
         ]
         assert missing == []
 
+    def test_diagnostic_scripts_all_exist_on_disk(self):
+        # R183 Op2 存在性守卫: 家族守卫只查「家族 ⊆ 链」方向, 「链 ⊆ 磁盘」
+        # 方向此前无人查 — 链条目被磁盘 rename/delete 漂移后 pinned-set 与
+        # 家族守卫双绿, 夜刷链对该条目永久 rc!=0 (fail-open 只进 status,
+        # 噪声无声永久化)。R156 起成员靠「宿主实测裸跑」人工验证存在性,
+        # 无自动守卫; 本测试使漂移在 CI 当场暴露。
+        repo_scripts = Path(__file__).resolve().parents[2] / "scripts"
+        missing = [
+            name
+            for name in DIAGNOSTIC_SCRIPTS
+            if not (repo_scripts / name.removeprefix("scripts/")).is_file()
+        ]
+        assert missing == []
+
     def test_build_success_runs_diagnostics_in_order(self, tmp_path):
         _write_manifest(tmp_path, {"window": {"start": "20250102"}})
         runner = _RecordingRunner()
