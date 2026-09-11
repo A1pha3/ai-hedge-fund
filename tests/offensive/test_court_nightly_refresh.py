@@ -180,6 +180,10 @@ class TestNightlyDiagnosticsRefresh:
         # R180 Op1: + regime_run_survivorship_sensitivity_validation (R179
         # 登记开放项第二轴: 幸存者偏差反事实敏感度界 — 隐藏退市票行复制当
         # 前罚分所需差分/均值网格 + 机械不可能旗标; 同门接线第 10 次)。
+        # R183 Op1: + regime_run_cross_era_validation (R178 cross-era 外部
+        # 验证补接入链: R168 d1 边界时代条件性的当前/早期双表装配, 重入决
+        # 策锚证据; 家族第 7 个报告写入者, 出生时漏接 — pinned-set 钉不住
+        # 从未入链成员的盲区由下方家族完备性守卫补齐; 同门接线第 11 次)。
         assert DIAGNOSTIC_SCRIPTS == (
             "scripts/winrate_payoff_decomposition.py",
             "scripts/btst_signal_day_cohort.py",
@@ -197,7 +201,31 @@ class TestNightlyDiagnosticsRefresh:
             "scripts/regime_excess_return_decomposition.py",
             "scripts/regime_run_universe_match_validation.py",
             "scripts/regime_run_survivorship_sensitivity_validation.py",
+            "scripts/regime_run_cross_era_validation.py",
         )
+
+    def test_regime_report_writer_family_all_chained(self):
+        # R183 Op1 家族完备性守卫: pinned-set 只钉已声明成员, 钉不住从未
+        # 入链的新成员 — R178 cross_era (家族第 7 个报告写入者) 正是这样
+        # 漏接的: 出生时未接线, R179/R180 各自接线时先例清单恰好跳过它,
+        # 报告冻结在手动运行日而其判定的当前侧输入 (当前表) 每夜重建。
+        # 家族谓词 = scripts/regime_*.py 引用 REPORT_DIR_DEFAULT (报告写入
+        # 者单一定义家: regime_proximity_conditioning 定义, 全家族 import);
+        # 有意不入链者必须在 EXEMPT 显式登记理由 (可见决策, 非静默缺席)。
+        scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+        family = sorted(
+            path.name
+            for path in sorted(scripts_dir.glob("regime_*.py"))
+            if "REPORT_DIR_DEFAULT" in path.read_text(encoding="utf-8")
+        )
+        exempt: dict[str, str] = {}
+        chained = {
+            name.removeprefix("scripts/") for name in DIAGNOSTIC_SCRIPTS
+        }
+        missing = [
+            name for name in family if name not in chained and name not in exempt
+        ]
+        assert missing == []
 
     def test_build_success_runs_diagnostics_in_order(self, tmp_path):
         _write_manifest(tmp_path, {"window": {"start": "20250102"}})

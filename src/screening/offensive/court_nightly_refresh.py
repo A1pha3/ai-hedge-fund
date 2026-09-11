@@ -114,6 +114,17 @@ DIAGNOSTIC_SCRIPTS: tuple[str, ...] = (
     # (R133/R135/R166/R168/R170/R172/R179 先例), pinned-set 测试同步钉住
     # 防再漏接。
     "scripts/regime_run_survivorship_sensitivity_validation.py",
+    # R183 Op1: R178 cross-era 外部验证工具补接入链 (同门接线第 11 次,
+    # R133/R135/R166/R168/R170/R172/R179/R180 先例) — 同一 R168 analyze 跑
+    # 当前/早期 (2022-24) 双表的跨时代装配, 判定 (R168 d1 边界为时代条件
+    # 证据不可单独外推) 是重入决策锚证据。R178 出生时未接线而 R179/R180
+    # (其两枚派生轴) 各自入链 — pinned-set 只钉已声明成员, 钉不住从未入链
+    # 的新成员, 此家族级盲区由 test_regime_report_writer_family_all_chained
+    # 守卫补齐 (scripts/regime_*.py × REPORT_DIR_DEFAULT 报告写入者全集
+    # 必须在链, 有意豁免显式登记制)。当前侧随 court 重建每夜保鲜 (早期表
+    # 冻结), 此前冻结在手动运行日 = 判定输入当期化原则反面; 宿主裸跑
+    # 4.8s ≪ 600s。
+    "scripts/regime_run_cross_era_validation.py",
 )
 DIAGNOSTIC_TIMEOUT_S = 600
 
