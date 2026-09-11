@@ -3995,3 +3995,156 @@ def test_reentry_line_live_readings_render_run_len_2(_isolated_run_conditioning_
     assert "d1_run 形态（距上一阻断日 1 个会话；前导连跑 2 日：crisis×2）" in line
     assert "当期读数（夜刷 regime_blocked_run_conditioning 20260910" in line
     assert "前导阻断 1 日" not in line
+
+
+# ---------- R184 Op1: 重入决策锚时代外验当期读数子句 ----------
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cross_era_dir(tmp_path, monkeypatch):
+    """时代外验读取面默认隔离 (R120b 家族, R181/R182 同款): 渲染测试绝不读
+    宿主真实夜刷报告; 既有测试因此恒走无子句路径 (行逐字节不变)。"""
+    import src.screening.offensive.daily_action as da
+
+    target = tmp_path / "cross_era_reports"
+    target.mkdir()
+    monkeypatch.setattr(da, "_CROSS_ERA_REPORTS_DIR", target)
+    return target
+
+
+def _write_cross_era_fixture(reports_dir, date_str="20260911"):
+    """非对称 cross-era 报告 fixture (数字取自 R178 时代外验真实读数形态)。"""
+    payload = {
+        "schema_version": 1,
+        "verdict": {
+            "d1_penalty_sign_consistent": False,
+            "early_ci_excludes_current_point": None,
+            "statement": (
+                "d1 罚分仅当前时代可检 (早期 CI 跨零) — R168 d1 边界为时代条件"
+                "证据, 不可单独据以外推"
+            ),
+        },
+        "d1_point_penalty": {"current": -0.0751, "early": 0.0072},
+    }
+    path = (
+        Path(reports_dir) / f"regime_run_cross_era_validation_{date_str}.json"
+    )
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_reentry_line_cross_era_clause_on_static_run_line(
+    _isolated_cross_era_dir,
+):
+    """报告在场 (静态回退路径) → 行尾时代外验子句 (判定输入当期化第三腿)。"""
+    _write_cross_era_fixture(_isolated_cross_era_dir)
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=_reentry_history())
+    assert line is not None
+    assert (
+        "时代外验（夜刷 regime_run_cross_era_validation 20260911 · "
+        "当前点罚分 -7.51% · 早期点罚分 +0.72% · 两时代 方向不一致）" in line
+    )
+    assert "R168 d1 边界为时代条件" in line
+    # 子句在句末纯披露限定语之前
+    assert line.index("时代外验") < line.index("纯披露不判定")
+
+
+def test_reentry_line_cross_era_clause_on_blip_line(_isolated_cross_era_dir):
+    history = dict(_reentry_history(), **{"20260819": "normal"})
+    _write_cross_era_fixture(_isolated_cross_era_dir)
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=history)
+    assert line is not None
+    assert "d1_blip 形态" in line
+    assert "时代外验（夜刷 regime_run_cross_era_validation 20260911" in line
+
+
+def test_reentry_line_cross_era_clause_with_live_readings(
+    _isolated_run_conditioning_dir, _isolated_cross_era_dir
+):
+    """当期读数与时代外验双证据面并存 (同一决策点的两条独立腿)。"""
+    _write_run_conditioning_fixture(_isolated_run_conditioning_dir)
+    _write_cross_era_fixture(_isolated_cross_era_dir)
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=_reentry_history())
+    assert line is not None
+    assert "当期读数（夜刷 regime_blocked_run_conditioning 20260910" in line
+    assert "时代外验（夜刷 regime_run_cross_era_validation 20260911" in line
+
+
+def test_reentry_line_cross_era_absent_line_unchanged(_isolated_cross_era_dir):
+    """报告缺席 → 行逐字节不变 (fail-open 接线家族纪律; R183 Op2 交付面)。"""
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=_reentry_history())
+    assert line is not None
+    assert "时代外验" not in line
+    assert line.endswith("纯披露不判定（宪法 #2）")
+
+
+def test_reentry_line_cross_era_corrupt_and_malformed_omitted(
+    _isolated_cross_era_dir,
+):
+    """损坏 json / 形状不符 (sign_consistent 缺席) → 子句省略, 行其余不变。"""
+    (Path(_isolated_cross_era_dir) / "regime_run_cross_era_validation_20260911.json").write_text(
+        "{broken", encoding="utf-8"
+    )
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=_reentry_history())
+    assert line is not None
+    assert "时代外验" not in line
+
+    import json as _json
+
+    payload = {
+        "schema_version": 1,
+        "verdict": {
+            "early_ci_excludes_current_point": None,
+            "statement": "x",
+        },
+        "d1_point_penalty": {"current": -0.07, "early": 0.01},
+    }
+    (
+        Path(_isolated_cross_era_dir)
+        / "regime_run_cross_era_validation_20260911.json"
+    ).write_text(_json.dumps(payload), encoding="utf-8")
+    line = _render_reentry_proximity_line(run, regimes_by_date=_reentry_history())
+    assert line is not None
+    assert "时代外验" not in line
+
+
+def test_reentry_line_cross_era_explicit_dir_param_seam_pinned(
+    _isolated_cross_era_dir, tmp_path
+):
+    """显式 cross_era_reports_dir 注入缝活着 (R181 Op2 P-m 同族钉住)。"""
+    other = tmp_path / "other_cross_era"
+    other.mkdir()
+    _write_cross_era_fixture(other)
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(
+        run, regimes_by_date=_reentry_history(), cross_era_reports_dir=other
+    )
+    assert line is not None
+    assert "时代外验（夜刷 regime_run_cross_era_validation 20260911" in line
+    default_line = _render_reentry_proximity_line(
+        run, regimes_by_date=_reentry_history()
+    )
+    assert default_line is not None
+    assert "时代外验" not in default_line
+
+
+def test_reentry_line_cross_era_clause_on_live_blip_line(
+    _isolated_run_conditioning_dir, _isolated_cross_era_dir
+):
+    """live blip 分支双证据面 (四分支穷尽: live×2 由本测+with_live_readings
+    覆盖, 静态×2 由 static_run/blip 两测覆盖 — 漏一分支的变异无牙放行)。"""
+    history = dict(_reentry_history(), **{"20260819": "normal"})
+    _write_run_conditioning_fixture(_isolated_run_conditioning_dir)
+    _write_cross_era_fixture(_isolated_cross_era_dir)
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=history)
+    assert line is not None
+    assert "d1_blip 形态" in line
+    assert "当期读数（夜刷 regime_blocked_run_conditioning 20260910" in line
+    assert "时代外验（夜刷 regime_run_cross_era_validation 20260911" in line
+    assert line.index("当期读数") < line.index("时代外验") < line.index("纯披露不判定")

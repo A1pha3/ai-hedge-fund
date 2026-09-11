@@ -798,3 +798,123 @@ def test_reentry_readings_clause_bool_n_rejected_even_if_delta_consistent():
     payload["tables"]["t10"]["d1_run"]["n"] = True
     payload["run_deltas_t10"]["d1_run_vs_blip"]["n_run"] = True
     assert gap_disclosure.reentry_readings_clause(payload, "20260910") is None
+
+
+# ---------- R184 Op1: 重入决策锚时代外验当期读数子句 ----------
+
+
+def _cross_era_payload():
+    """最小 cross-era 报告形态 (数字取自 R178 时代外验真实读数形态)。"""
+    return {
+        "schema_version": 1,
+        "verdict": {
+            "d1_penalty_sign_consistent": False,
+            "early_ci_excludes_current_point": None,
+            "statement": (
+                "d1 罚分仅当前时代可检 (早期 CI 跨零) — R168 d1 边界为时代条件"
+                "证据, 不可单独据以外推"
+            ),
+        },
+        "d1_point_penalty": {"current": -0.0751, "early": 0.0072},
+    }
+
+
+def test_cross_era_verdict_clause_renders_verdict_and_points():
+    clause = gap_disclosure.cross_era_verdict_clause(_cross_era_payload(), "20260911")
+    assert clause is not None
+    assert "时代外验（夜刷 regime_run_cross_era_validation 20260911" in clause
+    assert "当前点罚分 -7.51%" in clause
+    assert "早期点罚分 +0.72%" in clause
+    assert "两时代 方向不一致" in clause
+    assert clause.endswith("不可单独据以外推") or "时代条件" in clause
+
+
+def test_cross_era_verdict_clause_point_penalty_none_is_honest_dash():
+    """点罚分 None (组 n<MIN_CELL_N) 合法 → '—' (工具 _fmt 同款诚实缺省)。"""
+    payload = _cross_era_payload()
+    payload["d1_point_penalty"] = {"current": None, "early": None}
+    clause = gap_disclosure.cross_era_verdict_clause(payload, "20260911")
+    assert clause is not None
+    assert "当前点罚分 —" in clause
+    assert "早期点罚分 —" in clause
+
+
+def test_cross_era_verdict_clause_fail_closed_shapes():
+    """五面畸形输入全拒 (R85/R115/R119/R182 家族): 不渲染部分垃圾。"""
+    base = _cross_era_payload()
+    assert gap_disclosure.cross_era_verdict_clause(base, "20260911") is not None
+
+    # report_date 空 / 非 str
+    assert gap_disclosure.cross_era_verdict_clause(base, "") is None
+    assert gap_disclosure.cross_era_verdict_clause(base, None) is None
+    # payload 非 dict
+    assert gap_disclosure.cross_era_verdict_clause("nope", "20260911") is None
+    assert gap_disclosure.cross_era_verdict_clause(None, "20260911") is None
+
+    # verdict 缺失 / 非 dict
+    payload = _cross_era_payload()
+    payload.pop("verdict")
+    assert gap_disclosure.cross_era_verdict_clause(payload, "20260911") is None
+    payload = _cross_era_payload()
+    payload["verdict"] = "x"
+    assert gap_disclosure.cross_era_verdict_clause(payload, "20260911") is None
+
+    # statement 非 str / 空
+    payload = _cross_era_payload()
+    payload["verdict"]["statement"] = ""
+    assert gap_disclosure.cross_era_verdict_clause(payload, "20260911") is None
+    payload = _cross_era_payload()
+    payload["verdict"]["statement"] = 7
+    assert gap_disclosure.cross_era_verdict_clause(payload, "20260911") is None
+
+    # sign_consistent 非 bool (缺席 / None / str) — 判定谓词缺席不冒充
+    for bad in (None, "false", 1):
+        payload = _cross_era_payload()
+        payload["verdict"]["d1_penalty_sign_consistent"] = bad
+        assert gap_disclosure.cross_era_verdict_clause(payload, "20260911") is None
+
+    # excludes 非 bool 且非 None
+    payload = _cross_era_payload()
+    payload["verdict"]["early_ci_excludes_current_point"] = "yes"
+    assert gap_disclosure.cross_era_verdict_clause(payload, "20260911") is None
+
+    # d1_point_penalty 缺失 / 非 dict
+    payload = _cross_era_payload()
+    payload.pop("d1_point_penalty")
+    assert gap_disclosure.cross_era_verdict_clause(payload, "20260911") is None
+    payload = _cross_era_payload()
+    payload["d1_point_penalty"] = []
+    assert gap_disclosure.cross_era_verdict_clause(payload, "20260911") is None
+
+    # 点罚分非有限 / 非数值 / bool (True==1 会冒充 +100.00%)
+    for bad in ("x", float("nan"), float("inf"), True):
+        payload = _cross_era_payload()
+        payload["d1_point_penalty"]["current"] = bad
+        assert gap_disclosure.cross_era_verdict_clause(payload, "20260911") is None
+
+
+def test_latest_cross_era_report_selects_latest_dated(tmp_path):
+    for date_str in ("20260910", "20260911"):
+        path = tmp_path / f"regime_run_cross_era_validation_{date_str}.json"
+        path.write_text(json.dumps(_cross_era_payload()), encoding="utf-8")
+    found = gap_disclosure.latest_cross_era_report(tmp_path)
+    assert found is not None
+    assert found[0].name.endswith("20260911.json")
+    assert isinstance(found[1], dict)
+
+
+def test_latest_cross_era_report_future_dated_rejected(tmp_path, monkeypatch):
+    monkeypatch.setattr(gap_disclosure, "_today", lambda: dt.date(2026, 9, 11))
+    path = tmp_path / "regime_run_cross_era_validation_20990101.json"
+    path.write_text(json.dumps(_cross_era_payload()), encoding="utf-8")
+    assert gap_disclosure.latest_cross_era_report(tmp_path) is None
+
+
+def test_latest_cross_era_report_corrupt_no_fallback(tmp_path):
+    (tmp_path / "regime_run_cross_era_validation_20260910.json").write_text(
+        json.dumps(_cross_era_payload()), encoding="utf-8"
+    )
+    (tmp_path / "regime_run_cross_era_validation_20260911.json").write_text(
+        "{broken", encoding="utf-8"
+    )
+    assert gap_disclosure.latest_cross_era_report(tmp_path) is None

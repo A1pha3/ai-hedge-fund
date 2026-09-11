@@ -448,6 +448,87 @@ def reentry_readings_clause(payload: object, report_date: str) -> str | None:
     )
 
 
+# R184 Op1: 时代外验报告 glob 同纪律 (公开常量与读取家/渲染/测试同源,
+# 字面量多处并存时 glob 演化会让各面静默分叉)。
+CROSS_ERA_REPORT_GLOB = "regime_run_cross_era_validation_*.json"
+_CROSS_ERA_GLOB = CROSS_ERA_REPORT_GLOB
+
+
+def latest_cross_era_report(
+    reports_dir: str | Path = Path("data/reports"),
+) -> tuple[Path, dict] | None:
+    """最新 cross-era 时代外验报告的唯一读取家 (R184 Op1)。
+
+    与 latest_run_conditioning_report 同构 (形状守卫/字典序新鲜/未来日期
+    拒绝/损坏 None 不回退旧报告 — 不以陈旧数字冒充当前证据), 经
+    _latest_dated_report 单一实现只换 glob。
+    """
+    return _latest_dated_report(reports_dir, _CROSS_ERA_GLOB)
+
+
+def cross_era_verdict_clause(payload: object, report_date: str) -> str | None:
+    """重入决策锚时代外验当期读数子句 (R184 Op1) — 夜刷 cross-era 的操作员面。
+
+    R183 Op1 把 regime_run_cross_era_validation 接入夜刷链后, R168 d1 边界
+    的时代外验证据 (当前/早期双表装配) 当前侧每夜保鲜, 但重入决策点上操作员
+    只看到阻断连跑当期读数 (R182 Op1) 与注册证据静态锚 — 时代外验 verdict
+    仍只活在磁盘报告, 判定时刻不可见 (R182 Op1 所修不对称的同族第三腿)。
+
+    口径如实标注: 点罚分 = blip E − run E (正值 = run 罚分在场, 工具
+    _point_penalty 同式); 陈述是工具机械谓词装配的三形态 (独立时代支持 /
+    仅当前时代 / 不可判定), 本子句原样透传不改写判定语义; as-of 日期自
+    暴露 (文件名日期段由调用方透传, 陈旧可见不冒充)。
+
+    纯函数 + fail-closed 形状守卫 (R85/R115/R119/R182 家族): payload 非
+    dict、verdict 缺失或非 dict、statement 非 str 或空、
+    d1_penalty_sign_consistent 非 bool (判定谓词缺席不冒充)、
+    early_ci_excludes_current_point 非 bool 且非 None、d1_point_penalty
+    缺失或非 dict、current/early 非 None 且非有限数 (bool 亦拒 — True==1
+    会冒充 +100.00%)、report_date 空 → None (渲染侧子句静默省略, 不渲染
+    部分垃圾)。点罚分 None (组 n<MIN_CELL_N) 合法, 渲染 '—' (工具 _fmt
+    同款诚实缺省)。
+    """
+    if not report_date or not isinstance(report_date, str):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    verdict = payload.get("verdict")
+    if not isinstance(verdict, dict):
+        return None
+    statement = verdict.get("statement")
+    if not isinstance(statement, str) or not statement:
+        return None
+    sign_consistent = verdict.get("d1_penalty_sign_consistent")
+    if not isinstance(sign_consistent, bool):
+        return None
+    excludes = verdict.get("early_ci_excludes_current_point")
+    if excludes is not None and not isinstance(excludes, bool):
+        return None
+    points = payload.get("d1_point_penalty")
+    if not isinstance(points, dict):
+        return None
+
+    def _point(value: object) -> str | None:
+        if value is None:
+            return "—"
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        if not math.isfinite(float(value)):
+            return None
+        return f"{float(value) * 100:+.2f}%"
+
+    cur_token = _point(points.get("current"))
+    early_token = _point(points.get("early"))
+    if cur_token is None or early_token is None:
+        return None
+    sign_token = "方向一致" if sign_consistent else "方向不一致"
+    return (
+        f"时代外验（夜刷 regime_run_cross_era_validation {report_date} · "
+        f"当前点罚分 {cur_token} · 早期点罚分 {early_token} · "
+        f"两时代 {sign_token}）：{statement}"
+    )
+
+
 def gap_bucket(gap: float | None) -> str:
     """T+1 开盘缺口分桶 — 左闭右开, 缺失诚实 unknown (不假装知道)。"""
     if gap is None or (isinstance(gap, float) and math.isnan(gap)):

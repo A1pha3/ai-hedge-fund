@@ -1479,6 +1479,9 @@ _PRIOR_DRIFT_REPORTS_DIR = Path("data/reports")
 # 测试经 monkeypatch 隔离 (R120b 家族: 渲染测试不得读宿主真实报告)。
 _EXIT_ANATOMY_REPORTS_DIR = Path("data/reports")
 _RUN_CONDITIONING_REPORTS_DIR = Path("data/reports")
+# 夜刷 cross-era 时代外验报告目录默认值 (R184 Op1): 重入锚时代外验读数的
+# 读取面。测试经 monkeypatch 隔离 (R120b 家族: 渲染测试不得读宿主真实报告)。
+_CROSS_ERA_REPORTS_DIR = Path("data/reports")
 
 # 证据新鲜度告警阈值 (R115 Op2): 正常节律 = 分解报告每晚刷新覆盖前一交易日,
 # --daily-action (~15:05, 夜刷之前) 距最新报告 ≤1 个交易日; ≥2 = 至少一夜
@@ -1741,6 +1744,7 @@ def _render_reentry_proximity_line(
     run: Any,
     regimes_by_date: Mapping[str, str] | None = None,
     run_conditioning_reports_dir: str | Path | None = None,
+    cross_era_reports_dir: str | Path | None = None,
 ) -> str | None:
     """重入邻近度披露行 (R176 Op1): d1 信号日的 blip/run 形态区分。
 
@@ -1761,6 +1765,15 @@ def _render_reentry_proximity_line(
     (t10 净口径, 报告日期自暴露), 注册证据压缩为锚 (轴边界预注册日期);
     报告缺失/损坏/未来日期/形状不符 → 回退注册证据静态行 (注册对比仍是
     有效证据, 只是 dated — 不以读数缺席抹掉已注册发现)。
+
+    R184 Op1 时代外验子句: R183 Op1 把 regime_run_cross_era_validation
+    接入夜刷链后, R168 d1 边界的时代外验证据 (R178 跨时代装配) 当前侧
+    每夜保鲜, 但 verdict/点罚分仍只活在磁盘报告 — 现夜刷报告在场且形状
+    合法时行尾追加时代外验子句 (verdict 机械陈述原样透传 + 当前/早期点
+    罚分, 判定输入当期化第三 armed 决策点); 报告缺席/损坏/形状不符 →
+    子句静默省略, 行其余部分逐字节不变 (fail-open 接线家族纪律)。四分支
+    (live×2/静态×2) 统一追加 — 时代外验是同一决策点的独立证据面, 不随
+    当期读数子句在缺而缺席。
 
     纯披露 (宪法 #2): 本行不进入任何计划/评分/仓位/退出决策路径; 任何
     重入条件收紧 = 策略行为变化 = owner 决策 + 新证据世代。fail-open
@@ -1796,6 +1809,8 @@ def _render_reentry_proximity_line(
         if form != "normal" or dist != 1:
             return None
         from src.screening.offensive.gap_disclosure import (
+            cross_era_verdict_clause,
+            latest_cross_era_report,
             latest_run_conditioning_report,
             reentry_readings_clause,
             report_filename_date,
@@ -1812,6 +1827,18 @@ def _render_reentry_proximity_line(
             live_clause = reentry_readings_clause(
                 payload, report_filename_date(report_path) or ""
             )
+        cross_clause: str | None = None
+        cross_found = latest_cross_era_report(
+            Path(cross_era_reports_dir)
+            if cross_era_reports_dir is not None
+            else _CROSS_ERA_REPORTS_DIR
+        )
+        if cross_found is not None:
+            cross_path, cross_payload = cross_found
+            cross_clause = cross_era_verdict_clause(
+                cross_payload, report_filename_date(cross_path) or ""
+            )
+        cross_suffix = f" — {cross_clause}" if cross_clause else ""
         if live_clause is not None:
             registered = "注册证据 R168（轴边界预注册 2026-09-10）："
             if run_len >= 2:
@@ -1829,12 +1856,12 @@ def _render_reentry_proximity_line(
                 return (
                     f"重入邻近度：d1_run 形态（距上一阻断日 1 个会话；前导连跑 "
                     f"{run_len} 日：{stretch}）— {live_clause} — {registered}"
-                    f"同对比当时已决定性。纯披露不判定（宪法 #2）"
+                    f"同对比当时已决定性{cross_suffix}。纯披露不判定（宪法 #2）"
                 )
             return (
                 f"重入邻近度：d1_blip 形态（距上一阻断日 1 个会话；前导阻断 1 日）"
-                f"— {live_clause} — {registered}d1_run 同对比中反为深负。"
-                f"纯披露不判定（宪法 #2）"
+                f"— {live_clause} — {registered}d1_run 同对比中反为深负"
+                f"{cross_suffix}。纯披露不判定（宪法 #2）"
             )
         evidence = (
             f"注册证据（R168，截至 {_REENTRY_EVIDENCE_AS_OF}）；当期数字见夜刷 "
@@ -1856,13 +1883,13 @@ def _render_reentry_proximity_line(
                 f"重入邻近度：d1_run 形态（距上一阻断日 1 个会话；前导连跑 "
                 f"{run_len} 日：{stretch}）— {evidence}：该形态历史深负"
                 f"（E=-5.74%，胜率 30.8%），单日闪断后 d1_blip 反为正"
-                f"（E=+1.77%，胜率 53.7%），配对差 CI90 [+2.49%,+11.94%] 越零。"
-                f"纯披露不判定（宪法 #2）"
+                f"（E=+1.77%，胜率 53.7%），配对差 CI90 [+2.49%,+11.94%] 越零"
+                f"{cross_suffix}。纯披露不判定（宪法 #2）"
             )
         return (
             f"重入邻近度：d1_blip 形态（距上一阻断日 1 个会话；前导阻断 1 日）"
             f"— {evidence}：该形态历史为正（E=+1.77%，胜率 53.7%），与连跑后 "
-            f"d1_run（-5.74%/30.8%）相反。纯披露不判定（宪法 #2）"
+            f"d1_run（-5.74%/30.8%）相反{cross_suffix}。纯披露不判定（宪法 #2）"
         )
     except (OSError, ValueError, KeyError, TypeError):
         return None
