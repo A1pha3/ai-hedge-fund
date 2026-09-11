@@ -210,6 +210,34 @@ class TestGapExecutionReference:
         _write_report(tmp_path, payload=self._payload_with_pooled(pooled))
         assert gap_execution_reference(tmp_path)["pooled"] is None
 
+    # --- R189 Op1: pooled_penalty_body 单一实现 (clause 委托 + MD 渲染面同源) ---
+
+    def test_pooled_body_is_clause_body(self):
+        """body 是 clause 去掉『 · 』前缀的正文 — 委托输出逐字节恒等。"""
+        pooled = self._pooled(consistent=True)
+        body = gap_disclosure.pooled_penalty_body(pooled)
+        assert body is not None
+        assert body.startswith("聚合罚分两半 +5.63pp/+3.13pp 同号")
+        assert body.endswith(
+            "（高开子集期望 -4.90%/-2.86% · n 91/67）")
+        assert gap_disclosure.pooled_penalty_clause(pooled) == f" · {body}"
+
+    def test_pooled_body_flip_wording(self):
+        body = gap_disclosure.pooled_penalty_body(self._pooled(consistent=False))
+        assert body is not None
+        assert "聚合罚分两半 +5.63pp/+3.13pp 异号" in body
+        assert "同号" not in body
+
+    def test_pooled_body_malformed_and_absent_none(self):
+        assert gap_disclosure.pooled_penalty_body(None) is None
+        assert gap_disclosure.pooled_penalty_body("pooled") is None
+        zero_count = self._pooled()
+        zero_count["n_hi_first"] = 0  # R188 Op2 P09b: 零计数自相矛盾载荷整块拒绝
+        assert gap_disclosure.pooled_penalty_body(zero_count) is None
+        bool_poison = self._pooled()
+        bool_poison["penalty_second"] = True
+        assert gap_disclosure.pooled_penalty_body(bool_poison) is None
+
 
 class TestRenderGapLine:
     def _line(self, tmp_path):

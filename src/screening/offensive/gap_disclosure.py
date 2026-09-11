@@ -284,22 +284,31 @@ def parse_pooled_penalty(raw: object) -> dict[str, object] | None:
     return parsed
 
 
-def pooled_penalty_clause(pooled: object) -> str:
-    """执行面行聚合罚分子句 (R188 Op1) — pooled 缺席/畸形 → 空串 (行逐字节不变)。
-
-    同号/异号措辞由 consistent bool 驱动; 判读语义属 owner (宪法 #2),
-    子句只把聚合层读数与 R15 分桶 verdict 并列显形。
-    """
+def pooled_penalty_body(pooled: object) -> str | None:
+    """聚合罚分读数正文 (R189 Op1) — 执行面子句与 MD 渲染面 (render_md
+    split-half 节) 的单一实现, 两表面同源防漂移; pooled 缺席/畸形 → None
+    (半真披露比无披露更有害, parse_pooled_penalty 同款纪律)。"""
     parsed = parse_pooled_penalty(pooled)
     if parsed is None:
-        return ""
+        return None
     same = "同号" if parsed["consistent"] else "异号"
     return (
-        f" · 聚合罚分两半 {parsed['penalty_first'] * 100:+.2f}pp"
+        f"聚合罚分两半 {parsed['penalty_first'] * 100:+.2f}pp"
         f"/{parsed['penalty_second'] * 100:+.2f}pp {same}"
         f"（高开子集期望 {parsed['e_hi_first']:+.2%}/{parsed['e_hi_second']:+.2%}"
         f" · n {parsed['n_hi_first']}/{parsed['n_hi_second']}）"
     )
+
+
+def pooled_penalty_clause(pooled: object) -> str:
+    """执行面行聚合罚分子句 (R188 Op1) — pooled 缺席/畸形 → 空串 (行逐字节不变)。
+
+    同号/异号措辞由 consistent bool 驱动; 判读语义属 owner (宪法 #2),
+    子句只把聚合层读数与 R15 分桶 verdict 并列显形。正文单一实现见
+    pooled_penalty_body (R189 Op1: MD 渲染面同源消费, 防两表面漂移)。
+    """
+    body = pooled_penalty_body(pooled)
+    return f" · {body}" if body else ""
 
 
 def stop_direction_clause(

@@ -125,6 +125,7 @@ from src.screening.offensive.gap_disclosure import (  # noqa: E402
     DECOMPOSITION_REPORT_GLOB,
     gap_bucket,
     latest_decomposition_report,
+    pooled_penalty_body,
     report_filename_date,
 )
 
@@ -2062,6 +2063,15 @@ def _render_gap_anatomy(uni: dict, L: list[str]) -> None:
             L.append(
                 f"- close-anchor 罚分 (信息含量口径, 次级披露) 跨半一致: "
                 f"{'是' if ca_stable else '否'}"
+            )
+        # R189 Op1: 聚合罚分 (全强度池化) 直答层 — 执行面缺口参考行 (R188 Op1)
+        # 引用的聚合读数在明细报告同源显形 (pooled_penalty_body 单一实现,
+        # 与操作员子句零漂移); pooled 缺席 (旧报告)/畸形 → 列表项省略,
+        # 本节与修复前逐字节一致 (fail-open 接线家族纪律)。
+        pooled_body = pooled_penalty_body(sh.get("pooled"))
+        if pooled_body:
+            L.append(
+                f"- **聚合罚分 (全强度池化, 执行面行直答层)**: {pooled_body}"
             )
         L.append("")
 

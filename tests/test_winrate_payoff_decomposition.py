@@ -1951,6 +1951,82 @@ class TestGapSplitHalf:
         assert "split-half" in md
         assert "verdict" in md or "判定" in md
 
+    # --- R189 Op1: MD 渲染面 pooled 聚合罚分块 (fail-open 接线家族) ---
+
+    _POOLED_FIXTURE = {
+        "penalty_first": 0.0563,
+        "penalty_second": 0.0313,
+        "e_hi_first": -0.049,
+        "e_hi_second": -0.0286,
+        "n_hi_first": 91,
+        "n_hi_second": 67,
+        "consistent": True,
+    }
+
+    @staticmethod
+    def _render_with_pooled(pooled):
+        """构造最小可判定 split-half payload 并按参数注入 pooled (None=旧形态)。"""
+        import pandas as pd
+        from scripts.winrate_payoff_decomposition import decompose, render_md
+        rows = []
+        for i in range(80):
+            first = i < 40
+            half_hi = -0.03 if first else -0.02
+            hi = i % 8 == 0
+            rows.append({
+                "symbol": f"{600000+i}",
+                "signal_date": f"2026-0{1 if first else 4}-{(i % 40) % 28 + 1:02d}",
+                "regime": "normal",
+                "trigger_strength": 0.9,
+                "gap_t1_open": 0.07 if hi else 0.01,
+                "gross_ret_t10": (half_hi if hi else 0.01) + 0.0065,
+                "gross_ret_t5": 0.02,
+                "ret_close_anchor_t10": 0.03,
+                "fillable": True, "gate_blocked": False, "degraded": False,
+                "st_name": False, "industry_missing": False,
+                "excluded_ticker": False, "price_ge_3": True,
+            })
+        payload = decompose(pd.DataFrame(rows), universes=("production_aligned",))
+        sh = payload["universes"]["production_aligned"]["gap_anatomy"]["split_half"]
+        if pooled is not None:
+            sh["pooled"] = pooled
+        return render_md(payload, "20260912")
+
+    def test_render_md_pooled_bullet_present(self):
+        md = self._render_with_pooled(dict(self._POOLED_FIXTURE))
+        assert (
+            "- **聚合罚分 (全强度池化, 执行面行直答层)**: 聚合罚分两半"
+            " +5.63pp/+3.13pp 同号（高开子集期望 -4.90%/-2.86% · n 91/67）"
+        ) in md
+
+    def test_render_md_pooled_bullet_single_implementation_no_drift(self):
+        """MD 列表项正文与操作员子句同源 (pooled_penalty_body 单一实现)。"""
+        from src.screening.offensive.gap_disclosure import (
+            pooled_penalty_body,
+            pooled_penalty_clause,
+        )
+        pooled = dict(self._POOLED_FIXTURE)
+        md = self._render_with_pooled(pooled)
+        body = pooled_penalty_body(pooled)
+        assert body is not None
+        assert pooled_penalty_clause(pooled) == f" · {body}"
+        assert f"**聚合罚分 (全强度池化, 执行面行直答层)**: {body}" in md
+
+    def test_render_md_pooled_absent_old_report_unchanged(self):
+        """旧报告 (无 pooled 键) → 列表项缺席, split-half 节与修复前逐字节一致。"""
+        md = self._render_with_pooled(None)
+        assert "聚合罚分" not in md
+        assert "判定 (R15 合取判据镜像" in md  # 节内其余行照常
+
+    def test_render_md_pooled_malformed_omitted(self):
+        """畸形 pooled → 列表项省略, 零异常 (半真披露比无披露更有害)。"""
+        md = self._render_with_pooled({"consistent": "yes", "penalty_first": 0.05})
+        assert "聚合罚分" not in md
+        small = dict(self._POOLED_FIXTURE)
+        small["n_hi_second"] = 0  # consistent 与零计数并存 = 自相矛盾载荷
+        md2 = self._render_with_pooled(small)
+        assert "聚合罚分" not in md2
+
 
 class TestBuildTimestampNotIdentity:
     """R93 Op1: built_at 是构建事件时间戳, 不是数据状态身份。
