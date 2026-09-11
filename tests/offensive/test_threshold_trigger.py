@@ -75,6 +75,8 @@ def test_format_condition_reading_malformed_inputs_degrade_to_none():
         {"judged": True, "n": 10},                    # stat 缺失
         {"judged": True, "n": 10, "stat": True},      # bool stat
         {"judged": True, "n": 10, "stat": "0.1"},     # 字符串 stat
+        {"judged": True, "n": 10, "stat": {"x": 1}},  # dict stat
+        {"judged": True, "n": 10, "stat": [0.1]},     # list stat
         {"judged": True, "n": True, "stat": 0.1},     # bool n (True==1 冒充)
         {"judged": True, "n": 0, "stat": 0.1},        # n=0
         {"judged": True, "n": -3, "stat": 0.1},       # 负 n
