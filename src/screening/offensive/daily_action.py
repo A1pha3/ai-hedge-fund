@@ -2431,16 +2431,21 @@ def _render_day_cohort_line(
         return None
 
 
-def _court_coverage_end(court: Any) -> str | None:
-    """触发器/告警行『court 覆盖至』端点单一实现 (R186 Op1)。
+def _court_coverage_reading(court: Any) -> tuple[str, str] | None:
+    """触发器/告警行 court 端点读数单一实现 (R186 Op1 建, R190 Op1 真值化)。
 
-    数据内容真相优先: 账本 court 绑定的 ``data_window.end`` (R186 Op1 起
-    court_binding 随快照落盘, 事件表 signal_date max) — R141 Op3 成文
-    『覆盖至=数据窗口末端』语义; 请求态 ``window_end`` (manifest 请求窗,
-    R130 Op1 成文非数据内容) 仅作旧账本记录回退, 回退分支无新增守卫与
-    修复前渲染逐字节一致 (fail-open 接线家族纪律)。data_window 形状非法
+    返回 (端点, 来源): 来源 ``"data"`` = ``data_window.end`` (R186 Op1 起
+    随账本快照落盘, 事件表 signal_date max — R141 Op3 成文『覆盖至=数据
+    窗口末端』语义); 来源 ``"request"`` = 旧账本记录回退 ``window_end``
+    (manifest 请求窗, R130 Op1 成文非数据内容)。data_window 形状非法
     (非 dict/end 非 8 位数字串 — 含 bool/int 毒化) → 弃用并落回退; 两者
-    均缺 → None (子句省略, 不虚构)。三个消费面 (强度阈值行/日层 cohort 行/
+    均缺 → None (子句省略, 不虚构)。R190 Op1: 回退分支不再把请求窗冒充
+    数据覆盖 — 消费面按来源分标签渲染 (data→『court 覆盖至 X』/request→
+    『court 请求窗至 X』), 同屏与数据真相表面 (缺口行/先验行) 不再两说
+    (宿主 20260912 实录: 旧形态触发器行『覆盖至 20260911』vs 缺口行数据
+    真相 20260909, 数据不前进期持续显形); freshness 停滞距离仅由 data
+    来源驱动 (请求态计算停滞 = R139 Op3 注释成文『虚增新鲜度』同族残余),
+    报告陈旧判定照常兜底冻结检测。三个消费面 (强度阈值行/日层 cohort 行/
     freshness 告警行) 共用本实现, 同屏覆盖陈述恒同源。
     """
     if not isinstance(court, dict):
@@ -2449,10 +2454,10 @@ def _court_coverage_end(court: Any) -> str | None:
     if isinstance(data_window, dict):
         value = data_window.get("end")
         if isinstance(value, str) and _DATE_8_RE.fullmatch(value) is not None:
-            return value
+            return value, "data"
     value = court.get("window_end")
     if isinstance(value, str) and value:
-        return value
+        return value, "request"
     return None
 
 
@@ -2535,11 +2540,17 @@ def _render_trigger_state_line() -> str | None:
             else f"0.60 锚合取未武装（连亮 {stab.get('conjunction_060_streak', 0)}）"
         )
         court = latest.get("court")
-        # R186 Op1: 覆盖端点 = 数据内容真相 (data_window.end) 优先, 请求态
-        # window_end 仅旧记录回退 (_court_coverage_end 单一实现); R141 Op3
-        # 『同屏矛盾』陷阱 (请求窗可领先 signal_date max 数日) 的渲染面收口。
-        coverage = _court_coverage_end(court)
-        coverage_text = f" · court 覆盖至 {coverage}" if coverage else ""
+        # R186 Op1 建, R190 Op1 真值化: 数据真相 (data_window.end) 优先渲染
+        # 『court 覆盖至』; 旧记录请求态回退改标『court 请求窗至』不再冒充
+        # 覆盖 (_court_coverage_reading 单一实现) — R141 Op3『同屏矛盾』陷阱
+        # (请求窗可领先 signal_date max 数日) 渲染面收口的最后一米。
+        reading = _court_coverage_reading(court)
+        if reading is None:
+            coverage_text = ""
+        elif reading[1] == "data":
+            coverage_text = f" · court 覆盖至 {reading[0]}"
+        else:
+            coverage_text = f" · court 请求窗至 {reading[0]}"
         anchor = latest.get("anchor") or "production_aligned/t10"
         # 历史最多合取连亮 + K 未预注册 (R109 Op1; R120 措辞加合取限定 — 与条件①连亮
         # 是不同量纲, 无限定词时『已亮（连亮 3）… 历史最多连亮 0』被操作员判读为自相矛盾): threshold_trigger 已计算
@@ -2635,11 +2646,17 @@ def _render_day_cohort_trigger_line() -> str | None:
         )
         max_streak = int(stab.get("max_conjunction_streak") or 0)
         court = latest.get("court")
-        # R186 Op1: 覆盖端点 = 数据内容真相 (data_window.end) 优先, 请求态
-        # window_end 仅旧记录回退 (_court_coverage_end 单一实现); R141 Op3
-        # 『同屏矛盾』陷阱 (请求窗可领先 signal_date max 数日) 的渲染面收口。
-        coverage = _court_coverage_end(court)
-        coverage_text = f" · court 覆盖至 {coverage}" if coverage else ""
+        # R186 Op1 建, R190 Op1 真值化: 数据真相 (data_window.end) 优先渲染
+        # 『court 覆盖至』; 旧记录请求态回退改标『court 请求窗至』不再冒充
+        # 覆盖 (_court_coverage_reading 单一实现) — R141 Op3『同屏矛盾』陷阱
+        # (请求窗可领先 signal_date max 数日) 渲染面收口的最后一米。
+        reading = _court_coverage_reading(court)
+        if reading is None:
+            coverage_text = ""
+        elif reading[1] == "data":
+            coverage_text = f" · court 覆盖至 {reading[0]}"
+        else:
+            coverage_text = f" · court 请求窗至 {reading[0]}"
         anchor = latest.get("anchor") or "production_aligned/t10/cohort_size"
         # R129 Op1: K 子句经 cohort_k_qualification_disclosure 单一事实源 —
         # 未注册态缺席句即本行旧硬编码尾句 (逐字节, 零现行为变化);
@@ -2813,13 +2830,19 @@ def _render_evidence_freshness_line(
 
         ledger_last = None
         window_end = None
+        window_is_data_truth = False
         records = _tt.load_trigger_ledger()
         if records:
             ledger_last = str(records[-1].get("date"))
-            # R186 Op1: 覆盖端点 = 数据内容真相优先 (_court_coverage_end 单一
-            # 实现) — 覆盖渲染 (下文) 与覆盖停滞距离计算 (下文) 同源; 请求态
-            # window_end 只会虚增新鲜度 (R139 Op3 停滞判定晚触发同族)。
-            window_end = _court_coverage_end(records[-1].get("court"))
+            # R186 Op1 建, R190 Op1 真值化: 覆盖渲染 (下文) 与覆盖停滞距离
+            # 计算 (下文) 同源单一实现; 请求态回退只作诚实标注 (『请求窗至』)
+            # 不再冒充数据覆盖, 也不再驱动停滞距离 — 请求态计算停滞只会虚增
+            # 新鲜度 (R139 Op3 注释成文的停滞判定晚触发同族残余), 报告陈旧
+            # 判定照常兜底冻结检测。
+            reading = _court_coverage_reading(records[-1].get("court"))
+            if reading is not None:
+                window_end = reading[0]
+                window_is_data_truth = reading[1] == "data"
 
         status = None
         status_file = (
@@ -2872,8 +2895,9 @@ def _render_evidence_freshness_line(
             # 证据宇宙冻结 (连续合法空涨停日或原料边界事故同形)。复用同一
             # 日历实例计算 window_end→as_of 交易距离, ≥ 报告陈旧同款阈值出
             # 行; 落后 1 日属合法空日零噪声; 窗口早于全部会话/as_of 不在日历
-            # → 安静 fail-open (报告陈旧判定照常兜底)。
-            if window_end:
+            # → 安静 fail-open (报告陈旧判定照常兜底)。R190 Op1: 仅数据真相
+            # 来源驱动停滞 — 旧形态请求窗不再参与 (不冒充覆盖, 见上)。
+            if window_end and window_is_data_truth:
                 try:
                     window_end_date = datetime.strptime(window_end, "%Y%m%d").date()
                 except ValueError:
@@ -2950,7 +2974,12 @@ def _render_evidence_freshness_line(
                 f"court 覆盖停滞 {window_stall_dist} 个交易日（最后覆盖 {window_end}）"
             )
         elif window_end:
-            parts.append(f"court 覆盖至 {window_end}")
+            # R190 Op1: data 来源 → 覆盖陈述; 请求态回退 → 诚实标注不冒充。
+            parts.append(
+                f"court 覆盖至 {window_end}"
+                if window_is_data_truth
+                else f"court 请求窗至 {window_end}"
+            )
         tail = (
             " — 失败步骤的报告/账本停留在最后成功夜，其余判定面照常刷新；"
             "仅披露不改变决策"

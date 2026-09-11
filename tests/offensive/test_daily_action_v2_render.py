@@ -153,7 +153,8 @@ def test_trigger_state_line_renders_conditions_and_streaks(case, tmp_path, monke
     assert "条件① ≥0.70 桶 CI>0 已亮（连亮 2 · CI90 下界 +0.23% · n=315）" in text
     assert "条件② 0.50-0.60 转负 未亮（连亮 0 · E +0.97% · n=303）" in text
     assert "合取未武装" in text
-    assert "court 覆盖至 20260830" in text
+    # R190 Op1: 旧形态记录 (无 data_window) 请求窗诚实标注, 不冒充覆盖
+    assert "court 请求窗至 20260830" in text
     assert "账本 2 条" in text
 
 
@@ -1086,9 +1087,12 @@ def test_freshness_line_renders_when_stale_two_sessions(tmp_path, monkeypatch):
 
     base = _write_decomposition_report(tmp_path, date="20260827")
     _patch_drift_reports_dir(monkeypatch, base)
-    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
-        _trigger_rec("20260827", c1_lit=True, c2_lit=False, window_end="20260827"),
-    ]))
+    _stale_rec = _trigger_rec(
+        "20260827", c1_lit=True, c2_lit=False, window_end="20260827")
+    # R190 Op1: R139 停滞断言语义不变 — 记录升级为新形态世界 (R186 起每条
+    # 判定记录携带数据真相), 停滞由 data 来源驱动 (旧形态世界见 R190 新测).
+    _stale_rec["court"]["data_window"] = {"start": "20250702", "end": "20260827"}
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [_stale_rec]))
     monkeypatch.setattr(da, "_COURT_REFRESH_STATUS_PATH", tmp_path / "no-status.json")
     line = da._render_evidence_freshness_line(
         _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
@@ -1341,9 +1345,13 @@ def _freshness_env_window(tmp_path, monkeypatch, window_end, report_day="2026082
 
     base = _write_decomposition_report(tmp_path, date=report_day)
     _patch_drift_reports_dir(monkeypatch, base)
-    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
-        _trigger_rec(report_day, c1_lit=True, c2_lit=False, window_end=window_end),
-    ]))
+    _rec = _trigger_rec(
+        report_day, c1_lit=True, c2_lit=False, window_end=window_end)
+    # R190 Op1: R139 停滞族测试升级为新形态世界 (R186 起每条判定记录携带
+    # 数据真相 data_window, 此处数据真相=请求窗语义不变); 旧形态世界由
+    # R190 新增诚实标注测试覆盖。
+    _rec["court"]["data_window"] = {"start": "20250702", "end": window_end}
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [_rec]))
     monkeypatch.setattr(
         _da,
         "_COURT_REFRESH_STATUS_PATH",
@@ -2147,7 +2155,8 @@ def test_day_cohort_trigger_line_renders_conditions(case, tmp_path, monkeypatch)
     assert "条件C2 中间桶(4-9/10-19)转负 已亮（连亮 2 · 中间桶最大 E -1.10% · n=293）" in text
     assert "日层合取未武装（连亮 0）" in text
     assert "历史最多日层合取连亮 0" in text
-    assert "court 覆盖至 20260905" in text
+    # R190 Op1: 旧形态记录 (无 data_window) 请求窗诚实标注, 不冒充覆盖
+    assert "court 请求窗至 20260905" in text
     assert "账本 2 条" in text
     assert "披露不是行为改变" in text
 
@@ -2323,7 +2332,7 @@ def test_trigger_state_line_poisoned_condition_renders_unjudged(case, tmp_path, 
         assert "强度阈值触发器" in text  # 整行不炸 (fail-open 家族)
         assert "条件① ≥0.70 桶 CI>0 样本不足未判定" in text  # 毒化格降级未判定
         assert "条件② 0.50-0.60 转负 未亮（连亮 0 · E +0.97% · n=303）" in text  # 非毒化格照常
-        assert "court 覆盖至 20260830" in text  # 覆盖子句不受牵连
+        assert "court 请求窗至 20260830" in text  # R190 Op1: 旧形态请求窗标注, 不冒充覆盖
 
 
 # ---------- R129 Op3: 二进制损坏文件 PoC (UnicodeDecodeError 家族收口) ----------
@@ -4235,20 +4244,22 @@ def test_trigger_line_coverage_prefers_data_window(case, tmp_path, monkeypatch):
 
 
 def test_trigger_line_coverage_malformed_data_window_falls_back(case, tmp_path, monkeypatch):
-    """data_window 形状非法 (end 非 8 位 / bool 毒化) → 回退请求态 window_end,
-    与修复前渲染逐字节一致 (fail-open 接线家族纪律)."""
+    """data_window 形状非法 (end 非 8 位 / bool 毒化) → 回退请求态 window_end。
+    R190 Op1 契约更新: 回退渲染诚实标注『court 请求窗至 X』, 不再冒充数据
+    覆盖 (data 来源才渲染『court 覆盖至』— prefers_data_window 测试钉住)."""
     _patch_day_cohort_ledger(monkeypatch, tmp_path / "day_cohort_absent.jsonl")
     rec = _trigger_rec("20260911", c1_lit=True, c2_lit=False, window_end="20260911")
     rec["court"]["data_window"] = {"end": "not-a-date"}
     _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [rec]))
     text = _render_with_ledger(case, monkeypatch, None)
-    assert "court 覆盖至 20260911" in text
+    assert "court 请求窗至 20260911" in text
+    assert "court 覆盖至 20260911" not in text
 
     rec2 = _trigger_rec("20260911", c1_lit=True, c2_lit=False, window_end="20260910")
     rec2["court"]["data_window"] = {"end": True}
     _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [rec2]))
     text2 = _render_with_ledger(case, monkeypatch, None)
-    assert "court 覆盖至 20260910" in text2
+    assert "court 请求窗至 20260910" in text2
 
 
 def test_day_cohort_line_coverage_prefers_data_window(case, tmp_path, monkeypatch):
@@ -4312,10 +4323,83 @@ def test_trigger_line_coverage_nondict_data_window_falls_back(case, tmp_path, mo
     rec["court"]["data_window"] = "poisoned-string"
     _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [rec]))
     text = _render_with_ledger(case, monkeypatch, None)
-    assert "court 覆盖至 20260911" in text
+    assert "court 请求窗至 20260911" in text
+    assert "court 覆盖至 20260911" not in text
 
     rec2 = _trigger_rec("20260911", c1_lit=True, c2_lit=False, window_end="20260910")
     rec2["court"]["data_window"] = ["poisoned-list"]
     _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [rec2]))
     text2 = _render_with_ledger(case, monkeypatch, None)
-    assert "court 覆盖至 20260910" in text2
+    assert "court 请求窗至 20260910" in text2
+
+
+# ---------- R190 Op1: 旧形态回退请求态覆盖陈述真值化 (R186 家族残余收口) ----------
+
+def test_trigger_line_coverage_old_format_request_window_labeled_honestly(case, tmp_path, monkeypatch):
+    """R190 Op1: 旧形态记录 (无 data_window, R186 前夜刷尾) 的请求态
+    window_end 诚实标注『court 请求窗至 X』, 不再冒充数据覆盖 — 同屏缺口行/
+    先验行数据真相 (覆盖至=signal_date max) 不再与触发器行两说 (宿主
+    20260912 实录收口: 触发器行『覆盖至 20260911』vs 缺口行『覆盖至 20260909』,
+    数据不前进期持续显形)."""
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260911", c1_lit=True, c2_lit=False, window_end="20260911"),
+    ]))
+    _patch_day_cohort_ledger(monkeypatch, tmp_path / "day_cohort_absent.jsonl")
+    text = _render_with_ledger(case, monkeypatch, None)
+    assert "court 请求窗至 20260911" in text
+    assert "court 覆盖至 20260911" not in text
+
+
+def test_day_cohort_line_coverage_old_format_request_window_labeled_honestly(case, tmp_path, monkeypatch):
+    """R190 Op1: 日层 cohort 触发器行同款诚实标注 (第二判定面同源)."""
+    rec = _day_cohort_rec("20260911", c1_lit=False, c2_lit=True, window_end="20260911")
+    _patch_day_cohort_ledger(monkeypatch, _day_cohort_ledger(tmp_path, [rec]))
+    _patch_ledger(monkeypatch, tmp_path / "trigger_absent.jsonl")
+    text = _render_with_ledger(case, monkeypatch, None)
+    line = next(ln for ln in text.splitlines() if ln.startswith("日层 cohort 触发器"))
+    assert "court 请求窗至 20260911" in line
+    assert "court 覆盖至 20260911" not in line
+
+
+def test_freshness_line_old_format_request_window_not_driving_stall(tmp_path, monkeypatch):
+    """R190 Op1 (RED→GREEN): 旧形态记录 (无 data_window) 的请求态 window_end
+    不再驱动停滞判定 — 请求态计算停滞只会虚增新鲜度 (R139 Op3 注释成文的
+    停滞判定晚触发同族残余); 报告新鲜 + 其余全绿时整行省略, 冻结检测由
+    报告陈旧判定照常兜底 (数据真相来源的停滞判定由 R186/R139 既有钉子锁住)."""
+    from datetime import date as _date
+
+    from src.screening.offensive import daily_action as _da
+
+    base = _write_decomposition_report(tmp_path, date="20260828")
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260828", c1_lit=True, c2_lit=False, window_end="20260827"),
+    ]))  # 旧形态: 无 data_window; 请求窗 20260827 落后 as_of 2 交易日
+    monkeypatch.setattr(
+        _da, "_COURT_REFRESH_STATUS_PATH", tmp_path / "no-status.json")
+    line = _da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions())
+    assert line is None
+
+
+def test_freshness_line_old_format_request_window_display_honest(tmp_path, monkeypatch):
+    """R190 Op1: 报告陈旧 + 旧形态记录 → 覆盖子句诚实标注『court 请求窗至 X』
+    (数据覆盖真相不可知, 不虚构), 不再渲染『court 覆盖至』/『覆盖停滞』."""
+    from datetime import date as _date
+
+    from src.screening.offensive import daily_action as _da
+
+    base = _write_decomposition_report(tmp_path, date="20260827")
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260827", c1_lit=True, c2_lit=False, window_end="20260827"),
+    ]))  # 旧形态: 无 data_window
+    monkeypatch.setattr(
+        _da, "_COURT_REFRESH_STATUS_PATH", tmp_path / "no-status.json")
+    line = _da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions())
+    assert line is not None
+    assert "陈旧 2 个交易日" in line
+    assert "court 请求窗至 20260827" in line
+    assert "court 覆盖至" not in line
+    assert "覆盖停滞" not in line
