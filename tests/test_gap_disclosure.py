@@ -553,3 +553,57 @@ def test_latest_exit_anatomy_report_future_dated_rejected(tmp_path, monkeypatch)
     _write_exit_anatomy(tmp_path, "20260909")
     _write_exit_anatomy(tmp_path, "20990101")
     assert gap_disclosure.latest_exit_anatomy_report(tmp_path) is None
+
+
+def test_stop_direction_clause_delta_tie_prefers_shallower_tier():
+    """相等 Δ 平局取更浅档 (R181 Op2 P-a 钉住: 实现按档位深度升序遍历 +
+    严格大于; `>=` 变异翻转为更深档必被抓)。"""
+    payload = {
+        "production": {
+            "by_regime": {
+                "crisis": {
+                    "n_included": 60,
+                    "base": {"mean_net": -0.03},
+                    "stop_grid": {
+                        "-12%": {"delta_vs_base": 0.005, "mean_net": -0.025},
+                        "-5%": {"delta_vs_base": 0.005, "mean_net": -0.025},
+                        "-8%": {"delta_vs_base": 0.005, "mean_net": -0.025},
+                    },
+                }
+            }
+        }
+    }
+    clause = gap_disclosure.stop_direction_clause(payload, "crisis", "20260910")
+    assert clause is not None
+    assert "最佳止损档 -5%（Δ+0.50pp" in clause
+    assert "-12%" not in clause and "-8%" not in clause
+
+
+def test_stop_direction_clause_unknown_bucket_in_payload_rejected():
+    """payload 含真实形态的 unknown 桶 (夜刷 fillna('unknown') 可产出) 且
+    as_of 标签为 unknown → None; 标签门删除变异在桶在场时必然误披露 (P-b 钉住)。"""
+    payload = _exit_anatomy_payload()
+    payload["production"]["by_regime"]["unknown"] = {
+        "n_included": 7,
+        "base": {"mean_net": -0.09, "n": 7},
+        "stop_grid": {
+            "-5%": {"delta_vs_base": 0.42, "mean_net": 0.33, "n": 7,
+                    "n_stopped": 2, "n_gap_through": 1},
+        },
+    }
+    assert gap_disclosure.stop_direction_clause(payload, "unknown", "20260910") is None
+    assert gap_disclosure.stop_direction_clause(payload, "crisis", "20260910") is not None
+
+
+def test_stop_direction_clause_zero_n_bucket_rejected():
+    """n_included=0 (0 行桶不能冒充证据 — 0 行不产均值) → None (P-c 纵深)。"""
+    payload = _exit_anatomy_payload()
+    payload["production"]["by_regime"]["crisis"]["n_included"] = 0
+    assert gap_disclosure.stop_direction_clause(payload, "crisis", "20260910") is None
+
+
+def test_stop_direction_clause_empty_report_date_rejected():
+    """report_date 空 (无日期的证据声明) → None (P-j 纵深: 渲染器保证日期段,
+    纯函数契约独立成立)。"""
+    payload = _exit_anatomy_payload()
+    assert gap_disclosure.stop_direction_clause(payload, "crisis", "") is None

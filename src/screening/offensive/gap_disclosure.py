@@ -257,10 +257,13 @@ def stop_direction_clause(
     档跳过。
 
     纯函数 + fail-open (R85/R115/R119 家族): payload/桶/网格形状不符、基准
-    或最佳 Δ 非有限、n 缺失、标签不在三态集 → None (不假装有证据, 渲染侧
+    或最佳 Δ 非有限、n 缺失或 ≤0 (0 行桶不能冒充证据)、report_date 空
+    (无日期的证据声明不渲染)、标签不在三态集 → None (不假装有证据, 渲染侧
     整子句省略, 绝不渲染部分垃圾)。
     """
     if regime_label not in _STOP_DIRECTION_REGIME_LABELS:
+        return None
+    if not report_date or not isinstance(report_date, str):
         return None
     if not isinstance(payload, dict):
         return None
@@ -274,7 +277,7 @@ def stop_direction_clause(
     if not isinstance(bucket, dict):
         return None
     n_total = bucket.get("n_included")
-    if not _finite_number(n_total) or n_total < 0:
+    if not _finite_number(n_total) or n_total <= 0:
         return None
     base = bucket.get("base")
     base_mean = base.get("mean_net") if isinstance(base, dict) else None
@@ -286,11 +289,20 @@ def stop_direction_clause(
     best_tier: str | None = None
     best_delta: float | None = None
     best_entry: dict | None = None
-    for tier, entry in grid.items():
-        if not isinstance(tier, str) or not _STOP_TIER_RE.match(tier):
-            continue
-        if not isinstance(entry, dict):
-            continue
+    # 档位深度升序遍历 + 严格大于: 平局取更浅档, 与插入序无关 (R181 Op2
+    # P-a: 实现曾按 dict 插入序遍历, 与 docstring 声称的确定性平局语义不符;
+    # 形状外键先剔除再排序, 排序键不做防御。档标签是负百分比, 浅档=|深度|
+    # 更小, 排序键取绝对值 — 数值升序会把 -12% 排在 -5% 之前)。
+    shaped = [
+        (tier, entry)
+        for tier, entry in grid.items()
+        if isinstance(tier, str)
+        and _STOP_TIER_RE.match(tier)
+        and isinstance(entry, dict)
+    ]
+    for tier, entry in sorted(
+        shaped, key=lambda kv: abs(float(kv[0].rstrip("%")))
+    ):
         delta = entry.get("delta_vs_base")
         if not _finite_number(delta):
             continue

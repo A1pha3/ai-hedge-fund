@@ -3811,3 +3811,19 @@ def test_stop_readiness_direction_clause_in_full_render_after_regime_line(
     )
     assert stop_idx > regime_idx
     assert "当期方向（exit_anatomy 20260910" in lines[stop_idx]
+
+
+def test_stop_readiness_direction_clause_explicit_dir_param(case, tmp_path):
+    """显式 exit_anatomy_reports_dir 注入缝活着 (R181 Op2 P-m 钉住):
+    参数路径独立于模块常量隔离, 参数目录的报告照常消费。"""
+    other = tmp_path / "other_reports"
+    other.mkdir()
+    _write_exit_anatomy_fixture(other)
+    view, _as_of = _stop_view(case)
+    line = _render_stop_loss_readiness_line(
+        view,
+        regimes_by_date={"20260820": "crisis"},
+        exit_anatomy_reports_dir=other,
+    )
+    assert line is not None
+    assert "当期方向（exit_anatomy 20260910" in line
