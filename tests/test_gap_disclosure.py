@@ -788,3 +788,13 @@ def test_latest_run_conditioning_report_corrupt_no_fallback(tmp_path):
         "{broken", encoding="utf-8"
     )
     assert gap_disclosure.latest_run_conditioning_report(tmp_path) is None
+
+
+def test_reentry_readings_clause_bool_n_rejected_even_if_delta_consistent():
+    """bool n 直接钉住 (R182 Op2 P-l): 池计数交叉守卫对 bool 计数天然失明
+    (True == 1 时交叉可一致), 计数谓词的 bool 排除是独立防线 — 合成 payload
+    n_run=True + delta.n_run=True 交叉一致, 唯 bool 守卫能拒。"""
+    payload = _run_conditioning_payload()
+    payload["tables"]["t10"]["d1_run"]["n"] = True
+    payload["run_deltas_t10"]["d1_run_vs_blip"]["n_run"] = True
+    assert gap_disclosure.reentry_readings_clause(payload, "20260910") is None

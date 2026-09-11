@@ -3976,3 +3976,22 @@ def test_reentry_line_explicit_dir_param_seam_pinned(
     )
     assert default_line is not None
     assert "当期读数" not in default_line
+
+
+def test_reentry_line_live_readings_render_run_len_2(_isolated_run_conditioning_dir):
+    """live 分支 run_len==2 形态钉住 (R182 Op2 P-x: R177 P-d 同族在 live 分支
+    复活 — 2 日 crisis 连跑后首个 normal 信号日恰是 2026-09-09/10 真实形态,
+    门变 >=3 会把它误渲染成 d1_blip 形态)。"""
+    history = {
+        "20260817": "normal",
+        "20260819": "crisis",
+        "20260820": "crisis",
+        "20260821": "normal",
+    }
+    _write_run_conditioning_fixture(_isolated_run_conditioning_dir)
+    run = SimpleNamespace(service_run=SimpleNamespace(trade_date=date(2026, 8, 21)))
+    line = _render_reentry_proximity_line(run, regimes_by_date=history)
+    assert line is not None
+    assert "d1_run 形态（距上一阻断日 1 个会话；前导连跑 2 日：crisis×2）" in line
+    assert "当期读数（夜刷 regime_blocked_run_conditioning 20260910" in line
+    assert "前导阻断 1 日" not in line
