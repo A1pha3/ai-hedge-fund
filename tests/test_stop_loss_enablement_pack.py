@@ -607,3 +607,13 @@ def test_cli_as_of_before_all_history_face_a_still_missing(tmp_path, monkeypatch
     )
     assert payload["faces_ready"] is False
     assert payload["missing_faces"] == ["face_a_current"]
+
+
+def test_face_a_reading_none_and_poison_labels_rejected():
+    """R204 Op2 探针 M03 定谳钉: main 的 `if label:` gate 与本守卫是双重防御 —
+    拆 gate 后 None/空串/非 str 标签由 whitelist 形状守卫拒绝 (返回 None →
+    face A 缺失), 行为逐字节等价。本钉保证该等价性由测试承重而非实现巧合:
+    whitelist 检查被拆 (如改 dict.get 默认放行) 时此处当场红。"""
+    payload = _anatomy_payload()
+    for bad in (None, "", "   ", 123, ["crisis"], {"regime": "crisis"}):
+        assert stop_direction_reading(payload, bad, "20260911") is None
