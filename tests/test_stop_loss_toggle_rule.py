@@ -276,3 +276,28 @@ def test_status_tri_states(tmp_path, monkeypatch):
     # 损坏 → rc 2 fail-closed
     rule_path.write_text("{broken", encoding="utf-8")
     assert _run_cli(monkeypatch, argv) == 2
+
+
+# ---------------------------------------------------------------------------
+# R195 Op2: would-have-armed 推演直接单元覆盖 (P11 定谳为等价变异——CLI note
+# 检查与 validate_rule invalid_note 双重防御, 删一层行为不变)
+# ---------------------------------------------------------------------------
+
+
+def test_would_have_armed_dates_k2():
+    """假想推演: 窗口内 crisis streak ≥ k 的日期逐日列出 (preview 的直接语义)。"""
+    history = {
+        "20260901": "normal", "20260902": "crisis", "20260903": "crisis",
+        "20260904": "crisis", "20260905": "normal", "20260906": "crisis",
+    }
+    as_of = date(2026, 9, 6)
+    # k=2: 0903 (streak 2) 与 0904 (streak 3) 武装; 0902 (streak 1) 与 0906 (streak 1) 不武装
+    armed = packet._would_have_armed_dates(history, as_of, 2)
+    assert armed == ["20260903", "20260904"]
+    # k=3: 仅 0904
+    assert packet._would_have_armed_dates(history, as_of, 3) == ["20260904"]
+    # k=4: 无
+    assert packet._would_have_armed_dates(history, as_of, 4) == []
+    # 毒化键跳过不参与窗口
+    history["bad_key"] = "crisis"
+    assert packet._would_have_armed_dates(history, as_of, 2) == ["20260903", "20260904"]
