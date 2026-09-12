@@ -1705,7 +1705,10 @@ def test_alignment_line_renders_counts_split_and_realized(tmp_path):
     path = _write_alignment(tmp_path, _alignment_summary())
     line = da._render_universe_alignment_line(path)
     assert line is not None
-    assert "宇宙对齐（对账 20260905 · court 窗口 20250701..20260901）" in line
+    # R192 Op1 契约更新: 夹具无 data_window (R187 前旧 summary 形态) → 回退
+    # 分支诚实标注『court 请求窗』, 不再冒充数据覆盖 (R190 家族最后一米)。
+    assert "宇宙对齐（对账 20260905 · court 请求窗 20250701..20260901）" in line
+    assert "court 窗口 20250701..20260901" not in line
     assert "生产 BUY 18 · matched 9 · 分裂 9（最晚分裂 20260813）" in line
     assert "已平仓 15 胜率 20.0% 期望 -6.04%" in line
     assert "仅披露参考，不改变计划与执行决策" in line

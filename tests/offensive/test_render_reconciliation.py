@@ -603,8 +603,9 @@ def test_alignment_line_prefers_data_window_over_request_window(tmp_path):
     ],
 )
 def test_alignment_line_malformed_data_window_falls_back(tmp_path, poison):
-    """data_window 畸形 → 弃用落 court_window 回退分支, 渲染与修复前逐字节
-    一致 (fail-open 接线家族纪律, R186 _court_coverage_end 同族)."""
+    """data_window 畸形 → 弃用落 court_window 回退分支, 回退分支渲染诚实标注
+    『court 请求窗』不冒充数据覆盖 (R192 Op1: R190 成文『请求态恒带请求窗
+    标签』在本渲染面的最后一米; fail-open 接线家族纪律, R186 同族)."""
     from src.screening.offensive import daily_action as da
 
     payload = _alignment_summary_with_gap(
@@ -614,7 +615,39 @@ def test_alignment_line_malformed_data_window_falls_back(tmp_path, poison):
     path = _write_alignment(tmp_path, payload)
     line = da._render_universe_alignment_line(path)
     assert line is not None
-    assert "court 窗口 20250701..20260904" in line
+    assert "court 请求窗 20250701..20260904" in line
+    # 标签区分两来源: 回退分支不得再渲染与数据真相分支同形的『court 窗口』
+    assert "court 窗口 20250701..20260904" not in line
+
+
+def test_alignment_line_request_window_fallback_labeled(tmp_path):
+    """R192 Op1 钉住: summary 无 data_window 键 (R187 前旧 summary 形态) →
+    回退渲染『court 请求窗』, 与数据真相分支『court 窗口』可区分 — 宿主
+    20260912 实录同屏两说 (对齐行 20260911 vs 缺口/先验行 覆盖至 20260909)
+    的渲染面收口。"""
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary_with_gap()
+    assert "data_window" not in payload
+    path = _write_alignment(tmp_path, payload)
+    line = da._render_universe_alignment_line(path)
+    assert line is not None
+    assert "court 请求窗 20250701..20260904" in line
+    assert "court 窗口 20250701..20260904" not in line
+
+
+def test_alignment_line_poisoned_court_window_fallback_omits_clause(tmp_path):
+    """R192 Op1 钉住: data_window 缺 + court_window 毒化 → 窗口子句整段省略
+    (不渲染垃圾, 镜像数据真相分支的畸形弃用语义)。"""
+    from src.screening.offensive import daily_action as da
+
+    for poison in (None, "not-a-dict", {"start": "20250701"}, {"end": "20260904"}):
+        payload = _alignment_summary_with_gap(court_window=poison)
+        path = _write_alignment(tmp_path, payload)
+        line = da._render_universe_alignment_line(path)
+        assert line is not None
+        assert "court 请求窗" not in line
+        assert "court 窗口" not in line
 
 
 def test_alignment_line_data_window_without_court_window(tmp_path):

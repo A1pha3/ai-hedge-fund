@@ -456,13 +456,35 @@ class TestR187DataWindow:
         payload = summary_payload(
             self._recon(), court_window=("20250701", "20260911"), data_window=None
         )
-        assert "court 窗口: 20250701..20260911" in render_md(payload)
+        # R192 Op1 契约更新: 请求态回退诚实标注『court 请求窗』, 与数据真相
+        # 分支『court 窗口:』可区分 (R190 成文『请求态恒带请求窗标签』)。
+        text = render_md(payload)
+        assert "court 请求窗: 20250701..20260911" in text
+        assert "court 窗口: 20250701..20260911" not in text
 
     def test_render_md_omits_window_line_when_both_absent(self):
         payload = summary_payload(self._recon(), court_window=None, data_window=None)
         # 『窗口行』形态是 "court 窗口: s..e"; 分类图例 "T0 不在 court 窗口内"
         # 含同词, 不能作全文断言。
-        assert "court 窗口: " not in render_md(payload)
+        text = render_md(payload)
+        assert "court 窗口: " not in text
+        assert "court 请求窗: " not in text
+
+    def test_render_md_poisoned_court_window_omits_line(self):
+        """R192 Op1 钉住: court_window 毒化 (null/非 dict/缺端) → 窗口行省略
+        不崩溃 — 修复前回退分支无形状守卫, null/非 dict 直接 TypeError/KeyError
+        (summary_payload 只接受合法 tuple, 毒化形态直接注入 payload)。"""
+        poisons = ("absent-key", None, "not-a-dict", 20260911,
+                   {"start": "20250701"}, {"end": "20260911"})
+        for poison in poisons:
+            payload = summary_payload(
+                self._recon(), court_window=None, data_window=None
+            )
+            if poison != "absent-key":
+                payload["court_window"] = poison
+            text = render_md(payload)
+            assert "court 请求窗: " not in text, f"poison={poison!r}"
+            assert "court 窗口: " not in text, f"poison={poison!r}"
 
     def test_data_window_emitted_without_court_window(self):
         # R187 Op2 P11 钉住: data_window 增发不依赖 court_window 在场 —
@@ -520,14 +542,16 @@ class TestR187Op2RenderMdMalformedDataWindow:
     def test_render_md_malformed_data_window_falls_back(self, poison):
         """守卫契约 = isinstance dict + 两端非空 str (8 位形状由生产者
         court_window_from_events + 消费面对齐行面 _DATE_8_RE 守卫, render_md
-        面不重复); 类型毒化 → 整块弃用落 court_window 现行分支逐字节。"""
+        面不重复); 类型毒化 → 整块弃用落 court_window 回退分支。R192 Op1
+        契约更新: 回退分支诚实标注『court 请求窗』不冒充数据覆盖。"""
         payload = {
             "class_counts": dict.fromkeys(CLASSES, 0),
             "total_buys": 1,
             "court_window": {"start": "20250701", "end": "20260904"},
             "data_window": poison,
         }
-        assert "court 窗口: 20250701..20260904" in render_md(payload)
+        assert "court 请求窗: 20250701..20260904" in render_md(payload)
+        assert "court 窗口: 20250701..20260904" not in render_md(payload)
         assert "data_window" in payload  # 载荷原样 (渲染面不裁剪)
 
 

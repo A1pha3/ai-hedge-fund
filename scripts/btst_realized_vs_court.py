@@ -796,11 +796,23 @@ def render_md(payload: Mapping[str, Any]) -> str:
         # 请求窗 (court_window) 是分类语义不是覆盖陈述。
         lines.append(f"court 窗口: {data_block['start']}..{data_block['end']}")
         lines.append("")
-    elif "court_window" in payload:
-        lines.append(
-            f"court 窗口: {payload['court_window']['start']}..{payload['court_window']['end']}"
-        )
-        lines.append("")
+    else:
+        # R192 Op1: 请求态回退改标『court 请求窗』(R190 Op1 成文『请求态恒带
+        # 请求窗标签』, 与操作员对齐行面同款) + 形状守卫 (isinstance dict +
+        # 两端非空 str, 镜像 daily_action 对齐行面; 毒化 → 窗口行省略 —
+        # 修复前 null/非 dict 直接 TypeError/KeyError)。
+        court_window = payload.get("court_window")
+        if (
+            isinstance(court_window, dict)
+            and isinstance(court_window.get("start"), str)
+            and court_window["start"]
+            and isinstance(court_window.get("end"), str)
+            and court_window["end"]
+        ):
+            lines.append(
+                f"court 请求窗: {court_window['start']}..{court_window['end']}"
+            )
+            lines.append("")
     lines.append(f"生产 BUY 总数: **{payload['total_buys']}**")
     lines.append("")
     stores = payload.get("stores") or {}
