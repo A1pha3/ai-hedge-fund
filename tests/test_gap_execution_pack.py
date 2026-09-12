@@ -255,3 +255,36 @@ def test_cli_no_report_fails_closed(tmp_path, monkeypatch):
     ])
     assert pack.main() == 2
     assert not (tmp_path / "out").exists()
+
+
+# ---------------------------------------------------------------------------
+# R194 Op2 盲区钉住 (探针 P01/P06/P11 定谳后的复跑 TEETH)
+# ---------------------------------------------------------------------------
+
+
+def test_aggregate_zero_n_bucket_rejected():
+    """探针 P01: 零样本桶不得进入加权组合 (n=0 桶冒充证据同 R181 拒绝族)。"""
+    anatomy = _gap_anatomy()
+    anatomy["buckets"].append(_bucket(">10%", 0, 0.05))
+    assert aggregate_reading(anatomy) is None
+
+
+def test_conditional_bool_counts_rejected():
+    """探针 P06: judgable/consistent_count 是计数不是布尔 — bool 毒化时
+    该字段整体缺席 (int(True)=1 冒充计数是单一真值转发面的静默改写)。"""
+    split_half = _gap_anatomy()["split_half"]
+    split_half["judgable_count"] = True
+    reading = conditional_reading(split_half)
+    assert reading is not None
+    assert "judgable_count" not in reading
+    assert reading["consistent_count"] == 3
+
+
+def test_bucket_gradient_non_str_label_skipped():
+    """探针 P11: 梯度表桶标签必须为字符串 — 非 str 标签 (毒化/演化形态)
+    整行跳过, 不进入渲染面。"""
+    anatomy = _gap_anatomy()
+    anatomy["buckets"].append({"bucket": 123, "n": 50, "expectancy": 0.01})
+    gradient = assemble_pack(report_date="20260911", gap_anatomy=anatomy)["bucket_gradient"]
+    assert all(row["bucket"] != 123 for row in gradient)
+    assert len(gradient) == 6
