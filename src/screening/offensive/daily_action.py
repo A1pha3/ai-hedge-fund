@@ -776,6 +776,17 @@ class ScanFunnel:
     verify_blocked: int = 0
     excluded_permanent: int = 0
     data_rejected: int = 0
+    # R191 Op1: 就绪门拦截通道 — scannable_tickers 在验证拒绝之外还有两道过滤
+    # (manifest 成员资格 / 无 scannable 能力), 此前这批票在宇宙→扫描之间无痕
+    # 消失, 闭合格式算术不闭合 (2026-09-12 实录: 1991→1912 差 79 = st_stock 70
+    # / suspended 8 / price_missing_unexplained 1). readiness_miss_stages 按
+    # 启用 setup 的 block_reasons 分桶 (每票恰计一次, 多原因排序 + 号连接;
+    # 无启用 setup → no_enabled_setup, 不在 manifest → not_in_readiness).
+    readiness_excluded: int = 0
+    readiness_miss_stages: dict[str, int] | None = None
+    # plan_eligible 拦截通道 (candidate_not_plan_eligible): 此前只进 blocked
+    # 列表, 漏斗头算术对它断链.
+    not_plan_eligible: int = 0
     # prefilter→hits 之间的 per-condition 分桶 (R80 Op2): 检测器 miss_stage 标签
     # → 票数 (如 c2_flow_below_mean=66). None = 旧构造点退化旧格式; 未标注 miss
     # 落 'unattributed' 桶. 零命中日自解释的地基 — 0828 取证曾只能手工复现.
@@ -3542,10 +3553,14 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         # 数据拒绝), 漏斗算术可复核算得出来; universe 为 None 的旧构造点退化为
         # 旧格式.
         if run.funnel.universe is not None:
+            # R191 Op1 计数走 getattr 回退: ScanFunnel 恒有字段 (默认 0),
+            # 旧 duck-type 对象缺字段时按 0 呈现不崩 (与 detect_miss_stages 同纪律).
             funnel_head = (
                 f"扫描漏斗：宇宙 {run.funnel.universe} 只"
                 f" → 验证拒绝 {run.funnel.verify_blocked} · 永久排除 {run.funnel.excluded_permanent}"
                 f" · 数据拒绝 {run.funnel.data_rejected}"
+                f" · 就绪拦截 {getattr(run.funnel, 'readiness_excluded', 0)}"
+                f" · 计划不合格 {getattr(run.funnel, 'not_plan_eligible', 0)}"
                 f" → 扫描 {run.funnel.scannable} 只 → 涨幅≥9.5% {run.funnel.prefilter_passed} 只 → "
                 f"命中 {run.funnel.hits} 只 → 可计划 {len(run.plans)} 只 · "
                 f"不可计划 {len(actionable_blocked)} 只{capacity_suffix}"
@@ -3566,6 +3581,16 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
                 f"{stage} {n}" for stage, n in sorted(buckets.items()) if n
             )
             lines.append(f"  未命中分桶：{parts}")
+        # R191 Op1: 就绪门拦截分桶 — 拦截原因自解释, 与未命中分桶同纪律
+        # (只列非零桶; 旧 duck-type 对象缺字段时省略整行).
+        readiness_buckets = getattr(run.funnel, "readiness_miss_stages", None) or {}
+        if readiness_buckets:
+            readiness_parts = " · ".join(
+                f"{stage} {n}"
+                for stage, n in sorted(readiness_buckets.items())
+                if n
+            )
+            lines.append(f"  就绪拦截分桶：{readiness_parts}")
         lines.append("")
 
     # ---- 排除名单可见性 (2026-08-23 Item 5): 配置不是隐形政策 ----
@@ -4156,6 +4181,33 @@ def scan_from_verified_snapshot(
     verify_blocked_count = len(snapshot.ticker_blocks)
     excluded_permanent_count = 0
     data_rejected_count = 0
+    not_plan_eligible_count = 0
+    # R191 Op1: 就绪门拦截计数 — 每张票在漏斗头恰有一个去处, 无痕通道即缺陷.
+    scannable_set = set(snapshot.scannable_tickers)
+    readiness_excluded_count = 0
+    readiness_miss_stages: dict[str, int] = {}
+    for readiness_excluded_ticker in snapshot.manifest.universe_tickers:
+        if readiness_excluded_ticker in snapshot.ticker_blocks:
+            continue  # 已计 verify_blocked_count
+        if readiness_excluded_ticker in scannable_set:
+            continue
+        readiness_excluded_count += 1
+        ticker_readiness = snapshot.manifest.ticker_readiness.get(
+            readiness_excluded_ticker
+        )
+        reasons: set[str] = set()
+        if ticker_readiness is None:
+            reasons.add("not_in_readiness")
+        else:
+            for capability in ticker_readiness.capabilities.values():
+                if capability.enabled:
+                    reasons.update(
+                        str(reason) for reason in (capability.block_reasons or ())
+                    )
+            if not reasons:
+                reasons.add("no_enabled_setup")
+        stage_key = "+".join(sorted(reasons))
+        readiness_miss_stages[stage_key] = readiness_miss_stages.get(stage_key, 0) + 1
 
     def price_frame(rows: Sequence[Any]) -> pd.DataFrame:
         return pd.DataFrame(
@@ -4208,6 +4260,7 @@ def scan_from_verified_snapshot(
                 continue
             entry_price = reference_prices[ticker]
             if not ctx.capability.plan_eligible:
+                not_plan_eligible_count += 1
                 blocked.append(BlockedCandidate(ticker, "candidate_not_plan_eligible", entry_price, setup_name))
                 continue
 
@@ -4341,6 +4394,9 @@ def scan_from_verified_snapshot(
             verify_blocked=verify_blocked_count,
             excluded_permanent=excluded_permanent_count,
             data_rejected=data_rejected_count,
+            readiness_excluded=readiness_excluded_count,
+            readiness_miss_stages=dict(readiness_miss_stages),
+            not_plan_eligible=not_plan_eligible_count,
             detect_miss_stages=dict(detect_miss_stages),
         ),
         regime=regime,

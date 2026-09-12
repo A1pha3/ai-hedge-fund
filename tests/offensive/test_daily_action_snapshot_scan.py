@@ -310,3 +310,231 @@ def test_scanner_is_deterministic_after_runtime_setup_env_changes(monkeypatch) -
 
     assert disabled_scan == enabled_scan
     assert len(disabled_scan.candidates) == 1
+
+
+# ---------------------------------------------------------------------------
+# R191 Op1: 漏斗就绪门拦截通道命名 — 宇宙→扫描之间的静默通道必须有名字.
+# scannable_tickers 在验证拒绝之外还有两道过滤 (manifest 成员资格/无 scannable
+# 能力), 此前这批票无痕消失, 闭合格式算术不闭合 (2026-09-12 实录: 1991→1912
+# 差 79 = st_stock 70 / suspended 8 / price_missing_unexplained 1).
+# ---------------------------------------------------------------------------
+
+
+def _blocked_capability(*reasons: str) -> SetupCapability:
+    return SetupCapability(
+        enabled=True,
+        scannable=False,
+        plan_eligible=False,
+        degraded=False,
+        block_reasons=reasons,
+        warnings=(),
+        consumed_fingerprint=CONSUMED_FP,
+    )
+
+
+def _multi_manifest(
+    universe: tuple[str, ...],
+    readiness: dict[str, tuple[tuple[str, SetupCapability], ...]],
+) -> DailyActionReadinessManifest:
+    """多票 manifest: readiness 缺席的 universe 票 = not_in_readiness 通道."""
+    ticker_readiness = {}
+    for ticker, caps in readiness.items():
+        ticker_readiness[ticker] = DailyActionTickerReadiness(
+            evidence_status="verified"
+            if any(cap.scannable for _, cap in caps)
+            else "blocked",
+            capabilities=MappingProxyType(dict(caps)),
+        )
+    return DailyActionReadinessManifest(
+        schema_version=DAILY_ACTION_READINESS_SCHEMA_VERSION,
+        domain="daily_action",
+        run_id="task7test",
+        trade_date=SIGNAL_DATE,
+        created_at="2026-07-13T12:00:00+00:00",
+        status="healthy",
+        universe_kind="resolved_refresh_universe",
+        universe_tickers=universe,
+        universe_fingerprint=UNIVERSE_FP,
+        input_fingerprint=INPUT_FP,
+        suspension_evidence=SuspensionReadinessEvidence("available_empty", (), SUSPENSION_FP),
+        ticker_readiness=MappingProxyType(ticker_readiness),
+        warnings=(),
+        shared_evidence=_shared_evidence(universe[0]),
+        policy_versions=MappingProxyType(
+            {
+                "readiness_policy": READINESS_POLICY_VERSION,
+                "normalization": NORMALIZATION_VERSION,
+                "board_rule": BOARD_RULE_VERSION,
+                "setup_requirements": SETUP_REQUIREMENTS_VERSION,
+                "signal_session_cutoff": SIGNAL_SESSION_POLICY_VERSION,
+            }
+        ),
+        content_fingerprint=CONTENT_FP,
+    )
+
+
+def _multi_snapshot(
+    universe: tuple[str, ...],
+    readiness: dict[str, tuple[tuple[str, SetupCapability], ...]],
+) -> VerifiedDailyActionSnapshot:
+    manifest = _multi_manifest(universe, readiness)
+    scannable = [
+        ticker
+        for ticker in universe
+        if ticker in readiness
+        and any(cap.scannable for _, cap in readiness[ticker])
+    ]
+    return VerifiedDailyActionSnapshot(
+        signal_date=SIGNAL_DATE,
+        snapshot_id=SNAPSHOT_ID,
+        manifest=manifest,
+        universe_tickers=universe,
+        prices_by_ticker=MappingProxyType({t: _prices() for t in universe}),
+        fund_flow_by_ticker=MappingProxyType({t: _flows() for t in universe}),
+        industry_day_pct_by_ticker=MappingProxyType({t: 3.2 for t in universe}),
+        regime="normal",
+        board_rule_version=BOARD_RULE_VERSION,
+        normalization_version=NORMALIZATION_VERSION,
+        setup_requirements_version=SETUP_REQUIREMENTS_VERSION,
+        ticker_blocks=MappingProxyType({}),
+        consumed_fingerprint_by_ticker=MappingProxyType(
+            {t: MappingProxyType({"btst_breakout": CONSUMED_FP}) for t in scannable}
+        ),
+    )
+
+
+def test_funnel_counts_readiness_gate_exclusions_with_reasons(monkeypatch) -> None:
+    """就绪门拦截票 (st_stock/suspended) 计数且按原因分桶 — 20260911 形态."""
+    monkeypatch.setattr(BtstBreakoutSetup, "detect", lambda self, ticker, trade_date, context: hit_result())
+    universe = ("300001", "300002", "300003")
+    readiness = {
+        "300001": (
+            ("btst_breakout", _capability()),
+            ("oversold_bounce", _disabled_capability()),
+        ),
+        "300002": (
+            ("btst_breakout", _blocked_capability("st_stock")),
+            ("oversold_bounce", _disabled_capability()),
+        ),
+        "300003": (
+            ("btst_breakout", _blocked_capability("suspended")),
+            ("oversold_bounce", _disabled_capability()),
+        ),
+    }
+
+    scan = scan_from_verified_snapshot(_multi_snapshot(universe, readiness))
+    funnel = scan.funnel
+    assert funnel is not None
+    assert funnel.universe == 3
+    assert funnel.verify_blocked == 0
+    assert funnel.readiness_excluded == 2
+    assert funnel.readiness_miss_stages == {"st_stock": 1, "suspended": 1}
+    assert funnel.scannable == 1
+    # 漏斗算术闭合: 宇宙 = 验证 + 永久 + 数据 + 就绪 + 计划不合格 + 扫描
+    assert (
+        funnel.universe
+        == funnel.verify_blocked
+        + funnel.excluded_permanent
+        + funnel.data_rejected
+        + funnel.readiness_excluded
+        + funnel.not_plan_eligible
+        + funnel.scannable
+    )
+
+
+def test_funnel_readiness_exclusion_not_in_readiness_channel(monkeypatch) -> None:
+    """universe 在场但 manifest 无 readiness 的票 → not_in_readiness 桶."""
+    monkeypatch.setattr(BtstBreakoutSetup, "detect", lambda self, ticker, trade_date, context: hit_result())
+    universe = ("300001", "300004")
+    readiness = {
+        "300001": (
+            ("btst_breakout", _capability()),
+            ("oversold_bounce", _disabled_capability()),
+        ),
+    }
+
+    scan = scan_from_verified_snapshot(_multi_snapshot(universe, readiness))
+    funnel = scan.funnel
+    assert funnel.readiness_excluded == 1
+    assert funnel.readiness_miss_stages == {"not_in_readiness": 1}
+
+
+def test_funnel_readiness_exclusion_no_enabled_setup_channel(monkeypatch) -> None:
+    """在场但全部 setup 被 policy 禁用的票 → no_enabled_setup 桶 (非数据原因)."""
+    monkeypatch.setattr(BtstBreakoutSetup, "detect", lambda self, ticker, trade_date, context: hit_result())
+    universe = ("300001", "300005")
+    readiness = {
+        "300001": (
+            ("btst_breakout", _capability()),
+            ("oversold_bounce", _disabled_capability()),
+        ),
+        "300005": (
+            ("btst_breakout", _disabled_capability()),
+            ("oversold_bounce", _disabled_capability()),
+        ),
+    }
+
+    scan = scan_from_verified_snapshot(_multi_snapshot(universe, readiness))
+    funnel = scan.funnel
+    assert funnel.readiness_excluded == 1
+    assert funnel.readiness_miss_stages == {"no_enabled_setup": 1}
+
+
+def test_funnel_readiness_exclusion_multi_reason_joined_sorted(monkeypatch) -> None:
+    """同票多原因按排序 + 号连接成桶 — 每票恰计一次, 分桶和 = 拦截总数."""
+    monkeypatch.setattr(BtstBreakoutSetup, "detect", lambda self, ticker, trade_date, context: hit_result())
+    universe = ("300001", "300006")
+    readiness = {
+        "300001": (
+            ("btst_breakout", _capability()),
+            ("oversold_bounce", _disabled_capability()),
+        ),
+        "300006": (
+            ("btst_breakout", _blocked_capability("suspended", "st_stock")),
+            ("oversold_bounce", _disabled_capability()),
+        ),
+    }
+
+    scan = scan_from_verified_snapshot(_multi_snapshot(universe, readiness))
+    funnel = scan.funnel
+    assert funnel.readiness_excluded == 1
+    assert funnel.readiness_miss_stages == {"st_stock+suspended": 1}
+    assert sum(funnel.readiness_miss_stages.values()) == funnel.readiness_excluded
+
+
+def test_funnel_counts_plan_eligible_blocks(monkeypatch) -> None:
+    """plan_eligible 拦截通道计数 — 此前只进 blocked 列表, 漏斗头算术断链."""
+    monkeypatch.setattr(BtstBreakoutSetup, "detect", lambda self, ticker, trade_date, context: hit_result())
+
+    scan = scan_from_verified_snapshot(
+        _snapshot(capability=_capability(plan_eligible=False))
+    )
+    funnel = scan.funnel
+    assert funnel is not None
+    assert funnel.not_plan_eligible == 1
+    assert funnel.scannable == 0
+    assert funnel.readiness_excluded == 0
+    assert (
+        funnel.universe
+        == funnel.verify_blocked
+        + funnel.excluded_permanent
+        + funnel.data_rejected
+        + funnel.readiness_excluded
+        + funnel.not_plan_eligible
+        + funnel.scannable
+    )
+
+
+def test_funnel_single_ticker_identity_closes(monkeypatch) -> None:
+    """单票健康世界: 恒等式逐项为零断言 — 防未来通道再度静默."""
+    monkeypatch.setattr(BtstBreakoutSetup, "detect", lambda self, ticker, trade_date, context: hit_result())
+
+    scan = scan_from_verified_snapshot(_snapshot())
+    funnel = scan.funnel
+    assert funnel.universe == 1
+    assert funnel.verify_blocked == 0
+    assert funnel.excluded_permanent == 0
+    assert funnel.data_rejected == 0
+    assert funnel.readiness_excluded == 0
+    assert funnel.not_plan_eligible == 0
+    assert funnel.scannable == 1

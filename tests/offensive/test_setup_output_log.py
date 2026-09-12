@@ -333,7 +333,7 @@ def test_log_capacity_skips_writes_structured_rows(tmp_path):
     log_capacity_skips(date(2026, 8, 27), skips, out_dir=tmp_path)
     path = tmp_path / "20260827.capacity.jsonl"
     assert path.exists()
-    rows = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    rows = [json.loads(row) for row in path.read_text().splitlines() if row.strip()]
     assert len(rows) == 2
     assert rows[0]["schema_version"] == 1
     assert rows[0]["signal_date"] == "20260827"
@@ -436,6 +436,10 @@ class _Funnel:
         self.prefilter_passed = kw.get("prefilter_passed", 0)
         self.hits = kw.get("hits", 0)
         self.detect_miss_stages = kw.get("detect_miss_stages")
+        # R191 Op1: 就绪门通道 (默认缺省 = 旧构造点形态)
+        self.readiness_excluded = kw.get("readiness_excluded", 0)
+        self.not_plan_eligible = kw.get("not_plan_eligible", 0)
+        self.readiness_miss_stages = kw.get("readiness_miss_stages")
 
 
 def test_scan_funnel_roundtrip_and_idempotent_overwrite(tmp_path):
@@ -483,6 +487,45 @@ def test_scan_funnel_corrupt_artifact_reads_as_none(tmp_path):
 
     (tmp_path / "20260828.funnel.json").write_text("not-json{{", encoding="utf-8")
     assert load_scan_funnel(date(2026, 8, 28), out_dir=tmp_path) is None
+
+
+def test_scan_funnel_persists_readiness_gate_channels(tmp_path):
+    """R191 Op1: 就绪门拦截计数/分桶/计划不合格落工件 — 就绪门取证不回退到当次渲染."""
+    from src.screening.offensive.setup_output_log import (
+        load_scan_funnel,
+        log_scan_funnel,
+    )
+
+    funnel = _Funnel(
+        universe=1991, scannable=1912, prefilter_passed=41, hits=0,
+        readiness_excluded=79,
+        readiness_miss_stages={"st_stock": 70, "suspended": 8, "price_missing_unexplained": 1},
+    )
+    log_scan_funnel(date(2026, 9, 11), funnel, out_dir=tmp_path)
+    row = load_scan_funnel(date(2026, 9, 11), out_dir=tmp_path)
+    assert row["readiness_excluded"] == 79
+    assert row["not_plan_eligible"] == 0
+    assert row["readiness_miss_stages"] == {
+        "st_stock": 70, "suspended": 8, "price_missing_unexplained": 1,
+    }
+
+
+def test_scan_funnel_legacy_stub_readiness_defaults(tmp_path):
+    """旧 duck-type 漏斗对象 (无就绪门字段) → 缺省 0/空分桶, 不崩不冒充."""
+    from src.screening.offensive.setup_output_log import (
+        load_scan_funnel,
+        log_scan_funnel,
+    )
+
+    log_scan_funnel(
+        date(2026, 9, 11),
+        _Funnel(universe=10, scannable=5, prefilter_passed=2, hits=2),
+        out_dir=tmp_path,
+    )
+    row = load_scan_funnel(date(2026, 9, 11), out_dir=tmp_path)
+    assert row["readiness_excluded"] == 0
+    assert row["not_plan_eligible"] == 0
+    assert row["readiness_miss_stages"] == {}
 
 
 def test_scan_funnel_symlink_dir_rejected(tmp_path):

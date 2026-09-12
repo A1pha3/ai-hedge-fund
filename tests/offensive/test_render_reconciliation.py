@@ -234,6 +234,99 @@ def test_extra_excluded_tickers_rendered_when_active(case, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# R191 Op1: 漏斗就绪门拦截通道渲染 — 宇宙→扫描差额的最后一道无名通道.
+# ---------------------------------------------------------------------------
+
+def test_funnel_closed_format_renders_readiness_exclusion(case):
+    """闭合格式带就绪门计数与分桶行 — 20260911 形态 (79 = 70+8+1) 可复核."""
+    from src.screening.offensive.daily_action import ScanFunnel
+
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(
+        run,
+        (),
+        run.open_positions,
+        (),
+        (),
+        funnel=ScanFunnel(
+            scannable=1912,
+            prefilter_passed=41,
+            hits=0,
+            universe=1991,
+            readiness_excluded=79,
+            readiness_miss_stages={
+                "st_stock": 70,
+                "suspended": 8,
+                "price_missing_unexplained": 1,
+            },
+        ),
+        regime="normal",
+    )
+    text = render_daily_action_v2(view)
+    assert "宇宙 1991 只" in text
+    assert "就绪拦截 79" in text
+    assert "计划不合格 0" in text
+    assert (
+        "就绪拦截分桶：price_missing_unexplained 1 · st_stock 70 · suspended 8"
+        in text
+    )
+
+
+def test_funnel_zero_readiness_counters_still_rendered(case):
+    """就绪门零计数也渲染 — 算术恒等式逐项可见, 静默清零即回归."""
+    from src.screening.offensive.daily_action import ScanFunnel
+
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(
+        run,
+        (),
+        run.open_positions,
+        (),
+        (),
+        funnel=ScanFunnel(
+            scannable=1645,
+            prefilter_passed=47,
+            hits=4,
+            universe=1733,
+            verify_blocked=80,
+            excluded_permanent=8,
+            data_rejected=0,
+        ),
+        regime="normal",
+    )
+    text = render_daily_action_v2(view)
+    assert "就绪拦截 0" in text and "计划不合格 0" in text
+    assert "就绪拦截分桶" not in text  # 零桶不出现分桶行
+
+
+def test_funnel_legacy_stub_without_new_attrs_renders(case):
+    """duck-type 旧漏斗对象 (无新字段) 渲染不崩 — 分桶行省略, 计数按 0."""
+    from types import SimpleNamespace
+
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    stub = SimpleNamespace(
+        scannable=10,
+        prefilter_passed=3,
+        hits=1,
+        universe=12,
+        verify_blocked=2,
+        excluded_permanent=0,
+        data_rejected=0,
+        detect_miss_stages=None,
+    )
+    view = DailyActionV2Run(run, (), run.open_positions, (), (), funnel=stub)
+    text = render_daily_action_v2(view)
+    assert "就绪拦截 0" in text
+    assert "就绪拦截分桶" not in text
+
+
+# ---------------------------------------------------------------------------
 # R122 Op1: 宇宙对齐行实现归因子句 (realization gap attribution)
 # ---------------------------------------------------------------------------
 

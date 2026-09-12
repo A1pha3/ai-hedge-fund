@@ -66,6 +66,8 @@ def _out_dir_or_default(out_dir: Path | str | None) -> Path:
     if out_dir is None:
         return Path(_DEFAULT_DIR)
     return Path(out_dir)
+
+
 _DEFAULT_CALENDAR = Path("data/reports/trade_calendar.json")
 _MAX_LOG_FILE_BYTES = 16 * 1024 * 1024  # 16 MB — 单日 JSONL 的宽松上界
 
@@ -379,6 +381,10 @@ def log_scan_funnel(
         raw = getattr(funnel, "detect_miss_stages", None) or {}
         return {str(k): int(v) for k, v in raw.items() if v}
 
+    def _readiness_stages() -> dict[str, int]:
+        raw = getattr(funnel, "readiness_miss_stages", None) or {}
+        return {str(k): int(v) for k, v in raw.items() if v}
+
     payload = json.dumps(
         {
             "schema_version": SCHEMA_VERSION,
@@ -387,6 +393,10 @@ def log_scan_funnel(
             "verify_blocked": int(getattr(funnel, "verify_blocked", 0) or 0),
             "excluded_permanent": int(getattr(funnel, "excluded_permanent", 0) or 0),
             "data_rejected": int(getattr(funnel, "data_rejected", 0) or 0),
+            # R191 Op1: 就绪门拦截通道 — 宇宙→扫描差额的最后一道无名通道.
+            "readiness_excluded": int(getattr(funnel, "readiness_excluded", 0) or 0),
+            "not_plan_eligible": int(getattr(funnel, "not_plan_eligible", 0) or 0),
+            "readiness_miss_stages": _readiness_stages(),
             "scannable": int(getattr(funnel, "scannable", 0) or 0),
             "prefilter_passed": int(getattr(funnel, "prefilter_passed", 0) or 0),
             "hits": int(getattr(funnel, "hits", 0) or 0),
