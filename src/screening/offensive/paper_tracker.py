@@ -124,6 +124,8 @@ class PaperTracker:
         # 供 render 列出"今日可交易但暂不买入"的票 + 计数总述. 不持久化.
         # 单一真相源: 计数用 len(last_blocked_candidates), 明细直接遍历.
         self.last_blocked_candidates: list = []
+        # gap 前向影子 (宪章杠杆 A) 最近一次记录摘要 (供披露, 不持久化).
+        self.last_gap_shadow_summary: dict[str, int] | None = None
 
     # ---- portfolio state ----
 
@@ -300,6 +302,54 @@ class PaperTracker:
                 reasoning=reasoning,
             )
         )
+
+    # ---- gap 前向影子 (宪章杠杆 A 事实记录面) ----
+
+    def record_open_gap_shadow(
+        self,
+        as_of: str,
+        *,
+        price_loader: Callable[[str, str], Any],
+        t1_session_of: Callable[[str], str | None],
+    ) -> dict[str, int]:
+        """为尚无影子记录的 BUY 落 T+1 开盘 gap 归属事实 (纯披露, 宪法 #2).
+
+        消费 journal BUY 真值 + sidecar ``gap_shadow.jsonl`` (append-only,
+        幂等键 (signal_date, ticker) 首观察赢), 全部装配逻辑在
+        ``gap_shadow`` 纯核心 (单一实现); 本方法只负责 journal 目录所有权。
+        摘要写入 ``last_gap_shadow_summary`` 并返回; 调用方 (daily flow)
+        以 advisory 纪律消费 —— 影子记录失败绝不阻断交易流程。
+        """
+        from src.screening.offensive.gap_shadow import (
+            GAP_SHADOW_FILENAME,
+            append_shadow_records,
+            build_shadow_records,
+            load_shadow_entries,
+            shadow_keys,
+        )
+
+        sidecar = self._dir / GAP_SHADOW_FILENAME
+        entries = load_shadow_entries(sidecar)
+        journal = self._load_journal()
+        records, summary = build_shadow_records(
+            journal,
+            shadow_keys(entries),
+            str(as_of),
+            price_loader,
+            t1_session_of,
+        )
+        summary["appended"] = append_shadow_records(sidecar, records) if records else 0
+        self.last_gap_shadow_summary = summary
+        logger.info(
+            "gap_shadow: considered=%d already=%d future=%d retried=%d observed=%d "
+            "t1_bar_missing=%d prev_close_missing=%d non_positive_price=%d appended=%d",
+            summary.get("considered", 0), summary.get("already_recorded", 0),
+            summary.get("future", 0), summary.get("retried", 0),
+            summary.get("observed", 0), summary.get("t1_bar_missing", 0),
+            summary.get("prev_close_missing", 0), summary.get("non_positive_price", 0),
+            summary.get("appended", 0),
+        )
+        return summary
 
     # ---- close matured positions (闭环核心) ----
 

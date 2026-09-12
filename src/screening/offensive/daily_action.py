@@ -3841,6 +3841,35 @@ def _load_prices_for_ticker(ticker: str, report_date: str) -> pd.DataFrame:
     return df
 
 
+def _record_gap_shadow_advisory(
+    tracker: PaperTracker,
+    as_of: str,
+    price_loader: Any,
+    authoritative_sessions: tuple[date, ...] | None = None,
+) -> None:
+    """gap 前向影子事实记录 (宪章杠杆 A; 纯披露 宪法 #2) — advisory 绝不阻断.
+
+    影子记录是研究事实面, 不是交易证据面: 任何失败 (journal 损坏/日历未就绪/
+    IO 异常) 只降级为 warning 日志, 信号生成与交易流程照常 —— 与 setup_output_log
+    (计划证据面, 写失败阻断 rc13) 的纪律分域。
+    """
+    try:
+        sessions = authoritative_sessions or _load_authoritative_session_dates()
+    except Exception:  # noqa: BLE001 - advisory: 日历未就绪时 gap 记录按重试语义跳过
+        logger.debug("gap_shadow: 权威会话日历不可用, 本次影子记录全部按重试处理", exc_info=True)
+        sessions = ()
+    try:
+        from src.screening.offensive.gap_shadow import t1_session_resolver
+
+        tracker.record_open_gap_shadow(
+            str(as_of),
+            price_loader=price_loader,
+            t1_session_of=t1_session_resolver(sessions),
+        )
+    except Exception:  # noqa: BLE001 - 纯披露基础设施绝不阻断交易流程
+        logger.warning("gap_shadow 记录失败 (advisory, 不阻断)", exc_info=True)
+
+
 def generate_daily_action(
     report_path: Path | str | None = None,
     tracker: PaperTracker | None = None,
@@ -3979,6 +4008,9 @@ def generate_daily_action(
 
     # 2. 先平到期仓位 + 回填 realized P&L → 驱动 drawdown (闭环核心)
     tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=_load_prices)
+
+    # 2b. gap 前向影子事实记录 (宪章杠杆 A; 纯披露 — advisory 绝不阻断信号生成)
+    _record_gap_shadow_advisory(tracker, trade_date, _load_prices, authoritative_sessions)
 
     # 3. drawdown 熔断
     dd_action = tracker.drawdown_action()
