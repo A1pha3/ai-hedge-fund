@@ -2787,3 +2787,72 @@ def test_setup_policy_lines_disclose_staleness(monkeypatch, tmp_path):
     assert lines, "至少一条 setup 政策行"
     assert all("⚠陈旧" in line for line in lines)
     assert all(old_day.isoformat() in line for line in lines)
+
+
+# ---- R198 Op1: gap 影子日度可见性行 (纯披露, fail-open) ----
+
+
+def _write_shadow_sidecar(tmp_path, entries):
+    import json as _json
+    lines = "\n".join(_json.dumps(e, ensure_ascii=False) for e in entries)
+    (tmp_path / "gap_shadow.jsonl").write_text(lines + "\n", encoding="utf-8")
+
+
+def _shadow_entry(ticker, would_skip):
+    # gap 与 would_skip 必须语义一致 (R196 Op2 载入校验: would_skip==(gap>0.05))
+    return {"signal_date": "20260810", "ticker": ticker, "setup": "btst_breakout",
+            "horizon": 10, "gap_status": "observed" if would_skip is not None else "t1_bar_missing",
+            "gap_pct": (0.08 if would_skip else 0.01) if would_skip is not None else None,
+            "would_skip": would_skip, "threshold": 0.05}
+
+
+def test_render_daily_action_shows_gap_shadow_line(tmp_path, monkeypatch):
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260811", raising=False)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
+    tracker = PaperTracker(journal_dir=tmp_path)
+    _write_shadow_sidecar(tmp_path, [
+        _shadow_entry("000001", True), _shadow_entry("000002", False),
+        _shadow_entry("000003", None),
+    ])
+    tracker.last_gap_shadow_summary = {"appended": 1}
+
+    out = da.render_daily_action([], "20260810", tracker)
+
+    assert "gap 影子: 累计 3 笔 · would-skip 1 · 未观测 1 · 本轮新增 1" in out
+
+
+def test_render_daily_action_omits_shadow_line_without_sidecar(tmp_path, monkeypatch):
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260811", raising=False)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
+    tracker = PaperTracker(journal_dir=tmp_path)  # 无 sidecar
+
+    out = da.render_daily_action([], "20260810", tracker)
+
+    assert "gap 影子" not in out
+
+
+def test_render_daily_action_survives_corrupt_sidecar(tmp_path, monkeypatch):
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260811", raising=False)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
+    tracker = PaperTracker(journal_dir=tmp_path)
+    (tmp_path / "gap_shadow.jsonl").write_text("{broken\n", encoding="utf-8")
+
+    out = da.render_daily_action([], "20260810", tracker)  # 不抛, 无行
+
+    assert "gap 影子" not in out
+
+
+def test_gap_shadow_line_none_for_stub_without_journal_dir():
+    from types import SimpleNamespace
+    from src.screening.offensive.daily_action import _gap_shadow_operator_line
+
+    assert _gap_shadow_operator_line(SimpleNamespace()) is None

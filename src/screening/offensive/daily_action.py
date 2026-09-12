@@ -4671,6 +4671,36 @@ def _render_candidate_list(
         lines.append(f"  {Fore.WHITE}...其余 {rest} 只略 (强度更低){Style.RESET_ALL}")
 
 
+def _gap_shadow_operator_line(tracker: PaperTracker) -> str | None:
+    """gap 影子日度可见性行 (R198 Op1; 纯披露 宪法 #2, fail-open 家族纪律).
+
+    累计口径读 gap_shadow.jsonl sidecar 真相 (load_shadow_entries 严格装载),
+    本轮新增读 tracker.last_gap_shadow_summary (R196 记录摘要)。sidecar 缺失/
+    损坏/stub 无 _dir → None 整行省略, 绝不让披露行阻断渲染。
+    """
+    try:
+        from src.screening.offensive.gap_shadow import (
+            GAP_SHADOW_FILENAME,
+            load_shadow_entries,
+        )
+
+        journal_dir = getattr(tracker, "_dir", None)
+        if journal_dir is None:
+            return None
+        entries = load_shadow_entries(Path(journal_dir) / GAP_SHADOW_FILENAME)
+    except Exception:  # noqa: BLE001 - 披露行绝不阻断渲染
+        return None
+    if not entries:
+        return None
+    skips = sum(1 for e in entries if e.get("would_skip") is True)
+    unobservable = sum(1 for e in entries if e.get("would_skip") is None)
+    parts = [f"gap 影子: 累计 {len(entries)} 笔 · would-skip {skips} · 未观测 {unobservable}"]
+    summary = getattr(tracker, "last_gap_shadow_summary", None)
+    if isinstance(summary, dict) and isinstance(summary.get("appended"), int):
+        parts.append(f"本轮新增 {summary['appended']}")
+    return "  " + " · ".join(parts)
+
+
 def render_daily_action(
     actions: list[DailyAction],
     trade_date: str,
@@ -4734,6 +4764,11 @@ def render_daily_action(
             lines.append(f"  {Fore.YELLOW}ℹ {cap_blocked} 个信号未通过风控过滤 (具体原因见候选行){Style.RESET_ALL}")
     for policy_line in _setup_policy_lines(explain=explain):
         lines.append(f"  {policy_line}")
+
+    # gap 影子日度可见性 (R198 Op1; 纯披露 — 无 sidecar/损坏时整行省略)
+    shadow_line = _gap_shadow_operator_line(tracker)
+    if shadow_line:
+        lines.append(shadow_line)
 
     # C-DAILY-ACTION-POSITION-VISIBILITY: 列出当前持仓 + 到期释放日程.
     # 此前只显示 "持仓数: N" (计数), operator 看不到自己买了什么、何时到期释放.
