@@ -869,6 +869,11 @@ class DailyActionV2Run:
     # 家族纪律). complete 装配时读 canonical sidecar 位置 (双源记录唯一落点),
     # 缺失/损坏 → None 渲染整节省略, 旧构造点不受影响 (与 funnel 同款优雅降级).
     gap_shadow_line: str | None = None
+    # pending_exit_releases: EXIT_PENDING 持仓的释放日程投影 (R202 Op1; 纯披露
+    # 宪法 #2). forced_exit_target_date 是台账持久化的强制退出事实, 前瞻敞口
+    # 恢复日程必须含它 (9/11 实录: 最大释放 cohort 于释放前一日从日程消失,
+    # cap 恢复注记挂错日期). 旧构造点不传 → () 优雅降级 (与 funnel 同款).
+    pending_exit_releases: tuple[Any, ...] = ()
 
 
 _BLOCK_REASON_ZH = {
@@ -1595,6 +1600,9 @@ def complete_daily_action_v2(
         regime=scan.regime,
         undetected_pending_plans=undetected,
         gap_shadow_line=_gap_shadow_line_parts(journal_dir),
+        pending_exit_releases=getattr(
+            service_run, "pending_exit_releases", ()
+        ),
     )
 
 
@@ -3284,6 +3292,12 @@ def _release_schedule_clause(
     日期, 同日 cohort 合计、跨日复合扣减与 cap 恢复只能 operator 对持仓区逐行心算
     (0831 cohort 五仓 9/14 + 9/15 + 9/21 三期释放形态)。
 
+    R202 Op1: ``positions`` 是 OPEN 持仓与 EXIT_PENDING 释放投影
+    (``pending_exit_releases``, forced_exit_target_date 为台账持久化事实) 的
+    组合 — 后者缺席时日程恰在最大释放 cohort 释放前一日失明, 且 cap 恢复
+    注记挂错日期。clause 只 duck-type ``projected_exit_date``/``mark_weight``,
+    对两个来源同语义生效 (含 maturity > as_of 的 overdue 排除)。
+
     首段保持 v1『最近到期』聚合行逐字节同款语义: 仅统计未来到期 (days>0), 最近
     到期日 cohort 合计; 其后各到期日按升序追加『；M/D 释放 N 只 / X% 敞口 → 约
     Y%』, after 按累计释放复合扣减 (待成交计划不因释放消失, 从合计扣减才诚实),
@@ -3880,8 +3894,14 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
             f"= {total_exposure:.0%} / {_MAX_PORTFOLO_PCT:.0%} 上限{at_cap}"
         )
         # 到期释放日程聚合行 (R162 Op1): 敞口行的前瞻补全 — 当前约束何时松开.
+        # R202 Op1: 与 pending_exit_releases (EXIT_PENDING 持仓的 forced 退出
+        # cohort) 组合消费 — forced 是台账持久化事实, 比日历推导的 projected
+        # 更确定; 排除它则恰在最大释放 cohort 释放前一日失明 (9/11 实录).
         release_clause = _release_schedule_clause(
-            run.open_positions, open_exposure, reserved_exposure, as_of
+            (*run.open_positions, *run.pending_exit_releases),
+            open_exposure,
+            reserved_exposure,
+            as_of,
         )
         if release_clause:
             lines.append(release_clause)

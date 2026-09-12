@@ -225,6 +225,23 @@ class CapacitySkip:
 
 
 @dataclass(frozen=True)
+class PendingExitRelease:
+    """EXIT_PENDING 持仓的释放日程投影 (R202 Op1, 纯披露面).
+
+    已标记退出的持仓仍在手 (敞口行的持仓口径含它), 其 ``forced_exit_target_date``
+    是台账持久化的强制退出事实 — 比 OPEN 持仓按日历推导的 ``projected_exit_date``
+    更确定; 前瞻释放日程若无它, 恰在最大释放 cohort 释放前一交易日失明.
+    只携带释放日程需要的最小字段; mark_weight 语义与 OpenPositionView 相同
+    (同基准 mark/nav, 联合唯一性守卫下可能为 None — 诚实缺位).
+    """
+
+    trade_id: str
+    ticker: str
+    projected_exit_date: date | None
+    mark_weight: float | None = None
+
+
+@dataclass(frozen=True)
 class DailyActionRun:
     trade_date: date
     valuation: DailyValuation
@@ -241,6 +258,9 @@ class DailyActionRun:
     block_reasons: tuple[str, ...] = ()
     ticker_gate_blocks: tuple[TickerGateBlock, ...] = ()
     capacity_skipped: tuple[CapacitySkip, ...] = ()
+    # EXIT_PENDING 持仓的释放日程投影 (R202 Op1): 默认 () 旧构造点优雅降级,
+    # 渲染层释放日程与 open_positions 组合消费.
+    pending_exit_releases: tuple[PendingExitRelease, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -640,7 +660,14 @@ class DailyActionService:
         )
 
         return render_daily_action_v2(
-            DailyActionV2Run(run, run.new_plans, run.open_positions, (), ())
+            DailyActionV2Run(
+                run,
+                run.new_plans,
+                run.open_positions,
+                (),
+                (),
+                pending_exit_releases=getattr(run, "pending_exit_releases", ()),
+            )
         )
 
     def _manifest_eligible_candidates(
@@ -1180,17 +1207,19 @@ class DailyActionService:
         open_trades = tuple(self.repository.open_trades())
         _, values, _ = self._snapshot(as_of)
         nav = float(valuation.nav)
-        # 同 ticker 多笔 open 时 values 按 ticker 聚合, 不可逐笔归因 → 该 ticker
+        # 同 ticker 多笔持仓时 values 按 ticker 聚合, 不可逐笔归因 → 该 ticker
         # 不发权重 (诚实缺位, 不把聚合值拆给每一笔伪造逐笔权重)。
-        open_ticker_counts: dict[str, int] = {}
+        # R202 Op1: 计数按 OPEN + EXIT_PENDING 联合 — EXIT_PENDING 仍在手
+        # (敞口口径含它), 只数 OPEN 会让同 ticker 双仓时聚合市值全额记给
+        # OPEN 侧 (EXIT_PENDING 持仓被静默没收)。
+        held_ticker_counts: dict[str, int] = {}
         for trade in open_trades:
-            if trade.state is TradeState.OPEN:
-                open_ticker_counts[trade.ticker] = (
-                    open_ticker_counts.get(trade.ticker, 0) + 1
-                )
+            held_ticker_counts[trade.ticker] = (
+                held_ticker_counts.get(trade.ticker, 0) + 1
+            )
         mark_weights: dict[str, float] = {}
         if nav > 0 and math.isfinite(nav):
-            for ticker, count in open_ticker_counts.items():
+            for ticker, count in held_ticker_counts.items():
                 value = values.get(ticker)
                 if (
                     count == 1
@@ -1205,6 +1234,19 @@ class DailyActionService:
             )
             for trade in open_trades
             if trade.state is TradeState.OPEN
+        )
+        # R202 Op1: EXIT_PENDING 持仓的释放日程投影 — forced_exit_target_date
+        # 是台账持久化的强制退出事实, 释放日程前瞻敞口恢复必须含它
+        # (9/11 实录: 0831 cohort 五仓 9/14 ~38% 敞口在释放前一日从日程消失)。
+        pending_exit_releases = tuple(
+            PendingExitRelease(
+                trade_id=trade.trade_id,
+                ticker=trade.ticker,
+                projected_exit_date=self._projected_exit_date(trade),
+                mark_weight=mark_weights.get(trade.ticker),
+            )
+            for trade in open_trades
+            if trade.state is TradeState.EXIT_PENDING
         )
         return DailyActionRun(
             as_of,
@@ -1222,6 +1264,7 @@ class DailyActionService:
             tuple(self._block_reasons),
             self._ticker_gate_blocks,
             tuple(self._capacity_skipped),
+            pending_exit_releases,
         )
 
     def _shadow_position_view(

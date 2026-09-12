@@ -998,3 +998,75 @@ def test_mark_weight_defaults_to_none_for_old_construction():
         shadow_reason="hold",
     )
     assert view.mark_weight is None
+
+
+# ---------- R202 Op1: pending_exit_releases (释放日程的 EXIT_PENDING cohort 视图) ----------
+
+def _exit_pending_world(tmp_path, *, close: float = 8.0, n: int = 30):
+    """单仓 (entry sessions[15]) 在 session_nine 被标记 EXIT_PENDING 的世界.
+
+    forced = 下一持有会话 (台账 mark_exit_pending 持久化); 返回未运行的服务
+    与会话, 由各测试自选 as_of 驱动.
+    """
+    sessions = _pnl_sessions(n)
+    service = _pnl_service(tmp_path, sessions, close=close)
+    plan = service.repository.create_plan(
+        "000909", "btst_breakout", "v2", sessions[14], sessions[15], 0.10, 1
+    )
+    service.repository.settle_plan_at_open(
+        plan.trade_id, sessions[15], 10.0, 9.0, 11.0, False, 10.5, 9.5
+    )
+    return service, sessions
+
+
+def test_pending_exit_release_lists_forced_date_and_mark_weight(tmp_path):
+    """EXIT_PENDING (forced 未来) 持仓进 pending_exit_releases: forced 日期 +
+    mark 权重; open_positions 仍只含 OPEN (退出计划区语义不变).
+
+    9/11 生产实录镜像: 0831 cohort 五仓在 session_nine 被标记后, 释放日程
+    对它们失明 — 视图缺位即根因.
+    """
+    service, sessions = _exit_pending_world(tmp_path)
+    run = service.run(sessions[23], ())  # session_nine: 标记 EXIT_PENDING
+    assert len(run.pending_exit_releases) == 1
+    release = run.pending_exit_releases[0]
+    assert release.ticker == "000909"
+    assert release.trade_id
+    assert release.projected_exit_date == sessions[24]
+    assert release.mark_weight is not None
+    assert release.mark_weight > 0
+    # 单仓世界: 标记后无 OPEN 持仓; 该仓同时在退出计划区每天可见
+    # (_evaluate_open_positions 的既有契约, R202 视图不重复收它).
+    assert run.open_positions == ()
+    assert any(item.ticker == "000909" for item in run.exit_plans)
+
+
+def test_pending_exit_release_empty_when_exit_settled(tmp_path):
+    """forced 当日开盘结算退出 (CLOSED) → 不再出现在 pending_exit_releases."""
+    service, sessions = _exit_pending_world(tmp_path)
+    service.run(sessions[23], ())  # session_nine: 标记 EXIT_PENDING
+    run = service.run(sessions[24], ())  # forced 当日: 开盘结算退出
+    assert run.pending_exit_releases == ()
+
+
+def test_mark_weight_withheld_when_open_and_pending_share_ticker(tmp_path):
+    """同 ticker 1 OPEN + 1 EXIT_PENDING → 联合计数 >1, 两侧均无 mark_weight.
+
+    市值按 ticker 聚合不可逐笔归因 — 联合守卫前 OPEN 侧会把聚合市值全额
+    记给自己 (EXIT_PENDING 持仓被静默没收), 诚实缺位优于过度归属.
+    """
+    sessions = _pnl_sessions(40)
+    service = _pnl_service(tmp_path, sessions, close=8.0)
+    for signal, entry in ((sessions[14], sessions[15]), (sessions[27], sessions[28])):
+        plan = service.repository.create_plan(
+            "000909", "btst_breakout", "v2", signal, entry, 0.05, 1
+        )
+        service.repository.settle_plan_at_open(
+            plan.trade_id, entry, 10.0, 9.0, 11.0, False, 10.5, 9.5
+        )
+    run = service.run(sessions[24], ())
+    open_views = [t for t in run.open_positions if t.state is TradeState.OPEN]
+    assert len(open_views) == 1
+    assert open_views[0].mark_weight is None
+    assert len(run.pending_exit_releases) == 1
+    assert run.pending_exit_releases[0].mark_weight is None

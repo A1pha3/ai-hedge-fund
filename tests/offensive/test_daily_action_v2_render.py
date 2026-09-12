@@ -4818,3 +4818,69 @@ def test_gap_shadow_section_shows_facts_and_reading_rows(case, tmp_path, monkeyp
     rows = [row for row in section.splitlines() if row.startswith("  gap 影子")]
     assert rows[0].startswith("  gap 影子: 累计 2 笔")
     assert rows[1].startswith("  gap 影子读数: 罚分 +4.32%")
+
+
+# ---------- R202 Op1: 释放日程纳入 EXIT_PENDING 强制退出 cohort ----------
+
+class _PendingRelease:
+    """最小鸭子视图: 释放日程只读 projected_exit_date / mark_weight."""
+
+    def __init__(self, projected_exit_date, mark_weight):
+        self.projected_exit_date = projected_exit_date
+        self.mark_weight = mark_weight
+
+
+def test_release_schedule_lists_pending_exit_cohort_first(tmp_path):
+    """EXIT_PENDING cohort (forced 早于 OPEN 仓推导到期) 成为最近到期段,
+    cap 注记挂实际恢复段; OPEN 仓 cohort 顺延 — 9/14 五仓 + 9/15 + 9/21
+    生产形态的 fixture 镜像 (OPEN 仓 9/10 到期, forced 取 9/8)."""
+    run, sessions, _as_of, _r = _run_with_open_position(tmp_path)
+    forced = sessions[22]  # 9/8: 晚于 as_of, 早于 OPEN 仓 9/10
+    view = DailyActionV2Run(
+        run,
+        (),
+        run.open_positions,
+        (),
+        (),
+        pending_exit_releases=(_PendingRelease(forced, 0.05),),
+    )
+    text = render_daily_action_v2(view)
+    line = next(line for line in text.splitlines() if "释放日程" in line)
+    assert f"最近到期 {forced.month}/{forced.day}" in line
+    assert "释放 1 只 / 5% 敞口" in line
+    total = run.open_exposure + run.reserved_exposure
+    assert f"约 {max(0.0, total - 0.05):.0%}" in line
+    assert "9/10" in line  # OPEN 仓 cohort 顺延在后
+    assert "（降回上限内，可恢复出新仓）" in line
+
+
+def test_release_schedule_unchanged_without_pending_releases(tmp_path):
+    """旧构造点 (字段缺省 ()) 与显式空元组 → 释放日程行逐字节一致
+    (优雅降级家族纪律, 既有 R162/R164 形态不受扰动)."""
+    run, _sessions, _as_of, _r = _run_with_open_position(tmp_path)
+    legacy = DailyActionV2Run(run, (), run.open_positions, (), ())
+    explicit = DailyActionV2Run(
+        run, (), run.open_positions, (), (), pending_exit_releases=()
+    )
+    legacy_line = next(
+        line for line in render_daily_action_v2(legacy).splitlines() if "释放日程" in line
+    )
+    explicit_line = next(
+        line
+        for line in render_daily_action_v2(explicit).splitlines()
+        if "释放日程" in line
+    )
+    assert legacy_line == explicit_line
+
+
+def test_release_schedule_ignores_overdue_pending_release(tmp_path):
+    """forced <= as_of 的 overdue 仓 (停牌顺延形态) 不入未来释放日程
+    (maturity > as_of 语义对 combined 来源一致生效)."""
+    run, _sessions, as_of, _r = _run_with_open_position(tmp_path)
+    overdue = _PendingRelease(as_of, 0.20)
+    view = DailyActionV2Run(
+        run, (), run.open_positions, (), (), pending_exit_releases=(overdue,)
+    )
+    text = render_daily_action_v2(view)
+    line = next(line for line in text.splitlines() if "释放日程" in line)
+    assert "最近到期 9/10" in line  # 仅 OPEN 仓推导到期, overdue 未混入
