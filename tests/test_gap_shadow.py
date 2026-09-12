@@ -572,3 +572,48 @@ class TestBuildShadowRecordsFromLedger:
         assert records == []
         assert summary["retried"] == 1
         assert summary["future"] == 1
+
+
+# ---- R199 Op2 守卫钉 (探针 10/10 有牙 + 3 无钉盲区收口) ----
+
+
+class TestOp2HardeningPins:
+    def test_t1_semantics_distinguishable_from_next_row(self):
+        # B01 钉: 中间行 (0815) 在场 — t1 必须取 planned_entry_date (0817) 而非
+        # 帧内下一行; next-row 变异在旧无中间行 fixture 上逃逸, 此处当场红。
+        frames = {"X": _frame([
+            ("20260814", 10.0, 10.2),
+            ("20260815", 10.1, 10.3),
+            ("20260817", 10.5, 11.8),
+        ])}
+        trades = [{"ticker": "X", "signal_date": "20260814",
+                   "planned_entry_date": "20260817", "setup": "s"}]
+        records, _ = build_shadow_records_from_ledger(trades, set(), "20260818", _loader(frames))
+        assert records[0]["gap_pct"] == pytest.approx(11.8 / 10.0 - 1)  # 0817 开盘
+
+    def test_realized_guards_nonpositive_entry_cash(self, tmp_path):
+        # B02 钉: ENTRY_FILLED cash_delta >= 0 是非交易形态 → 不进 realized (不伪造)
+        led = _make_ledger(
+            tmp_path,
+            [("t1", "X", "20260814", "20260817", "closed", "s")],
+            [
+                ("t1", "ENTRY_FILLED", 100.0),   # 畸形: 入场净流入
+                ("t1", "EXIT_FILLED", -50.0),
+            ],
+        )
+        assert read_ledger_realized(led) == {}
+
+    def test_scanner_stub_record_open_gap_shadow_noop(self):
+        # B03 钉: 生产扫描 stub 必须有诚实 no-op (R199 Op1) — 方法被误删则
+        # R196 advisory 在生产路径恢复每天 AttributeError 失败噪声。
+        from src.screening.offensive.daily_action import _ScannerCompatibilityState
+
+        assert _ScannerCompatibilityState().record_open_gap_shadow() == {}
+
+    def test_missing_planned_entry_date_counted_future(self):
+        # B04 钉: planned_entry_date 缺失 → future 计数 (不猜测 t1, 不落记录)
+        trades = [{"ticker": "X", "signal_date": "20260814",
+                   "planned_entry_date": None, "setup": "s"}]
+        records, summary = build_shadow_records_from_ledger(trades, set(), "20260818", _loader({}))
+        assert records == []
+        assert summary["future"] == 1
