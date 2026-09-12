@@ -204,3 +204,45 @@ class TestRenderMd:
             md = render_md(bad)  # 不抛
             assert isinstance(md, str)
         assert render_md(None).startswith("gap_shadow_pack:")
+
+
+# ---- R197 Op2 守卫钉 (探针定谳 P14 BLIND + B07 真实盲区收口) ----
+
+
+class TestOp2HardeningPins:
+    def test_zero_realized_is_not_a_win(self):
+        # P14 守卫: realized 恰 0 不计胜 (>= 变异在此红)
+        r = assemble_shadow_reading(
+            [_entry("20260810", "000001", would_skip=True)],
+            [_buy("20260810", "000001"), _exit("20260810", "000001", "+0.00%")],
+        )
+        assert r["skip"]["win_rate"] == 0.0
+        assert r["skip"]["n"] == 1
+
+    def test_divergent_duplicate_exit_first_wins(self):
+        # B02 守卫: 重复 EXIT (篡改/重放分叉) 首条是 journal 真相
+        r = assemble_shadow_reading(
+            [_entry("20260810", "000001", would_skip=True)],
+            [_buy("20260810", "000001"), _exit("20260810", "000001", "+1.00%"),
+             _exit("20260810", "000001", "+99.00%")],
+        )
+        assert r["skip"]["mean"] == pytest.approx(0.01)
+
+    def test_empty_bucket_winrate_and_mean_both_none(self):
+        # B03 守卫: 零桶 mean/win_rate 双 None (无伪造)
+        r = assemble_shadow_reading([_entry("20260810", "000001", would_skip=True)], [])
+        assert r["skip"]["mean"] is None
+        assert r["skip"]["win_rate"] is None
+
+    def test_non_bool_would_skip_excluded_named(self):
+        # B07 收口: 绕过严格 loader 直传的毒值按真值性入桶即改写会员籍
+        for poison in (1, 0, "true", ""):
+            r = assemble_shadow_reading(
+                [{**_entry("20260810", "000001", would_skip=True), "would_skip": poison}],
+                [_buy("20260810", "000001"), _exit("20260810", "000001", "+5.00%")],
+            )
+            assert r["counts"]["invalid_entries"] == 1, poison
+            assert r["skip"]["n"] == 0 and r["keep"]["n"] == 0
+        md = render_md(assemble_shadow_reading(
+            [{**_entry("20260810", "000001", would_skip=True), "would_skip": 1}], []))
+        assert "invalid_entries 1" in md

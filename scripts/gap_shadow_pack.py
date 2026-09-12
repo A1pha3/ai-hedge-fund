@@ -131,14 +131,22 @@ def assemble_shadow_reading(
         "pending": 0,              # 有影子记录但未成熟 (无 EXIT)
         "unparseable_exits": 0,    # EXIT realized 不可解析 (排除, 不伪造)
         "unobservable": 0,         # would_skip=None (按 status 分组另计)
+        "invalid_entries": 0,      # would_skip 非 bool 恰一 (类型毒化, R194 P06 族)
     }
     unobservable_by_status: dict[str, int] = {}
     thresholds: dict[str, int] = {}
 
     entry_keys = shadow_keys(entries)
     for e in entries:
+        would_skip = e.get("would_skip")
+        if would_skip is not None and not isinstance(would_skip, bool):
+            # 生产路径经 gap_shadow.load_shadow_entries 严格校验不可能到达;
+            # 直传 assemble 的旁路 (测试/未来消费方) 毒值按真值性入桶即改写
+            # 影子会员籍 (R194 P06 同族 PoC 实锤) → 具名排除, 不进任何桶。
+            counts["invalid_entries"] += 1
+            continue
         thresholds[str(e.get("threshold"))] = thresholds.get(str(e.get("threshold")), 0) + 1
-        if e.get("would_skip") is None:
+        if would_skip is None:
             counts["unobservable"] += 1
             status = str(e.get("gap_status"))
             unobservable_by_status[status] = unobservable_by_status.get(status, 0) + 1
@@ -155,7 +163,7 @@ def assemble_shadow_reading(
         if realized is None:
             counts["unparseable_exits"] += 1
             continue
-        (skip_pnls if e["would_skip"] else keep_pnls).append(realized)
+        (skip_pnls if would_skip else keep_pnls).append(realized)
 
     for key in buys:
         if key not in entry_keys:
@@ -204,7 +212,8 @@ def render_md(reading: Any) -> str:
     counts = reading.get("counts") if isinstance(reading.get("counts"), dict) else None
     if counts:
         parts = [f"{name} {counts[name]}" for name in
-                 ("orphan_entries", "unshadowed_buys", "pending", "unparseable_exits", "unobservable")
+                 ("orphan_entries", "unshadowed_buys", "pending", "unparseable_exits",
+                  "unobservable", "invalid_entries")
                  if isinstance(counts.get(name), int)]
         if parts:
             lines += [f"键位对账: {' · '.join(parts)}", ""]
