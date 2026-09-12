@@ -865,6 +865,10 @@ class DailyActionV2Run:
     # undetected_pending_plans: 本信号日台账已有、本次扫描未再检出的待成交计划
     # (渲染对账 join 的第四态). None/空时渲染省略, 旧构造点不受影响.
     undetected_pending_plans: tuple[PendingPlanRef, ...] = ()
+    # gap_shadow_line: 影子日度可见性行 (R200 Op1; 纯披露 宪法 #2, fail-open
+    # 家族纪律). complete 装配时读 canonical sidecar 位置 (双源记录唯一落点),
+    # 缺失/损坏 → None 渲染整节省略, 旧构造点不受影响 (与 funnel 同款优雅降级).
+    gap_shadow_line: str | None = None
 
 
 _BLOCK_REASON_ZH = {
@@ -1521,6 +1525,7 @@ def complete_daily_action_v2(
     verified_snapshot: VerifiedDailyActionSnapshot | None = None,
     new_entry_block: str | None = None,
     shadow_prices: Any | None = None,
+    gap_shadow_journal_dir: Path | str | None = None,
 ) -> DailyActionV2Run:
     """Build the v2 display view after lifecycle has already advanced."""
     if not all(isinstance(candidate, PlanCandidate) for candidate in scan.candidates):
@@ -1568,6 +1573,16 @@ def complete_daily_action_v2(
         for plan in session_plans
         if plan.ticker not in displayed_tickers
     )
+    # gap 影子日度可见性装配 (R200 Op1; R199 留后续收口): R198 行只接在 v1
+    # 渲染器上, 生产 --daily-action 走 v2 渲染, 操作员视图影子事实不可见。
+    # canonical sidecar 位置 = legacy journal 目录 (双源记录唯一落点, 与
+    # gap_shadow_record/pack CLI 缺省同源); v2 无进程内记录 (夜刷 record 步
+    # 回填) → 无「本轮新增」子句。fail-open: 缺失/损坏 → None, 绝不阻断装配。
+    journal_dir = gap_shadow_journal_dir
+    if journal_dir is None:
+        from src.screening.offensive.paper_tracker import _DEFAULT_JOURNAL_DIR
+
+        journal_dir = _DEFAULT_JOURNAL_DIR
     return DailyActionV2Run(
         service_run,
         persisted,
@@ -1579,6 +1594,7 @@ def complete_daily_action_v2(
         capacity_skipped=getattr(service_run, "capacity_skipped", ()),
         regime=scan.regime,
         undetected_pending_plans=undetected,
+        gap_shadow_line=_gap_shadow_line_parts(journal_dir),
     )
 
 
@@ -3591,6 +3607,14 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     lines.extend(_render_section("持仓退出建议（影子，不改变默认退出）", shadow_rows))
     lines.append("")
 
+    # ---- gap 影子日度可见性 (R200 Op1: R199 留后续收口; 纯披露 宪法 #2) ----
+    # complete 装配的行在此纯展示; None (sidecar 缺失/损坏/旧构造点) 整节省略.
+    if run.gap_shadow_line:
+        lines.extend(
+            _render_section("gap 影子（前向证据 · 纯披露）", [run.gap_shadow_line])
+        )
+        lines.append("")
+
     # ---- 不可计划候选 ----
     # 强度不足的候选附分量下钻行 (哪个维度拖累了强度); 其他原因中文表已够
     # 清楚, 保持单行. 节后的扫描漏斗行回答"为什么只有这几只".
@@ -4678,12 +4702,12 @@ def _render_candidate_list(
         lines.append(f"  {Fore.WHITE}...其余 {rest} 只略 (强度更低){Style.RESET_ALL}")
 
 
-def _gap_shadow_operator_line(tracker: PaperTracker) -> str | None:
-    """gap 影子日度可见性行 (R198 Op1; 纯披露 宪法 #2, fail-open 家族纪律).
+def _gap_shadow_line_parts(journal_dir: Path | str) -> str | None:
+    """gap 影子可见性行文案单一实现 (R200 Op1; 纯披露 宪法 #2, fail-open 家族纪律).
 
-    累计口径读 gap_shadow.jsonl sidecar 真相 (load_shadow_entries 严格装载),
-    本轮新增读 tracker.last_gap_shadow_summary (R196 记录摘要)。sidecar 缺失/
-    损坏/stub 无 _dir → None 整行省略, 绝不让披露行阻断渲染。
+    v1 渲染 (tracker._dir + 进程内 summary) 与 v2 装配 (canonical sidecar 位置,
+    无进程内新增) 共用同一文案; sidecar 缺失/损坏/空 → None, 绝不让披露行阻断
+    主流程。
     """
     try:
         from src.screening.offensive.gap_shadow import (
@@ -4691,9 +4715,6 @@ def _gap_shadow_operator_line(tracker: PaperTracker) -> str | None:
             load_shadow_entries,
         )
 
-        journal_dir = getattr(tracker, "_dir", None)
-        if journal_dir is None:
-            return None
         entries = load_shadow_entries(Path(journal_dir) / GAP_SHADOW_FILENAME)
     except Exception:  # noqa: BLE001 - 披露行绝不阻断渲染
         return None
@@ -4701,11 +4722,28 @@ def _gap_shadow_operator_line(tracker: PaperTracker) -> str | None:
         return None
     skips = sum(1 for e in entries if e.get("would_skip") is True)
     unobservable = sum(1 for e in entries if e.get("would_skip") is None)
-    parts = [f"gap 影子: 累计 {len(entries)} 笔 · would-skip {skips} · 未观测 {unobservable}"]
+    return (
+        f"gap 影子: 累计 {len(entries)} 笔 · would-skip {skips} · 未观测 {unobservable}"
+    )
+
+
+def _gap_shadow_operator_line(tracker: PaperTracker) -> str | None:
+    """gap 影子日度可见性行 (R198 Op1; R200 起文案经 _gap_shadow_line_parts).
+
+    累计口径读 gap_shadow.jsonl sidecar 真相 (load_shadow_entries 严格装载),
+    本轮新增读 tracker.last_gap_shadow_summary (R196 记录摘要)。sidecar 缺失/
+    损坏/stub 无 _dir → None 整行省略, 绝不让披露行阻断渲染。
+    """
+    journal_dir = getattr(tracker, "_dir", None)
+    if journal_dir is None:
+        return None
+    line = _gap_shadow_line_parts(journal_dir)
+    if line is None:
+        return None
     summary = getattr(tracker, "last_gap_shadow_summary", None)
     if isinstance(summary, dict) and isinstance(summary.get("appended"), int):
-        parts.append(f"本轮新增 {summary['appended']}")
-    return "  " + " · ".join(parts)
+        line += f" · 本轮新增 {summary['appended']}"
+    return "  " + line
 
 
 def render_daily_action(

@@ -17,10 +17,12 @@ import pytest
 
 from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
 from src.screening.offensive.daily_action import (
+    DailyActionScan,
     DailyActionV2Run,
     ScanFunnel,
     _render_reentry_proximity_line,
     _render_stop_loss_readiness_line,
+    complete_daily_action_v2,
     render_daily_action_v2,
 )
 from src.screening.offensive.daily_action_service import (
@@ -4467,3 +4469,116 @@ def test_freshness_line_coverage_reads_latest_record(tmp_path, monkeypatch):
     assert "触发器账本最后判定 20260828" in line
     assert "court 覆盖停滞 2 个交易日（最后覆盖 20260827）" in line
     assert "最后覆盖 20260820" not in line
+
+
+# ---- R200 Op1: gap 影子日度可见性行 v2 接线 (R199 留后续收口; 纯披露, fail-open) ----
+
+
+def _shadow_sidecar(tmp_path, entries):
+    lines = "\n".join(json.dumps(e, ensure_ascii=False) for e in entries)
+    (tmp_path / "gap_shadow.jsonl").write_text(lines + "\n", encoding="utf-8")
+
+
+def _shadow_entry(ticker, would_skip):
+    # gap 与 would_skip 必须语义一致 (R196 Op2 载入校验: would_skip==(gap>0.05))
+    return {
+        "signal_date": "20260810",
+        "ticker": ticker,
+        "setup": "btst_breakout",
+        "horizon": 10,
+        "gap_status": "observed" if would_skip is not None else "t1_bar_missing",
+        "gap_pct": (0.08 if would_skip else 0.01) if would_skip is not None else None,
+        "would_skip": would_skip,
+        "threshold": 0.05,
+    }
+
+
+def test_gap_shadow_line_renders_when_sidecar_present(case, tmp_path):
+    """sidecar 在场 → complete 装配行 + 渲染单行 section (R199 留后续收口)."""
+    _shadow_sidecar(
+        tmp_path,
+        [
+            _shadow_entry("000001", True),
+            _shadow_entry("000002", False),
+            _shadow_entry("000003", None),
+        ],
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service,
+        context,
+        DailyActionScan(as_of, (), (), ()),
+        gap_shadow_journal_dir=tmp_path,
+    )
+
+    assert v2_run.gap_shadow_line == "gap 影子: 累计 3 笔 · would-skip 1 · 未观测 1"
+    text = render_daily_action_v2(v2_run)
+    assert "gap 影子（前向证据 · 纯披露）" in text
+    assert "gap 影子: 累计 3 笔 · would-skip 1 · 未观测 1" in text
+
+
+def test_gap_shadow_line_absent_when_sidecar_missing(case, tmp_path):
+    """sidecar 缺失 → 字段 None, 渲染无 section 不崩 (fail-open 家族纪律)."""
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service,
+        context,
+        DailyActionScan(as_of, (), (), ()),
+        gap_shadow_journal_dir=tmp_path,
+    )
+
+    assert v2_run.gap_shadow_line is None
+    assert "gap 影子" not in render_daily_action_v2(v2_run)
+
+
+def test_gap_shadow_line_survives_corrupt_sidecar(case, tmp_path):
+    """sidecar 损坏 → 字段 None (fail-open), 绝不阻断 run 装配与渲染."""
+    (tmp_path / "gap_shadow.jsonl").write_text("{broken\n", encoding="utf-8")
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service,
+        context,
+        DailyActionScan(as_of, (), (), ()),
+        gap_shadow_journal_dir=tmp_path,
+    )
+
+    assert v2_run.gap_shadow_line is None
+    assert "gap 影子" not in render_daily_action_v2(v2_run)
+
+
+def test_gap_shadow_section_absent_on_legacy_construction(case):
+    """旧构造点 (不传字段) → 渲染无 section (与 funnel 同款优雅降级)."""
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+
+    assert view.gap_shadow_line is None
+    assert "gap 影子" not in render_daily_action_v2(view)
+
+
+def test_gap_shadow_line_counts_asymmetric_skip_set(case, tmp_path):
+    """R198 Op2 P10 同族钉: 计数反转变异 (is True→is False) 在对称 fixture 上
+    逃逸 — 非对称 (2 skip/1 keep/1 unobservable) 当场红."""
+    _shadow_sidecar(
+        tmp_path,
+        [
+            _shadow_entry("000001", True),
+            _shadow_entry("000004", True),
+            _shadow_entry("000002", False),
+            _shadow_entry("000003", None),
+        ],
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service,
+        context,
+        DailyActionScan(as_of, (), (), ()),
+        gap_shadow_journal_dir=tmp_path,
+    )
+
+    assert v2_run.gap_shadow_line == "gap 影子: 累计 4 笔 · would-skip 2 · 未观测 1"
