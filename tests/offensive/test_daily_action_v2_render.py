@@ -4582,3 +4582,48 @@ def test_gap_shadow_line_counts_asymmetric_skip_set(case, tmp_path):
     )
 
     assert v2_run.gap_shadow_line == "gap 影子: 累计 4 笔 · would-skip 2 · 未观测 1"
+
+
+def test_gap_shadow_line_default_dir_is_canonical_journal(case, tmp_path, monkeypatch):
+    """R200 Op2 P8 钉: 缺省 (不传 gap_shadow_journal_dir) 读 canonical
+    _DEFAULT_JOURNAL_DIR (data/paper_trading, 与 gap_shadow_record/pack CLI
+    缺省同源) — 默认目录漂移 (如 paper_trading_v2) 当场红。"""
+    from src.screening.offensive import paper_tracker as _pt
+
+    _shadow_sidecar(
+        tmp_path,
+        [
+            _shadow_entry("000001", True),
+            _shadow_entry("000002", False),
+            _shadow_entry("000003", None),
+        ],
+    )
+    monkeypatch.setattr(_pt, "_DEFAULT_JOURNAL_DIR", tmp_path)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service, context, DailyActionScan(as_of, (), (), ())
+    )
+
+    assert v2_run.gap_shadow_line == "gap 影子: 累计 3 笔 · would-skip 1 · 未观测 1"
+
+
+def test_v1_gap_shadow_line_indented_two_spaces(tmp_path, monkeypatch):
+    """R200 Op2 P9 钉: v1 wrapper 行以两空格缩进返回 (v1 渲染对齐契约, R200
+    wrapper 重写不得漂移) — 前缀拆除当场红。"""
+    from src.screening.offensive import daily_action as _da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setattr(
+        _da, "_resolve_next_trade_date", lambda trade_date: "20260811", raising=False
+    )
+    monkeypatch.setattr(
+        "src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}"
+    )
+    tracker = PaperTracker(journal_dir=tmp_path)
+    _shadow_sidecar(tmp_path, [_shadow_entry("000001", True)])
+
+    out = _da.render_daily_action([], "20260810", tracker)
+
+    line = next(row for row in out.splitlines() if "gap 影子: 累计" in row)
+    assert line.startswith("  gap 影子: 累计 1 笔")
