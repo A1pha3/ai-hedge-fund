@@ -311,6 +311,45 @@ def pooled_penalty_clause(pooled: object) -> str:
     return f" · {body}" if body else ""
 
 
+def best_stop_tier(
+    grid: object,
+) -> tuple[str, float, dict] | None:
+    """止损反事实网格的最佳档位选择 (结构化单一实现, R193 Op1)。
+
+    档位深度升序遍历 + 严格大于: 平局取更浅档, 与插入序无关 (R181 Op2
+    P-a: 实现曾按 dict 插入序遍历, 与 docstring 声称的确定性平局语义不符;
+    形状外键先剔除再排序, 排序键不做防御。档标签是负百分比, 浅档=|深度|
+    更小, 排序键取绝对值 — 数值升序会把 -12% 排在 -5% 之前)。
+
+    网格非 dict/为空、无形状合法档、或全部档 Δ 非有限 → None (不假装有
+    最佳档)。消费面: stop_direction_clause (渲染) 与
+    scripts/stop_loss_enablement_pack.py (两面装配) 同源。
+    """
+    if not isinstance(grid, dict) or not grid:
+        return None
+    best_tier: str | None = None
+    best_delta: float | None = None
+    best_entry: dict | None = None
+    shaped = [
+        (tier, entry)
+        for tier, entry in grid.items()
+        if isinstance(tier, str)
+        and _STOP_TIER_RE.match(tier)
+        and isinstance(entry, dict)
+    ]
+    for tier, entry in sorted(
+        shaped, key=lambda kv: abs(float(kv[0].rstrip("%")))
+    ):
+        delta = entry.get("delta_vs_base")
+        if not _finite_number(delta):
+            continue
+        if best_delta is None or delta > best_delta:
+            best_tier, best_delta, best_entry = tier, float(delta), entry
+    if best_tier is None or best_entry is None or best_delta is None:
+        return None
+    return best_tier, best_delta, best_entry
+
+
 def stop_direction_clause(
     payload: object,
     regime_label: object,
@@ -359,30 +398,10 @@ def stop_direction_clause(
     grid = bucket.get("stop_grid")
     if not isinstance(grid, dict) or not grid:
         return None
-    best_tier: str | None = None
-    best_delta: float | None = None
-    best_entry: dict | None = None
-    # 档位深度升序遍历 + 严格大于: 平局取更浅档, 与插入序无关 (R181 Op2
-    # P-a: 实现曾按 dict 插入序遍历, 与 docstring 声称的确定性平局语义不符;
-    # 形状外键先剔除再排序, 排序键不做防御。档标签是负百分比, 浅档=|深度|
-    # 更小, 排序键取绝对值 — 数值升序会把 -12% 排在 -5% 之前)。
-    shaped = [
-        (tier, entry)
-        for tier, entry in grid.items()
-        if isinstance(tier, str)
-        and _STOP_TIER_RE.match(tier)
-        and isinstance(entry, dict)
-    ]
-    for tier, entry in sorted(
-        shaped, key=lambda kv: abs(float(kv[0].rstrip("%")))
-    ):
-        delta = entry.get("delta_vs_base")
-        if not _finite_number(delta):
-            continue
-        if best_delta is None or delta > best_delta:
-            best_tier, best_delta, best_entry = tier, float(delta), entry
-    if best_tier is None or best_entry is None or best_delta is None:
+    found = best_stop_tier(grid)
+    if found is None:
         return None
+    best_tier, best_delta, best_entry = found
     best_mean = best_entry.get("mean_net")
     n_stopped = best_entry.get("n_stopped")
     n_gap = best_entry.get("n_gap_through")

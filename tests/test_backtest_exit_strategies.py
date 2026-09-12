@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -354,3 +355,98 @@ def test_raw_frame_loader_normalizes_dates(tmp_path):
     loaded = _load_raw_frame(tmp_path / "cache", "600400")
     assert loaded is not None
     assert loaded["date"].tolist() == ["20260101", "20260102"]
+
+
+# ---------------------------------------------------------------------------
+# CLI --json 机器可读排放 (R193 Op1: stop_loss_enablement_pack face B 输入)
+# ---------------------------------------------------------------------------
+
+
+def _happy_journal_and_cache(tmp_path: Path) -> Path:
+    journal = tmp_path / "ok.jsonl"
+    journal.write_text(
+        "\n".join(
+            [
+                _journal_line("BUY", "20260101", "600000"),
+                _journal_line("EXIT", "20260101", "600000", reasoning="realized=+5.0%"),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _write_cache(
+        tmp_path,
+        "600000",
+        _frame(
+            [
+                ("20260101", 10.0, 10.0, 10.1, 9.9, 0.0),
+                ("20260102", 10.0, 10.0, 10.1, 9.9, 0.0),
+                ("20260103", 10.0, 10.0, 10.1, 9.9, 0.0),
+                ("20260104", 10.5, 10.5, 10.6, 10.4, 5.0),
+            ]
+        ),
+    )
+    return journal
+
+
+def test_cli_json_stdout_byte_stable_and_payload_deterministic(tmp_path):
+    journal = _happy_journal_and_cache(tmp_path)
+    cache = str(tmp_path / "cache")
+    out1, out2 = tmp_path / "run1.json", tmp_path / "run2.json"
+
+    plain = _run_cli("--journal", str(journal), "--cache-dir", cache, "--time-exit", "3")
+    first = _run_cli("--journal", str(journal), "--cache-dir", cache, "--time-exit", "3", "--json", str(out1))
+    second = _run_cli("--journal", str(journal), "--cache-dir", cache, "--time-exit", "3", "--json", str(out2))
+
+    assert plain.returncode == first.returncode == second.returncode == 0
+    # --json 缺省/在场时既有 stdout 逐字节一致, 只追加一行 json: PATH 指针
+    assert first.stdout == plain.stdout + f"json: {out1}\n"
+    # 排放内容确定性: 同输入同字节 (无墙钟)
+    assert out1.read_bytes() == out2.read_bytes()
+
+    payload = json.loads(out1.read_text(encoding="utf-8"))
+    assert payload["schema"] == "backtest_exit_strategies_json_v1"
+    assert payload["journal_sha256"] == hashlib.sha256(journal.read_bytes()).hexdigest()
+    assert payload["n_trades"] == 1
+    assert payload["time_exit"] == 3
+    assert len(payload["strategies"]) == 9
+    no_stop = next(r for r in payload["strategies"] if r["stop_mode"] == "none")
+    assert no_stop["n"] == 1 and no_stop["stop_param"] is None and no_stop["E"] is not None
+    fixed5 = next(r for r in payload["strategies"] if r["label"] == "fixed -5%")
+    assert fixed5["stop_param"] == -0.05 and fixed5["E"] is not None
+    assert isinstance(payload["baseline_excluded"], dict)
+
+
+def test_cli_json_2024_journal_guard_writes_nothing(tmp_path):
+    journal = tmp_path / "replay.jsonl"
+    journal.write_text(
+        "\n".join(
+            [
+                _journal_line("BUY", "20240501", "600000"),
+                _journal_line("EXIT", "20240501", "600000", reasoning="realized=+5.0%"),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    out = tmp_path / "guard.json"
+    proc = _run_cli("--journal", str(journal), "--json", str(out))
+    assert proc.returncode == 2
+    assert not out.exists()
+
+
+def test_cli_json_n0_rows_null_metrics(tmp_path):
+    journal = tmp_path / "ok.jsonl"
+    journal.write_text(
+        "\n".join(
+            [
+                _journal_line("BUY", "20260101", "600000"),
+                _journal_line("EXIT", "20260101", "600000", reasoning="realized=+5.0%"),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    out = tmp_path / "n0.json"
+    proc = _run_cli("--journal", str(journal), "--cache-dir", str(tmp_path / "missing_cache"), "--json", str(out))
+    assert proc.returncode == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert all(row["n"] == 0 for row in payload["strategies"])
+    assert all(row["E"] is None for row in payload["strategies"])

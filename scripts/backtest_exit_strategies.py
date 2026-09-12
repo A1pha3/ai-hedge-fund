@@ -32,7 +32,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import re
 import statistics as st
 import sys
@@ -273,6 +275,59 @@ def simulate_strategy(
     return summary
 
 
+def _journal_sha256(journal_path: Path) -> str:
+    return hashlib.sha256(journal_path.read_bytes()).hexdigest()
+
+
+_JSON_METRIC_FIELDS = (
+    "E",
+    "winrate",
+    "median",
+    "max_loss",
+    "big_loss_pct",
+    "sharpe",
+)
+
+
+def _json_row(label: str, kwargs: dict[str, Any], r: dict[str, Any]) -> dict[str, Any]:
+    """单策略机器可读行; n=0 时指标为 null (不冒充数值)。"""
+    row: dict[str, Any] = {
+        "label": label,
+        "stop_mode": kwargs.get("stop_mode"),
+        "stop_param": kwargs.get("stop_param"),
+        "n": r["n"],
+        "stop_trig": r["stop_trig"],
+    }
+    for field in _JSON_METRIC_FIELDS:
+        row[field] = r[field] if r["n"] > 0 else None
+    return row
+
+
+def _build_json_payload(
+    *,
+    journal_path: Path,
+    n_trades: int,
+    time_exit: int,
+    rows: list[dict[str, Any]],
+    baseline_excluded: dict[str, int] | None,
+) -> dict[str, Any]:
+    """确定性机器可读载荷: 无墙钟, 同输入同字节 (R193 Op1)。
+
+    消费面: scripts/stop_loss_enablement_pack.py 样本期方向 (face B) 读取;
+    journal 以 sha256 绑定 (新鲜度/替换可见), 绝不以路径字符串冒充身份。
+    """
+    return {
+        "schema": "backtest_exit_strategies_json_v1",
+        "journal": os.fspath(journal_path),
+        "journal_sha256": _journal_sha256(journal_path),
+        "n_trades": n_trades,
+        "time_exit": time_exit,
+        "slippage_per_side": _SLIPPAGE,
+        "strategies": rows,
+        "baseline_excluded": baseline_excluded,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -282,6 +337,12 @@ def main() -> None:
     )
     parser.add_argument("--cache-dir", default=_DEFAULT_CACHE, help="price_cache 目录")
     parser.add_argument("--time-exit", type=int, default=10, help="时间退出 horizon (交易日)")
+    parser.add_argument(
+        "--json",
+        dest="json_out",
+        default=None,
+        help="附加机器可读排放路径 (stdout 表格不变; 内容确定性无墙钟)",
+    )
     args = parser.parse_args()
 
     journal_path = Path(args.journal)
@@ -311,10 +372,12 @@ def main() -> None:
     print(header)
     print("-" * len(header))
     baseline_excluded: dict[str, int] | None = None
+    json_rows: list[dict[str, Any]] = []
     for label, kwargs in strategies:
         r = simulate_strategy(trades, cache_dir=args.cache_dir, time_exit=args.time_exit, **kwargs)
         if baseline_excluded is None:
             baseline_excluded = r["excluded"]
+        json_rows.append(_json_row(label, kwargs, r))
         if r["n"] == 0:
             print(f"{label:<28} n=0 (no data)")
             continue
@@ -349,6 +412,24 @@ def main() -> None:
     print("  (若 ATR 止损的 E[r] 或 Sharpe 优于 no_stop, 则值得集成到 paper_tracker)")
     print("  ⚠️ 相对比较工具: 启用真实止损执行 (DAILY_ACTION_EXECUTION_STOP) 前先看排除项计数,")
     print("     排除占比过高时本表证据不可用。")
+
+    if args.json_out:
+        payload = _build_json_payload(
+            journal_path=journal_path,
+            n_trades=len(trades),
+            time_exit=args.time_exit,
+            rows=json_rows,
+            baseline_excluded=baseline_excluded,
+        )
+        out_path = Path(args.json_out)
+        if not out_path.is_absolute():
+            out_path = _PROJECT_ROOT / out_path
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        print(f"json: {out_path}")
 
 
 if __name__ == "__main__":
