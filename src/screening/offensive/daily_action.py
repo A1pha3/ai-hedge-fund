@@ -1622,6 +1622,84 @@ _COURT_REFRESH_STATUS_PATH = Path("data/reports/court_refresh_status.json")
 # 本模块 _render_universe_alignment_line 消费 (形状守卫 fail-open)。
 _ALIGNMENT_SUMMARY_PATH = Path("data/reports/realized_vs_court_alignment.json")
 _DATE_8_RE = re.compile(r"[0-9]{8}")
+# gap 影子配对读数报告目录 (R201 Op1): 夜刷 shadow_pack 单写者落盘
+# (gap_shadow_pack_YYYYMMDD.json), 本模块 _gap_shadow_reading_line 消费。
+# 测试经 monkeypatch 隔离 (R120b 家族: 渲染测试不得读宿主真实报告)。
+_GAP_SHADOW_PACK_REPORTS_DIR = Path("data/reports")
+
+
+def _latest_gap_shadow_pack(
+    reports_dir: str | Path | None = None,
+) -> tuple[Path, dict[str, Any]] | None:
+    """最新 gap_shadow_pack 报告冷读 (R201 Op1; fail-open 家族纪律).
+
+    文件名日期段 (8 位) 为新鲜度序, 非 dated 同形文件忽略 (R151 先例);
+    无可用报告/读取或解析失败 → None, 绝不猜测。
+    """
+    base = (
+        Path(reports_dir) if reports_dir is not None else _GAP_SHADOW_PACK_REPORTS_DIR
+    )
+    try:
+        candidates: list[tuple[str, Path]] = []
+        for path in base.glob("gap_shadow_pack_*.json"):
+            match = re.fullmatch(r"gap_shadow_pack_([0-9]{8})\.json", path.name)
+            if match is None:
+                continue  # 非 dated 同形文件 (草稿/手工产物) 不当最新
+            candidates.append((match.group(1), path))
+        if not candidates:
+            return None
+        _date_str, path = max(candidates, key=lambda item: item[0])
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # 读取/解码/解析失败按无报告处理 (fail-open)
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return path, payload
+
+
+def _gap_shadow_reading_line(
+    reports_dir: str | Path | None = None,
+) -> str | None:
+    """影子配对读数行 (R201 Op1; 纯披露 宪法 #2, fail-open 家族纪律).
+
+    夜刷 gap_shadow_pack 报告是装配单一事实源 — 本行只转发读数 (罚分/skip/
+    keep 的 n·E 与判定纪律), 绝不重算第二套。数值子句逐字段形状守卫: 非有限/
+    缺失 → 对应子句省略不虚构 (R119 守卫家族); 报告缺失/损坏 → None 整行
+    省略, 绝不让披露行阻断渲染。
+    """
+    found = _latest_gap_shadow_pack(reports_dir)
+    if found is None:
+        return None
+    _path, payload = found
+    parts: list[str] = []
+    penalty = payload.get("penalty_keep_minus_skip")
+    if _is_finite_number(penalty):
+        parts.append(f"罚分 {penalty:+.2%}")
+    for label in ("skip", "keep"):
+        bucket = payload.get(label)
+        if not isinstance(bucket, dict):
+            continue
+        n = bucket.get("n")
+        n_text = f"n={n}" if isinstance(n, int) and not isinstance(n, bool) else "n=—"
+        mean = bucket.get("mean")
+        mean_text = f"E {mean:+.2%}" if _is_finite_number(mean) else ""
+        parts.append(f"{label} {n_text}" + (f" {mean_text}" if mean_text else ""))
+    if not parts:
+        return None  # 无任何可用数值读数, 空壳行不冒充披露
+    window = payload.get("window")
+    if isinstance(window, dict):
+        start, end = window.get("start"), window.get("end")
+        if (
+            isinstance(start, str)
+            and _DATE_8_RE.fullmatch(start) is not None
+            and isinstance(end, str)
+            and _DATE_8_RE.fullmatch(end) is not None
+        ):
+            parts.append(f"窗 {start}→{end}")
+    verdict = payload.get("verdict_hint")
+    if isinstance(verdict, str) and verdict.strip():
+        parts.append(verdict)
+    return "gap 影子读数: " + " · ".join(parts)
 
 
 def _render_prior_drift_line(
@@ -3607,11 +3685,15 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     lines.extend(_render_section("持仓退出建议（影子，不改变默认退出）", shadow_rows))
     lines.append("")
 
-    # ---- gap 影子日度可见性 (R200 Op1: R199 留后续收口; 纯披露 宪法 #2) ----
-    # complete 装配的行在此纯展示; None (sidecar 缺失/损坏/旧构造点) 整节省略.
-    if run.gap_shadow_line:
+    # ---- gap 影子日度可见性 (R200/R201; 纯披露 宪法 #2) ----
+    # 事实行 (R200, complete 装配 sidecar 计数) 与读数行 (R201, 最新 pack 报告
+    # 罚分读数) 独立披露 — 一者在场即出 section, 双双缺失整节省略.
+    gap_shadow_rows = [
+        row for row in (run.gap_shadow_line, _gap_shadow_reading_line()) if row
+    ]
+    if gap_shadow_rows:
         lines.extend(
-            _render_section("gap 影子（前向证据 · 纯披露）", [run.gap_shadow_line])
+            _render_section("gap 影子（前向证据 · 纯披露）", gap_shadow_rows)
         )
         lines.append("")
 

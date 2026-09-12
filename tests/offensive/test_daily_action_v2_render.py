@@ -4627,3 +4627,181 @@ def test_v1_gap_shadow_line_indented_two_spaces(tmp_path, monkeypatch):
 
     line = next(row for row in out.splitlines() if "gap 影子: 累计" in row)
     assert line.startswith("  gap 影子: 累计 1 笔")
+
+
+# ---- R201 Op1: gap 影子读数行 (最新 pack 报告 → v2 视图; 纯披露, fail-open) ----
+
+
+def _write_pack(tmp_path, date_str, payload):
+    (tmp_path / f"gap_shadow_pack_{date_str}.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def _pack_payload(**overrides):
+    payload = {
+        "counts": {"pending": 10},
+        "judgable": False,
+        "keep": {"mean": -0.0680379507798657, "n": 21, "win_rate": 0.238},
+        "min_n_for_judgment": 30,
+        "penalty_keep_minus_skip": 0.043216997348195924,
+        "skip": {"mean": -0.11125494812806162, "n": 3, "win_rate": 0.0},
+        "verdict_hint": "n<30: 只披露不判定 (样本不支持任何政策结论)",
+        "window": {"end": "20260907", "start": "20260710"},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _patch_pack_dir(monkeypatch, tmp_path):
+    from src.screening.offensive import daily_action as _da
+
+    monkeypatch.setattr(_da, "_GAP_SHADOW_PACK_REPORTS_DIR", tmp_path)
+
+
+def test_gap_shadow_reading_line_renders_latest_pack(case, tmp_path, monkeypatch):
+    """两个 dated pack → 取最新日期段读数装配 (罚分/skip/keep/窗/判定原文)."""
+    _write_pack(tmp_path, "20260901", _pack_payload(penalty_keep_minus_skip=0.01))
+    _write_pack(tmp_path, "20260907", _pack_payload())
+    _patch_pack_dir(monkeypatch, tmp_path)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service, context, DailyActionScan(as_of, (), (), ())
+    )
+    text = render_daily_action_v2(v2_run)
+
+    assert "gap 影子读数: 罚分 +4.32%" in text
+    assert "skip n=3 E -11.13%" in text
+    assert "keep n=21 E -6.80%" in text
+    assert "窗 20260710→20260907" in text
+    assert "n<30: 只披露不判定" in text
+    assert "罚分 +1.00%" not in text  # 20260901 旧报告不得混入
+
+
+def test_gap_shadow_reading_line_ignores_non_dated_lookalike(
+    case, tmp_path, monkeypatch
+):
+    """非 dated 同形文件 (草稿/手工产物) 不当最新 — R151 同款先例."""
+    _write_pack(tmp_path, "20260907", _pack_payload())
+    (tmp_path / "gap_shadow_pack_draft.json").write_text("{}", encoding="utf-8")
+    _patch_pack_dir(monkeypatch, tmp_path)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service, context, DailyActionScan(as_of, (), (), ())
+    )
+    text = render_daily_action_v2(v2_run)
+
+    assert "罚分 +4.32%" in text  # dated 报告照常选中
+
+
+def test_gap_shadow_reading_line_absent_when_no_pack_facts_independent(
+    case, tmp_path, monkeypatch
+):
+    """无 pack → 读数行省略; R200 事实行独立在场 (两源互不牵连)."""
+    _patch_pack_dir(monkeypatch, tmp_path)  # 空 pack 目录
+    _shadow_sidecar(
+        tmp_path,
+        [
+            _shadow_entry("000001", True),
+            _shadow_entry("000002", False),
+            _shadow_entry("000003", None),
+        ],
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service,
+        context,
+        DailyActionScan(as_of, (), (), ()),
+        gap_shadow_journal_dir=tmp_path,
+    )
+    text = render_daily_action_v2(v2_run)
+
+    assert "gap 影子读数" not in text
+    assert "gap 影子: 累计 3 笔 · would-skip 1 · 未观测 1" in text
+
+
+def test_gap_shadow_reading_line_survives_corrupt_pack(case, tmp_path, monkeypatch):
+    """损坏 pack → 读数行省略不崩 (fail-open 家族纪律)."""
+    (tmp_path / "gap_shadow_pack_20260907.json").write_text("{broken", encoding="utf-8")
+    _patch_pack_dir(monkeypatch, tmp_path)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service, context, DailyActionScan(as_of, (), (), ())
+    )
+    text = render_daily_action_v2(v2_run)
+
+    assert "gap 影子读数" not in text
+
+
+def test_gap_shadow_reading_line_poisoned_numbers_omit_clauses(
+    case, tmp_path, monkeypatch
+):
+    """毒化形状 (penalty 字符串/mean None/n 缺失) → 对应子句省略不虚构, 不崩
+    (R119 数值守卫家族)."""
+    _write_pack(
+        tmp_path,
+        "20260907",
+        _pack_payload(
+            penalty_keep_minus_skip="x",
+            skip={"mean": None, "n": 3, "win_rate": None},
+            keep=None,
+        ),
+    )
+    _patch_pack_dir(monkeypatch, tmp_path)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service, context, DailyActionScan(as_of, (), (), ())
+    )
+    text = render_daily_action_v2(v2_run)
+
+    assert "罚分" not in text.split("gap 影子读数")[-1].splitlines()[0]
+    assert "skip n=3" in text  # n 在, E 省略
+    assert "E None" not in text
+    assert "keep" not in text.split("gap 影子读数")[-1].splitlines()[0]
+
+
+def test_gap_shadow_reading_line_penalty_sign_convention(case, tmp_path, monkeypatch):
+    """罚分符号钉 (正 = 跳过有利, R197 方向约定同族): 负罚分渲染负号 —
+    符号翻转变异当场红."""
+    _write_pack(
+        tmp_path, "20260907", _pack_payload(penalty_keep_minus_skip=-0.0432)
+    )
+    _patch_pack_dir(monkeypatch, tmp_path)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service, context, DailyActionScan(as_of, (), (), ())
+    )
+    text = render_daily_action_v2(v2_run)
+
+    assert "罚分 -4.32%" in text
+    assert "罚分 +4.32%" not in text
+
+
+def test_gap_shadow_section_shows_facts_and_reading_rows(case, tmp_path, monkeypatch):
+    """事实行与读数行共存于同一 section, 事实行在前 (R200 → R201 顺序)."""
+    _write_pack(tmp_path, "20260907", _pack_payload())
+    _patch_pack_dir(monkeypatch, tmp_path)
+    _shadow_sidecar(
+        tmp_path,
+        [_shadow_entry("000001", True), _shadow_entry("000002", False)],
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service,
+        context,
+        DailyActionScan(as_of, (), (), ()),
+        gap_shadow_journal_dir=tmp_path,
+    )
+    text = render_daily_action_v2(v2_run)
+
+    section = text.split("gap 影子（前向证据 · 纯披露）")[1]
+    rows = [row for row in section.splitlines() if row.startswith("  gap 影子")]
+    assert rows[0].startswith("  gap 影子: 累计 2 笔")
+    assert rows[1].startswith("  gap 影子读数: 罚分 +4.32%")
