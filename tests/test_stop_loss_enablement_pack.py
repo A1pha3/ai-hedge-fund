@@ -468,3 +468,63 @@ def test_cli_backtest_guard_failure_faces_ready_false(tmp_path, monkeypatch):
     )
     assert payload["faces_ready"] is False
     assert payload["missing_faces"] == ["face_b_sample"]
+
+
+# ---------------------------------------------------------------------------
+# R193 Op2 盲区钉住 (探针 P01/P07/P12/P17 定谳后的复跑 TEETH)
+# ---------------------------------------------------------------------------
+
+
+def test_face_a_reading_invalid_label_with_present_bucket_returns_none():
+    """探针 P01: 标签白名单是承重守卫 — by_regime 里真有该桶时, 不在
+    三态集的标签仍必须拒绝 (防 anatomy 工具标签集演化时静默放行)。"""
+    payload = _anatomy_payload()
+    payload["production"]["by_regime"]["risk_on"] = {
+        "n_included": 50,
+        "base": {"mean_net": -0.03},
+        "stop_grid": {"-5%": {"delta_vs_base": 0.05}},
+    }
+    assert stop_direction_reading(payload, "risk_on", "20260911") is None
+
+
+def test_best_stop_tier_non_dict_entry_returns_none():
+    """探针 P07: 形状过滤是承重守卫 — 档键过正则但档体非 dict 时整网格
+    拒绝 (None), 不崩溃不部分消费。"""
+    from src.screening.offensive.gap_disclosure import best_stop_tier
+
+    assert best_stop_tier({"-5%": "garbage"}) is None
+    assert best_stop_tier({"-5%": ["not", "a", "dict"]}) is None
+
+
+def test_face_b_reading_non_regex_fixed_label_skipped():
+    """探针 P12 守卫语义补钉: fixed_pct 行的档标签必须过档位正则才算
+    固定档 — 不合规标签的行静默剔除 (全体不合规 → 无读数), 不冒充档位。"""
+    payload = _backtest_payload()
+    payload["strategies"] = [
+        row for row in payload["strategies"] if row["stop_mode"] != "fixed_pct"
+    ] + [
+        {"label": "fixed -5 percent", "stop_mode": "fixed_pct", "stop_param": -0.05, "n": 1, "E": 0.0, "stop_trig": 1},
+    ]
+    assert sample_direction_reading(payload) is None
+    # 与合规档共存时只剔除不合规行
+    payload2 = _backtest_payload()
+    payload2["strategies"].append(
+        {"label": "fixed -5 percent", "stop_mode": "fixed_pct", "stop_param": -0.05, "n": 1, "E": 0.0, "stop_trig": 1}
+    )
+    reading = sample_direction_reading(payload2)
+    assert reading is not None
+    assert [row["tier"] for row in reading["tiers"]] == ["-5%", "-8%"]
+
+
+def test_render_md_anchor_poison_omits_note_not_crashes():
+    """探针 P17: anchor 形状守卫 — 非字符串/短字符串 anchor 只省略截至
+    子句, 绝不崩溃 (fail-open 渲染家族纪律)。"""
+    payload = _full_pack_payload()
+    payload["crisis_streak"] = {"streak": 2, "anchor": 123}
+    md = render_md(payload)
+    assert "Regime：连续 crisis 2 日" in md
+    assert "截至" not in md
+    payload["crisis_streak"] = {"streak": 2, "anchor": "abc"}
+    md = render_md(payload)
+    assert "Regime：连续 crisis 2 日" in md
+    assert "截至" not in md
