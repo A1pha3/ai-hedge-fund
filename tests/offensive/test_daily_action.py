@@ -2856,3 +2856,43 @@ def test_gap_shadow_line_none_for_stub_without_journal_dir():
     from src.screening.offensive.daily_action import _gap_shadow_operator_line
 
     assert _gap_shadow_operator_line(SimpleNamespace()) is None
+
+
+def test_render_shadow_line_counts_asymmetric_skip_set(tmp_path, monkeypatch):
+    # R198 Op2 P10 钉: skip/keep 非对称 (2 skip / 1 keep) — would-skip 计数
+    # 反转变异 (is True→is False) 在对称 fixture 上逃逸, 非对称当场红。
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260811", raising=False)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
+    tracker = PaperTracker(journal_dir=tmp_path)
+    _write_shadow_sidecar(tmp_path, [
+        _shadow_entry("000001", True), _shadow_entry("000004", True),
+        _shadow_entry("000002", False), _shadow_entry("000003", None),
+    ])
+    tracker.last_gap_shadow_summary = {"appended": 0}
+
+    out = da.render_daily_action([], "20260810", tracker)
+
+    assert "gap 影子: 累计 4 笔 · would-skip 2 · 未观测 1 · 本轮新增 0" in out
+
+
+def test_render_shadow_line_survives_missing_or_malformed_summary(tmp_path, monkeypatch):
+    # R198 Op2 P11 钉: sidecar 在场 + last_gap_shadow_summary=None / 非 dict
+    # (report-mode/legacy 渲染对真实 journal dir 的生产形态) — 形状守卫拆除
+    # (None.get 崩) 在此当场红; 行渲染无"本轮新增"且不崩。
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260811", raising=False)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
+    for summary in (None, 3, "appended=1"):
+        tracker = PaperTracker(journal_dir=tmp_path)
+        tracker.last_gap_shadow_summary = summary
+        _write_shadow_sidecar(tmp_path, [_shadow_entry("000001", True)])
+
+        out = da.render_daily_action([], "20260810", tracker)  # 不崩
+
+        assert "gap 影子: 累计 1 笔 · would-skip 1 · 未观测 0" in out
+        assert "本轮新增" not in out
