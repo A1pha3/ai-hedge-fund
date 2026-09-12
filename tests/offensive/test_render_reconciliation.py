@@ -638,10 +638,13 @@ def test_alignment_line_request_window_fallback_labeled(tmp_path):
 
 def test_alignment_line_poisoned_court_window_fallback_omits_clause(tmp_path):
     """R192 Op1 钉住: data_window 缺 + court_window 毒化 → 窗口子句整段省略
-    (不渲染垃圾, 镜像数据真相分支的畸形弃用语义)。"""
+    (不渲染垃圾, 镜像数据真相分支的畸形弃用语义)。R192 Op2 P16a 盲区钉:
+    空字符串值形态 — 回退守卫的非空真值性检查 (isinstance 之外的
+    ``and window.get(...)``) 拆除时空串会渲染 '..20260904' 垃圾子句。"""
     from src.screening.offensive import daily_action as da
 
-    for poison in (None, "not-a-dict", {"start": "20250701"}, {"end": "20260904"}):
+    for poison in (None, "not-a-dict", {"start": "20250701"}, {"end": "20260904"},
+                   {"start": "", "end": "20260904"}, {"start": "20250701", "end": ""}):
         payload = _alignment_summary_with_gap(court_window=poison)
         path = _write_alignment(tmp_path, payload)
         line = da._render_universe_alignment_line(path)

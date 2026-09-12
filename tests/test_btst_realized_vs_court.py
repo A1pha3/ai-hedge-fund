@@ -473,9 +473,12 @@ class TestR187DataWindow:
     def test_render_md_poisoned_court_window_omits_line(self):
         """R192 Op1 钉住: court_window 毒化 (null/非 dict/缺端) → 窗口行省略
         不崩溃 — 修复前回退分支无形状守卫, null/非 dict 直接 TypeError/KeyError
-        (summary_payload 只接受合法 tuple, 毒化形态直接注入 payload)。"""
+        (summary_payload 只接受合法 tuple, 毒化形态直接注入 payload)。
+        R192 Op2 P16b 盲区钉: 空字符串值形态 — 守卫的非空真值性检查拆除时
+        空串会渲染 '..20260911' 垃圾行。"""
         poisons = ("absent-key", None, "not-a-dict", 20260911,
-                   {"start": "20250701"}, {"end": "20260911"})
+                   {"start": "20250701"}, {"end": "20260911"},
+                   {"start": "", "end": "20260911"}, {"start": "20250701", "end": ""})
         for poison in poisons:
             payload = summary_payload(
                 self._recon(), court_window=None, data_window=None
