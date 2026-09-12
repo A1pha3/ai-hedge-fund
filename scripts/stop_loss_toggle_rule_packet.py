@@ -141,8 +141,10 @@ def _status(args: argparse.Namespace) -> int:
             print(f"status: 注册损坏 fail-closed — {reason}", file=sys.stderr)
         return 2 if reason else 0
     history = _load_regime_history()
-    streak, _anchor = _crisis_streak(history, as_of)
-    label = history.get(as_of.strftime("%Y%m%d"))
+    streak, anchor = _crisis_streak(history, as_of)
+    # regime_history 只含交易日: 非交易日 as-of 经 anchor (≤ as_of 最新有
+    # 标签日) 解析标签 — 与 enablement pack face A 同族同语义 (R204 Op1)。
+    label = history.get(anchor.strftime("%Y%m%d")) if anchor is not None else None
     delta, missing = _current_direction_delta(Path(args.reports_dir), label)
     non_crisis = _rule.consecutive_non_crisis(history, as_of)
     reading = _rule.arming_reading(

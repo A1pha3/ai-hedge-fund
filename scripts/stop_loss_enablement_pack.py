@@ -429,8 +429,12 @@ def main() -> int:
     as_of = args.as_of or _current_cn_datetime().strftime("%Y%m%d")
     as_of_date = datetime.strptime(as_of, "%Y%m%d").date()
     history = _load_regime_history()
-    label = history.get(as_of)
-    streak = _crisis_streak(history, as_of_date)
+    # regime_history 只含交易日: 非交易日 as-of 经 anchor (≤ as_of 最新
+    # 有标签日, _crisis_streak 单一实现) 解析标签, 与日报信号日锚定同语义;
+    # 全部有标签日都晚于 as_of → anchor None → face A 缺失 (fail-open 不变)。
+    crisis = _crisis_streak(history, as_of_date)
+    anchor = crisis[1]
+    label = history.get(anchor.strftime("%Y%m%d")) if anchor is not None else None
 
     face_a: dict[str, Any] | None = None
     if label:
@@ -451,7 +455,7 @@ def main() -> int:
 
     payload = assemble_pack(
         as_of=as_of,
-        crisis_streak=streak,
+        crisis_streak=crisis,
         drawdown=args.drawdown,
         face_a=face_a,
         face_b=face_b,

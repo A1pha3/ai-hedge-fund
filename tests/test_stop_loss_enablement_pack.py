@@ -548,3 +548,62 @@ def test_render_md_anchor_poison_omits_note_not_crashes():
     md = render_md(payload)
     assert "Regime：连续 crisis 2 日" in md
     assert "截至" not in md
+
+
+# ---------------------------------------------------------------------------
+# R204 Op1: 非交易日 as-of 的 face A 标签经 anchor 解析 — 同链与日报对齐
+# ---------------------------------------------------------------------------
+
+
+def test_cli_weekend_as_of_face_a_uses_anchor_label(tmp_path, monkeypatch):
+    """宿主 PoC 实锤: regime_history 只含交易日, as-of 周日时
+    history.get(墙钟今天)=None → face A 误报「缺：当期方向」, 而日报
+    (第一消费面) 锚定信号日渲染正常 — 同链两面互相矛盾, 恰在深 crisis
+    owner 有空做启用判定的周末。修复 = 标签经 _crisis_streak anchor
+    (≤ as_of 最新有标签日) 解析, 与日报信号日锚定同语义。"""
+    rc = _run_cli(tmp_path, monkeypatch, ["--as-of", "20260913"])
+    assert rc == 0
+    payload = json.loads(
+        (tmp_path / "out" / "stop_loss_enablement_pack_20260913.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert payload["faces_ready"] is True
+    assert payload["face_a_current"]["regime"] == "crisis"
+    # 报告日期自暴露: 面读数仍挂 exit_anatomy 20260911, 陈旧可见
+    assert payload["face_a_current"]["as_of"] == "20260911"
+    md = (tmp_path / "out" / "stop_loss_enablement_pack_20260913.md").read_text(
+        encoding="utf-8"
+    )
+    assert "结论：两面齐备 = 是" in md
+    assert "生产表/crisis/全候选" in md
+    assert "exit_anatomy 20260911" in md
+
+
+def test_cli_as_of_before_all_history_face_a_still_missing(tmp_path, monkeypatch):
+    """fail-open 守卫: as_of 早于全部有标签日 → anchor None → 标签 None →
+    face A 缺失 (修复不改 fail-open 家族语义)。"""
+    _run_cli(tmp_path, monkeypatch, [])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "stop_loss_enablement_pack.py",
+            "--as-of",
+            "20260101",
+            "--reports-dir",
+            str(tmp_path / "reports"),
+            "--backtest-json",
+            str(tmp_path / "bt.json"),
+            "--out-dir",
+            str(tmp_path / "out"),
+        ],
+    )
+    assert pack.main() == 0
+    payload = json.loads(
+        (tmp_path / "out" / "stop_loss_enablement_pack_20260101.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert payload["faces_ready"] is False
+    assert payload["missing_faces"] == ["face_a_current"]

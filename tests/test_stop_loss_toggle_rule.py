@@ -382,3 +382,83 @@ def test_packet_preview_none_mode_keeps_scope_clause(monkeypatch, capsys):
     assert packet._preview(args) == 0
     out = capsys.readouterr().out
     assert "执行模式 none（登记: 不启用 · 生产 v2 台账无止损执行面，退出仅 T+10 强制）" in out
+
+
+# ---------------------------------------------------------------------------
+# R204 Op1: 非交易日 as-of 的当期方向 Δ 经 anchor 标签解析 (pack face A 同族)
+# ---------------------------------------------------------------------------
+
+
+def _anatomy_for_status() -> dict:
+    return {
+        "production": {
+            "by_regime": {
+                "crisis": {
+                    "n_included": 132,
+                    "base": {"mean_net": -0.0551},
+                    "stop_grid": {
+                        "-5%": {
+                            "delta_vs_base": 0.0090,
+                            "mean_net": -0.0460,
+                            "n_stopped": 114,
+                            "n_gap_through": 49,
+                        },
+                    },
+                }
+            }
+        }
+    }
+
+
+def test_status_weekend_as_of_current_delta_uses_anchor_label(
+    tmp_path, monkeypatch, capsys
+):
+    """宿主 PoC 镜像面: 注册规则在场时, 周末 as-of 的 Δ 输入此前因
+    history.get(墙钟今天)=None 误报 regime_label_missing — 武装判定的 Δ
+    条件周末永不可满足, 与 pack face A 同族。修复 = 标签经 anchor 解析。"""
+    rule_path = tmp_path / "rule.json"
+    rule_path.write_text(json.dumps(_valid_rule()), encoding="utf-8")
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "exit_anatomy_20260911.json").write_text(
+        json.dumps(_anatomy_for_status()), encoding="utf-8"
+    )
+    monkeypatch.setattr(packet, "_load_regime_history", lambda: {
+        "20260909": "risk_off", "20260910": "crisis", "20260911": "crisis",
+    })
+    monkeypatch.setattr(packet, "_execution_stop_mode", lambda: "none")
+    argv = [
+        "status", "--as-of", "20260913", "--rule-path", str(rule_path),
+        "--reports-dir", str(reports),
+    ]
+    assert _run_cli(monkeypatch, argv) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["current_delta"] == pytest.approx(0.0090)
+    assert out["current_delta_missing_reason"] is None
+    assert out["crisis_streak"] == 2
+
+
+def test_status_as_of_before_all_history_delta_still_missing(
+    tmp_path, monkeypatch, capsys
+):
+    """fail-open 守卫: as_of 早于全部有标签日 → anchor None → Δ 缺失理由
+    regime_label_missing (修复不改 fail-open 家族语义)。"""
+    rule_path = tmp_path / "rule.json"
+    rule_path.write_text(json.dumps(_valid_rule()), encoding="utf-8")
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "exit_anatomy_20260911.json").write_text(
+        json.dumps(_anatomy_for_status()), encoding="utf-8"
+    )
+    monkeypatch.setattr(packet, "_load_regime_history", lambda: {
+        "20260909": "risk_off", "20260910": "crisis", "20260911": "crisis",
+    })
+    monkeypatch.setattr(packet, "_execution_stop_mode", lambda: "none")
+    argv = [
+        "status", "--as-of", "20260101", "--rule-path", str(rule_path),
+        "--reports-dir", str(reports),
+    ]
+    assert _run_cli(monkeypatch, argv) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["current_delta"] is None
+    assert out["current_delta_missing_reason"] == "regime_label_missing"
