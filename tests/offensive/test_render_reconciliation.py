@@ -326,6 +326,34 @@ def test_funnel_legacy_stub_without_new_attrs_renders(case):
     assert "就绪拦截分桶" not in text
 
 
+def test_funnel_readiness_zero_bucket_not_rendered(case):
+    """R191 Op2 P14 盲区钉: 零值就绪桶不渲染 — 非零桶在同行呈现."""
+    from src.screening.offensive.daily_action import ScanFunnel
+
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(
+        run,
+        (),
+        run.open_positions,
+        (),
+        (),
+        funnel=ScanFunnel(
+            scannable=100,
+            prefilter_passed=10,
+            hits=2,
+            universe=112,
+            readiness_excluded=8,
+            readiness_miss_stages={"st_stock": 0, "suspended": 8},
+        ),
+        regime="normal",
+    )
+    text = render_daily_action_v2(view)
+    assert "就绪拦截分桶：suspended 8" in text
+    assert "st_stock 0" not in text
+
+
 # ---------------------------------------------------------------------------
 # R122 Op1: 宇宙对齐行实现归因子句 (realization gap attribution)
 # ---------------------------------------------------------------------------

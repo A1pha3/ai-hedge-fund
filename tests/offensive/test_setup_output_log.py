@@ -528,6 +528,24 @@ def test_scan_funnel_legacy_stub_readiness_defaults(tmp_path):
     assert row["readiness_miss_stages"] == {}
 
 
+def test_scan_funnel_none_attr_duck_object_persists_zero(tmp_path):
+    """R191 Op2 P17 盲区钉: None 属性毒化 → `or 0` 守卫归零, 不 TypeError 不冒充."""
+    from src.screening.offensive.setup_output_log import (
+        load_scan_funnel,
+        log_scan_funnel,
+    )
+
+    funnel = _Funnel(universe=10, scannable=5, prefilter_passed=2, hits=2)
+    funnel.readiness_excluded = None
+    funnel.not_plan_eligible = None
+    funnel.readiness_miss_stages = None
+    log_scan_funnel(date(2026, 9, 11), funnel, out_dir=tmp_path)
+    row = load_scan_funnel(date(2026, 9, 11), out_dir=tmp_path)
+    assert row["readiness_excluded"] == 0
+    assert row["not_plan_eligible"] == 0
+    assert row["readiness_miss_stages"] == {}
+
+
 def test_scan_funnel_symlink_dir_rejected(tmp_path):
     """目录链守卫复用: symlink 目录 fail-closed (与主日志/容量工件同纪律)。"""
     import os

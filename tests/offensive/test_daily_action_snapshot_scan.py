@@ -376,6 +376,7 @@ def _multi_manifest(
 def _multi_snapshot(
     universe: tuple[str, ...],
     readiness: dict[str, tuple[tuple[str, SetupCapability], ...]],
+    ticker_blocks: dict[str, tuple[str, ...]] | None = None,
 ) -> VerifiedDailyActionSnapshot:
     manifest = _multi_manifest(universe, readiness)
     scannable = [
@@ -396,7 +397,7 @@ def _multi_snapshot(
         board_rule_version=BOARD_RULE_VERSION,
         normalization_version=NORMALIZATION_VERSION,
         setup_requirements_version=SETUP_REQUIREMENTS_VERSION,
-        ticker_blocks=MappingProxyType({}),
+        ticker_blocks=MappingProxyType(ticker_blocks or {}),
         consumed_fingerprint_by_ticker=MappingProxyType(
             {t: MappingProxyType({"btst_breakout": CONSUMED_FP}) for t in scannable}
         ),
@@ -538,3 +539,67 @@ def test_funnel_single_ticker_identity_closes(monkeypatch) -> None:
     assert funnel.readiness_excluded == 0
     assert funnel.not_plan_eligible == 0
     assert funnel.scannable == 1
+
+
+def test_funnel_blocked_ticker_not_double_counted(monkeypatch) -> None:
+    """R191 Op2 P02 盲区钉: 验证拒绝票不得再计入就绪拦截 — 每票恰一个去处."""
+    monkeypatch.setattr(BtstBreakoutSetup, "detect", lambda self, ticker, trade_date, context: hit_result())
+    universe = ("300001", "300002")
+    readiness = {
+        "300001": (
+            ("btst_breakout", _capability()),
+            ("oversold_bounce", _disabled_capability()),
+        ),
+        "300002": (
+            ("btst_breakout", _capability()),
+            ("oversold_bounce", _disabled_capability()),
+        ),
+    }
+
+    scan = scan_from_verified_snapshot(
+        _multi_snapshot(universe, readiness, ticker_blocks={"300002": ("fingerprint_mismatch",)})
+    )
+    funnel = scan.funnel
+    assert funnel.verify_blocked == 1
+    assert funnel.readiness_excluded == 0
+    assert funnel.readiness_miss_stages == {}
+    assert funnel.scannable == 1
+    assert (
+        funnel.universe
+        == funnel.verify_blocked
+        + funnel.excluded_permanent
+        + funnel.data_rejected
+        + funnel.readiness_excluded
+        + funnel.not_plan_eligible
+        + funnel.scannable
+    )
+
+
+def test_funnel_same_reason_accumulates_across_tickers(monkeypatch) -> None:
+    """R191 Op2 P08 盲区钉: 同原因多票累积计数 — 覆盖写 1 即回归."""
+    monkeypatch.setattr(BtstBreakoutSetup, "detect", lambda self, ticker, trade_date, context: hit_result())
+    universe = ("300001", "300002", "300003", "300007")
+    readiness = {
+        "300001": (
+            ("btst_breakout", _capability()),
+            ("oversold_bounce", _disabled_capability()),
+        ),
+        "300002": (
+            ("btst_breakout", _blocked_capability("st_stock")),
+            ("oversold_bounce", _disabled_capability()),
+        ),
+        "300003": (
+            ("btst_breakout", _blocked_capability("st_stock")),
+            ("oversold_bounce", _disabled_capability()),
+        ),
+        "300007": (
+            ("btst_breakout", _blocked_capability("suspended")),
+            ("oversold_bounce", _disabled_capability()),
+        ),
+    }
+
+    scan = scan_from_verified_snapshot(_multi_snapshot(universe, readiness))
+    funnel = scan.funnel
+    assert funnel.readiness_excluded == 3
+    assert funnel.readiness_miss_stages == {"st_stock": 2, "suspended": 1}
+    assert sum(funnel.readiness_miss_stages.values()) == funnel.readiness_excluded
