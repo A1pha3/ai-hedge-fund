@@ -205,8 +205,50 @@ def build_shadow_records(
     return records, summary
 
 
+def _validate_entry_semantics(rec: dict[str, Any], line_no: int) -> None:
+    """毒记录语义一致性校验 (R196 Op2 收口): 损坏绝不静默当作合法影子事实.
+
+    三层防御的第三层 (JSON 语法 → 必需键 → 本层): gap_status 必须是四具名
+    常量之一; observed 态的 would_skip 由 (gap > threshold) 载入重推导核对
+    (单一实现 —— 篡改任一字段即拒, 影子集成员籍不可被改写); 不可观测态
+    gap_pct/would_skip 恰全 None (绝不冒充可交易性判定)。
+    """
+    def bad(why):
+        return GapShadowJournalError(f"gap_shadow_journal_corrupt: line {line_no}: {why}")
+
+    if rec["gap_status"] not in (
+        GAP_STATUS_OBSERVED,
+        GAP_STATUS_T1_BAR_MISSING,
+        GAP_STATUS_PREV_CLOSE_MISSING,
+        GAP_STATUS_NON_POSITIVE_PRICE,
+    ):
+        raise bad(f"unknown gap_status {rec['gap_status']!r}")
+    for key in ("signal_date", "ticker"):
+        if not isinstance(rec[key], str) or not rec[key]:
+            raise bad(f"empty {key}")
+    threshold = rec.get("threshold")
+    if not _finite_positive(threshold):
+        raise bad(f"threshold {threshold!r} not finite-positive real")
+    if rec["gap_status"] == GAP_STATUS_OBSERVED:
+        gap = rec.get("gap_pct")
+        if not isinstance(gap, Real) or isinstance(gap, bool) or not math.isfinite(float(gap)):
+            raise bad(f"observed gap_pct {gap!r} not finite real")
+        skip = rec.get("would_skip")
+        if not isinstance(skip, bool):
+            raise bad(f"observed would_skip {skip!r} not bool")
+        if skip != (float(gap) > float(threshold)):
+            raise bad("would_skip inconsistent with gap_pct>threshold")
+    else:
+        if rec.get("gap_pct") is not None or rec.get("would_skip") is not None:
+            raise bad("unobservable status must carry gap_pct=None and would_skip=None")
+
+
 def load_shadow_entries(path: Path | str) -> list[dict[str, Any]]:
-    """读影子 journal 全部记录; 文件缺失 → []; 结构损坏 → 类型化异常 (不静默)."""
+    """读影子 journal 全部记录; 文件缺失 → []; 损坏 → 类型化异常 (不静默).
+
+    损坏 = JSON 语法 / 结构 (必需键) / 语义一致性 任一层不过 —— 与 R195
+    tri-state 家族同纪律: 篡改后的记录绝不冒充合法影子事实。
+    """
     p = Path(path)
     if not p.exists():
         return []
@@ -220,6 +262,7 @@ def load_shadow_entries(path: Path | str) -> list[dict[str, Any]]:
             raise GapShadowJournalError(f"gap_shadow_journal_corrupt: line {line_no}: {exc}") from exc
         if not isinstance(rec, dict) or any(k not in rec for k in _REQUIRED_RECORD_KEYS):
             raise GapShadowJournalError(f"gap_shadow_journal_corrupt: line {line_no}: schema")
+        _validate_entry_semantics(rec, line_no)
         entries.append(rec)
     return entries
 

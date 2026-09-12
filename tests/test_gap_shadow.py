@@ -359,3 +359,88 @@ class TestAdvisoryWiring:
         monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: (_ for _ in ()).throw(RuntimeError("no cal")))
         self._call(tracker, sessions=None)
         assert len(calls) == 1  # 日历失败仍记录 (空日历 → 全部按重试语义)
+
+
+# ---- 载入语义一致性校验 (R196 Op2 收口: 毒记录绝不冒充合法影子事实) ----
+
+
+def _observed_line(**over):
+    line = {"signal_date": "20260810", "ticker": "000001", "setup": "s", "horizon": 10,
+            "gap_status": GAP_STATUS_OBSERVED, "gap_pct": 0.08, "would_skip": True,
+            "threshold": 0.05}
+    line.update(over)
+    return json.dumps(line, ensure_ascii=False)
+
+
+def _load_line(tmp_path, line):
+    p = tmp_path / "sidecar.jsonl"
+    p.write_text(line + "\n", encoding="utf-8")
+    return load_shadow_entries(p)
+
+
+class TestSemanticValidation:
+    def test_valid_observed_negative_gap_loads(self, tmp_path):
+        entries = _load_line(tmp_path, _observed_line(gap_pct=-0.02, would_skip=False))
+        assert entries[0]["gap_pct"] == pytest.approx(-0.02)
+        assert entries[0]["would_skip"] is False
+
+    def test_valid_observed_exact_threshold_loads(self, tmp_path):
+        entries = _load_line(tmp_path, _observed_line(gap_pct=0.05, would_skip=False))
+        assert entries[0]["would_skip"] is False  # 恰等不 skip (严格 >)
+
+    def test_valid_unobservable_all_none_loads(self, tmp_path):
+        for status in (GAP_STATUS_T1_BAR_MISSING, GAP_STATUS_PREV_CLOSE_MISSING,
+                       GAP_STATUS_NON_POSITIVE_PRICE):
+            line = json.dumps({"signal_date": "20260810", "ticker": "000001", "setup": "s",
+                               "horizon": 10, "gap_status": status, "gap_pct": None,
+                               "would_skip": None, "threshold": 0.05})
+            entries = _load_line(tmp_path, line)
+            assert entries[0]["gap_status"] == status
+
+    def test_B01_observed_missing_would_skip_rejected(self, tmp_path):
+        line = json.dumps({"signal_date": "20260810", "ticker": "000001", "setup": "s",
+                           "horizon": 10, "gap_status": GAP_STATUS_OBSERVED,
+                           "gap_pct": 0.08, "threshold": 0.05})
+        with pytest.raises(GapShadowJournalError):
+            _load_line(tmp_path, line)
+
+    def test_B02_bool_poison_gap_rejected(self, tmp_path):
+        with pytest.raises(GapShadowJournalError):
+            _load_line(tmp_path, _observed_line(gap_pct=True))
+
+    def test_B03_inconsistent_membership_rejected(self, tmp_path):
+        with pytest.raises(GapShadowJournalError):
+            _load_line(tmp_path, _observed_line(gap_pct=0.08, would_skip=False))
+
+    def test_B04_unknown_status_rejected(self, tmp_path):
+        with pytest.raises(GapShadowJournalError):
+            _load_line(tmp_path, _observed_line(gap_pct=None, would_skip=None,
+                                                gap_status="observed "))
+        with pytest.raises(GapShadowJournalError):
+            _load_line(tmp_path, _observed_line(gap_pct=None, would_skip=None,
+                                                gap_status="OBSERVED"))
+
+    def test_unobservable_with_gap_poison_rejected(self, tmp_path):
+        with pytest.raises(GapShadowJournalError):
+            _load_line(tmp_path, _observed_line(gap_status=GAP_STATUS_T1_BAR_MISSING,
+                                                gap_pct=0.01))
+
+    def test_unobservable_with_skip_poison_rejected(self, tmp_path):
+        with pytest.raises(GapShadowJournalError):
+            _load_line(tmp_path, _observed_line(gap_status=GAP_STATUS_PREV_CLOSE_MISSING,
+                                                gap_pct=None, would_skip=False))
+
+    def test_threshold_bool_or_nonpositive_rejected(self, tmp_path):
+        for bad in (True, 0, -0.05, "0.05", None):
+            with pytest.raises(GapShadowJournalError):
+                _load_line(tmp_path, _observed_line(threshold=bad))
+
+    def test_would_skip_non_bool_rejected(self, tmp_path):
+        with pytest.raises(GapShadowJournalError):
+            _load_line(tmp_path, _observed_line(would_skip=1))
+
+    def test_empty_key_rejected(self, tmp_path):
+        with pytest.raises(GapShadowJournalError):
+            _load_line(tmp_path, _observed_line(ticker=""))
+        with pytest.raises(GapShadowJournalError):
+            _load_line(tmp_path, _observed_line(signal_date=""))
