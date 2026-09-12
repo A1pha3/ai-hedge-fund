@@ -2207,10 +2207,17 @@ def _render_stop_loss_readiness_line(
         if not clauses:
             return None
         from src.screening.offensive.paper_tracker import _execution_stop_mode
+        from src.screening.offensive.stop_loss_toggle_rule import stop_mode_note
 
         mode = _execution_stop_mode()
+        # R203 Op1: mode 子句经 stop_mode_note 单一实现 — 作用域真相 (该变量
+        # 仅作用 legacy journal 研究口径, 生产 v2 台账无止损执行面) 取代旧的
+        # 无限定「已启用」虚假宣称; 毒化 mode → 裸值显示 (省略注记)。
+        note = stop_mode_note(mode)
         mode_note = (
-            f"止损执行模式 {mode}（{'已启用' if mode != 'none' else '登记: 不启用'}）"
+            f"止损执行模式 {mode}（{note}）"
+            if note is not None
+            else f"止损执行模式 {mode}"
         )
         return (
             f"止损启用条件（清单项 5）：{' · '.join(clauses)} · {mode_note} · "

@@ -2891,18 +2891,22 @@ def test_stop_readiness_both_inputs_missing_line_omitted():
 
 
 def test_stop_readiness_stop_mode_disclosed(case, monkeypatch):
-    """登记状态如实双面: 默认 none (不启用) / 显式启用时反照 env。"""
+    """登记状态如实双面 + 作用域真相 (R203 Op1 契约更新): 旧钉「已启用」是
+    对生产风险控制的虚假宣称 — 该变量仅作用 legacy journal 研究口径, 生产
+    v2 台账无止损执行面 (退出仅 T+10 强制)。两种状态都必须披露作用域。"""
     view, _as_of = _stop_view(case)
     line = _render_stop_loss_readiness_line(
         view, regimes_by_date={"20260820": "crisis"},
     )
-    assert "止损执行模式 none（登记: 不启用）" in line
+    assert "止损执行模式 none（登记: 不启用 · 生产 v2 台账无止损执行面，退出仅 T+10 强制）" in line
 
     monkeypatch.setenv("DAILY_ACTION_EXECUTION_STOP", "atr_k2")
     line = _render_stop_loss_readiness_line(
         view, regimes_by_date={"20260820": "crisis"},
     )
-    assert "止损执行模式 atr_k2（已启用）" in line
+    assert "止损执行模式 atr_k2（已设，仅作用 legacy journal 研究口径" in line
+    assert "生产 v2 台账无止损执行面，退出仍仅 T+10 强制）" in line
+    assert "已启用" not in line
 
 
 def test_stop_readiness_line_renders_after_regime_line(case, monkeypatch):

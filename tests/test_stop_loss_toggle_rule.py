@@ -301,3 +301,49 @@ def test_would_have_armed_dates_k2():
     # 毒化键跳过不参与窗口
     history["bad_key"] = "crisis"
     assert packet._would_have_armed_dates(history, as_of, 2) == ["20260903", "20260904"]
+
+
+# ---------------------------------------------------------------------------
+# R203 Op1: stop_mode_note 单一实现 — 止损执行模式子句的作用域真相
+# ---------------------------------------------------------------------------
+
+
+def test_stop_mode_note_none_discloses_production_has_no_stop_face():
+    """mode=none: 「登记: 不启用」+ 生产 v2 无止损执行面披露 (预设前告知)。"""
+    note = rule_mod.stop_mode_note("none")
+    assert note is not None
+    assert "登记: 不启用" in note
+    assert "生产 v2 台账无止损执行面" in note
+    assert "退出仅 T+10 强制" in note
+
+
+def test_stop_mode_note_enabled_scopes_to_research_journal_only():
+    """mode!=none: 「已设」必须限定 legacy journal 研究口径, 禁无限定「已启用」。"""
+    note = rule_mod.stop_mode_note("atr_k2")
+    assert note is not None
+    assert "已设" in note
+    assert "仅作用 legacy journal 研究口径" in note
+    assert "生产 v2 台账无止损执行面" in note
+    assert "退出仍仅 T+10 强制" in note
+    # 无限定宣称禁现 — 旧渲染「已启用」是对生产风险控制的虚假宣称 (R203 缺陷本体)
+    assert "已启用" not in note
+
+
+def test_stop_mode_note_poisoned_inputs_return_none():
+    """毒化输入 → None (fail-open 家族), 调用方省略子句。"""
+    assert rule_mod.stop_mode_note(None) is None
+    assert rule_mod.stop_mode_note("") is None
+    assert rule_mod.stop_mode_note("   ") is None
+    assert rule_mod.stop_mode_note(7) is None
+    assert rule_mod.stop_mode_note(["atr_k2"]) is None
+
+
+def test_stop_mode_note_exact_values_pinned():
+    """精确值钉死 (渲染契约, 防措辞漂移松动作用域真相)。"""
+    assert rule_mod.stop_mode_note("none") == (
+        "登记: 不启用 · 生产 v2 台账无止损执行面，退出仅 T+10 强制"
+    )
+    assert rule_mod.stop_mode_note("fixed8") == (
+        "已设，仅作用 legacy journal 研究口径 · "
+        "生产 v2 台账无止损执行面，退出仍仅 T+10 强制"
+    )

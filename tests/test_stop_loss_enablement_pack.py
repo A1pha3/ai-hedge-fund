@@ -295,12 +295,32 @@ def test_render_md_full_payload_key_lines():
     assert "结论：两面齐备 = 是" in md
     assert "Regime：连续 crisis 3 日（截至 0911）" in md
     assert "回撤：-5.0%（距 -15% 降仓参考线，余量 +10.0pp）" in md
-    assert "止损执行模式：none（登记: 不启用）" in md
+    assert "止损执行模式：none（登记: 不启用 · 生产 v2 台账无止损执行面，退出仅 T+10 强制）" in md
     assert "exit_anatomy 20260911 · 生产表/crisis/全候选 · n=132" in md
     assert "最佳止损档 -5%（Δ+0.90pp" in md
     assert "no_stop E=+2.00%" in md
     assert "最佳固定档：-5%（Δ-3.00pp）" in md
     assert "启用判定属 owner" in md
+
+
+def test_render_md_enabled_mode_discloses_scope_not_enabled_claim():
+    """R203 Op1: mode!=none 渲染作用域真相 (仅 legacy journal 研究口径),
+    不再出现无限定「已启用」— 该变量对生产 v2 台账零止损消费 (Observe PoC)。"""
+    payload = _full_pack_payload()
+    payload["stop_mode"] = "atr_k2"
+    md = render_md(payload)
+    assert "止损执行模式：atr_k2（已设，仅作用 legacy journal 研究口径 · " in md
+    assert "生产 v2 台账无止损执行面，退出仍仅 T+10 强制）" in md
+    assert "已启用" not in md
+
+
+def test_render_md_poisoned_stop_mode_line_omitted():
+    """stop_mode 毒化 (非 str 形态已有 isinstance 守卫; 空白 str → note None)
+    → 模式行整行省略, 不出残行 (fail-open 家族)。"""
+    payload = _full_pack_payload()
+    payload["stop_mode"] = "   "
+    md = render_md(payload)
+    assert "止损执行模式" not in md
 
 
 def test_render_md_missing_face_named():

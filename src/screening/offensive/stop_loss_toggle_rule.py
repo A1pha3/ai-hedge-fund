@@ -177,3 +177,27 @@ def arming_reading(
         "n_normal_sessions_to_disable": n,
         "require_delta_positive": require_delta,
     }
+
+
+def stop_mode_note(mode: object) -> str | None:
+    """清单项 5 止损执行模式子句的单一实现 (R203 Op1)。
+
+    Observe PoC 定谳的作用域真相: ``DAILY_ACTION_EXECUTION_STOP`` 的唯一经济
+    消费面是 legacy journal ``close_matured`` (journal 停写 20260813、零持仓);
+    生产资本真相在 v2 台账且退出仅 T+10 强制 + 停牌 stale 了结, v2 生命周期
+    零止损消费 — mode != none 时旧渲染「已启用」是对生产风险控制的虚假宣称
+    (owner 按项 5 预注册程序设变量后视图翻「已启用」而生产惰性, 恰在深
+    crisis 损失最大化的场景)。本函数把作用域真相收敛为单一实现, 三消费面
+    (v2 渲染行 / enablement pack / toggle rule packet preview) 共用;
+    毒化输入 (非 str/空/空白) 返回 None, 调用方省略子句 (fail-open 家族)。
+
+    纯披露 (宪法 #2): 不进入任何计划/评分/仓位/退出决策路径。
+    """
+    if not isinstance(mode, str) or not mode.strip():
+        return None
+    if mode == "none":
+        return "登记: 不启用 · 生产 v2 台账无止损执行面，退出仅 T+10 强制"
+    return (
+        "已设，仅作用 legacy journal 研究口径 · "
+        "生产 v2 台账无止损执行面，退出仍仅 T+10 强制"
+    )

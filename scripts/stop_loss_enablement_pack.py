@@ -64,6 +64,7 @@ from src.screening.offensive.daily_action import (  # noqa: E402
     _load_regime_history,
 )
 from src.screening.offensive.paper_tracker import _execution_stop_mode  # noqa: E402
+from src.screening.offensive.stop_loss_toggle_rule import stop_mode_note  # noqa: E402
 
 PACK_SCHEMA = "stop_loss_enablement_pack_v1"
 BACKTEST_SCHEMA = "backtest_exit_strategies_json_v1"
@@ -293,8 +294,11 @@ def render_md(payload: object) -> str:
         ]
     mode = payload.get("stop_mode")
     if isinstance(mode, str) and mode:
-        note = "已启用" if mode != "none" else "登记: 不启用"
-        lines += [f"止损执行模式：{mode}（{note}）", ""]
+        # R203 Op1: 经 stop_mode_note 单一实现 — 作用域真相取代旧「已启用」
+        # 虚假宣称; 毒化 mode → 整行省略 (fail-open 家族)。
+        note = stop_mode_note(mode)
+        if note is not None:
+            lines += [f"止损执行模式：{mode}（{note}）", ""]
 
     face_a = payload.get("face_a_current")
     lines += ["## 当期方向（face A）", ""]

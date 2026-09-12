@@ -110,9 +110,12 @@ def _preview(args: argparse.Namespace) -> int:
     print("止损开关规则 packet (preview, 零写入; 假想注册未生效)")
     print(f"  假想规则: k_crisis_sessions={k} · n_normal_to_disable={n} · "
           f"require_delta_positive={args.require_delta}")
+    _mode = _execution_stop_mode()
+    _mode_note = _rule.stop_mode_note(_mode)
+    _mode_text = f"{_mode}（{_mode_note}）" if _mode_note else _mode
     print(f"  当前 (as-of {as_of.strftime('%Y%m%d')}): 连续 crisis {streak} 日 · "
           f"连续非 crisis {_rule.consecutive_non_crisis(history, as_of)} 日 · "
-          f"执行模式 {_execution_stop_mode()}")
+          f"执行模式 {_mode_text}")
     hypothetical = _rule.arming_reading(
         {"k_crisis_sessions": k, "n_normal_sessions_to_disable": n,
          "require_delta_positive": args.require_delta},
