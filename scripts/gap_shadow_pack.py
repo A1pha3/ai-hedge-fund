@@ -46,7 +46,10 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from src.screening.offensive.gap_shadow import (  # noqa: E402
     GAP_SHADOW_FILENAME,
+    GAP_SHADOW_SOURCE_V2,
     load_shadow_entries,
+    read_ledger_realized,
+    read_ledger_trades,
     shadow_keys,
 )
 
@@ -105,8 +108,17 @@ def _bucket(pnls: list[float]) -> dict[str, Any]:
 def assemble_shadow_reading(
     entries: list[dict[str, Any]],
     journal_actions: list[dict[str, Any]],
+    *,
+    ledger_trades: list[dict[str, Any]] | None = None,
+    ledger_realized: dict[tuple[str, str], float] | None = None,
 ) -> dict[str, Any]:
-    """装配影子窗配对读数 (纯装配, 不写盘; 恒等式见各具名计数)."""
+    """装配影子窗配对读数 (纯装配, 不写盘; 恒等式见各具名计数).
+
+    双源配对 (R199 Op1): 记录体 source 缺省 = legacy_journal (EXIT reasoning
+    解析); source='v2_ledger' 配台账净现金 realized (费用/滑点内含)。orphan/
+    pending 按各自源真相解析, 绝不互串。ledger 真相未供给时 v2 记录按 orphan
+    披露 (诚实降级, 不冒充配对)。
+    """
     buys: dict[tuple[str, str], dict[str, Any]] = {}
     for rec in journal_actions:
         if str(rec.get("action", "")) != "BUY":
@@ -123,6 +135,13 @@ def assemble_shadow_reading(
         if key not in exits:
             exits[key] = rec
 
+    ledger_trades = ledger_trades if ledger_trades is not None else []
+    ledger_realized = ledger_realized if ledger_realized is not None else {}
+    v2_buys = {
+        (str(t.get("signal_date", "")), str(t.get("ticker", "")))
+        for t in ledger_trades
+    }
+
     skip_pnls: list[float] = []
     keep_pnls: list[float] = []
     counts = {
@@ -132,6 +151,7 @@ def assemble_shadow_reading(
         "unparseable_exits": 0,    # EXIT realized 不可解析 (排除, 不伪造)
         "unobservable": 0,         # would_skip=None (按 status 分组另计)
         "invalid_entries": 0,      # would_skip 非 bool 恰一 (类型毒化, R194 P06 族)
+        "unshadowed_ledger_trades": 0,  # v2 台账计划无影子记录 (未观测/重试中)
     }
     unobservable_by_status: dict[str, int] = {}
     thresholds: dict[str, int] = {}
@@ -152,22 +172,36 @@ def assemble_shadow_reading(
             unobservable_by_status[status] = unobservable_by_status.get(status, 0) + 1
             continue
         key = (str(e.get("signal_date", "")), str(e.get("ticker", "")))
-        if key not in buys:
-            counts["orphan_entries"] += 1
-            continue
-        exit_rec = exits.get(key)
-        if exit_rec is None:
-            counts["pending"] += 1
-            continue
-        realized = parse_exit_realized(exit_rec.get("reasoning"))
-        if realized is None:
-            counts["unparseable_exits"] += 1
-            continue
+        if str(e.get("source") or "") == GAP_SHADOW_SOURCE_V2:
+            # v2 源: 计划真相 = 台账 trades, realized = 净现金 (费用/滑点内含)
+            if key not in v2_buys:
+                counts["orphan_entries"] += 1
+                continue
+            realized = ledger_realized.get(key)
+            if realized is None:
+                counts["pending"] += 1
+                continue
+        else:
+            # legacy 源: BUY/EXIT 真相 = paper journal EXIT reasoning 严格解析
+            if key not in buys:
+                counts["orphan_entries"] += 1
+                continue
+            exit_rec = exits.get(key)
+            if exit_rec is None:
+                counts["pending"] += 1
+                continue
+            realized = parse_exit_realized(exit_rec.get("reasoning"))
+            if realized is None:
+                counts["unparseable_exits"] += 1
+                continue
         (skip_pnls if would_skip else keep_pnls).append(realized)
 
     for key in buys:
         if key not in entry_keys:
             counts["unshadowed_buys"] += 1
+    for key in v2_buys:
+        if key not in entry_keys:
+            counts["unshadowed_ledger_trades"] += 1
 
     skip_bucket = _bucket(skip_pnls)
     keep_bucket = _bucket(keep_pnls)
@@ -179,9 +213,15 @@ def assemble_shadow_reading(
     judgable = skip_bucket["n"] >= MIN_N_FOR_JUDGMENT and keep_bucket["n"] >= MIN_N_FOR_JUDGMENT
     dates = sorted({str(e.get("signal_date", "")) for e in entries if e.get("signal_date")})
 
+    source_counts: dict[str, int] = {}
+    for e in entries:
+        src = str(e.get("source") or "legacy_journal")
+        source_counts[src] = source_counts.get(src, 0) + 1
+
     return {
         "window": {"start": dates[0] if dates else None, "end": dates[-1] if dates else None},
         "counts": counts,
+        "sources": source_counts,
         "unobservable_by_status": unobservable_by_status,
         "thresholds": thresholds,
         "skip": skip_bucket,
@@ -242,6 +282,7 @@ def render_md(reading: Any) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--journal-dir", default="data/paper_trading")
+    parser.add_argument("--ledger", default="data/paper_trading_v2/ledger.sqlite3")
     parser.add_argument("--out-dir", default="data/reports")
     parser.add_argument("--print", action="store_true", help="渲染 MD 到 stdout")
     args = parser.parse_args()
@@ -251,7 +292,18 @@ def main() -> int:
         journal_dir = _PROJECT_ROOT / journal_dir
     entries = load_shadow_entries(journal_dir / GAP_SHADOW_FILENAME)
     journal_actions = load_journal_actions(journal_dir / "journal.jsonl")
-    payload = assemble_shadow_reading(entries, journal_actions)
+    ledger_path = Path(args.ledger)
+    if not ledger_path.is_absolute():
+        ledger_path = _PROJECT_ROOT / ledger_path
+    try:
+        payload = assemble_shadow_reading(
+            entries,
+            journal_actions,
+            ledger_trades=read_ledger_trades(ledger_path),
+            ledger_realized=read_ledger_realized(ledger_path),
+        )
+    except Exception:  # noqa: BLE001 - fail-open 家族: 台账损坏降级为单源读数
+        payload = assemble_shadow_reading(entries, journal_actions)
 
     out_dir = Path(args.out_dir)
     if not out_dir.is_absolute():

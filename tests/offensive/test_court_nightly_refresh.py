@@ -34,6 +34,7 @@ from screening.offensive.court_nightly_refresh import (  # noqa: E402
     DIAGNOSTIC_TIMEOUT_S,
     RECONCILE_SCRIPT_REL,
     SHADOW_PACK_SCRIPT_REL,
+    SHADOW_RECORD_SCRIPT_REL,
     run_court_nightly_refresh,
 )
 
@@ -74,6 +75,7 @@ class TestCourtNightlyRefreshOrchestration:
             ["scripts/btst_court_build.py", "--start", "20250102"],
             [RECONCILE_SCRIPT_REL, "--summary-json", ALIGNMENT_SUMMARY_REL],
             *([[script] for script in DIAGNOSTIC_SCRIPTS]),
+            [SHADOW_RECORD_SCRIPT_REL],
             [SHADOW_PACK_SCRIPT_REL],
         ]
         assert all(c[1] == tmp_path for c in runner.calls)
@@ -88,6 +90,7 @@ class TestCourtNightlyRefreshOrchestration:
         status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
         assert [c[0] for c in runner.calls] == [
             ["scripts/btst_court_fetch.py"],
+            [SHADOW_RECORD_SCRIPT_REL],
             [SHADOW_PACK_SCRIPT_REL],
         ]
         assert "skipped" in status["build"]
@@ -102,6 +105,7 @@ class TestCourtNightlyRefreshOrchestration:
             status = run_court_nightly_refresh(repo_root=root, _runner=runner)
             assert [c[0] for c in runner.calls] == [
                 ["scripts/btst_court_fetch.py"],
+                [SHADOW_RECORD_SCRIPT_REL],
                 [SHADOW_PACK_SCRIPT_REL],
             ]
             assert "skipped" in status["build"]
@@ -116,6 +120,7 @@ class TestCourtNightlyRefreshOrchestration:
         # R198 契约更新: 影子包无条件尾步 (生产平面刷新不随研究面失败停摆)
         assert [c[0] for c in runner.calls] == [
             ["scripts/btst_court_fetch.py"],
+            [SHADOW_RECORD_SCRIPT_REL],
             [SHADOW_PACK_SCRIPT_REL],
         ]
         assert "skipped" in status["build"]
@@ -128,6 +133,7 @@ class TestCourtNightlyRefreshOrchestration:
         assert "timeout" in str(status["fetch"]["error"]).lower()
         assert [c[0] for c in runner.calls] == [
             ["scripts/btst_court_fetch.py"],
+            [SHADOW_RECORD_SCRIPT_REL],
             [SHADOW_PACK_SCRIPT_REL],
         ]
         assert "skipped" in status["build"]
@@ -261,8 +267,8 @@ class TestNightlyDiagnosticsRefresh:
         _write_manifest(tmp_path, {"window": {"start": "20250102"}})
         runner = _RecordingRunner()
         status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
-        # R198: 影子包是无条件尾步, 切片先剥掉它再取诊断段
-        diag_calls = runner.calls[-len(DIAGNOSTIC_SCRIPTS) - 1:-1]
+        # R198/R199: record+pack 是无条件双尾步, 切片先剥掉它们再取诊断段
+        diag_calls = runner.calls[-len(DIAGNOSTIC_SCRIPTS) - 2:-2]
         assert [c[0] for c in diag_calls] == [[s] for s in DIAGNOSTIC_SCRIPTS]
         assert all(c[1] == tmp_path for c in diag_calls)
         assert all(c[2] == DIAGNOSTIC_TIMEOUT_S for c in diag_calls)
@@ -276,7 +282,7 @@ class TestNightlyDiagnosticsRefresh:
         runner = _RecordingRunner()
         status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
         assert "diagnostics" not in status
-        assert len(runner.calls) == 2  # fetch + 影子包无条件尾步 (R198)
+        assert len(runner.calls) == 3  # fetch + record/pack 无条件尾步 (R198/R199)
 
     def test_diagnostics_fail_open_one_failure_does_not_block_rest(self, tmp_path):
         _write_manifest(tmp_path, {"window": {"start": "20250102"}})
@@ -295,7 +301,7 @@ class TestNightlyDiagnosticsRefresh:
         # 诊断面失败绝不改变 ok 语义 (build 成功即 True), reconcile 照跑
         assert status["ok"] is True
         assert status["reconcile"]["rc"] == 0
-        assert len(runner.calls) == 4 + len(DIAGNOSTIC_SCRIPTS)  # +影子包尾步 (R198)
+        assert len(runner.calls) == 5 + len(DIAGNOSTIC_SCRIPTS)  # +record/pack 双尾步 (R198/R199)
 
     def test_diagnostics_runner_exception_fail_open_never_raises(self, tmp_path):
         _write_manifest(tmp_path, {"window": {"start": "20250102"}})
@@ -410,6 +416,7 @@ class TestCourtNightlyReconcileStep:
         assert "reconcile" not in status
         assert [c[0] for c in runner.calls] == [
             ["scripts/btst_court_fetch.py"],
+            [SHADOW_RECORD_SCRIPT_REL],
             [SHADOW_PACK_SCRIPT_REL],
         ]
 
@@ -421,6 +428,7 @@ class TestCourtNightlyReconcileStep:
         assert "reconcile" not in status
         assert [c[0] for c in runner.calls] == [
             ["scripts/btst_court_fetch.py"],
+            [SHADOW_RECORD_SCRIPT_REL],
             [SHADOW_PACK_SCRIPT_REL],
         ]
 
@@ -479,3 +487,36 @@ class TestShadowPackRefreshStep:
         # 表 — 若被误并进 DIAGNOSTIC_SCRIPTS (gate 在 build 后), fetch/build
         # 失败夜生产平面刷新会随研究面停摆, 依赖分域在此防漂移。
         assert SHADOW_PACK_SCRIPT_REL not in DIAGNOSTIC_SCRIPTS
+
+
+class TestShadowRecordStep:
+    """R199 Op1: 影子记录步 — 从生产 v2 台账回填影子事实, 必须无条件且
+    前置于 pack (先记录后读数); 同 fail-open 形态, 不改 ok 语义。
+    """
+
+    def test_record_runs_before_pack_unconditionally(self, tmp_path):
+        _write_manifest(tmp_path, {"window": {"start": "20250102"}})
+        runner = _RecordingRunner()
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        tails = [c[0] for c in runner.calls][-2:]
+        assert tails == [[SHADOW_RECORD_SCRIPT_REL], [SHADOW_PACK_SCRIPT_REL]]
+        assert status["shadow_record"] == {"rc": 0, "error": None}
+
+    def test_record_runs_on_fetch_failure(self, tmp_path):
+        _write_manifest(tmp_path, {"window": {"start": "20250102"}})
+        runner = _RecordingRunner(rc_by_script={"scripts/btst_court_fetch.py": 1})
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        assert status["shadow_record"] == {"rc": 0, "error": None}
+        assert status["ok"] is False  # ok 语义不含影子面
+
+    def test_record_failure_fail_open_not_blocking_pack(self, tmp_path):
+        _write_manifest(tmp_path, {"window": {"start": "20250102"}})
+        runner = _RecordingRunner(
+            rc_by_script={SHADOW_RECORD_SCRIPT_REL: 3},
+            err_by_script={SHADOW_RECORD_SCRIPT_REL: "ledger corrupt"},
+        )
+        status = run_court_nightly_refresh(repo_root=tmp_path, _runner=runner)
+        assert status["shadow_record"]["rc"] == 3
+        assert "ledger corrupt" in str(status["shadow_record"]["error"])
+        assert status["shadow_pack"]["rc"] == 0  # pack 照跑 (读既有记录)
+        assert status["ok"] is True

@@ -55,6 +55,10 @@ RECONCILE_TIMEOUT_S = 300
 # 失败照跑), fail-open 进 status["shadow_pack"], ok 语义不变。
 SHADOW_PACK_SCRIPT_REL = "scripts/gap_shadow_pack.py"
 
+# 影子记录步 (R199 Op1): 从生产 v2 台账回填影子归属事实 — 必须前置于 pack
+# (先记录后读数); 同无条件 fail-open 形态。
+SHADOW_RECORD_SCRIPT_REL = "scripts/gap_shadow_record.py"
+
 # 胜率/赔率证据链诊断报告 (R133 Op3): build 成功后逐个 fail-open 刷新 —
 # 这些报告此前只靠手动运行, 静默陈旧在最后手动日 (项 8『活文档随 court
 # 重建刷新』的实现面)。每脚本独立超时独立容错, 一个失败不阻断其余,
@@ -297,8 +301,13 @@ def run_court_nightly_refresh(
             diagnostics[script_rel] = {"rc": diag_rc, "error": diag_err}
         status["diagnostics"] = diagnostics
 
-    # 影子配对读数保鲜 (R198 Op1): 无条件常跑 (依赖面独立, 见常量注释),
-    # 与 reconcile/diagnostics 同 fail-open 形态 — 失败只进 status, 不阻断。
+    # 影子记录 + 配对读数保鲜 (R198/R199): 无条件常跑 (依赖面独立, 见常量
+    # 注释), record 前置于 pack (先记录后读数); 同 fail-open 形态 — 失败只
+    # 进 status, 不阻断。
+    record_rc, record_err = _run_step(
+        runner, [SHADOW_RECORD_SCRIPT_REL], root, DIAGNOSTIC_TIMEOUT_S
+    )
+    status["shadow_record"] = {"rc": record_rc, "error": record_err}
     shadow_rc, shadow_err = _run_step(
         runner, [SHADOW_PACK_SCRIPT_REL], root, DIAGNOSTIC_TIMEOUT_S
     )

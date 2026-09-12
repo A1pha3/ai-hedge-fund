@@ -246,3 +246,83 @@ class TestOp2HardeningPins:
         md = render_md(assemble_shadow_reading(
             [{**_entry("20260810", "000001", would_skip=True), "would_skip": 1}], []))
         assert "invalid_entries 1" in md
+
+
+# ---- R199 Op1: 双源配对 (v2 台账真相 + legacy journal) ----
+
+
+def _ledger_trade(date, ticker, planned):
+    return {"trade_id": "t", "ticker": ticker, "signal_date": date,
+            "planned_entry_date": planned, "state": "open", "setup": "s"}
+
+
+class TestDualSourcePairing:
+    def test_v2_record_pairs_against_ledger_realized(self):
+        entries = [{"signal_date": "20260814", "ticker": "600487", "setup": "s",
+                    "horizon": 10, "gap_status": "observed", "gap_pct": 0.18,
+                    "would_skip": True, "threshold": 0.05, "source": "v2_ledger"}]
+        r = assemble_shadow_reading(
+            entries, [],
+            ledger_trades=[_ledger_trade("20260814", "600487", "20260817")],
+            ledger_realized={("20260814", "600487"): 0.1057},
+        )
+        assert r["counts"]["orphan_entries"] == 0
+        assert r["skip"]["n"] == 1
+        assert r["skip"]["mean"] == pytest.approx(0.1057)  # 台账净现金, 非 journal 解析
+        assert r["sources"] == {"v2_ledger": 1}
+
+    def test_v2_record_without_ledger_supply_disclosed_as_orphan(self):
+        # ledger 真相未供给 → 诚实降级 orphan, 绝不冒充配对
+        entries = [{"signal_date": "20260814", "ticker": "600487", "setup": "s",
+                    "horizon": 10, "gap_status": "observed", "gap_pct": 0.18,
+                    "would_skip": True, "threshold": 0.05, "source": "v2_ledger"}]
+        r = assemble_shadow_reading(entries, [])
+        assert r["counts"]["orphan_entries"] == 1
+        assert r["skip"]["n"] == 0
+
+    def test_v2_record_without_exit_pending(self):
+        entries = [{"signal_date": "20260814", "ticker": "600487", "setup": "s",
+                    "horizon": 10, "gap_status": "observed", "gap_pct": 0.18,
+                    "would_skip": True, "threshold": 0.05, "source": "v2_ledger"}]
+        r = assemble_shadow_reading(
+            entries, [],
+            ledger_trades=[_ledger_trade("20260814", "600487", "20260817")],
+            ledger_realized={},
+        )
+        assert r["counts"]["pending"] == 1
+        assert r["skip"]["n"] == 0
+
+    def test_legacy_record_pairs_against_journal_not_ledger(self):
+        # legacy 记录即使台账有同键 realized, 也走 journal EXIT 解析 (源不互串)
+        entries = [_entry("20260810", "000001", would_skip=True)]
+        actions = [_buy("20260810", "000001"), _exit("20260810", "000001", "+1.00%")]
+        r = assemble_shadow_reading(
+            entries, actions,
+            ledger_trades=[_ledger_trade("20260810", "000001", "20260811")],
+            ledger_realized={("20260810", "000001"): 0.99},
+        )
+        assert r["skip"]["mean"] == pytest.approx(0.01)  # journal 真相胜
+
+    def test_unshadowed_ledger_trades_counted(self):
+        r = assemble_shadow_reading(
+            [], [],
+            ledger_trades=[_ledger_trade("20260910", "600001", "20260911")],
+            ledger_realized={},
+        )
+        assert r["counts"]["unshadowed_ledger_trades"] == 1
+
+    def test_sources_mixed_disclosed(self):
+        entries = [
+            _entry("20260810", "000001", would_skip=True),
+            {"signal_date": "20260814", "ticker": "600487", "setup": "s",
+             "horizon": 10, "gap_status": "observed", "gap_pct": 0.18,
+             "would_skip": False, "threshold": 0.05, "source": "v2_ledger"},
+        ]
+        actions = [_buy("20260810", "000001"), _exit("20260810", "000001", "+2.00%")]
+        r = assemble_shadow_reading(
+            entries, actions,
+            ledger_trades=[_ledger_trade("20260814", "600487", "20260817")],
+            ledger_realized={("20260814", "600487"): 0.03},
+        )
+        assert r["sources"] == {"legacy_journal": 1, "v2_ledger": 1}
+        assert r["keep"]["n"] == 1 and r["skip"]["n"] == 1

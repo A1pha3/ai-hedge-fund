@@ -1436,6 +1436,13 @@ class _ScannerCompatibilityState:
     def record_skip(self, *_args: Any, **_kwargs: Any) -> None:
         return None
 
+    def record_open_gap_shadow(self, *_args: Any, **_kwargs: Any) -> dict[str, int]:
+        # 生产扫描路径是 v2: 计划台账在 paper_trading_v2 (本 stub 无 legacy
+        # 状态 I/O), 影子记录由夜刷 shadow_record 步从 v2 台账回填 (R199) —
+        # no-op 让 R196 advisory 在本路径诚实静默, legacy-persistence 路径
+        # (真实 PaperTracker) 保持活跃。
+        return {}
+
 
 def _price_frame_is_fresh(prices: pd.DataFrame, signal_date: str) -> bool:
     """Require an exact terminal bar for the authoritative signal session."""

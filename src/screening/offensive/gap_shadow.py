@@ -282,3 +282,179 @@ def append_shadow_records(path: Path | str, records: Sequence[dict[str, Any]]) -
         for rec in records:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     return len(records)
+
+
+# ---- v2 生产台账只读访问 + 影子记录 (R199 Op1: 基座 rebalance) ----
+#
+# 生产 --daily-action 自 v2 切换后计划台账在 paper_trading_v2/ledger.sqlite3;
+# legacy paper journal 已不被生产写入 (停在 20260821)。影子记录的"本会买"
+# 真相自此以 v2 台账为准: planned_entry_date 是 T+1 执行会话的事实源
+# (非日历推导), EXIT/ENTRY 现金净额是 realized 的经济真相 (费用/滑点内含)。
+
+GAP_SHADOW_SOURCE_V2 = "v2_ledger"
+_DEFAULT_LEDGER_REL = "data/paper_trading_v2/ledger.sqlite3"
+
+
+class GapShadowLedgerError(Exception):
+    """v2 台账只读访问损坏 (fail-closed, 绝不猜测)。"""
+
+
+def _compact(date_str: Any) -> str:
+    return str(date_str).replace("-", "")
+
+
+def read_ledger_trades(ledger_path: Path | str) -> list[dict[str, Any]]:
+    """只读 v2 台账 trades (mode=ro); 缺文件 → []; 损坏 → GapShadowLedgerError."""
+    import sqlite3
+
+    p = Path(ledger_path)
+    if not p.exists():
+        return []
+    try:
+        conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT trade_id, ticker, signal_date, planned_entry_date, state, setup "
+                "FROM trades"
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        raise GapShadowLedgerError(f"ledger_corrupt: {exc}") from exc
+    trades = []
+    for trade_id, ticker, signal_date, planned_entry_date, state, setup in rows:
+        trades.append({
+            "trade_id": str(trade_id),
+            "ticker": str(ticker),
+            "signal_date": _compact(signal_date),
+            "planned_entry_date": _compact(planned_entry_date) if planned_entry_date else None,
+            "state": str(state),
+            "setup": str(setup or ""),
+        })
+    return trades
+
+
+def read_ledger_realized(ledger_path: Path | str) -> dict[tuple[str, str], float]:
+    """只读 v2 台账已实现收益 (净现金口径): (exit_sum + entry_sum)/(-entry_sum).
+
+    ENTRY_FILLED cash_delta 为负 (买入净流出, 含费用/税/滑点), EXIT_FILLED 为正
+    (卖出净流入) — 比值即扣净成本 realized, 与北极星同口径。无 EXIT_FILLED 的
+    trade 不在返回表 (pending)。部分进出按现金求和。
+    """
+    import sqlite3
+
+    p = Path(ledger_path)
+    if not p.exists():
+        return {}
+    try:
+        conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT t.signal_date, t.ticker, e.event_type, e.cash_delta "
+                "FROM trade_events e JOIN trades t ON t.trade_id = e.trade_id "
+                "WHERE e.event_type IN ('ENTRY_FILLED', 'EXIT_FILLED')"
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        raise GapShadowLedgerError(f"ledger_corrupt: {exc}") from exc
+    entry_cash: dict[tuple[str, str], float] = {}
+    exit_cash: dict[tuple[str, str], float] = {}
+    for signal_date, ticker, event_type, cash_delta in rows:
+        key = (_compact(signal_date), str(ticker))
+        bucket = entry_cash if event_type == "ENTRY_FILLED" else exit_cash
+        bucket[key] = bucket.get(key, 0.0) + float(cash_delta or 0.0)
+    realized: dict[tuple[str, str], float] = {}
+    for key, entry in entry_cash.items():
+        if entry >= 0:
+            continue  # 非正入场净流出非交易形态, 不进 realized (fail-closed 不伪造)
+        out = exit_cash.get(key)
+        if out is None:
+            continue
+        realized[key] = (out + entry) / (-entry)
+    return realized
+
+
+def build_shadow_records_from_ledger(
+    trades: Iterable[dict[str, Any]],
+    existing_keys: set[tuple[str, str]],
+    as_of: str,
+    price_loader: Callable[[str, str], Any],
+    threshold: float = GAP_HIGH_THRESHOLD,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """为尚无影子记录的 v2 台账计划构建 T+1 gap 归属记录 (纯装配, 不写盘).
+
+    t1 = planned_entry_date (执行真相); 记录体 source='v2_ledger' 溯源;
+    幂等键与 legacy 同域 —— 跨源首观察赢 (legacy 先记则 already_recorded,
+    绝不双记同键)。summary 恒等式同 build_shadow_records。
+    """
+    records: list[dict[str, Any]] = []
+    summary = {
+        "considered": 0,
+        "already_recorded": 0,
+        "future": 0,
+        "retried": 0,
+        GAP_STATUS_OBSERVED: 0,
+        GAP_STATUS_T1_BAR_MISSING: 0,
+        GAP_STATUS_PREV_CLOSE_MISSING: 0,
+        GAP_STATUS_NON_POSITIVE_PRICE: 0,
+    }
+    seen: set[tuple[str, str]] = set()
+    for trade in trades:
+        if not isinstance(trade, dict):
+            continue
+        signal_date = str(trade.get("signal_date", ""))
+        ticker = str(trade.get("ticker", ""))
+        key = (signal_date, ticker)
+        if key in seen:
+            continue
+        seen.add(key)
+        summary["considered"] += 1
+        if key in existing_keys:
+            summary["already_recorded"] += 1
+            continue
+        t1 = trade.get("planned_entry_date")
+        if not signal_date or not ticker or not t1 or str(signal_date) >= str(as_of):
+            summary["future"] += 1
+            continue
+        base = {
+            "signal_date": signal_date,
+            "ticker": ticker,
+            "setup": str(trade.get("setup", "")),
+            "horizon": 10,
+            "threshold": threshold,
+            "source": GAP_SHADOW_SOURCE_V2,
+        }
+        try:
+            prices_df = price_loader(ticker, str(as_of))
+        except Exception:
+            prices_df = None
+        dates = _frame_date_strings(prices_df)
+        if dates is None:
+            summary["retried"] += 1
+            continue
+        matches = [i for i, d in enumerate(dates) if d == signal_date]
+        if not matches:
+            records.append({**base, "gap_pct": None,
+                            "gap_status": GAP_STATUS_PREV_CLOSE_MISSING, "would_skip": None})
+            summary[GAP_STATUS_PREV_CLOSE_MISSING] += 1
+            continue
+        t1_matches = [i for i, d in enumerate(dates) if d == t1]
+        if not t1_matches:
+            records.append({**base, "gap_pct": None,
+                            "gap_status": GAP_STATUS_T1_BAR_MISSING, "would_skip": None})
+            summary[GAP_STATUS_T1_BAR_MISSING] += 1
+            continue
+        gap = open_gap_pct(
+            _frame_value_at(prices_df, matches[0], "close"),
+            _frame_value_at(prices_df, t1_matches[0], "open"),
+        )
+        if gap is None:
+            records.append({**base, "gap_pct": None,
+                            "gap_status": GAP_STATUS_NON_POSITIVE_PRICE, "would_skip": None})
+            summary[GAP_STATUS_NON_POSITIVE_PRICE] += 1
+            continue
+        records.append({**base, "gap_pct": gap,
+                        "gap_status": GAP_STATUS_OBSERVED, "would_skip": would_skip(gap, threshold)})
+        summary[GAP_STATUS_OBSERVED] += 1
+    return records, summary

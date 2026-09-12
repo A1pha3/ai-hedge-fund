@@ -18,6 +18,10 @@ import pytest
 from src.screening.offensive import gap_disclosure, gap_shadow
 from src.screening.offensive.gap_shadow import (
     GAP_SHADOW_FILENAME,
+    GapShadowLedgerError,
+    build_shadow_records_from_ledger,
+    read_ledger_realized,
+    read_ledger_trades,
     GAP_STATUS_NON_POSITIVE_PRICE,
     GAP_STATUS_OBSERVED,
     GAP_STATUS_PREV_CLOSE_MISSING,
@@ -444,3 +448,127 @@ class TestSemanticValidation:
             _load_line(tmp_path, _observed_line(ticker=""))
         with pytest.raises(GapShadowJournalError):
             _load_line(tmp_path, _observed_line(signal_date=""))
+
+
+# ---- v2 生产台账只读访问 + 影子记录 (R199 Op1: 基座 rebalance) ----
+
+
+def _make_ledger(tmp_path: Path, trades: list[tuple], events: list[tuple]) -> Path:
+    """构造最小 v2 台账 fixture: trades(trade_id,ticker,signal_date,planned_entry_date,state,setup)
+    + trade_events(trade_id,event_type,cash_delta)。"""
+    import sqlite3
+
+    p = tmp_path / "ledger.sqlite3"
+    conn = sqlite3.connect(p)
+    conn.execute(
+        "CREATE TABLE trades (trade_id TEXT, ticker TEXT, signal_date TEXT, "
+        "planned_entry_date TEXT, state TEXT, setup TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE trade_events (trade_id TEXT, event_type TEXT, cash_delta REAL)"
+    )
+    conn.executemany("INSERT INTO trades VALUES (?,?,?,?,?,?)", trades)
+    conn.executemany("INSERT INTO trade_events VALUES (?,?,?)", events)
+    conn.commit()
+    conn.close()
+    return p
+
+
+class TestLedgerReadAccess:
+    def test_read_trades_normalizes_dates(self, tmp_path):
+        led = _make_ledger(
+            tmp_path,
+            [("t1", "600487", "2026-08-14", "2026-08-17", "closed", "btst_breakout")],
+            [],
+        )
+        trades = read_ledger_trades(led)
+        assert trades == [{
+            "trade_id": "t1", "ticker": "600487",
+            "signal_date": "20260814", "planned_entry_date": "20260817",
+            "state": "closed", "setup": "btst_breakout",
+        }]
+
+    def test_missing_ledger_empty(self, tmp_path):
+        assert read_ledger_trades(tmp_path / "absent.sqlite3") == []
+        assert read_ledger_realized(tmp_path / "absent.sqlite3") == {}
+
+    def test_corrupt_ledger_fail_closed(self, tmp_path):
+        p = tmp_path / "broken.sqlite3"
+        p.write_bytes(b"not a database at all")
+        with pytest.raises(GapShadowLedgerError):
+            read_ledger_trades(p)
+        with pytest.raises(GapShadowLedgerError):
+            read_ledger_realized(p)
+
+    def test_realized_net_cash_and_pending_excluded(self, tmp_path):
+        led = _make_ledger(
+            tmp_path,
+            [
+                ("t1", "600487", "2026-08-14", "2026-08-17", "closed", "s"),
+                ("t2", "000001", "2026-08-14", "2026-08-17", "exit_pending", "s"),
+            ],
+            [
+                ("t1", "ENTRY_FILLED", -76789.68),
+                ("t1", "EXIT_FILLED", 84901.80),
+                ("t2", "ENTRY_FILLED", -10000.0),
+            ],
+        )
+        realized = read_ledger_realized(led)
+        assert realized[("20260814", "600487")] == pytest.approx((84901.80 - 76789.68) / 76789.68)
+        assert ("20260814", "000001") not in realized  # 无 EXIT_FILLED = pending
+
+    def test_realized_partial_exits_summed(self, tmp_path):
+        led = _make_ledger(
+            tmp_path,
+            [("t1", "600487", "2026-08-14", "2026-08-17", "closed", "s")],
+            [
+                ("t1", "ENTRY_FILLED", -10000.0),
+                ("t1", "EXIT_FILLED", 4000.0),
+                ("t1", "EXIT_FILLED", 6500.0),
+            ],
+        )
+        assert read_ledger_realized(led)[("20260814", "600487")] == pytest.approx(0.05)
+
+
+class TestBuildShadowRecordsFromLedger:
+    def test_observed_record_carries_source_and_execution_truth_t1(self):
+        frames = {"600487": _frame([("20260814", 10.0, 10.2), ("20260817", 10.5, 11.8)])}
+        trades = [{"trade_id": "t1", "ticker": "600487", "signal_date": "20260814",
+                   "planned_entry_date": "20260817", "state": "open", "setup": "s"}]
+        records, summary = build_shadow_records_from_ledger(
+            trades, set(), "20260818", _loader(frames)
+        )
+        assert len(records) == 1
+        rec = records[0]
+        assert rec["source"] == "v2_ledger"
+        assert rec["gap_pct"] == pytest.approx(0.18)  # t1 = planned_entry_date 开盘
+        assert rec["would_skip"] is True
+        assert summary["observed"] == 1
+
+    def test_cross_source_idempotency_first_observation_wins(self):
+        frames = {"600487": _frame([("20260814", 10.0, 10.2), ("20260817", 10.5, 11.8)])}
+        trades = [{"ticker": "600487", "signal_date": "20260814",
+                   "planned_entry_date": "20260817", "setup": "s"}]
+        records, summary = build_shadow_records_from_ledger(
+            trades, {("20260814", "600487")}, "20260818", _loader(frames)
+        )
+        assert records == []
+        assert summary["already_recorded"] == 1  # legacy 先记 → 跨源首观察赢
+
+    def test_unobservable_states_named_same_as_legacy(self):
+        frames = {"600487": _frame([("20260814", 10.0, 10.2), ("20260819", 10.5, 10.6)])}
+        trades = [{"ticker": "600487", "signal_date": "20260814",
+                   "planned_entry_date": "20260817", "setup": "s"}]  # t1 bar 缺
+        records, _ = build_shadow_records_from_ledger(trades, set(), "20260820", _loader(frames))
+        assert records[0]["gap_status"] == GAP_STATUS_T1_BAR_MISSING
+        assert records[0]["would_skip"] is None
+
+    def test_missing_frame_retried_and_future_skipped(self):
+        trades = [
+            {"ticker": "000001", "signal_date": "20260814", "planned_entry_date": "20260817", "setup": "s"},
+            {"ticker": "000002", "signal_date": "20260920", "planned_entry_date": "20260921", "setup": "s"},
+        ]
+        records, summary = build_shadow_records_from_ledger(trades, set(), "20260918", _loader({}))
+        assert records == []
+        assert summary["retried"] == 1
+        assert summary["future"] == 1
