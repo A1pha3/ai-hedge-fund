@@ -347,3 +347,38 @@ def test_stop_mode_note_exact_values_pinned():
         "已设，仅作用 legacy journal 研究口径 · "
         "生产 v2 台账无止损执行面，退出仍仅 T+10 强制"
     )
+
+
+# ---------------------------------------------------------------------------
+# R203 Op2: 对抗审查 BLIND 钉 — packet preview 接线与渲染回退分支
+# ---------------------------------------------------------------------------
+
+
+def test_packet_preview_discloses_mode_scope(monkeypatch, capsys):
+    """M11 钉: preview 的执行模式子句必须经 stop_mode_note 作用域真相 —
+
+    note 接线被静默拆除 (回退裸 mode / 旧「已启用」三元) 时本测当场红。
+    preview 是交付面之一, 拆线 = 作用域真相从该面静默消失。
+    """
+    import argparse
+
+    monkeypatch.setattr(packet, "_load_regime_history", lambda: {"20260910": "crisis"})
+    monkeypatch.setattr(packet, "_execution_stop_mode", lambda: "atr_k2")
+    args = argparse.Namespace(as_of="20260911", k=5, n=5, require_delta=True)
+    assert packet._preview(args) == 0
+    out = capsys.readouterr().out
+    assert "执行模式 atr_k2（已设，仅作用 legacy journal 研究口径" in out
+    assert "生产 v2 台账无止损执行面，退出仍仅 T+10 强制）" in out
+    assert "已启用" not in out
+
+
+def test_packet_preview_none_mode_keeps_scope_clause(monkeypatch, capsys):
+    """none 态 preview 同样携带作用域 (预设前告知), 不退回旧「登记: 不启用」。"""
+    import argparse
+
+    monkeypatch.setattr(packet, "_load_regime_history", lambda: {"20260910": "normal"})
+    monkeypatch.setattr(packet, "_execution_stop_mode", lambda: "none")
+    args = argparse.Namespace(as_of="20260911", k=5, n=5, require_delta=True)
+    assert packet._preview(args) == 0
+    out = capsys.readouterr().out
+    assert "执行模式 none（登记: 不启用 · 生产 v2 台账无止损执行面，退出仅 T+10 强制）" in out

@@ -2909,6 +2909,22 @@ def test_stop_readiness_stop_mode_disclosed(case, monkeypatch):
     assert "已启用" not in line
 
 
+def test_render_mode_fallback_bare_when_note_none(case, monkeypatch):
+    """M07 钉 (R203 Op2): 生产路径 mode 恒为 str, 但 stop_mode_note 的 None
+    回退分支若被未来重构改为谎言文案 (如「已启用」) 且 note 判定收紧, 回退即
+    变成可达的虚假宣称面 — 钉死回退内容 = 裸 mode 值, 无括注、无宣称。
+    """
+    from src.screening.offensive import paper_tracker
+
+    monkeypatch.setattr(paper_tracker, "_execution_stop_mode", lambda: "   ")
+    view, _as_of = _stop_view(case)
+    line = _render_stop_loss_readiness_line(view, regimes_by_date={"20260820": "crisis"})
+    assert line is not None
+    assert "止损执行模式    " in line  # 裸值 (三空格 mode 原样), 无「（…）」括注
+    assert "已启用" not in line
+    assert "已设" not in line
+
+
 def test_stop_readiness_line_renders_after_regime_line(case, monkeypatch):
     """整链接线: render_daily_action_v2 中行位于 Regime 行之后, 协议指针在行内。"""
     view, _as_of = _stop_view(case, regime="crisis")
