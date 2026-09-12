@@ -666,3 +666,33 @@ def test_alignment_line_data_window_without_court_window(tmp_path):
     line = da._render_universe_alignment_line(path)
     assert line is not None
     assert "court 窗口 20250702..20260909" in line
+
+
+def test_complete_run_carries_pending_exit_releases_to_view(case, tmp_path):
+    """R202 Op2 钉 (M10 变异定谳 BLIND): complete_daily_action_v2 必须把
+    service_run.pending_exit_releases 贯通到 v2 视图 — 贯通被拆后 (回退 ())
+    释放日程对 EXIT_PENDING cohort 失明而全部测试绿. 端到端: 标记 → complete →
+    渲染行含 forced cohort."""
+    service, repository, _as_of, sessions = case
+    plan = repository.create_plan(
+        "300009", "btst_breakout", "v2", sessions[0], sessions[0], 0.06, 1
+    )
+    repository.settle_plan_at_open(
+        plan.trade_id, sessions[0], 10.0, 9.0, 11.0, False, 10.2, 9.8
+    )
+    as_of = sessions[8]  # session_nine: 标记 EXIT_PENDING, forced = sessions[9]
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service,
+        context,
+        DailyActionScan(as_of, (), (), ()),
+        gap_shadow_journal_dir=tmp_path / "no-journal",
+    )
+    assert len(v2_run.pending_exit_releases) == 1
+    release = v2_run.pending_exit_releases[0]
+    assert release.ticker == "300009"
+    assert release.projected_exit_date == sessions[9]
+    assert release.mark_weight is not None and release.mark_weight > 0
+    text = render_daily_action_v2(v2_run)
+    release_line = next(line for line in text.splitlines() if "释放日程" in line)
+    assert f"最近到期 {sessions[9].month}/{sessions[9].day}" in release_line

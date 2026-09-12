@@ -1070,3 +1070,19 @@ def test_mark_weight_withheld_when_open_and_pending_share_ticker(tmp_path):
     assert open_views[0].mark_weight is None
     assert len(run.pending_exit_releases) == 1
     assert run.pending_exit_releases[0].mark_weight is None
+
+
+def test_service_render_carries_pending_exit_releases(tmp_path):
+    """R202 Op2 钉 (M11 变异定谳 BLIND): DailyActionService.render 便捷路径必须
+    把 pending_exit_releases 贯通进 v2 渲染 — 贯通被拆后 (回退 ()) 释放日程行
+    对 EXIT_PENDING cohort 失明而全部测试绿."""
+    from src.screening.offensive.daily_action_service import DailyActionService
+
+    service, sessions = _exit_pending_world(tmp_path)
+    run = service.run(sessions[23], ())
+    assert run.pending_exit_releases
+    text = DailyActionService.render(run)
+    forced = run.pending_exit_releases[0].projected_exit_date
+    release_line = next(line for line in text.splitlines() if "释放日程" in line)
+    assert f"最近到期 {forced.month}/{forced.day}" in release_line
+    assert "释放 1 只" in release_line
