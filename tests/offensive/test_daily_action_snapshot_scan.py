@@ -503,6 +503,40 @@ def test_funnel_readiness_exclusion_multi_reason_joined_sorted(monkeypatch) -> N
     assert sum(funnel.readiness_miss_stages.values()) == funnel.readiness_excluded
 
 
+def test_funnel_readiness_bucket_key_deterministic_under_hash_seed() -> None:
+    """R191 Op2 P06 补强 (R185 P15 先例): 分桶键跨进程哈希种子确定.
+
+    就绪分桶键是披露面标签, 排序连接保证跨进程逐字节稳定 (与 funnel.json
+    侧车/渲染行同键). set 迭代序随 PYTHONHASHSEED 变化 (实证: {"st_stock",
+    "suspended"} 在 seed=0 为正序、seed=1 为逆序), 排序连接被移除时进程内
+    断言只概率性暴露 — 本钉子以 seed=1 子进程 (实证逆序形态) 使『排序移除』
+    变异确定性有牙; 排序在场时任何种子输出恒为 sorted 键.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+
+    snippet = (
+        "import json;"
+        "from tests.offensive.test_daily_action_snapshot_scan import ("
+        "_multi_snapshot, _blocked_capability, _disabled_capability);"
+        "from src.screening.offensive.daily_action import scan_from_verified_snapshot;"
+        "scan = scan_from_verified_snapshot(_multi_snapshot(("
+        "'300006',), {'300006': (('btst_breakout', "
+        "_blocked_capability('suspended', 'st_stock')), "
+        "('oversold_bounce', _disabled_capability()))}));"
+        "print(json.dumps(scan.funnel.readiness_miss_stages))"
+    )
+    env = {**os.environ, "PYTHONHASHSEED": "1"}
+    proc = subprocess.run(
+        [sys.executable, "-c", snippet],
+        capture_output=True, text=True, env=env, timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr[-500:]
+    assert json.loads(proc.stdout.strip()) == {"st_stock+suspended": 1}
+
+
 def test_funnel_counts_plan_eligible_blocks(monkeypatch) -> None:
     """plan_eligible 拦截通道计数 — 此前只进 blocked 列表, 漏斗头算术断链."""
     monkeypatch.setattr(BtstBreakoutSetup, "detect", lambda self, ticker, trade_date, context: hit_result())
