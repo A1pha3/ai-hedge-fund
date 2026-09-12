@@ -4518,8 +4518,13 @@ def test_gap_shadow_line_renders_when_sidecar_present(case, tmp_path):
     assert "gap 影子: 累计 3 笔 · would-skip 1 · 未观测 1" in text
 
 
-def test_gap_shadow_line_absent_when_sidecar_missing(case, tmp_path):
-    """sidecar 缺失 → 字段 None, 渲染无 section 不崩 (fail-open 家族纪律)."""
+def test_gap_shadow_line_absent_when_sidecar_missing(case, tmp_path, monkeypatch):
+    """sidecar 缺失 → 字段 None, 渲染无 section 不崩 (fail-open 家族纪律).
+
+    R201 Op2 封闭性收口: pack 目录一并隔离 — 本测试断言的是整个 gap 影子
+    section 缺席, 宿主真实 pack 报告 (R120b 禁读) 不得经由读数行渗入.
+    """
+    _patch_pack_dir(monkeypatch, tmp_path)
     service, _repository, as_of, _sessions = case
     context = service.advance_lifecycle(as_of)
     v2_run = complete_daily_action_v2(
@@ -4533,8 +4538,12 @@ def test_gap_shadow_line_absent_when_sidecar_missing(case, tmp_path):
     assert "gap 影子" not in render_daily_action_v2(v2_run)
 
 
-def test_gap_shadow_line_survives_corrupt_sidecar(case, tmp_path):
-    """sidecar 损坏 → 字段 None (fail-open), 绝不阻断 run 装配与渲染."""
+def test_gap_shadow_line_survives_corrupt_sidecar(case, tmp_path, monkeypatch):
+    """sidecar 损坏 → 字段 None (fail-open), 绝不阻断 run 装配与渲染.
+
+    pack 目录一并隔离 (R201 Op2, 同 absent 测试的封闭性语义).
+    """
+    _patch_pack_dir(monkeypatch, tmp_path)
     (tmp_path / "gap_shadow.jsonl").write_text("{broken\n", encoding="utf-8")
     service, _repository, as_of, _sessions = case
     context = service.advance_lifecycle(as_of)
@@ -4549,8 +4558,12 @@ def test_gap_shadow_line_survives_corrupt_sidecar(case, tmp_path):
     assert "gap 影子" not in render_daily_action_v2(v2_run)
 
 
-def test_gap_shadow_section_absent_on_legacy_construction(case):
-    """旧构造点 (不传字段) → 渲染无 section (与 funnel 同款优雅降级)."""
+def test_gap_shadow_section_absent_on_legacy_construction(case, tmp_path, monkeypatch):
+    """旧构造点 (不传字段) → 渲染无 section (与 funnel 同款优雅降级).
+
+    pack 目录一并隔离 (R201 Op2): section 缺席断言要求两披露源都不可达.
+    """
+    _patch_pack_dir(monkeypatch, tmp_path)
     service, _repository, as_of, _sessions = case
     context = service.advance_lifecycle(as_of)
     run = service.complete_run(context, candidates=())
