@@ -5,7 +5,7 @@
 **来源**：owner 2026-09-12 指令「把正确的方向不断的更新到我们的产品文档中，形成长期优化的努力方向，我授权你继续努力」。
 **更新纪律**：任一杠杆的证据状态变化时（新轮次交付、court 数据收敛、触发器武装/触发），
 当轮更新对应小节并附日期戳；autodev 入册纪律照旧（AGENTS.md R 轮段）。
-最后更新：2026-09-12（R197 后：杠杆 A 前向影子机器闭环——记录机 ✅ + 配对读数包 ✅，影子事实自动积累中；B/C 等 owner K 注册 / D 开关规则注册机器 ✅）。
+最后更新：2026-09-12（R199 后：影子基座 rebalance 到生产 v2 台账——记录/读数/夜刷链全机械且接生产真相；34 记录双源（18 legacy + 16 v2），v2 时代新增 would-skip 301419/603533/601595；B/C 等 owner K 注册 / D 开关规则注册机器 ✅）。
 
 ---
 
@@ -51,7 +51,11 @@
   `scripts/gap_shadow_pack.py` 组装影子窗 would-skip vs keep 成熟 EXIT 配对 n/E/胜率 +
   罚分（E_keep − E_skip）+ n<30 只披露不判定；宿主首读数（20260710→20260821 窗）：
   skip n=2 E=−11.09% vs keep n=13 E=−5.26%，罚分 +5.83%，方向与 court 回溯证据一致）。
-- **下一动作**：影子事实随每日 --daily-action 自动积累；影子窗数据成熟（skip/keep 双侧 n≥30）
+- **基座 rebalance（R199 `32b27b67`/`9c0a17fe`，2026-09-12）**：Observe 期定谳 R196 基座接错真相源
+  （生产计划台账在 v2 ledger，legacy journal 已停写；stub 路径 advisory 静默失败）→ 影子记录/
+  配对全面 rebalance：t1=planned_entry_date 执行真相、realized=台账净现金（费用/滑点内含）、
+  夜刷 record 步前置于 pack（生产链自动积累）、双源配对 source 分派不互串。
+- **下一动作**：影子事实随每夜保鲜链自动积累（v2 台账为准）；影子窗数据成熟（skip/keep 双侧 n≥30）
   后跑 `scripts/gap_shadow_pack.py` 出配对读数 → owner 按前向配对证据评估政策化
   （剔除 T+1 高开>5% 入场，属 owner gate + 新证据世代预注册纪律）。
 
