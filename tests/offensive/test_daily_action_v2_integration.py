@@ -665,30 +665,33 @@ def test_verbose_appends_debug_section_without_changing_body(service, signal_dat
     body = "\n".join(verbose_lines[:idx]).rstrip()
     assert body == default_text
     assert "诊断明细（--verbose）" in verbose_text
-    assert "reason=entry_planned" in verbose_text
-    assert "execution=pending" in verbose_text
-    assert "source=pending" in verbose_text
+    # 原始审计码不再进终端视图 (default 与 verbose 均无).
+    for raw in ("reason=", "execution=", "source=", "shadow_exit_line="):
+        assert raw not in verbose_text
     # 中文含义只在诊断区出现, 不进正文 (单轨原则).
     assert "新计划已登记" in verbose_text
     assert "新计划已登记" not in default_text
 
 
-def test_verbose_diagnostics_are_chinese_first_with_raw_code_appendix(service, signal_date):
-    """诊断明细区: 每行 = 对象 + 中文含义 + [原始审计码附录] — 操作员先读懂
-    "发生了什么/为什么", 开发者仍可用方括号里的 key=value 对照日志/事件 payload.
-    未知码 fail-closed 回退为原文显示 (不崩溃、不吞信息)."""
+def test_verbose_diagnostics_are_chinese_only(service, signal_date, monkeypatch):
+    """诊断明细区: 每行 = 代码+名称 + 持仓状态 + 中文含义 + 执行状态, 无英文
+    原始码 — 操作员直接读懂 "发生了什么/为什么/现在什么状况"; key=value
+    原始码持久在 JSON 报告/事件日志, 未知码 fail-closed 回退原文内联显示."""
+    monkeypatch.setattr(
+        "src.tools.tushare_api.get_stock_name", lambda ticker: "平安银行"
+    )
     run = run_daily_action_v2(service, _scan(signal_date))
     text = render_daily_action_v2(run, verbose=True)
-    # entry_planned: signal 7/13 → 入场 7/14（周二）; pending/pending 去重为单次"待成交".
+    # entry_planned: signal 7/13 → 入场 7/14（周二）; pending/pending 去重为单次"待成交";
+    # 代码+名称与主视图同列对齐 ("000001 平安银行" 15 显示宽, 补 1 空格 + 分隔 2 空格).
     assert (
-        "000001  新计划已登记，等待 7/14（周二）开盘成交；当前待成交  "
-        "[reason=entry_planned execution=pending source=pending]"
+        "000001 平安银行   新计划已登记，等待 7/14（周二）开盘成交；待成交"
     ) in text
 
     blocked_run = run_daily_action_v2(service, _scan(signal_date, degraded=True))
     blocked_text = render_daily_action_v2(blocked_run, verbose=True)
     assert (
-        "000001  不可计划：setup 数据不完整  [block_reason=incomplete_setup_data]"
+        "000001 平安银行   不可计划：setup 数据不完整"
     ) in blocked_text
 
 
@@ -737,14 +740,18 @@ def test_renderer_includes_real_lifecycle_reasons(service, signal_date):
     assert "execution=pending" not in default_text
     assert "source=pending" not in default_text
     assert "参考价" in default_text
-    # Verbose retains the raw audit detail.
-    assert "entry_planned" in verbose_text
-    assert "execution=pending" in verbose_text
-    assert "source=pending" in verbose_text
+    # Verbose 同样是纯中文业务行 — 原始码持久在 JSON 报告/事件日志,
+    # 终端视图 (含 verbose 诊断区) 不再重复携带.
+    for raw in ("entry_planned", "execution=", "source="):
+        assert raw not in verbose_text
+    assert "新计划已登记" in verbose_text
+    assert "待成交" in verbose_text
 
 
 def test_render_gates_manifest_diagnostic_codes_behind_verbose(signal_date):
-    """Task 9: default operator output hides raw readiness/gate codes; --verbose reveals them."""
+    """Task 9 演进: 原始 readiness/gate 码从操作员视图彻底移除 (default 与
+    verbose 均不含); verbose 诊断区只呈现中文翻译 — 原始码持久在 JSON
+    报告/事件日志, 终端 grep 中文措辞即可对上."""
     view = DailyActionRun(
         signal_date,
         DailyValuation(signal_date, 100_000, 0, 100_000, 100_000, 0, ()),
@@ -774,9 +781,11 @@ def test_render_gates_manifest_diagnostic_codes_behind_verbose(signal_date):
         "candidate_snapshot_mismatch",
     ):
         assert raw not in default_text, f"raw code leaked into default output: {raw}"
-    assert "block_reasons=daily_action_readiness_missing" in verbose_text
-    assert "manifest_blocked_tickers=000002" in verbose_text
-    assert "candidate_snapshot_mismatch" in verbose_text
+        assert raw not in verbose_text, f"raw code leaked into verbose output: {raw}"
+    # verbose 诊断区以中文呈现同一事实.
+    assert "就绪清单缺失" in verbose_text
+    assert "manifest 拦截票：000002" in verbose_text
+    assert "候选快照身份不匹配" in verbose_text
 
 
 def test_ticker_terminal_bar_must_equal_authoritative_signal_session():
@@ -806,16 +815,27 @@ def test_renderer_surfaces_every_lifecycle_collection(signal_date):
         "calendar_unavailable",
     )
     rendered = render_daily_action_v2(DailyActionV2Run(view, (), (), (), ()), verbose=True)
+    # 诊断区是纯中文业务行: 四个生命周期集合 + 运行阻断 + 执行状态全部以
+    # 中文措辞呈现, 原始码不再出现.
     for expected in (
+        "组合敞口达上限，计划跳过",
+        "持有期届满，计划到期开盘退出",
+        "当日成交状态未知，退出延期",
+        "已按开盘价完成退出",
+        "运行阻断：交易日历不可用",
+        "模拟执行 · 开盘成交",
+    ):
+        assert expected in rendered
+    for raw in (
         "portfolio_capacity",
         "maximum_holding_session",
         "unknown_queue",
         "exit_filled",
         "calendar_unavailable",
-        "execution=paper",
-        "source=synthetic_open",
+        "execution=",
+        "source=",
     ):
-        assert expected in rendered
+        assert raw not in rendered
 
 
 def test_actual_cli_is_idempotent_and_preserves_recursive_legacy_artifacts(

@@ -158,6 +158,11 @@ class ActionItem:
     # 披露 (延迟退出延期后日期不可靠, 完成退出已结算 — 语义区隔)。可选字段
     # 向后兼容旧构造点, None → 渲染省略子句。
     target_exit_date: date | None = None
+    # 持仓状态披露 (浮盈亏/持有天数): 仅仍在持有的 item 填写 (pending_exit /
+    # maximum_holding_session / 延迟退出) — 已结算项的浮盈亏是陈旧 mark,
+    # 未入场项无仓位, 一律 None → 渲染省略子句 (fail-open, 不编造)。
+    entry_date: date | None = None
+    unrealized_pct: float | None = None
 
 
 def _shadow_unrealized_pct(
@@ -864,7 +869,13 @@ class DailyActionService:
                     as_of,
                     forced_exit_target_date=trade.forced_exit_target_date,
                 )
-                self._deferred.append(self._item(trade, reason))
+                self._deferred.append(
+                    self._item(
+                        trade,
+                        reason,
+                        unrealized_pct=self._held_unrealized_pct(trade, as_of),
+                    )
+                )
                 continue
             fill = apply_execution_costs(
                 bar.open,
@@ -922,7 +933,13 @@ class DailyActionService:
                     trade.forced_exit_target_date is not None
                     and as_of < trade.forced_exit_target_date
                 ):
-                    self._exit_plans.append(self._item(trade, "pending_exit"))
+                    self._exit_plans.append(
+                        self._item(
+                            trade,
+                            "pending_exit",
+                            unrealized_pct=self._held_unrealized_pct(trade, as_of),
+                        )
+                    )
                 continue
             if trade.state is not TradeState.OPEN:
                 continue
@@ -938,7 +955,10 @@ class DailyActionService:
                 )
                 self._exit_plans.append(
                     self._item(
-                        trade, "maximum_holding_session", target_exit_date=target
+                        trade,
+                        "maximum_holding_session",
+                        target_exit_date=target,
+                        unrealized_pct=self._held_unrealized_pct(trade, as_of),
                     )
                 )
 
@@ -1571,6 +1591,7 @@ class DailyActionService:
         reason: str,
         *,
         target_exit_date: date | None = None,
+        unrealized_pct: float | None = None,
     ) -> ActionItem:
         execution = trade.execution_mode.value if trade.execution_mode else "pending"
         source = trade.fill_source.value if trade.fill_source else "pending"
@@ -1589,7 +1610,25 @@ class DailyActionService:
                 if target_exit_date is not None
                 else trade.forced_exit_target_date
             ),
+            entry_date=trade.entry_date,
+            unrealized_pct=unrealized_pct,
         )
+
+    def _held_unrealized_pct(self, trade: LedgerTrade, as_of: date) -> float | None:
+        """仍在持有仓位的浮盈亏 = 最新台账 mark / 入场价 - 1 (fail-open).
+
+        mark 由 advance_lifecycle 的 mark-to-market 先行落库 (EXIT_PENDING
+        持仓同样逐日 mark); mark 缺失 (当日停牌且无历史)/入场价无效/非有限
+        → None, 渲染层省略子句, 绝不为披露编造。
+        """
+        entry = trade.raw_entry_price
+        if entry is None or not math.isfinite(entry) or entry <= 0:
+            return None
+        mark = self.repository.latest_position_mark(trade.trade_id, as_of)
+        if mark is None or not math.isfinite(mark) or mark <= 0:
+            return None
+        pct = mark / entry - 1.0
+        return pct if math.isfinite(pct) else None
 
     @staticmethod
     def _status(bar: MarketBar | None) -> ExecutionStatus:

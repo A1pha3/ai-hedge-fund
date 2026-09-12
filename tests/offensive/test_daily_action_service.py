@@ -903,6 +903,31 @@ def test_pending_exit_item_carries_target_exit_date(service, sessions):
     )
 
 
+def test_exit_items_carry_unrealized_pnl_and_entry_date(tmp_path):
+    """浮盈亏/持有天数披露 (回答"标记退出后等待结算这几天, 仓位什么状况"):
+    maximum_holding_session / pending_exit item 携带最新台账 mark 浮盈亏与
+    入场日 — mark-to-market 先于 open-position 评估, 待结算期间逐日更新."""
+    sessions = _pnl_sessions(30)
+    service = _pnl_service(tmp_path, sessions, close=8.0)
+    plan = service.repository.create_plan(
+        "000214", "btst_breakout", "v2", sessions[14], sessions[15], 0.10, 1
+    )
+    trade = service.repository.settle_plan_at_open(
+        plan.trade_id, sessions[15], 10.0, 9.0, 11.0, False, 10.5, 9.5
+    )[0]
+    session_nine = service.calendar.nth_holding_session(trade.entry_date, 9)
+
+    maximum = service.run(session_nine, ()).exit_plans[0]
+    assert maximum.reason == "maximum_holding_session"
+    assert maximum.entry_date == trade.entry_date
+    assert maximum.unrealized_pct == pytest.approx(8.0 / 10.0 - 1)
+
+    pending = service.run(session_nine, ()).exit_plans[0]
+    assert pending.reason == "pending_exit"
+    assert pending.entry_date == trade.entry_date
+    assert pending.unrealized_pct == pytest.approx(8.0 / 10.0 - 1)
+
+
 def test_maturity_date_independent_of_shadow_frame(service, sessions):
     """F-b 钉住 (000977 生产形态): 影子价格帧不足 (insufficient_data) 不影响到
     期日披露 — 日历路径与影子价格路径独立, 双披露互不拖垮."""

@@ -299,7 +299,10 @@ def test_calendar_and_manifest_warnings_accumulate_and_render(
 
     assert run.block_reasons == ("calendar_unavailable", "healthy_manifest_missing")
     assert run.block_reason == "calendar_unavailable;healthy_manifest_missing"
-    assert "block_reasons=calendar_unavailable,healthy_manifest_missing" in rendered
+    # 诊断区纯中文: 两个运行阻断 + 拦截票 + 门控拦截同屏, 原始码不再出现.
+    assert "运行阻断：交易日历不可用；健康就绪清单缺失" in rendered
+    assert "manifest 拦截票：000001" in rendered
+    assert "block_reasons=" not in rendered
 
 
 def test_manifest_ticker_mapping_remains_immutable_after_candidate_gate(

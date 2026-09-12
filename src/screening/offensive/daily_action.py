@@ -1107,9 +1107,10 @@ def _format_plan_detail_rows(
 
 # ---------------------------------------------------------------------------
 # 诊断明细 (--verbose) 翻译层
-# 每行 = 对象 + 中文含义 + [原始审计码附录]. 原始码是日志/事件 payload 的
-# 对照键, 必须在附录中原样保留 (key=value); 未知码 fail-closed 回退为原文
-# 显示 (不崩溃、不吞信息) — 新增枚举值无需同步改这里也能安全渲染.
+# 每行 = 代码+名称 + 持仓状态 (浮盈亏/持有天数, 仅持有中) + 中文含义 + 执行状态.
+# 原始审计码不在终端视图重复携带 — 中文措辞由下方映射表逐一翻译, 未知码
+# fail-closed 回退为原文内联显示 (不崩溃、不吞信息, 新增枚举值无需同步改
+# 这里也能安全渲染); key=value 原始码持久在 JSON 报告/事件日志, 供日志对照.
 # ---------------------------------------------------------------------------
 
 # ActionItem.reason (入场/退出/生命周期) + 影子退出评估 reason, 按业务含义措辞.
@@ -1205,38 +1206,132 @@ def _format_strength_breakdown(metadata: dict) -> str:
     return f"{text} — 短板：{'、'.join(laggards)}"
 
 
-def _debug_action_item_line(item: ActionItem) -> str:
-    """诊断行: ticker + 中文含义 + 状态 + [原始审计码附录].
+def _settle_date_zh(target: Any) -> str:
+    """强制结算日子句: 具体日期替换抽象的「强制退出日」.
 
-    execution/source 相同 (如 pending/pending) 时状态只显示一次, 不重复堆砌.
+    fail-open 家族纪律: 非 date (含 datetime 子类) → 空串, 渲染退回
+    原表措辞, 绝不为披露猜测日期.
+    """
+    if not isinstance(target, date) or isinstance(target, datetime):
+        return ""
+    return f"{target.month}/{target.day}（周{_weekday_zh(target)}）"
+
+
+def _pnl_holding_clause(entry_date: Any, unrealized_pct: Any, as_of: date) -> str:
+    """持仓状态子句「浮 X%（持有 N 天）」— 回答"我拿了这么多天, 什么状况".
+
+    浮盈亏与持有天数独立 fail-open: 任一缺失/非有限/不构成有效区间 → 对应
+    部分省略; 持有天数以日历日计 (_maturity_clause「剩N天」同口径), 入场
+    当日 (N=0) 不显示天数.
+    """
+    pnl = ""
+    if isinstance(unrealized_pct, Real) and not isinstance(unrealized_pct, bool):
+        if math.isfinite(unrealized_pct):
+            pnl = f"浮 {unrealized_pct:+.1%}"
+    days_text = ""
+    if isinstance(entry_date, date) and not isinstance(entry_date, datetime):
+        try:
+            days = (as_of - entry_date).days
+        except TypeError:
+            days = 0
+        if days > 0:
+            days_text = f"持有 {days} 天"
+    if pnl and days_text:
+        return f"{pnl}（{days_text}）"
+    return pnl or days_text
+
+
+def _state_zh(execution_zh: str, source_zh: str) -> str:
+    """执行状态短语: 同义只显示一次; 共享前缀 (模拟/券商) 也只保留一次.
+
+    「模拟执行 · 模拟开盘成交」的双「模拟」堆砌降噪为「模拟执行 · 开盘成交」;
+    前缀不足 2 字或后缀为空时回退原文拼接, 未知码不吞信息.
+    """
+    if execution_zh == source_zh:
+        return execution_zh
+    shared = 0
+    for a, b in zip(execution_zh, source_zh):
+        if a != b:
+            break
+        shared += 1
+    if shared >= 2 and len(source_zh) > shared:
+        return f"{execution_zh} · {source_zh[shared:]}"
+    return f"{execution_zh} · {source_zh}"
+
+
+def _shadow_line_distance_clause(trade: Any) -> str:
+    """现价相对影子退出线的偏离子句 — 回答「离触发还有多远/已跌破多深」.
+
+    隐含现价 = entry × (1 + 浮盈亏), 与退出线同一 entry 复权帧 (浮盈亏与
+    退出线同源 `_evaluate_shadow_path`), 偏离口径一致; 任一输入缺失/非有限/
+    非正 → 子句省略 (fail-open, 与浮盈亏同纪律), 绝不编造.
+    """
+    line = getattr(trade, "shadow_exit_line", None)
+    entry = getattr(trade, "raw_entry_price", None)
+    pnl = getattr(trade, "shadow_unrealized_pct", None)
+    if line is None or entry is None or pnl is None:
+        return ""
+    if not (
+        math.isfinite(line) and math.isfinite(entry) and math.isfinite(pnl)
+    ) or line <= 0 or entry <= 0:
+        return ""
+    dist = entry * (1.0 + pnl) / line - 1.0
+    if not math.isfinite(dist):
+        return ""
+    if dist < 0:
+        return f"（现价低 {abs(dist):.1%}）"
+    return f"（现价高 {dist:.1%}）"
+
+
+def _debug_action_item_line(item: ActionItem, label: str, as_of: date) -> str:
+    """诊断行: 代码+名称 + 持仓状态 (浮盈亏/持有天数) + 中文含义 + 执行状态.
+
+    仍在持有的 item (pending_exit/maximum_holding_session/延迟退出) 携带
+    浮盈亏与入场日; 结算日期可得时具体日期替换抽象「强制退出日」;
+    execution/source 状态经 _state_zh 去重, 不重复堆砌.
     """
     reason_zh = _DEBUG_REASON_ZH.get(item.reason, item.reason)
+    settle = _settle_date_zh(getattr(item, "target_exit_date", None))
     if item.reason == "entry_planned" and item.planned_entry_date is not None:
         d = item.planned_entry_date
         reason_zh = f"新计划已登记，等待 {d.month}/{d.day}（周{_weekday_zh(d)}）开盘成交"
+    elif item.reason == "pending_exit" and settle:
+        reason_zh = f"已标记退出，等待 {settle}强制结算"
+    elif item.reason == "maximum_holding_session" and settle:
+        reason_zh = f"持有期届满，{settle}开盘退出"
+    holding = _pnl_holding_clause(
+        getattr(item, "entry_date", None), getattr(item, "unrealized_pct", None), as_of
+    )
+    holding_prefix = f"{holding} · " if holding else ""
     execution_zh = _DEBUG_EXECUTION_ZH.get(item.execution_label, item.execution_label)
     source_zh = _DEBUG_SOURCE_ZH.get(item.source_label, item.source_label)
-    state_zh = source_zh if source_zh == execution_zh else f"{execution_zh} · {source_zh}"
     return (
-        f"{item.ticker}  {reason_zh}；当前{state_zh}  "
-        f"[reason={item.reason} execution={item.execution_label} source={item.source_label}]"
+        f"{label}  {holding_prefix}{reason_zh}；{_state_zh(execution_zh, source_zh)}"
     )
 
 
-def _debug_shadow_line(trade: Any) -> str:
-    """影子退出诊断行: 退出线数值 + 中文信号含义 + [原始审计码附录]."""
+def _debug_shadow_line(trade: Any, label: str, as_of: date) -> str:
+    """影子退出诊断行: 代码+名称 + 浮盈亏/持有天数 + 退出线数值 + 现价距离
+    + 中文信号含义."""
     line = (
         f"{trade.shadow_exit_line:.2f}"
         if trade.shadow_exit_line is not None
-        else "unavailable"
+        else "—"
     )
     would_exit = bool(trade.shadow_would_exit_next_open)
     decision_zh = "次日开盘退出" if would_exit else "继续持有"
     reason_text = str(trade.shadow_reason)
     reason_zh = _DEBUG_REASON_ZH.get(reason_text, reason_text)
+    distance = _shadow_line_distance_clause(trade)
+    holding = _pnl_holding_clause(
+        getattr(trade, "entry_date", None),
+        getattr(trade, "shadow_unrealized_pct", None),
+        as_of,
+    )
+    holding_prefix = f"{holding} · " if holding else ""
     return (
-        f"{trade.ticker}  影子退出线 {line} · 影子信号：{decision_zh}（{reason_zh}）  "
-        f"[shadow_exit_line={line} shadow_would_exit_next_open={str(would_exit).lower()} shadow_reason={reason_text}]"
+        f"{label}  {holding_prefix}影子退出线 {line}{distance} · "
+        f"影子信号：{decision_zh}（{reason_zh}）"
     )
 
 
@@ -3173,9 +3268,9 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     用统一 ``_render_section`` 渲染, 空集合显式输出「无」. 新计划区在
     ``plan_details`` 非空时每只计划附完整交易计划块 (买入价位口径 / 买入理由
     / 先验胜率赔率 / T+N 退出合约 + 失效参考价仅披露). ``verbose`` 不再
-    改变正文形态, 只在末尾追加「诊断明细」区: 每行 = 对象 + 中文含义 +
-    [原始审计码附录] (``reason=/execution=/source=``、``shadow_*``、
-    ``block_reason(s)=``、``manifest_*`` 的 key=value 原样保留供日志对照) —
+    改变正文形态, 只在末尾追加「诊断明细」区: 每行 = 代码+名称 + 持仓状态
+    (浮盈亏/持有天数, 仅持有中) + 中文含义 + 执行状态; 原始 key=value 审计
+    码不在终端视图重复携带 — 持久在 JSON 报告/事件日志供日志对照 —
     正文与审计是两个层, 不互相污染.
     """
     from src.screening.offensive.trade_lifecycle import FillSource
@@ -3381,7 +3476,11 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
                 )
             )
         if verbose:
-            debug.append(_debug_action_item_line(plan))
+            debug.append(
+                _debug_action_item_line(
+                    plan, _pad_to(_label(plan.ticker), _LABEL_WIDTH), as_of
+                )
+            )
     if converge_shown:
         plan_rows.append(
             "  ⭐双信号 = 同日也在 --auto Top-N（收敛子集历史胜率更高，"
@@ -3477,7 +3576,11 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         )
         shadow_rows.append(f"{label}{pnl_clause} 影子建议：{advice}{maturity_clause}")
         if verbose:
-            debug.append(_debug_shadow_line(trade))
+            debug.append(
+                _debug_shadow_line(
+                    trade, _pad_to(_label(trade.ticker), _LABEL_WIDTH), as_of
+                )
+            )
     lines.extend(_render_section("持仓退出建议（影子，不改变默认退出）", shadow_rows))
     lines.append("")
 
@@ -3504,8 +3607,8 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
                 blocked_rows.append(breakdown)
         if verbose:
             debug.append(
-                f"{candidate.ticker}  不可计划：{_block_reason_zh(candidate.reason)}  "
-                f"[block_reason={candidate.reason}]"
+                f"{_pad_to(_label(candidate.ticker), _LABEL_WIDTH)}  "
+                f"不可计划：{_block_reason_zh(candidate.reason)}"
             )
     lines.extend(
         _render_section(f"不可计划候选（{len(actionable_blocked)} 只）", blocked_rows)
@@ -3529,8 +3632,8 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
             )
             if verbose:
                 debug.append(
-                    f"{skip.ticker}  容量拦截：{skip.detail}  "
-                    f"[capacity_skip_reason={skip.reason} industry={skip.industry}]"
+                    f"{_pad_to(_label(skip.ticker), _LABEL_WIDTH)}  "
+                    f"容量拦截：{skip.detail}"
                 )
         lines.extend(
             _render_section(f"容量拦截（{len(capacity_skipped)} 只）", capacity_rows)
@@ -3636,7 +3739,11 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
                 )
             rows.append(f"{_pad_to(_label(item.ticker), _LABEL_WIDTH)}{clause}")
             if verbose:
-                debug.append(_debug_action_item_line(item))
+                debug.append(
+                    _debug_action_item_line(
+                        item, _pad_to(_label(item.ticker), _LABEL_WIDTH), as_of
+                    )
+                )
         lines.extend(_render_section(f"{title}（{len(items)}）", rows))
         lines.append("")
 
@@ -3666,28 +3773,20 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         if release_clause:
             lines.append(release_clause)
 
-    # ---- verbose 诊断区: 中文含义为主行, raw audit 码收进方括号附录 ----
+    # ---- verbose 诊断区: 中文业务行 (原始码持久在 JSON 报告/事件日志) ----
     if run.service_run.block_reason and verbose:
-        debug.append(
-            f"运行阻断：{_run_block_reason_zh(run.service_run.block_reason)}  "
-            f"[block_reason={run.service_run.block_reason}]"
-        )
+        debug.append(f"运行阻断：{_run_block_reason_zh(run.service_run.block_reason)}")
     if run.service_run.block_reasons and verbose:
         debug.append(
-            f"运行阻断：{'；'.join(_run_block_reason_zh(code) for code in run.service_run.block_reasons)}  "
-            f"[block_reasons={','.join(run.service_run.block_reasons)}]"
+            f"运行阻断：{'；'.join(_run_block_reason_zh(code) for code in run.service_run.block_reasons)}"
         )
     if run.service_run.blocked_tickers and verbose:
-        debug.append(
-            f"manifest 拦截票：{','.join(run.service_run.blocked_tickers)}  "
-            f"[manifest_blocked_tickers={','.join(run.service_run.blocked_tickers)}]"
-        )
+        debug.append(f"manifest 拦截票：{','.join(run.service_run.blocked_tickers)}")
     if run.service_run.ticker_gate_blocks and verbose:
-        debug.append("manifest 门控拦截  [manifest_gate_blocks]")
+        debug.append("manifest 门控拦截")
         debug.extend(
-            f"  {block.ticker}  "
-            f"{'；'.join(_DEBUG_GATE_REASON_ZH.get(reason, reason) for reason in block.reasons)}  "
-            f"[reasons={' | '.join(block.reasons)}]"
+            f"  {_pad_to(_label(block.ticker), _LABEL_WIDTH)}  "
+            f"{'；'.join(_DEBUG_GATE_REASON_ZH.get(reason, reason) for reason in block.reasons)}"
             for block in run.service_run.ticker_gate_blocks
         )
     if verbose and debug:

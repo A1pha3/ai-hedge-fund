@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import fields
+from dataclasses import fields, replace
 from datetime import date, timedelta
 
 import pandas as pd
@@ -14,6 +14,7 @@ from src.screening.offensive.daily_action import (
     render_daily_action_v2,
 )
 from src.screening.offensive.daily_action_service import (
+    ActionItem,
     DailyActionService,
     MarketBar,
 )
@@ -145,14 +146,78 @@ def test_render_labels_shadow_as_non_executable_advice(shadow_case):
     assert "影子建议" in text
     assert "shadow_exit_line=" not in text
     assert "close_below_trailing_line" not in text
-    # Verbose exposes the raw shadow evidence in the diagnostics appendage,
-    # with a Chinese-first explanation of what the shadow signal means.
-    assert "close_below_trailing_line" in verbose_text
-    assert "shadow_exit_line=" in verbose_text
+    # Verbose diagnostics are Chinese-only too: raw codes stay in JSON reports /
+    # event logs, the terminal view carries the Chinese explanation of the signal.
+    assert "close_below_trailing_line" not in verbose_text
+    assert "shadow_exit_line=" not in verbose_text
     assert "影子信号：次日开盘退出（收盘跌破移动退出线）" in verbose_text
     assert "影子信号" not in text
     # service.render mirrors the default (non-verbose) operator view.
     assert text == service.render(run)
+
+
+def test_verbose_debug_lines_carry_names_distances_and_settlement_dates(
+    shadow_case, monkeypatch
+):
+    """诊断行可读性收口: 代码+名称对齐、浮盈亏/持有天数、现价距线幅度、
+    结算具体日期、状态去重. 终端视图无英文原始码 (持久在 JSON 报告/日志)."""
+    service, open_trade, prices, as_of = shadow_case
+    monkeypatch.setattr(
+        "src.tools.tushare_api.get_stock_name", lambda ticker: "测试股份"
+    )
+    run = service.run(as_of, candidates=(), shadow_prices=prices)
+    pending = ActionItem(
+        trade_id="t-debug",
+        ticker=open_trade.ticker,
+        reason="pending_exit",
+        execution_label="paper",
+        source_label="synthetic_open",
+        target_exit_date=as_of,
+        entry_date=as_of - timedelta(days=8),
+        unrealized_pct=-0.05,
+    )
+    view = DailyActionV2Run(
+        replace(run, exit_plans=(pending,)), (), run.open_positions, (), ()
+    )
+    text = render_daily_action_v2(view, verbose=True)
+
+    # 名称进入诊断行 (主视图 _label 同源, 查不到名回退纯代码)
+    assert f"{open_trade.ticker} 测试股份" in text
+    # 影子行: 浮盈亏 +5% (close 10.5 / entry 10.0) 与持有 3 天; 现价距线「现价低」
+    assert "浮 +5.0%（持有 3 天） · 影子退出线" in text
+    assert "（现价低 " in text
+    # pending_exit 行: 同款持仓状态子句 (item 携带的 entry_date/unrealized_pct)
+    assert "浮 -5.0%（持有 8 天） · 已标记退出" in text
+    # 结算日: 具体日期替换抽象「强制退出日」
+    assert (
+        f"已标记退出，等待 {as_of.month}/{as_of.day}"
+        f"（周{'一二三四五六日'[as_of.weekday()]}）强制结算"
+    ) in text
+    # 状态短语去重: 共享前缀「模拟」只出现一次, 「当前」前缀删除
+    assert "模拟执行 · 开盘成交" in text
+    assert "模拟开盘成交" not in text
+    assert "当前模拟执行" not in text
+    # 终端视图无原始码附录
+    assert "[reason=" not in text
+    assert "shadow_exit_line=" not in text
+
+
+def test_verbose_debug_line_renders_missing_line_as_placeholder(shadow_case, monkeypatch):
+    """退出线缺失 (insufficient_data) → 显示占位「—」, 浮盈亏/距离子句全部
+    省略 (fail-open, 不编造), 终端无原始码."""
+    service, open_trade, prices, as_of = shadow_case
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda ticker: ticker)
+    incomplete = dict(prices)
+    incomplete.pop((open_trade.ticker, as_of))
+    run = service.run(as_of, candidates=(), shadow_prices=incomplete)
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view, verbose=True)
+
+    assert "影子退出线 —" in text
+    assert "shadow_exit_line" not in text
+    assert "浮 " not in text
+    assert "（现价低" not in text
+    assert "（现价高" not in text
 
 
 def test_missing_shadow_path_is_visible_and_never_treated_as_exit(shadow_case):
