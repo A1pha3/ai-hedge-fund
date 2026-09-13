@@ -5260,3 +5260,111 @@ def test_verbose_holding_days_keep_signal_day_anchor(tmp_path):
     # 读锚 9/8 会膨胀为 7 — 本钉锁定后向天数不随读锚后移.
     assert "持有 5 天" in debug_row
     assert "持有 7 天" not in debug_row
+
+
+# ---- R208 Op2: 对抗审查盲区钉 (探针 M03/M04/M05/M06/M11/M12 定谳 BLIND → 纯 tests 钉) ----
+
+
+def _bridge_case(case, tmp_path, monkeypatch, *, skip_bucket, keep_bucket):
+    """桥接子句守卫形态夹具: 单 entry (would_skip=True)/直收原始 pack bucket
+    (M03-M06 毒化形态须能注入非 dict bucket, 不得经包装层洗白)."""
+    _patch_pack_dir(monkeypatch, tmp_path)
+    _shadow_sidecar(tmp_path, [_shadow_entry("000001", True)])
+    _write_pack(
+        tmp_path,
+        "20260907",
+        _pack_payload(skip=skip_bucket, keep=keep_bucket),
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    return complete_daily_action_v2(
+        service,
+        context,
+        DailyActionScan(as_of, (), (), ()),
+        gap_shadow_journal_dir=tmp_path,
+    )
+
+
+def test_bridge_clause_omits_when_bucket_n_is_bool_small_total(case, tmp_path, monkeypatch):
+    """M03 钉: n=bool 在小总体下 M>total 兜不住 — True 计入会把「True/1」字面
+    渲染进披露行; 严格 bool 拒绝必须独立于矛盾守卫生效 (fail-open 省略)."""
+    v2_run = _bridge_case(case, tmp_path, monkeypatch,
+                          skip_bucket={"mean": -0.11, "n": True, "win_rate": 0.0},
+                          keep_bucket={"mean": -0.07, "n": 0, "win_rate": 0.0})
+    assert v2_run.gap_shadow_line == (
+        "gap 影子: 累计 1 笔 · would-skip 1 · gap 缺失 0"
+    )
+
+
+def test_bridge_clause_omits_when_bucket_not_dict_without_crash(case, tmp_path, monkeypatch):
+    """M04 钉: bucket 非 dict (如毒化字符串) → 子句省略且绝不崩渲染 — 该守卫
+    是 _gap_shadow_line_parts try 块之外的唯一崩溃屏障."""
+    v2_run = _bridge_case(case, tmp_path, monkeypatch,
+                          skip_bucket="poison",
+                          keep_bucket={"mean": -0.07, "n": 0, "win_rate": 0.0})
+    assert v2_run.gap_shadow_line == (
+        "gap 影子: 累计 1 笔 · would-skip 1 · gap 缺失 0"
+    )
+
+
+def test_bridge_clause_omits_when_bucket_n_negative(case, tmp_path, monkeypatch):
+    """M05 钉: n 为负 = 毒化计数 → 「结果成熟 -1/1」式无意义读数不得渲染."""
+    v2_run = _bridge_case(case, tmp_path, monkeypatch,
+                          skip_bucket={"mean": -0.11, "n": -1, "win_rate": 0.0},
+                          keep_bucket={"mean": -0.07, "n": 0, "win_rate": 0.0})
+    assert v2_run.gap_shadow_line == (
+        "gap 影子: 累计 1 笔 · would-skip 1 · gap 缺失 0"
+    )
+
+
+def test_bridge_clause_omits_at_matured_exceeds_total_boundary(case, tmp_path, monkeypatch):
+    """M06 钉: M == total+1 (恰好越界一格) 也是工件矛盾 → 子句省略 — 守卫的
+    严格不等式边界不得松动为 off-by-one."""
+    v2_run = _bridge_case(case, tmp_path, monkeypatch,
+                          skip_bucket={"mean": -0.11, "n": 2, "win_rate": 0.0},
+                          keep_bucket={"mean": -0.07, "n": 0, "win_rate": 0.0})
+    assert v2_run.gap_shadow_line == (
+        "gap 影子: 累计 1 笔 · would-skip 1 · gap 缺失 0"
+    )
+
+
+def test_bridge_clause_renders_when_matured_equals_total(case, tmp_path, monkeypatch):
+    """M==total 等值形态必须渲染 (矛盾守卫只拒「超出」, 不拒「全部成熟」)—
+    与上一钉共同锁死边界的两侧语义."""
+    v2_run = _bridge_case(case, tmp_path, monkeypatch,
+                          skip_bucket={"mean": -0.11, "n": 1, "win_rate": 0.0},
+                          keep_bucket={"mean": -0.07, "n": 0, "win_rate": 0.0})
+    assert v2_run.gap_shadow_line == (
+        "gap 影子: 累计 1 笔 · would-skip 1 · gap 缺失 0 · 结果成熟 1/1"
+    )
+
+
+def test_exit_advice_row_no_flag_when_calendar_loader_raises(tmp_path, monkeypatch):
+    """M11 钉: 日历 loader 抛错 (网络/文件事故) → fail-open 吞掉并省略括注,
+    渲染绝不被披露面异常阻断 (except 收窄即崩)."""
+    from src.screening.offensive import daily_action as _da
+
+    def _raise():
+        raise RuntimeError("calendar loader poison")
+
+    view, run, _sessions = _advice_view(tmp_path)
+    monkeypatch.setattr(_da, "_load_authoritative_session_dates", _raise)
+    text = render_daily_action_v2(view, today=run.trade_date)
+    row = next(line for line in text.splitlines() if "000909" in line)
+    assert "影子建议：建议次日退出" in row
+    assert "早于合约到期" not in row
+
+
+def test_exit_advice_row_annotation_follows_read_time_anchor(tmp_path, monkeypatch):
+    """M12 钉: 张力判定锚定读时刻 (R206 today 契约) 而非信号日 — 读时刻已过
+    下一开盘 (到期已不再晚于下一开盘) 时即使信号日锚会给出括注也不得渲染."""
+    from src.screening.offensive import daily_action as _da
+
+    view, run, sessions = _advice_view(tmp_path, maturity_index=24)
+    monkeypatch.setattr(_da, "_load_authoritative_session_dates", lambda: sessions)
+    # 读时刻取信号日之后第 3 个会话: next_session(读时刻)=s24 == 到期日 → 无张力;
+    # 信号日锚突变 (next_session(s20)=s21 < s24) 会误渲染括注 — 本钉当场红。
+    text = render_daily_action_v2(view, today=sessions[23])
+    row = next(line for line in text.splitlines() if "000909" in line)
+    assert "影子建议：建议次日退出" in row
+    assert "早于合约到期" not in row
