@@ -946,11 +946,12 @@ def test_actual_cli_two_session_calendar_blocks_btst_horizon(
     # Two-session calendar can't hold a T+10 BTST position. No plans created.
     assert LedgerRepository(ledger, "daily-action-v2", 100_000, execution_costs=ExecutionCosts(version="test")).planned_trades() == []
 
+
 # ---------------------------------------------------------------------------
 # Task 9 readiness v2 production path integration
 # ---------------------------------------------------------------------------
 
-from tests.offensive.readiness_v2_testkit import (
+from tests.offensive.readiness_v2_testkit import (  # noqa: E402 - 分节基建 (基线遗留 lint, R206 Op1 声明命令覆盖本文件时收口)
     run_full_injected_pipeline,
     run_pipeline_without_readiness_with_due_exit,
 )

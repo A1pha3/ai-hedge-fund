@@ -640,6 +640,16 @@ def _resolve_next_trade_date(
         return ""
 
 
+def _wall_clock_today() -> date:
+    """生产墙钟单一接缝 (R206 Op1): 「剩N天」读时刻锚的默认取值点.
+
+    独立函数而非内联 date.today() — 测试注入墙钟时 patch 此接缝而不 patch
+    模块 date (替换 date 类会污染全部 isinstance 检查: 真 date 实例对
+    date 子类 isinstance 为 False, R206 RED 期实证).
+    """
+    return date.today()
+
+
 def _coerce_today_yyyymmdd(today: date | str | None) -> str:
     """Normalize an injectable "today" to ``YYYYMMDD``.
 
@@ -3385,7 +3395,9 @@ def _release_schedule_clause(
         return None
 
 
-def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> str:
+def render_daily_action_v2(
+    run: DailyActionV2Run, *, verbose: bool = False, today: date | None = None
+) -> str:
     """Render the daily operator view — one track regardless of ``verbose``.
 
     正文永远是可读的中文业务视图: 一行「今日摘要」结论先行, 后接新计划 /
@@ -3397,6 +3409,14 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     (浮盈亏/持有天数, 仅持有中) + 中文含义 + 执行状态; 原始 key=value 审计
     码不在终端视图重复携带 — 持久在 JSON 报告/事件日志供日志对照 —
     正文与审计是两个层, 不互相污染.
+
+    today (R206 Op1): 「剩N天」/到期释放日程子句族的读时刻基准 — v1
+    render_daily_action 同款契约: 默认 None = 真实 wall clock (生产读路径
+    零接线缝: 渲染本体即读时刻语义), 测试必须显式注入, 否则日历越过夹具到期日
+    后断言落空 (R90 日历漂移家族); 非 date 毒化 (datetime/str) 退化
+    run.service_run.trade_date 冻结锚, 渲染保持 total。信号日事实
+    (当日成交 entry==trade_date 过滤, verbose 持有天数) 仍锚 trade_date —
+    前瞻剩余天数与信号日快照两角色分流, 各锚其位。
     """
     from src.screening.offensive.trade_lifecycle import FillSource
     from src.tools.tushare_api import get_stock_name
@@ -3407,6 +3427,15 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         return f"{ticker} {name}" if name and name != ticker else ticker
 
     as_of = run.service_run.trade_date
+    # 「剩N天」读时刻锚 (R206 Op1): v1 today 契约对齐 — operator 关心「从读时刻
+    # 起还要等几天」, 信号日做基准会让剩N天比直觉多 2-3 天 (周日读周一到期仓
+    # 显示「剩3天」实录, 9:25 竞价时点误读)。默认墙钟, 注入 date 采纳, 毒化
+    # 退化冻结锚 (渲染 total, fail-open 家族)。
+    read_as_of = (
+        today
+        if isinstance(today, date) and not isinstance(today, datetime)
+        else (as_of if today is not None else _wall_clock_today())
+    )
     references = dict(run.reference_prices)
     debug: list[str] = []
 
@@ -3697,7 +3726,7 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         if isinstance(pnl, Real) and not isinstance(pnl, bool) and math.isfinite(pnl):
             pnl_clause = f" 浮 {pnl:+.1%}"
         maturity_clause = _maturity_clause(
-            getattr(trade, "projected_exit_date", None), as_of
+            getattr(trade, "projected_exit_date", None), read_as_of
         )
         shadow_rows.append(f"{label}{pnl_clause} 影子建议：{advice}{maturity_clause}")
         if verbose:
@@ -3872,7 +3901,7 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
             clause = ""
             if title == "退出计划":
                 clause = _maturity_clause(
-                    getattr(item, "target_exit_date", None), as_of
+                    getattr(item, "target_exit_date", None), read_as_of
                 )
             rows.append(f"{_pad_to(_label(item.ticker), _LABEL_WIDTH)}{clause}")
             if verbose:
@@ -3911,7 +3940,7 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
             (*run.open_positions, *run.pending_exit_releases),
             open_exposure,
             reserved_exposure,
-            as_of,
+            read_as_of,
         )
         if release_clause:
             lines.append(release_clause)

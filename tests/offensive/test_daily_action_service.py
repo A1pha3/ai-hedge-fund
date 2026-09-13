@@ -1081,8 +1081,27 @@ def test_service_render_carries_pending_exit_releases(tmp_path):
     service, sessions = _exit_pending_world(tmp_path)
     run = service.run(sessions[23], ())
     assert run.pending_exit_releases
-    text = DailyActionService.render(run)
+    text = DailyActionService.render(run, today=run.trade_date)
     forced = run.pending_exit_releases[0].projected_exit_date
     release_line = next(line for line in text.splitlines() if "释放日程" in line)
     assert f"最近到期 {forced.month}/{forced.day}" in release_line
     assert "释放 1 只" in release_line
+
+
+def test_service_render_passthrough_read_time_today(tmp_path):
+    """R206 Op1: Service.render 便捷消费面 today passthrough — 注入读时刻后
+    到期/释放子句按读时刻计 (与 render_daily_action_v2 同一契约, R202 M11 同面)."""
+    from datetime import date
+
+    service, sessions = _exit_pending_world(tmp_path)
+    run = service.run(sessions[23], ())
+    assert run.trade_date == date(2026, 8, 5)
+    # == 信号日: 冻结锚形态 (forced 8/6, 剩1天)
+    with_trade_date = DailyActionService.render(run, today=date(2026, 8, 5))
+    release_line = next(
+        line for line in with_trade_date.splitlines() if "释放日程" in line
+    )
+    assert "最近到期 8/6（剩1天）" in release_line
+    # == 到期日: day-0 排除, 释放日程省略
+    at_maturity = DailyActionService.render(run, today=date(2026, 8, 6))
+    assert not any("释放日程" in line for line in at_maturity.splitlines())

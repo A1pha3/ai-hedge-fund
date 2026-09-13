@@ -3163,7 +3163,7 @@ def test_exit_advice_row_shows_maturity_date(tmp_path):
     同日到期 cohort (0831 五笔集中释放) 由此日度可见."""
     run, _sessions, _target, _r = _run_with_open_position(tmp_path)
     view = DailyActionV2Run(run, (), run.open_positions, (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     row = next(line for line in text.splitlines() if "000909" in line)
     # entry = sessions[15], T+10 = sessions[24], as_of = sessions[20] → 剩 4 天
     assert "到期 9/10（剩4天）" in row
@@ -3179,8 +3179,8 @@ def test_exit_advice_row_omits_maturity_when_none(tmp_path):
     stripped = dc_replace(run.open_positions[0], projected_exit_date=None)
     view_with = DailyActionV2Run(run, (), run.open_positions, (), ())
     view_without = DailyActionV2Run(run, (), (stripped,), (), ())
-    text_with = render_daily_action_v2(view_with)
-    text_without = render_daily_action_v2(view_without)
+    text_with = render_daily_action_v2(view_with, today=run.trade_date)
+    text_without = render_daily_action_v2(view_without, today=run.trade_date)
     row_with = next(line for line in text_with.splitlines() if "000909" in line)
     row_without = next(line for line in text_without.splitlines() if "000909" in line)
     assert "到期" in row_with
@@ -3196,7 +3196,7 @@ def test_exit_advice_row_maturity_today(tmp_path):
     as_of = run.trade_date
     matured = dc_replace(run.open_positions[0], projected_exit_date=as_of)
     view = DailyActionV2Run(run, (), (matured,), (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     row = next(line for line in text.splitlines() if "000909" in line)
     assert "今日到期" in row
     assert "剩" not in row
@@ -3210,10 +3210,16 @@ def test_exit_advice_row_maturity_survives_datetime_trade_date(tmp_path):
     run, _s, _t, _r = _run_with_open_position(tmp_path)
     stale_service_run = dc_replace(run, trade_date=datetime(2026, 9, 6, 18, 0))
     view = DailyActionV2Run(stale_service_run, (), run.open_positions, (), ())
-    text = render_daily_action_v2(view)
+    # R206 读锚契约: 毒化 today → 退化冻结锚 (=datetime trade_date) →
+    # (date - datetime) TypeError 家族防御 → 子句省略; 合法注入则不再被
+    # trade_date 毒化连坐 (子句锚已与工件 trade_date 解耦)。
+    text = render_daily_action_v2(view, today=datetime(2026, 9, 8, 9, 30))
     row = next(line for line in text.splitlines() if "000909" in line)
     assert "到期" not in row
     assert "影子建议" in row
+    text_ok = render_daily_action_v2(view, today=date(2026, 9, 8))
+    row_ok = next(line for line in text_ok.splitlines() if "000909" in line)
+    assert "到期 9/10（剩2天）" in row_ok
 
 
 # ---------- R159 Op2: 退出计划区到期子句 (F-a) + 过期日形态钉住 (F-c) ----------
@@ -3237,7 +3243,7 @@ def test_exit_plan_row_shows_maturity_date(tmp_path):
     """F-a: 退出计划行披露「到期 M/D（剩N天）」— day-9/10 退出窗口的日期可见性."""
     run, service_run, _sessions = _run_with_exit_plan(tmp_path)
     view = DailyActionV2Run(service_run, (), run.open_positions, (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     section = text.split("退出计划（")[1]
     row = next(line for line in section.splitlines() if "000909" in line)
     assert "到期 9/10（剩4天）" in row
@@ -3247,7 +3253,7 @@ def test_exit_plan_row_omits_maturity_when_none(tmp_path):
     """target_exit_date=None (旧构造点) → 退出计划行与修复前逐字节一致."""
     run, service_run, _sessions = _run_with_exit_plan(tmp_path, with_date=False)
     view = DailyActionV2Run(service_run, (), run.open_positions, (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     section = text.split("退出计划（")[1]
     row = next(line for line in section.splitlines() if "000909" in line)
     assert "到期" not in row
@@ -3268,7 +3274,7 @@ def test_deferred_exit_row_never_shows_maturity_clause(tmp_path):
     )
     service_run = dc_replace(run, deferred_exits=(item,))
     view = DailyActionV2Run(service_run, (), run.open_positions, (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     section = text.split("延迟退出")[1]
     row = next(line for line in section.splitlines() if "000909" in line)
     assert "到期" not in row
@@ -3289,7 +3295,7 @@ def test_release_schedule_line_shows_soonest_cohort(tmp_path):
     释放敞口与 open_exposure 同基准 (单持仓时相等), after = 持仓+待成交 − 释放."""
     run, _sessions, _t, _r = _run_with_open_position(tmp_path)
     view = DailyActionV2Run(run, (), run.open_positions, (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     line = next(line for line in text.splitlines() if "释放日程" in line)
     assert "最近到期 9/10（剩4天）" in line
     assert "释放 1 只 / " in line
@@ -3308,7 +3314,7 @@ def test_release_schedule_line_aggregates_same_date_cohort(tmp_path):
     first = run.open_positions[0]
     second = dc_replace(first, trade_id="t-second")
     view = DailyActionV2Run(run, (), (first, second), (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     line = next(line for line in text.splitlines() if "释放日程" in line)
     assert "释放 2 只 / " in line
     assert f"{2 * first.mark_weight:.0%} 敞口" in line
@@ -3324,7 +3330,7 @@ def test_release_schedule_line_prefers_earliest_of_two_dates(tmp_path):
         first, trade_id="t-later", projected_exit_date=sessions[25], mark_weight=0.2
     )
     view = DailyActionV2Run(run, (), (first, later), (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     line = next(line for line in text.splitlines() if "释放日程" in line)
     assert "最近到期 9/10" in line
     assert "释放 1 只 / " in line
@@ -3338,7 +3344,7 @@ def test_release_schedule_line_omitted_when_no_future_maturity(tmp_path):
     run, _s, _t, _r = _run_with_open_position(tmp_path)
     stripped = dc_replace(run.open_positions[0], projected_exit_date=None)
     view = DailyActionV2Run(run, (), (stripped,), (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     assert "释放日程" not in text
     assert "敞口：" in text
 
@@ -3354,7 +3360,7 @@ def test_release_schedule_line_over_cap_clause_includes_reserved_base(tmp_path):
     )
     position = dc_replace(run.open_positions[0], mark_weight=0.10)
     view = DailyActionV2Run(service_run, (), (position,), (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     line = next(line for line in text.splitlines() if "释放日程" in line)
     assert "约 65%" in line
     assert "（仍超 60% 上限，需继续等待）" in line
@@ -3368,7 +3374,8 @@ def test_release_schedule_line_omitted_for_datetime_trade_date(tmp_path):
     run, _s, _t, _r = _run_with_open_position(tmp_path)
     stale_service_run = dc_replace(run, trade_date=datetime(2026, 9, 6, 18, 0))
     view = DailyActionV2Run(stale_service_run, (), run.open_positions, (), ())
-    text = render_daily_action_v2(view)
+    # R206 读锚契约: 毒化 today → 冻结锚 datetime → isinstance 守卫省略聚合行。
+    text = render_daily_action_v2(view, today=datetime(2026, 9, 8, 9, 30))
     assert "释放日程" not in text
     assert "000909" in text
 
@@ -3382,7 +3389,7 @@ def test_release_schedule_line_omitted_when_weight_poisoned(tmp_path):
     for poison in (float("nan"), True, "5%", None):
         poisoned = dc_replace(run.open_positions[0], mark_weight=poison)
         view = DailyActionV2Run(run, (), (poisoned,), (), ())
-        text = render_daily_action_v2(view)
+        text = render_daily_action_v2(view, today=run.trade_date)
         assert "释放日程" not in text, f"poison={poison!r} 未被守卫"
 
 
@@ -3396,7 +3403,7 @@ def test_release_schedule_line_zero_weight_is_shown_not_omitted(tmp_path):
     run, _s, _t, _r = _run_with_open_position(tmp_path)
     zero = dc_replace(run.open_positions[0], mark_weight=0.0)
     view = DailyActionV2Run(run, (), (zero,), (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     line = next(line for line in text.splitlines() if "释放日程" in line)
     assert "释放 1 只 / 0% 敞口" in line
     total = run.open_exposure + run.reserved_exposure
@@ -3413,7 +3420,7 @@ def test_release_schedule_line_excludes_maturity_equal_to_as_of(tmp_path):
         run.open_positions[0], projected_exit_date=run.trade_date
     )
     view = DailyActionV2Run(run, (), (today,), (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     assert "释放日程" not in text
     assert "敞口：" in text
 
@@ -3428,7 +3435,7 @@ def test_release_schedule_line_excludes_past_maturity(tmp_path):
         run.open_positions[0], projected_exit_date=sessions[18]
     )
     view = DailyActionV2Run(run, (), (past,), (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     assert "释放日程" not in text
 
 
@@ -3445,7 +3452,7 @@ def test_release_schedule_line_shows_all_future_cohorts(tmp_path):
         first, trade_id="t-later", projected_exit_date=sessions[25], mark_weight=0.2
     )
     view = DailyActionV2Run(run, (), (first, later), (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     line = next(line for line in text.splitlines() if "释放日程" in line)
     total = run.open_exposure + run.reserved_exposure
     first_weight = first.mark_weight
@@ -3479,7 +3486,7 @@ def test_release_schedule_line_orders_descending_input_positions(tmp_path):
         base, trade_id="t-late", projected_exit_date=sessions[26], mark_weight=0.05
     )
     view = DailyActionV2Run(service_run, (), (late, mid, early), (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     line = next(line for line in text.splitlines() if "释放日程" in line)
     assert line == (
         "释放日程：最近到期 9/10（剩4天）释放 1 只 / 10% 敞口 → 约 65%；"
@@ -3502,7 +3509,7 @@ def test_release_schedule_line_cap_note_follows_recovery_segment(tmp_path):
         first, trade_id="t-later", projected_exit_date=sessions[25], mark_weight=0.30
     )
     view = DailyActionV2Run(service_run, (), (first, later), (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     line = next(line for line in text.splitlines() if "释放日程" in line)
     assert "→ 约 65%；" in line
     later_day = f"{sessions[25].month}/{sessions[25].day}"
@@ -3521,7 +3528,7 @@ def test_release_schedule_line_never_recovers_note_on_last_segment(tmp_path):
         first, trade_id="t-later", projected_exit_date=sessions[25], mark_weight=0.05
     )
     view = DailyActionV2Run(service_run, (), (first, later), (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     line = next(line for line in text.splitlines() if "释放日程" in line)
     later_day = f"{sessions[25].month}/{sessions[25].day}"
     assert f"释放 1 只 / 5% 敞口 → 约 70%；{later_day} 释放 1 只 / 5% 敞口 → 约 65%（仍超 60% 上限，需继续等待）" in line
@@ -3561,7 +3568,7 @@ def test_release_schedule_line_later_cohort_aggregates_same_date(tmp_path):
         first, trade_id="t-later-b", projected_exit_date=sessions[25], mark_weight=0.2
     )
     view = DailyActionV2Run(run, (), (first, later_a, later_b), (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     line = next(line for line in text.splitlines() if "释放日程" in line)
     later_day = f"{sessions[25].month}/{sessions[25].day}"
     assert f"；{later_day} 释放 2 只 / 40% 敞口" in line
@@ -3578,7 +3585,7 @@ def test_release_schedule_line_later_cohort_zero_weight_shown(tmp_path):
         first, trade_id="t-later", projected_exit_date=sessions[25], mark_weight=0.0
     )
     view = DailyActionV2Run(run, (), (first, later), (), ())
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     line = next(line for line in text.splitlines() if "释放日程" in line)
     total = run.open_exposure + run.reserved_exposure
     later_day = f"{sessions[25].month}/{sessions[25].day}"
@@ -4909,7 +4916,7 @@ def test_release_schedule_lists_pending_exit_cohort_first(tmp_path):
         (),
         pending_exit_releases=(_PendingRelease(forced, 0.05),),
     )
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     line = next(line for line in text.splitlines() if "释放日程" in line)
     assert f"最近到期 {forced.month}/{forced.day}" in line
     assert "释放 1 只 / 5% 敞口" in line
@@ -4928,11 +4935,11 @@ def test_release_schedule_unchanged_without_pending_releases(tmp_path):
         run, (), run.open_positions, (), (), pending_exit_releases=()
     )
     legacy_line = next(
-        line for line in render_daily_action_v2(legacy).splitlines() if "释放日程" in line
+        line for line in render_daily_action_v2(legacy, today=run.trade_date).splitlines() if "释放日程" in line
     )
     explicit_line = next(
         line
-        for line in render_daily_action_v2(explicit).splitlines()
+        for line in render_daily_action_v2(explicit, today=run.trade_date).splitlines()
         if "释放日程" in line
     )
     assert legacy_line == explicit_line
@@ -4946,6 +4953,113 @@ def test_release_schedule_ignores_overdue_pending_release(tmp_path):
     view = DailyActionV2Run(
         run, (), run.open_positions, (), (), pending_exit_releases=(overdue,)
     )
-    text = render_daily_action_v2(view)
+    text = render_daily_action_v2(view, today=run.trade_date)
     line = next(line for line in text.splitlines() if "释放日程" in line)
     assert "最近到期 9/10" in line  # 仅 OPEN 仓推导到期, overdue 未混入
+
+
+# ---------- R206 Op1: 「剩N天」读法锚定真相 (读时刻锚, v1 today 契约对齐) ----------
+# 缺陷 (宿主 2026-09-13 周日冒烟实锤): render_daily_action_v2 内部
+# as_of = run.service_run.trade_date (信号日锚), 缓存重读时到期/释放子句族冻结在
+# 信号日口径 — 5 只周一开盘强制退出仓显示「剩3天」而非「剩1天」, 恰在 9:25 竞价
+# 与周末判读时点误导退出时点判断。v1 render_daily_action today 契约 (「as_of 用
+# 今天 (而非信号日 trade_date)」) 是既定语义, v2 迁移时静默回归。
+
+
+def test_read_time_anchor_shadow_row_counts_from_today(tmp_path):
+    """影子建议行注入 today (读时刻) > 信号日 → 剩余天数按读时刻计, 非信号日."""
+    run, _sessions, _target, _r = _run_with_open_position(tmp_path)
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view, today=date(2026, 9, 8))
+    row = next(line for line in text.splitlines() if "000909" in line)
+    # 信号日锚 (9/6) 渲染「剩4天」; 读时刻 9/8 → 剩 2 天
+    assert "到期 9/10（剩2天）" in row
+
+
+def test_read_time_anchor_exit_plan_row_counts_from_today(tmp_path):
+    """退出计划行注入读时刻 today → 剩余天数按读时刻计 (R159 F-a 子句同款语义)."""
+    run, service_run, _sessions = _run_with_exit_plan(tmp_path)
+    view = DailyActionV2Run(service_run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view, today=date(2026, 9, 8))
+    section = text.split("退出计划（")[1]
+    row = next(line for line in section.splitlines() if "000909" in line)
+    assert "到期 9/10（剩2天）" in row
+
+
+def test_read_time_anchor_exit_plan_row_maturity_day_today(tmp_path):
+    """读时刻 == 到期日 → 退出计划行「今日到期」(9:25 竞价时点的正确读法)."""
+    run, service_run, _sessions = _run_with_exit_plan(tmp_path)
+    view = DailyActionV2Run(service_run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view, today=date(2026, 9, 10))
+    section = text.split("退出计划（")[1]
+    row = next(line for line in section.splitlines() if "000909" in line)
+    assert "今日到期" in row
+
+
+def test_read_time_anchor_release_schedule_counts_from_today(tmp_path):
+    """释放日程注入读时刻 today → 首段剩余天数按读时刻计."""
+    run, _sessions, _target, _r = _run_with_open_position(tmp_path)
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view, today=date(2026, 9, 8))
+    line = next(line for line in text.splitlines() if "释放日程" in line)
+    assert "最近到期 9/10（剩2天）" in line
+
+
+def test_read_time_anchor_maturity_day_release_omitted_shadow_today(tmp_path):
+    """读时刻 == 到期日: 释放日程按 day-0 排除语义省略 (R202 M7 钉在读锚下不变),
+    影子行同时显示「今日到期」— 退出时点信息由退出计划/影子行承载."""
+    run, _sessions, _target, _r = _run_with_open_position(tmp_path)
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view, today=date(2026, 9, 10))
+    assert not any("释放日程" in line for line in text.splitlines())
+    row = next(line for line in text.splitlines() if "000909" in line)
+    assert "今日到期" in row
+
+
+def test_render_default_today_is_wall_clock(tmp_path, monkeypatch):
+    """默认 today=None = 真实墙钟 (v1 同款生产语义) — 墙钟在信号日之后时子句按
+    墙钟计. 生产读路径零接线缝: 渲染本体即读时刻语义 (M12 接线盲区不可能发生).
+    墙钟经 _wall_clock_today 单一接缝读取 — patch 它而不 patch 模块 date
+    (替换 date 会污染全部 isinstance 检查, 真date 实例对子类 isinstance=False)."""
+    import src.screening.offensive.daily_action as da_module
+
+    monkeypatch.setattr(da_module, "_wall_clock_today", lambda: date(2026, 9, 8))
+    run, _sessions, _target, _r = _run_with_open_position(tmp_path)
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    row = next(line for line in text.splitlines() if "000909" in line)
+    assert "到期 9/10（剩2天）" in row
+
+
+def test_read_anchor_poison_today_falls_back_to_frozen_anchor(tmp_path):
+    """today 非 date 毒化 (datetime/str) → 退化信号日冻结锚, 渲染 total 不抛
+    (fail-open 家族: 调用方毒化不崩视图, 只退回工件自带口径)."""
+    run, _sessions, _target, _r = _run_with_open_position(tmp_path)
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    for poison in (datetime(2026, 9, 8, 12, 0), "20260908"):
+        text = render_daily_action_v2(view, today=poison)
+        row = next(line for line in text.splitlines() if "000909" in line)
+        assert "到期 9/10（剩4天）" in row
+
+
+def test_read_anchor_keeps_signal_day_fill_facts(tmp_path):
+    """角色分流钉: 当日成交是信号日事实 (entry_date == 信号日), 读锚后移不改变
+    其判定 — 若读锚被误扩散到成交过滤, 本测当场红."""
+    from dataclasses import replace as dc_replace
+
+    from src.screening.offensive.trade_lifecycle import FillSource
+
+    run, _sessions, _target, _r = _run_with_open_position(tmp_path)
+    today_fill = dc_replace(
+        run.open_positions[0],
+        entry_date=run.trade_date,
+        fill_source=FillSource.SYNTHETIC_OPEN,
+    )
+    view = DailyActionV2Run(run, (), (today_fill,), (), ())
+    text = render_daily_action_v2(view, today=date(2026, 9, 8))
+    all_lines = text.splitlines()
+    sec_start = next(
+        i for i, ln in enumerate(all_lines) if ln.startswith("当日成交")
+    )
+    sec_end = next(i for i, ln in enumerate(all_lines) if "持仓退出建议" in ln)
+    assert any("000909" in ln for ln in all_lines[sec_start:sec_end])

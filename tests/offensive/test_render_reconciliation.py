@@ -693,6 +693,6 @@ def test_complete_run_carries_pending_exit_releases_to_view(case, tmp_path):
     assert release.ticker == "300009"
     assert release.projected_exit_date == sessions[9]
     assert release.mark_weight is not None and release.mark_weight > 0
-    text = render_daily_action_v2(v2_run)
+    text = render_daily_action_v2(v2_run, today=as_of)
     release_line = next(line for line in text.splitlines() if "释放日程" in line)
     assert f"最近到期 {sessions[9].month}/{sessions[9].day}" in release_line

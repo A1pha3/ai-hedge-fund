@@ -652,8 +652,13 @@ class DailyActionService:
         )
 
     @staticmethod
-    def render(run: DailyActionRun) -> str:
-        """Render the same operator view used by the daily-action dispatcher."""
+    def render(run: DailyActionRun, *, today: date | None = None) -> str:
+        """Render the same operator view used by the daily-action dispatcher.
+
+        today (R206 Op1) 原样透传 render_daily_action_v2 — 读时刻锚
+        契约见其 docstring (默认 None = 真实墙钟, 便捷消费面与 dispatcher
+        同一语义, R202 M11 面贯通不破).
+        """
         from src.screening.offensive.daily_action import (
             DailyActionV2Run,
             render_daily_action_v2,
@@ -667,7 +672,8 @@ class DailyActionService:
                 (),
                 (),
                 pending_exit_releases=getattr(run, "pending_exit_releases", ()),
-            )
+            ),
+            today=today,
         )
 
     def _manifest_eligible_candidates(
