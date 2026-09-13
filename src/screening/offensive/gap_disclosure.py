@@ -445,6 +445,55 @@ def latest_run_conditioning_report(
     return _latest_dated_report(reports_dir, _RUN_CONDITIONING_GLOB)
 
 
+def _forward_split_token(payload: dict) -> str:
+    """前向切分可选段 (R212 Op1) — 杠杆 F 注册锚后 OOS 累积的操作员面。
+
+    夜刷 forward_split_t10 (锚 20260909 = R168 注册样本窗末) 形状合法时
+    渲染前向读数; 缺省/畸形仅省略该段 (fail-open 可选段, split-half 同款
+    纪律), 基础子句不变。形状守卫: anchor 8 位串、双组 forward dict、
+    n 为非负 int (bool 毒化拒绝)、expectancy 缺失或有限数值。前向双组
+    n 均 0 → 『尚未成熟』标注 (T+10 滞后正常形态, 绝不伪造数字); 单侧 0
+    → 数字照常渲染 (falsy-zero 保真), E 缺失渲染 '—'。
+    """
+    forward = payload.get("forward_split_t10")
+    if not isinstance(forward, dict):
+        return ""
+    anchor = forward.get("anchor")
+    if not isinstance(anchor, str) or not re.fullmatch(r"[0-9]{8}", anchor):
+        return ""
+    parsed: dict[str, tuple[int, object]] = {}
+    for group in ("d1_run", "d1_blip"):
+        cell = forward.get(group)
+        fw = cell.get("forward") if isinstance(cell, dict) else None
+        if not isinstance(fw, dict):
+            return ""
+        n = fw.get("n")
+        if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+            return ""
+        # win_loss_stats 工件契约: n>0 ⇔ expectancy 有限; n==0 ⇔ None —
+        # 违约即畸形工件, 整段省略 (不渲染 '—' 冒充读数)。
+        e = fw.get("expectancy")
+        if n == 0:
+            if e is not None:
+                return ""
+        elif not _finite_number(e):
+            return ""
+        parsed[group] = (n, e)
+    run_n, run_e = parsed["d1_run"]
+    blip_n, blip_e = parsed["d1_blip"]
+    if run_n == 0 and blip_n == 0:
+        return f" · 前向(>锚 {anchor}): 前向样本尚未成熟（T+10 滞后）"
+
+    def _side(n: int, e: object) -> str:
+        e_txt = f"{e * 100:+.2f}%" if e is not None else "—"
+        return f"n={n} E={e_txt}"
+
+    return (
+        f" · 前向(>锚 {anchor}): run {_side(run_n, run_e)} · "
+        f"blip {_side(blip_n, blip_e)}（只披露）"
+    )
+
+
 def reentry_readings_clause(payload: object, report_date: str) -> str | None:
     """d1 重入邻近度当期读数子句 (R182 Op1) — 夜刷阻断连跑条件化的操作员面。
 
@@ -463,8 +512,8 @@ def reentry_readings_clause(payload: object, report_date: str) -> str | None:
     配对差 CI 缺失或非有限或 ci_low > ci_high (结构非法)、delta 池计数与
     组行 n 不一致 (键↔内容交叉, R44/R47 家族)、report_date 空 (无日期的
     证据声明不渲染) → None (渲染侧回退注册证据静态行, 不渲染部分垃圾)。
-    split-half 判读是可选段: consistent 非 bool (缺位/畸形) → 该段省略,
-    其余读数照常。
+    split-half 判读与前向切分 (R212 Op1, forward_split_t10 — 杠杆 F 注册锚
+    后 OOS 累积) 都是可选段: 缺位/畸形 → 该段省略, 其余读数照常。
     """
     if not report_date or not isinstance(report_date, str):
         return None
@@ -518,6 +567,7 @@ def reentry_readings_clause(payload: object, report_date: str) -> str | None:
     ):
         verdict = "跨半一致" if split_half["consistent"] else "跨半翻转"
         split_token = f" · split-half {verdict}"
+    forward_token = _forward_split_token(payload)
 
     def _pct(value: float) -> str:
         return f"{value * 100:+.2f}%"
@@ -531,6 +581,7 @@ def reentry_readings_clause(payload: object, report_date: str) -> str | None:
         f"（n={int(n_run)}）· d1_blip E={_pct(blip_e)}/{_wr(blip_wr)}"
         f"（n={int(n_blip)}）· 配对差 CI90 "
         f"[{_pct(ci_low)},{_pct(ci_high)}]（正值=run 罚分）{split_token}"
+        f"{forward_token}"
     )
 
 

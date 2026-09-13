@@ -95,6 +95,14 @@ GROUP_LABELS: dict[str, str] = {
 }
 
 
+# R212 Op1: R168 注册样本窗末 (2026-09-10 注册, 当前时代决定性对比 d1_blip
+# n=460 / d1_run n=341 的窗口端): signal_session ≤ 锚 = 注册样本; > 锚 =
+# 前向/OOS。预注册常量一经入册不可漂移 (宪章 §4 同款纪律, 字面量有测试钉死)。
+FORWARD_ANCHOR_YYYYMMDD = "20260909"
+
+FORWARD_SPLIT_GROUPS: tuple[str, ...] = ("d1_blip", "d1_run")
+
+
 class RegimeBlockedRunError(SystemExit):
     """输入缺失/畸形 — typed fail-closed, 绝不产空报告冒充成功."""
 
@@ -182,6 +190,44 @@ def residual_ex_d1_run(u: pd.DataFrame, prox: dict[str, str]) -> dict[str, objec
     return stats
 
 
+def forward_split(
+    rows: pd.DataFrame, anchor: str = FORWARD_ANCHOR_YYYYMMDD
+) -> dict[str, object]:
+    """注册锚前向切分 (t10): 注册样本 (≤锚) vs 前向/OOS (>锚) 逐组双格.
+
+    R212 Op1: 杠杆 F 三层判定链的『锚后前向累积』显形面 — tables.t10 渲染
+    混合样本, 窗口推进时注册数字被稀释不可辨, 锚后世界是否复制 R168 决定性
+    对比 (d1_run −5.74% vs d1_blip +1.77%, CI90 [+2.49,+11.94]) 不可见;
+    crisis↔normal 翻转期 (2026-09) 前向事件逐日累积, 本切分让其显形。
+    前向 n=0 = 锚后事件尚未成熟 (T+10 滞后正常形态, 如实标注); 聚类 CI
+    仍由 win_loss_stats 单一实现的 MIN_CELL_N 门槛把关。切分谓词: 8 位串
+    严格字典序比较 (==锚 归注册侧)。纯披露不判定 (宪法 #2); d1_run→gate
+    仍属新证据世代 owner 决策。
+    """
+    sig = rows["signal_date"].astype(str)
+    registration = rows[sig <= anchor]
+    forward = rows[sig > anchor]
+    out: dict[str, object] = {
+        "anchor": anchor,
+        "definition": (
+            "signal_session <= anchor = R168 注册样本; > anchor = 前向/OOS "
+            "(随 court 成熟逐日累积)"
+        ),
+    }
+    for group in FORWARD_SPLIT_GROUPS:
+        reg_cell = registration[registration["group"] == group]
+        fwd_cell = forward[forward["group"] == group]
+        out[group] = {
+            "registration": win_loss_stats(
+                reg_cell["net"].tolist(), reg_cell["signal_date"].tolist()
+            ),
+            "forward": win_loss_stats(
+                fwd_cell["net"].tolist(), fwd_cell["signal_date"].tolist()
+            ),
+        }
+    return out
+
+
 def analyze(ev: pd.DataFrame, history_path: Path) -> dict[str, object]:
     """装配完整 payload (纯函数: 事件表 + history 路径 → dict)."""
     sessions, labels = load_regime_history(history_path)
@@ -204,6 +250,7 @@ def analyze(ev: pd.DataFrame, history_path: Path) -> dict[str, object]:
         "tables": tables,
         "run_deltas_t10": run_deltas(rows10),
         "split_half_d1": split_half_stability(rows10, "d1_blip", "d1_run"),
+        "forward_split_t10": forward_split(rows10),
         "residual_ex_d1_run_t10": residual_ex_d1_run(u, prox),
         "strength_cross_t10": strength_cross(
             u, prox, groups=("d1_blip", "d1_run")
@@ -316,6 +363,33 @@ def render_md(payload: dict[str, object], date_str: str) -> str:
             f"E={_fmt(h.get('e_hi'))} · run n={_fmt(h.get('n_lo'), pct=False)} "
             f"E={_fmt(h.get('e_lo'))} · 罚分={_fmt(h.get('penalty'))}"
         )
+
+    fwd = payload.get("forward_split_t10")
+    if isinstance(fwd, dict) and isinstance(fwd.get("anchor"), str):
+        lines += [
+            "",
+            f"### 注册锚前向切分 (t10) — 锚 {fwd.get('anchor')} "
+            f"(R168 注册样本窗末; > 锚 = 前向/OOS)",
+            "",
+            "| 组 | 注册 n | 注册 E | 前向 n | 前向 E | 前向 胜率 | 前向 CI90 下界 |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for group in FORWARD_SPLIT_GROUPS:
+            cell = fwd.get(group) if isinstance(fwd.get(group), dict) else {}
+            reg = cell.get("registration") if isinstance(cell.get("registration"), dict) else {}
+            fw = cell.get("forward") if isinstance(cell.get("forward"), dict) else {}
+            immature = "（尚未成熟）" if fw.get("n") == 0 else ""
+            lines.append(
+                f"| {group}{immature} | {_fmt(reg.get('n'), pct=False)} "
+                f"| {_fmt(reg.get('expectancy'))} | {_fmt(fw.get('n'), pct=False)} "
+                f"| {_fmt(fw.get('expectancy'))} | {_fmt(fw.get('winrate'))} "
+                f"| {_fmt(fw.get('cluster_ci_low_90'))} |"
+            )
+        lines += [
+            "",
+            "前向 n=0 = 锚后事件尚未成熟 (T+10 滞后正常形态); 前向 n<30 只披露不判定",
+            "(聚类 CI 缺失即样本不足, win_loss_stats 单一门槛)。",
+        ]
     lines += ["", "### 强度桶 × 连跑组交叉 (t10, 净口径; n<30 只披露不判定 — R131 同门)", "",
               "| 强度桶 | 组 | n | 胜率 | E |", "|---|---|---|---|---|"]
     for cell in cross:

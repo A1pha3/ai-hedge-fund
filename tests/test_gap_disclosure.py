@@ -1098,3 +1098,90 @@ def test_latest_cross_era_report_corrupt_no_fallback(tmp_path):
         "{broken", encoding="utf-8"
     )
     assert gap_disclosure.latest_cross_era_report(tmp_path) is None
+
+
+# ---------- R212 Op1: 前向切分可选段 (reentry_readings_clause) ----------
+
+
+def _forward_section(run_n, run_e, blip_n, blip_e, anchor="20260909"):
+    return {
+        "anchor": anchor,
+        "d1_run": {
+            "registration": {"n": 341, "expectancy": -0.057425},
+            "forward": {"n": run_n, "expectancy": run_e},
+        },
+        "d1_blip": {
+            "registration": {"n": 460, "expectancy": 0.017710},
+            "forward": {"n": blip_n, "expectancy": blip_e},
+        },
+    }
+
+
+def test_reentry_clause_forward_token_rendered():
+    payload = _run_conditioning_payload()
+    payload["forward_split_t10"] = _forward_section(3, 0.0123, 5, -0.021)
+    clause = gap_disclosure.reentry_readings_clause(payload, "20260910")
+    assert clause is not None
+    assert "前向(>锚 20260909)" in clause
+    assert "run n=3 E=+1.23%" in clause
+    assert "blip n=5 E=-2.10%" in clause
+    assert "（只披露）" in clause
+
+
+def test_reentry_clause_forward_immature_token():
+    payload = _run_conditioning_payload()
+    payload["forward_split_t10"] = _forward_section(0, None, 0, None)
+    clause = gap_disclosure.reentry_readings_clause(payload, "20260910")
+    assert clause is not None
+    assert "前向(>锚 20260909): 前向样本尚未成熟（T+10 滞后）" in clause
+
+
+def test_reentry_clause_forward_one_side_zero_keeps_zero():
+    """单侧 n=0 → 数字照常渲染 (falsy-zero 保真), E 缺失渲染 '—'。"""
+    payload = _run_conditioning_payload()
+    payload["forward_split_t10"] = _forward_section(2, -0.03, 0, None)
+    clause = gap_disclosure.reentry_readings_clause(payload, "20260910")
+    assert clause is not None
+    assert "run n=2 E=-3.00%" in clause
+    assert "blip n=0 E=—" in clause
+    assert "尚未成熟" not in clause
+
+
+def test_reentry_clause_forward_malformed_only_drops_segment():
+    """畸形前向段 (锚/形状/n/E 任一非法) → 仅省略该段, 基础子句不变。"""
+    base = gap_disclosure.reentry_readings_clause(
+        _run_conditioning_payload(), "20260910"
+    )
+    malformed = [
+        {"anchor": "2026090", "d1_run": {"forward": {"n": 1, "expectancy": 0.0}},
+         "d1_blip": {"forward": {"n": 1, "expectancy": 0.0}}},          # 锚 7 位
+        {"d1_run": {"forward": {"n": 1, "expectancy": 0.0}},
+         "d1_blip": {"forward": {"n": 1, "expectancy": 0.0}}},          # 锚缺位
+        {"anchor": 20260909, "d1_run": {"forward": {"n": 1, "expectancy": 0.0}},
+         "d1_blip": {"forward": {"n": 1, "expectancy": 0.0}}},          # 锚非串
+        {"anchor": "20260909", "d1_run": {"forward": {"n": -1, "expectancy": 0.0}},
+         "d1_blip": {"forward": {"n": 1, "expectancy": 0.0}}},          # n 负
+        {"anchor": "20260909", "d1_run": {"forward": {"n": True, "expectancy": 0.0}},
+         "d1_blip": {"forward": {"n": 1, "expectancy": 0.0}}},          # bool 毒化
+        {"anchor": "20260909", "d1_run": {"forward": {"n": 1, "expectancy": float("nan")}},
+         "d1_blip": {"forward": {"n": 1, "expectancy": 0.0}}},          # E NaN
+        {"anchor": "20260909", "d1_run": {"forward": {"n": 1}},         # E 键缺位
+         "d1_blip": {"forward": {"n": 1, "expectancy": 0.0}}},
+        {"anchor": "20260909", "d1_run": {"n": 1},                      # forward 缺位
+         "d1_blip": {"forward": {"n": 1, "expectancy": 0.0}}},
+    ]
+    for section in malformed:
+        payload = _run_conditioning_payload()
+        payload["forward_split_t10"] = section
+        clause = gap_disclosure.reentry_readings_clause(payload, "20260910")
+        assert clause == base, f"畸形段改变了基础子句: {section!r}"
+
+
+def test_reentry_clause_without_forward_unchanged():
+    """payload 无前向键 → 与既有 exact-render 期望逐字节一致 (向后兼容钉)。"""
+    clause = gap_disclosure.reentry_readings_clause(
+        _run_conditioning_payload(), "20260910"
+    )
+    assert clause is not None
+    assert "前向" not in clause
+    assert clause.endswith("split-half 跨半一致")

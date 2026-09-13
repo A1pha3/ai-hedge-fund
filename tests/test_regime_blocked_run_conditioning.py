@@ -21,21 +21,28 @@ import pandas as pd
 import pytest
 
 from scripts.regime_blocked_run_conditioning import (
+    FORWARD_ANCHOR_YYYYMMDD,
     GROUP_LABELS,
     RUN_GROUPS,
     _fmt,
     _ratio,
     analyze,
     blocked_run_group,
+    forward_split,
     main,
     render_md,
+    run_groups,
 )
 from scripts.regime_proximity_conditioning import (
+    PRIMARY_HORIZON,
     d1_vs_d2_5_delta,
     load_regime_history,
     split_half_verdict,
 )
-from scripts.winrate_payoff_decomposition import production_aligned
+from scripts.winrate_payoff_decomposition import (
+    production_aligned,
+    win_loss_stats,
+)
 
 SESSIONS = [f"202601{d:02d}" for d in range(1, 16)]  # 15 会话工作世界
 REGIMES = {
@@ -408,3 +415,135 @@ class TestMain:
                 "--out-dir", str(tmp_path),
                 "--date", "20260910",
             ])
+
+
+# ---------- R212 Op1: 注册锚前向切分 ----------
+
+FORWARD_SESSIONS = [f"202609{d:02d}" for d in range(5, 17)]  # 0905..0916
+FORWARD_REGIMES = {
+    "20260905": "normal",
+    "20260906": "normal",
+    "20260907": "crisis",
+    "20260908": "crisis",   # 连跑 run=2
+    "20260909": "normal",   # d1_run, ==锚 → 注册侧 (边界: 严格 > 锚才是前向)
+    "20260910": "normal",   # d2_run, > 锚 → 前向
+    "20260911": "risk_off",  # 单日闪断
+    "20260912": "normal",   # d1_blip, > 锚 → 前向
+    "20260913": "normal",
+    "20260914": "normal",
+    "20260915": "normal",
+    "20260916": "normal",
+}
+
+
+def _forward_world_events() -> pd.DataFrame:
+    """跨锚小世界 (非对称): 0909 d1_run 落注册侧, 0910 d2_run 与 0912
+    d1_blip 落前向侧 — d1_run 前向格必须有非零读数可断言。"""
+    net_targets = {
+        "20260909": [-0.05, -0.04],   # d1_run (run=2), ==锚 → 注册
+        "20260910": [0.02],           # d2_run, > 锚 → 前向
+        "20260912": [0.03, 0.03],     # d1_blip (run=1), > 锚 → 前向
+    }
+    rows = [
+        _event_row("20260907", "crisis", 0.0),
+        _event_row("20260908", "crisis", 0.0),
+        _event_row("20260911", "risk_off", 0.0),
+    ]
+    for day, nets in net_targets.items():
+        for i, net in enumerate(nets):
+            rows.append(
+                _event_row(day, "normal", net + 0.0065, symbol=f"F{day}_{i}")
+            )
+    return pd.DataFrame(rows)
+
+
+def _forward_history(tmp_path: Path) -> Path:
+    p = tmp_path / "regime_history_forward.json"
+    p.write_text(json.dumps(FORWARD_REGIMES), encoding="utf-8")
+    return p
+
+
+def _forward_rows() -> pd.DataFrame:
+    """直接构造 _horizon_rows 形状 (net/signal_date/group) 的行帧。
+
+    group 用连跑轴 run_groups (forward_split 的分组语义, 非邻近度距离轴)。
+    """
+    from scripts.regime_proximity_conditioning import _horizon_rows as _hrows
+
+    ev = _forward_world_events()
+    u = production_aligned(ev)
+    prox = run_groups(
+        pd.unique(u["signal_date"].astype(str)), FORWARD_SESSIONS, dict(FORWARD_REGIMES)
+    )
+    return _hrows(u, PRIMARY_HORIZON, prox)
+
+
+class TestForwardSplit:
+    def test_anchor_literal_pinned(self):
+        """预注册锚字面量不得漂移 (R168 注册样本窗末; 宪章 §4 同款纪律)。"""
+        assert FORWARD_ANCHOR_YYYYMMDD == "20260909"
+
+    def test_partition_boundary_exact(self):
+        """==锚 归注册侧 (严格 > 锚才是前向); 两侧计数精确断言。"""
+        rows = _forward_rows()
+        out = forward_split(rows, "20260909")
+        assert out["d1_run"]["registration"]["n"] == 2   # 0909 (==锚)
+        assert out["d1_run"]["forward"]["n"] == 0        # 0910 是 d2_run
+        assert out["d1_blip"]["registration"]["n"] == 0
+        assert out["d1_blip"]["forward"]["n"] == 2       # 0912 (>锚)
+
+    def test_forward_zero_immature_not_fabricated(self):
+        """全样本 ≤ 锚 → 前向格 n=0 且统计字段 None (绝不伪造数字)。"""
+        rows = _forward_rows()
+        out = forward_split(rows, "20260916")  # 锚=末日 → 前向全空
+        for group in ("d1_blip", "d1_run"):
+            fw = out[group]["forward"]
+            assert fw["n"] == 0
+            assert fw["expectancy"] is None
+            assert fw["cluster_ci_low_90"] is None
+
+    def test_forward_stats_match_single_implementation(self):
+        """前向格统计与对过滤子集直接调 win_loss_stats 逐值一致 (单一实现)。"""
+        rows = _forward_rows()
+        out = forward_split(rows, "20260909")
+        sub = rows[(rows["signal_date"].astype(str) > "20260909")
+                   & (rows["group"] == "d1_blip")]
+        direct = win_loss_stats(sub["net"].tolist(), sub["signal_date"].tolist())
+        assert out["d1_blip"]["forward"] == direct
+
+    def test_analyze_payload_carries_forward_split(self, tmp_path):
+        """analyze() payload 含 forward_split_t10 且锚字段为预注册字面量。"""
+        payload = analyze(_forward_world_events(), _forward_history(tmp_path))
+        fwd = payload["forward_split_t10"]
+        assert fwd["anchor"] == "20260909"
+        assert fwd["d1_run"]["registration"]["n"] == 2
+
+    def test_render_md_forward_section(self, tmp_path):
+        """markdown 含前向切分节、锚串与前向数字 (n>0 时无未成熟标注)。"""
+        payload = analyze(_forward_world_events(), _forward_history(tmp_path))
+        md = render_md(payload, "20260917")
+        assert "注册锚前向切分" in md
+        assert "锚 20260909" in md
+        # 本世界 d1_blip 前向 n=2 (0912) 无未成熟标注; d1_run 前向 n=0
+        # (0910 是 d2_run, 不入 d1_run 格) → 未成熟标注如实出现
+        assert "| d1_run（尚未成熟） | 2 |" in md
+        assert "| d1_blip | 0 |" in md
+
+    def test_render_md_forward_immature_marked(self):
+        """前向全空 → 未成熟标注出现在行内 (渲染存活, 缺键不崩)。"""
+        payload = {
+            "forward_split_t10": {
+                "anchor": "20260909",
+                "d1_blip": {
+                    "registration": {"n": 5, "expectancy": 0.01},
+                    "forward": {"n": 0, "expectancy": None},
+                },
+                "d1_run": {
+                    "registration": {"n": 3, "expectancy": -0.05},
+                    "forward": {"n": 0, "expectancy": None},
+                },
+            },
+        }
+        md = render_md(payload, "20260917")
+        assert "尚未成熟" in md
+        assert "| d1_run（尚未成熟） |" in md
