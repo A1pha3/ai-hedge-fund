@@ -1167,6 +1167,8 @@ def test_reentry_clause_forward_malformed_only_drops_segment():
          "d1_blip": {"forward": {"n": 1, "expectancy": 0.0}}},          # E NaN
         {"anchor": "20260909", "d1_run": {"forward": {"n": 1}},         # E 键缺位
          "d1_blip": {"forward": {"n": 1, "expectancy": 0.0}}},
+        {"anchor": "20260909", "d1_run": {"forward": {"n": 0, "expectancy": 0.05}},
+         "d1_blip": {"forward": {"n": 0, "expectancy": None}}},         # n=0 但 E 非 None
         {"anchor": "20260909", "d1_run": {"n": 1},                      # forward 缺位
          "d1_blip": {"forward": {"n": 1, "expectancy": 0.0}}},
     ]
@@ -1175,6 +1177,24 @@ def test_reentry_clause_forward_malformed_only_drops_segment():
         payload["forward_split_t10"] = section
         clause = gap_disclosure.reentry_readings_clause(payload, "20260910")
         assert clause == base, f"畸形段改变了基础子句: {section!r}"
+
+
+def test_reentry_clause_forward_zero_n_with_e_fabrication_dropped():
+    """n=0 但 E 非 None (伪造读数形态「n=0 E=+5.00%」) → 整段拒绝 (R212 Op2)。
+
+    win_loss_stats 工件契约的 n=0 分支: expectancy 恒 None — n=0 带 E 即
+    非法工件。窄变异 (仅删 n==0→E-None 要求) 在本钉落树前 BLIND 实证
+    (T11 全删变体被「E 键缺位」用例咬住, 但 n=0 分支本身无牙), 落钉后
+    窄变异当场红/还原后绿 (钉所在树 R206 纪律, src 文件定向还原)。
+    """
+    base = gap_disclosure.reentry_readings_clause(
+        _run_conditioning_payload(), "20260910"
+    )
+    payload = _run_conditioning_payload()
+    payload["forward_split_t10"] = _forward_section(0, 0.05, 0, None)
+    clause = gap_disclosure.reentry_readings_clause(payload, "20260910")
+    assert clause == base
+    assert "尚未成熟" not in (clause or "")
 
 
 def test_reentry_clause_without_forward_unchanged():
