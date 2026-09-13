@@ -546,3 +546,227 @@ def test_main_json_output_and_human_render(world: Path, capsys: pytest.CaptureFi
     text = render_human(payload)
     assert "NO_FILL" in text
     assert "limit_not_touched" in text
+
+
+# ---- R209 Op2 对抗收口: 6 BLIND 定谳的钉 (行为当前正确, 无钉守卫) ----
+
+
+def _insert_superseding_evidence(
+    conn: sqlite3.Connection,
+    *,
+    evidence_id: str,
+    payload_hash: str,
+    commit_sequence: int,
+) -> None:
+    record = {
+        "evidence": {
+            "evidence_id": evidence_id,
+            "payload_content_hash": payload_hash,
+        },
+        "revision": 2,
+        "commit_sequence": commit_sequence,
+    }
+    conn.execute(
+        "INSERT INTO evidence_records VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "market-bars",
+            evidence_id,
+            2,
+            "bar_set",
+            json.dumps(record),
+            payload_hash,
+            "t",
+            "t",
+            commit_sequence,
+            1,
+            None,
+        ),
+    )
+
+
+def test_exit_not_due_when_exit_bars_absent(world: Path) -> None:
+    """M14 钉: FILLED 入场 + 出场会话 bar 缺席 → 出场 not_due (不冒充 UNKNOWN)。"""
+    conn = sqlite3.connect(world / "bars-evidence.sqlite3")
+    conn.execute(
+        "DELETE FROM evidence_records WHERE evidence_id = ?",
+        (f"market:bars:{S_EXIT}",),
+    )
+    conn.commit()
+    conn.close()
+    report = audit_trial_execution(world, TRIAL_ID)
+    line = report["pairs"]["2026-09-01"]["arms"]["CHALLENGER"]["lines"][0]
+    assert line["entry"]["verdict"] == "FILLED"
+    assert line["exit"] == {"verdict": "not_due", "reason": "exit_session_bars_absent"}
+
+
+def test_terminal_position_state_not_counted(world: Path) -> None:
+    """M10 钉: 终态持仓 (bust/correction 法律终态) 不入对账 held 集。"""
+    conn = sqlite3.connect(world / "arms" / "challenger" / "capital.sqlite3")
+    conn.execute(
+        "INSERT INTO positions VALUES (?,?,?,?)",
+        ("shadow:closed", "lot:shadow-line-closed", "600162.SH", "CLOSED"),
+    )
+    conn.commit()
+    conn.close()
+    report = audit_trial_execution(world, TRIAL_ID)
+    recon = report["reconciliation"]["arms"]["challenger"]
+    assert recon["positions_seen"] == 1
+    assert recon["findings"] == []
+
+
+def test_evidence_head_wins_on_revision(world: Path) -> None:
+    """M11 钉: 同 evidence_id 多 revision 时 commit_sequence 最大的 head 胜 —
+    bar-set 循环与候选快照循环两处同形选择面都钉 (探针须分别命中)。"""
+    superseded_entry = {
+        "session": S_ENTRY,
+        "bars": [
+            _bar(
+                "002815.SZ",
+                S_ENTRY,
+                open_cents=1711,
+                high_cents=1761,
+                low_cents=1695,
+                close_cents=1708,
+                limit_up_cents=1761,
+                limit_down_cents=1441,
+            ),
+            _bar(
+                "600162.SH",
+                S_ENTRY,
+                open_cents=555,
+                high_cents=563,
+                low_cents=999,
+                close_cents=522,
+                limit_up_cents=605,
+                limit_down_cents=495,
+            ),
+        ],
+    }
+    conn = sqlite3.connect(world / "bars-evidence.sqlite3")
+    _insert_superseding_evidence(
+        conn,
+        evidence_id=f"market:bars:{S_ENTRY}",
+        payload_hash=_write_blob(world, superseded_entry),
+        commit_sequence=2,
+    )
+    conn.commit()
+    conn.close()
+
+    conn = sqlite3.connect(world / "evidence.sqlite3")
+    _insert_superseding_evidence(
+        conn,
+        evidence_id="btst:l2:selected",
+        payload_hash=_write_blob(world, {"entry_price_micros": 999 * 10_000}),
+        commit_sequence=2,
+    )
+    conn.commit()
+    conn.close()
+
+    report = audit_trial_execution(world, TRIAL_ID)
+    line = report["pairs"]["2026-09-01"]["arms"]["CHALLENGER"]["lines"][0]
+    # bar 头部: 新 revision low=999 → 限价 550 不再触及 → NO_FILL
+    assert line["entry"]["verdict"] == "NO_FILL"
+    assert line["entry"]["reason"] == "limit_not_touched"
+    # 快照头部: 新 revision 快照价 999 (L1 的 1601 快照未动, 故计数为 1)
+    assert line["entry_snapshot_price_cents"] == 999
+    assert report["aggregate"]["limit_equals_entry_snapshot"] == 1
+
+
+def test_malformed_blob_hash_fails_closed(world: Path) -> None:
+    """M12 钉: 信封携带穿越形状哈希 → section error, 绝不读 blobs 外路径。"""
+    conn = sqlite3.connect(world / "bars-evidence.sqlite3")
+    record = {
+        "evidence": {
+            "evidence_id": f"market:bars:{S_ENTRY}",
+            "payload_content_hash": "sha256:../../evil",
+        },
+        "revision": 9,
+        "commit_sequence": 9,
+    }
+    conn.execute(
+        "INSERT INTO evidence_records VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "market-bars",
+            f"market:bars:{S_ENTRY}",
+            9,
+            "bar_set",
+            json.dumps(record),
+            "sha256:../../evil",
+            "t",
+            "t",
+            9,
+            None,
+            None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    report = audit_trial_execution(world, TRIAL_ID)
+    assert any(
+        e["section"] == "bar_sets" and e["code"] == "bar_blob_unreadable"
+        for e in report["section_errors"]
+    )
+    assert audit_main(["--trial-root", str(world), "--trial-id", TRIAL_ID]) == 3
+
+
+def test_trial_filter_isolation(world: Path) -> None:
+    """M13 钉: --trial-id 过滤是硬隔离 — 其他 trial 的行绝不入报告。"""
+    other_line = _line(
+        "shadow-line-other",
+        "600162.SH",
+        limit=550,
+        evidence_id="btst:other:selected",
+    )
+    other = json.loads(_admitted_decision(S_ENTRY, [other_line]))
+    other["target_entry_session"] = S_ENTRY
+    conn = sqlite3.connect(world / "decisions.sqlite3")
+    conn.execute(
+        "INSERT INTO trial_arm_decisions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "trial-OTHER",
+            "2026-08-15",
+            "daily-action-x",
+            "CHAMPION",
+            "h" * 64,
+            None,
+            "k" * 64,
+            "m" * 64,
+            json.dumps(other),
+            "t",
+            "z" * 64,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    report = audit_trial_execution(world, TRIAL_ID)
+    assert "2026-08-15" not in report["pairs"]
+    assert report["aggregate"]["admitted_lines"] == 2
+
+
+def test_command_time_mirror_pinned_to_paired_trial() -> None:
+    """M06 钉: 工具派生命令时刻与 paired_trial.advance_market_session 的
+    派生闭包是同一镜像 — 词法双向钉 (任一侧漂移即红)。"""
+    import re
+
+    tool_src = Path("scripts/v3_trial_execution_audit.py").read_text(
+        encoding="utf-8"
+    )
+    runner_src = Path(
+        "src/screening/offensive/v3/orchestration/paired_trial.py"
+    ).read_text(encoding="utf-8")
+    tool_match = re.search(
+        r"_COMMAND_AT_TIME = time\((\d+), (\d+)", tool_src
+    )
+    assert tool_match, "tool command-time constant missing"
+    runner_match = re.search(r"time\((\d+), (\d+)\)", runner_src)
+    assert runner_match, "paired_trial command-time literal missing"
+    assert (
+        (int(tool_match.group(1)), int(tool_match.group(2)))
+        == (int(runner_match.group(1)), int(runner_match.group(2)))
+    ), "command-time mirror drifted between tool and paired_trial"
+    deadline_tool = re.search(r"_SEND_DEADLINE_MINUTES = (\d+)", tool_src)
+    deadline_runner = re.search(r"_td\(minutes=(\d+)\)", runner_src)
+    assert deadline_tool and deadline_runner
+    assert deadline_tool.group(1) == deadline_runner.group(1), (
+        "send-deadline mirror drifted between tool and paired_trial"
+    )
