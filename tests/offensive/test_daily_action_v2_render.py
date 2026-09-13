@@ -1701,9 +1701,13 @@ def _write_alignment(base, payload):
     return p
 
 
-def test_alignment_line_renders_counts_split_and_realized(tmp_path):
+def test_alignment_line_renders_counts_split_and_realized(tmp_path, monkeypatch):
     from src.screening.offensive import daily_action as da
 
+    # R207 遗留隔离 (宿主实测红先在性 2026-09-13): 本测断言 R192 窗口子句
+    # 精确前缀, R207 新鲜度子句读宿主真实 court manifest (built_at 晚于夹具
+    # 对账日) 会插队破坏 — 指向空 tmp 恢复 fail-open 省略形态。
+    monkeypatch.setattr(da, "_COURT_TABLE_MANIFEST_PATH", tmp_path / "absent.json")
     path = _write_alignment(tmp_path, _alignment_summary())
     line = da._render_universe_alignment_line(path)
     assert line is not None
@@ -1987,7 +1991,10 @@ def test_alignment_line_post_ledger_anomaly_annotation(tmp_path):
     payload = _alignment_summary(total_buys=33, class_counts=counts, stores=stores)
     line = da._render_universe_alignment_line(_write_alignment(tmp_path, payload))
     assert line is not None
-    assert "（legacy journal 18 · v2 台账 15），其中台账启用后 journal 尾部 3 笔（结构异常）" in line
+    assert (
+        "（legacy journal 18 · v2 台账 15），其中台账启用后 journal 尾部 3 笔（结构异常·非台账持仓）"
+        in line
+    )
 
 
 def test_alignment_line_no_anomaly_clause_when_clean_or_absent(tmp_path):
@@ -3220,6 +3227,71 @@ def test_exit_advice_row_maturity_survives_datetime_trade_date(tmp_path):
     text_ok = render_daily_action_v2(view, today=date(2026, 9, 8))
     row_ok = next(line for line in text_ok.splitlines() if "000909" in line)
     assert "到期 9/10（剩2天）" in row_ok
+
+
+# ---------- R208: 影子建议「次日退出」早于合约到期的双轨张力显形 ----------
+# 释放日程按合约到期日聚合 (forced/projected 事实), 影子建议执行在下一开盘 —
+# 影子早于到期时 (603123 实录: 建议次日退出, 到期 9/15 计 9/15 释放), 跟随
+# 建议则提前兑现, 行内括注直接命名; 各形态 fail-open, 无张力不虚报。
+
+
+def _advice_view(tmp_path, *, maturity_index=24, exit_next=True):
+    run, sessions, _t, dc_replace = _run_with_open_position(tmp_path)
+    trade = dc_replace(
+        run.open_positions[0],
+        shadow_would_exit_next_open=exit_next,
+        projected_exit_date=sessions[maturity_index],
+    )
+    return DailyActionV2Run(run, (), (trade,), (), ()), run, sessions
+
+
+def test_exit_advice_row_flags_shadow_exit_before_maturity(tmp_path, monkeypatch):
+    """建议次日退出 且 到期日在下一开盘之后 → 行内括注「（早于合约到期）」."""
+    from src.screening.offensive import daily_action as _da
+
+    view, run, sessions = _advice_view(tmp_path)
+    monkeypatch.setattr(_da, "_load_authoritative_session_dates", lambda: sessions)
+    text = render_daily_action_v2(view, today=run.trade_date)
+    row = next(line for line in text.splitlines() if "000909" in line)
+    assert "影子建议：建议次日退出（早于合约到期）" in row
+    assert "到期 9/10（剩4天）" in row
+
+
+def test_exit_advice_row_no_flag_when_maturity_is_next_session(tmp_path, monkeypatch):
+    """到期日 == 下一开盘 (影子退出与合约到期同日) → 无括注 (无张力不虚报)."""
+    from src.screening.offensive import daily_action as _da
+
+    view, run, sessions = _advice_view(tmp_path, maturity_index=21)
+    monkeypatch.setattr(_da, "_load_authoritative_session_dates", lambda: sessions)
+    text = render_daily_action_v2(view, today=run.trade_date)
+    row = next(line for line in text.splitlines() if "000909" in line)
+    assert "影子建议：建议次日退出" in row
+    assert "早于合约到期" not in row
+
+
+def test_exit_advice_row_no_flag_when_advice_is_hold(tmp_path, monkeypatch):
+    """维持持有 → 无括注 (括注只挂在建议退出行, 与到期早晚无关)."""
+    from src.screening.offensive import daily_action as _da
+
+    view, run, sessions = _advice_view(tmp_path, exit_next=False)
+    monkeypatch.setattr(_da, "_load_authoritative_session_dates", lambda: sessions)
+    text = render_daily_action_v2(view, today=run.trade_date)
+    row = next(line for line in text.splitlines() if "000909" in line)
+    assert "影子建议：维持持有" in row
+    assert "早于合约到期" not in row
+
+
+def test_exit_advice_row_no_flag_when_calendar_unavailable(tmp_path, monkeypatch):
+    """权威日历缺席 → 无括注 (fail-open 家族), 行其余部分照常."""
+    from src.screening.offensive import daily_action as _da
+
+    view, run, _sessions = _advice_view(tmp_path)
+    monkeypatch.setattr(_da, "_load_authoritative_session_dates", lambda: ())
+    text = render_daily_action_v2(view, today=run.trade_date)
+    row = next(line for line in text.splitlines() if "000909" in line)
+    assert "影子建议：建议次日退出" in row
+    assert "早于合约到期" not in row
+    assert "到期 9/10（剩4天）" in row
 
 
 # ---------- R159 Op2: 退出计划区到期子句 (F-a) + 过期日形态钉住 (F-c) ----------
@@ -4565,8 +4637,12 @@ def _shadow_entry(ticker, would_skip):
     }
 
 
-def test_gap_shadow_line_renders_when_sidecar_present(case, tmp_path):
-    """sidecar 在场 → complete 装配行 + 渲染单行 section (R199 留后续收口)."""
+def test_gap_shadow_line_renders_when_sidecar_present(case, tmp_path, monkeypatch):
+    """sidecar 在场 → complete 装配行 + 渲染单行 section (R199 留后续收口).
+
+    pack 目录隔离 (R201 Op2 家族; R208 起事实行也会消费 pack 桥接子句).
+    """
+    _patch_pack_dir(monkeypatch, tmp_path)
     _shadow_sidecar(
         tmp_path,
         [
@@ -4584,10 +4660,10 @@ def test_gap_shadow_line_renders_when_sidecar_present(case, tmp_path):
         gap_shadow_journal_dir=tmp_path,
     )
 
-    assert v2_run.gap_shadow_line == "gap 影子: 累计 3 笔 · would-skip 1 · 未观测 1"
+    assert v2_run.gap_shadow_line == "gap 影子: 累计 3 笔 · would-skip 1 · gap 缺失 1"
     text = render_daily_action_v2(v2_run)
     assert "gap 影子（前向证据 · 纯披露）" in text
-    assert "gap 影子: 累计 3 笔 · would-skip 1 · 未观测 1" in text
+    assert "gap 影子: 累计 3 笔 · would-skip 1 · gap 缺失 1" in text
 
 
 def test_gap_shadow_line_absent_when_sidecar_missing(case, tmp_path, monkeypatch):
@@ -4645,9 +4721,10 @@ def test_gap_shadow_section_absent_on_legacy_construction(case, tmp_path, monkey
     assert "gap 影子" not in render_daily_action_v2(view)
 
 
-def test_gap_shadow_line_counts_asymmetric_skip_set(case, tmp_path):
+def test_gap_shadow_line_counts_asymmetric_skip_set(case, tmp_path, monkeypatch):
     """R198 Op2 P10 同族钉: 计数反转变异 (is True→is False) 在对称 fixture 上
-    逃逸 — 非对称 (2 skip/1 keep/1 unobservable) 当场红."""
+    逃逸 — 非对称 (2 skip/1 keep/1 unobservable) 当场红. pack 目录隔离同上."""
+    _patch_pack_dir(monkeypatch, tmp_path)
     _shadow_sidecar(
         tmp_path,
         [
@@ -4666,7 +4743,7 @@ def test_gap_shadow_line_counts_asymmetric_skip_set(case, tmp_path):
         gap_shadow_journal_dir=tmp_path,
     )
 
-    assert v2_run.gap_shadow_line == "gap 影子: 累计 4 笔 · would-skip 2 · 未观测 1"
+    assert v2_run.gap_shadow_line == "gap 影子: 累计 4 笔 · would-skip 2 · gap 缺失 1"
 
 
 def test_gap_shadow_line_default_dir_is_canonical_journal(case, tmp_path, monkeypatch):
@@ -4675,6 +4752,7 @@ def test_gap_shadow_line_default_dir_is_canonical_journal(case, tmp_path, monkey
     缺省同源) — 默认目录漂移 (如 paper_trading_v2) 当场红。"""
     from src.screening.offensive import paper_tracker as _pt
 
+    _patch_pack_dir(monkeypatch, tmp_path)
     _shadow_sidecar(
         tmp_path,
         [
@@ -4690,7 +4768,99 @@ def test_gap_shadow_line_default_dir_is_canonical_journal(case, tmp_path, monkey
         service, context, DailyActionScan(as_of, (), (), ())
     )
 
-    assert v2_run.gap_shadow_line == "gap 影子: 累计 3 笔 · would-skip 1 · 未观测 1"
+    assert v2_run.gap_shadow_line == "gap 影子: 累计 3 笔 · would-skip 1 · gap 缺失 1"
+
+
+# ---- R208: gap 影子事实行↔读数行双口径桥接 (2026-09-13 对抗审查) ----
+
+
+def test_gap_shadow_line_matured_bridge_clause(case, tmp_path, monkeypatch):
+    """pack 在场 → 事实行追加「结果成熟 M/累计」桥接子句 — 分类总体 (sidecar
+    累计) 与读数总体 (pack 成熟 n) 的差额 (未到期) 自此有显式衔接."""
+    _patch_pack_dir(monkeypatch, tmp_path)
+    _shadow_sidecar(
+        tmp_path,
+        [
+            _shadow_entry("000001", True),
+            _shadow_entry("000002", False),
+            _shadow_entry("000003", True),
+            _shadow_entry("000004", False),
+        ],
+    )
+    _write_pack(
+        tmp_path,
+        "20260907",
+        _pack_payload(
+            skip={"mean": -0.11, "n": 1, "win_rate": 0.0},
+            keep={"mean": -0.07, "n": 2, "win_rate": 0.5},
+        ),
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service,
+        context,
+        DailyActionScan(as_of, (), (), ()),
+        gap_shadow_journal_dir=tmp_path,
+    )
+
+    assert v2_run.gap_shadow_line == (
+        "gap 影子: 累计 4 笔 · would-skip 2 · gap 缺失 0 · 结果成熟 3/4"
+    )
+
+
+def test_gap_shadow_line_bridge_omitted_when_matured_exceeds_total(
+    case, tmp_path, monkeypatch
+):
+    """成熟 n 之和 > sidecar 累计 = 工件矛盾 → 桥接子句整体省略不渲染矛盾读数
+    (R119 P3 家族: 渲染矛盾读数比不渲染更有害)。"""
+    _patch_pack_dir(monkeypatch, tmp_path)
+    _shadow_sidecar(tmp_path, [_shadow_entry("000001", True)])
+    _write_pack(
+        tmp_path,
+        "20260907",
+        _pack_payload(
+            skip={"mean": -0.11, "n": 40, "win_rate": 0.0},
+            keep={"mean": -0.07, "n": 59, "win_rate": 0.5},
+        ),
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service,
+        context,
+        DailyActionScan(as_of, (), (), ()),
+        gap_shadow_journal_dir=tmp_path,
+    )
+
+    assert v2_run.gap_shadow_line == (
+        "gap 影子: 累计 1 笔 · would-skip 1 · gap 缺失 0"
+    )
+
+
+def test_gap_shadow_line_bridge_omitted_when_pack_counts_malformed(
+    case, tmp_path, monkeypatch
+):
+    """pack n 毒化 (bool/负数/缺 dict) → 桥接子句省略, 事实行照常 (fail-open)."""
+    _patch_pack_dir(monkeypatch, tmp_path)
+    _shadow_sidecar(tmp_path, [_shadow_entry("000001", True)])
+    _write_pack(
+        tmp_path,
+        "20260907",
+        _pack_payload(skip={"mean": -0.11, "n": True, "win_rate": 0.0}),
+    )
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    v2_run = complete_daily_action_v2(
+        service,
+        context,
+        DailyActionScan(as_of, (), (), ()),
+        gap_shadow_journal_dir=tmp_path,
+    )
+
+    assert v2_run.gap_shadow_line == (
+        "gap 影子: 累计 1 笔 · would-skip 1 · gap 缺失 0"
+    )
 
 
 def test_v1_gap_shadow_line_indented_two_spaces(tmp_path, monkeypatch):
@@ -4805,7 +4975,7 @@ def test_gap_shadow_reading_line_absent_when_no_pack_facts_independent(
     text = render_daily_action_v2(v2_run)
 
     assert "gap 影子读数" not in text
-    assert "gap 影子: 累计 3 笔 · would-skip 1 · 未观测 1" in text
+    assert "gap 影子: 累计 3 笔 · would-skip 1 · gap 缺失 1" in text
 
 
 def test_gap_shadow_reading_line_survives_corrupt_pack(case, tmp_path, monkeypatch):

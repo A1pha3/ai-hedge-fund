@@ -2821,7 +2821,7 @@ def test_render_daily_action_shows_gap_shadow_line(tmp_path, monkeypatch):
 
     out = da.render_daily_action([], "20260810", tracker)
 
-    assert "gap 影子: 累计 3 笔 · would-skip 1 · 未观测 1 · 本轮新增 1" in out
+    assert "gap 影子: 累计 3 笔 · would-skip 1 · gap 缺失 1 · 本轮新增 1" in out
 
 
 def test_render_daily_action_omits_shadow_line_without_sidecar(tmp_path, monkeypatch):
@@ -2875,7 +2875,7 @@ def test_render_shadow_line_counts_asymmetric_skip_set(tmp_path, monkeypatch):
 
     out = da.render_daily_action([], "20260810", tracker)
 
-    assert "gap 影子: 累计 4 笔 · would-skip 2 · 未观测 1 · 本轮新增 0" in out
+    assert "gap 影子: 累计 4 笔 · would-skip 2 · gap 缺失 1 · 本轮新增 0" in out
 
 
 def test_render_shadow_line_survives_missing_or_malformed_summary(tmp_path, monkeypatch):
@@ -2894,5 +2894,5 @@ def test_render_shadow_line_survives_missing_or_malformed_summary(tmp_path, monk
 
         out = da.render_daily_action([], "20260810", tracker)  # 不崩
 
-        assert "gap 影子: 累计 1 笔 · would-skip 1 · 未观测 0" in out
+        assert "gap 影子: 累计 1 笔 · would-skip 1 · gap 缺失 0" in out
         assert "本轮新增" not in out

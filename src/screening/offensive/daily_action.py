@@ -1541,6 +1541,7 @@ def complete_daily_action_v2(
     new_entry_block: str | None = None,
     shadow_prices: Any | None = None,
     gap_shadow_journal_dir: Path | str | None = None,
+    gap_shadow_pack_dir: Path | str | None = None,
 ) -> DailyActionV2Run:
     """Build the v2 display view after lifecycle has already advanced."""
     if not all(isinstance(candidate, PlanCandidate) for candidate in scan.candidates):
@@ -1598,6 +1599,11 @@ def complete_daily_action_v2(
         from src.screening.offensive.paper_tracker import _DEFAULT_JOURNAL_DIR
 
         journal_dir = _DEFAULT_JOURNAL_DIR
+    # R208: pack 目录缺省即 canonical (生产零接线缝), 测试经 _patch_pack_dir
+    # 隔离 (R201 Op2 渲染测试禁读宿主真实报告家族纪律)。
+    pack_dir = (
+        _GAP_SHADOW_PACK_REPORTS_DIR if gap_shadow_pack_dir is None else gap_shadow_pack_dir
+    )
     return DailyActionV2Run(
         service_run,
         persisted,
@@ -1609,7 +1615,7 @@ def complete_daily_action_v2(
         capacity_skipped=getattr(service_run, "capacity_skipped", ()),
         regime=scan.regime,
         undetected_pending_plans=undetected,
-        gap_shadow_line=_gap_shadow_line_parts(journal_dir),
+        gap_shadow_line=_gap_shadow_line_parts(journal_dir, pack_dir=pack_dir),
         pending_exit_releases=getattr(
             service_run, "pending_exit_releases", ()
         ),
@@ -2402,12 +2408,14 @@ def _render_universe_alignment_line(
             has_store_clause = True
         # R121c F2: journal 尾部结构异常显形 — journal BUY signal_date ≥ 台账首
         # 信号日 = 时代重叠, 而 v2 启用后 journal 无生产写入者 (R121a 取证:
-        # 重叠笔即测试产物)。计数缺失/非正整数 → 子句省略不渲染垃圾。
+        # 重叠笔即测试产物)。R208 锐化: 「结构异常」单独成词不回答「它是不是
+        # 我的持仓」— 明示非台账持仓 (v2 台账是唯一持仓真相), 防止 total_buys
+        # 被读成全部为实仓。计数缺失/非正整数 → 子句省略不渲染垃圾。
         journal_block = stores.get("legacy_journal")
         if isinstance(journal_block, dict):
             post = journal_block.get("post_ledger_start_buys")
             if isinstance(post, int) and not isinstance(post, bool) and post > 0:
-                head += f"，其中台账启用后 journal 尾部 {post} 笔（结构异常）"
+                head += f"，其中台账启用后 journal 尾部 {post} 笔（结构异常·非台账持仓）"
     if split == 0:
         head += " — 全部生产信号在 court 宇宙内"
     body = head
@@ -3435,6 +3443,26 @@ def _release_schedule_clause(
         return None
 
 
+def _next_session_after(as_of: date) -> date | None:
+    """读时刻之后的首个交易日 (披露面专用; fail-open 家族纪律).
+
+    R208 Op1: 影子建议「次日退出」执行在下一开盘, 与按合约到期日聚合的释放
+    日程存在双轨张力 — 判定「影子是否早于合约到期」需要下一开盘日。日历缺席
+    /毒化 as_of/会话数据耗尽 → None (调用方省略括注, 绝不为披露猜测日期)。
+    """
+    if not isinstance(as_of, date) or isinstance(as_of, datetime):
+        return None
+    try:
+        sessions = _load_authoritative_session_dates()
+        if not sessions:
+            return None
+        from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
+
+        return TradingSessionCalendar.from_dates(sessions).next_session(as_of)
+    except Exception:  # noqa: BLE001 - 披露子句绝不阻断渲染
+        return None
+
+
 def render_daily_action_v2(
     run: DailyActionV2Run, *, verbose: bool = False, today: date | None = None
 ) -> str:
@@ -3478,6 +3506,10 @@ def render_daily_action_v2(
     )
     references = dict(run.reference_prices)
     debug: list[str] = []
+    # R208: 影子建议「次日退出」与释放日程 (按合约到期日聚合) 的双轨张力显形 —
+    # 影子早于到期时行内括注命名 (跟随建议即提前兑现), 到期日 == 下一开盘或
+    # 日历缺席 → 不括注 (无张力不虚报, fail-open)。
+    shadow_next_session = _next_session_after(read_as_of)
 
     # candidate_not_plan_eligible 是 detect 前的数据契约拒票 (未触发; 数据事故日
     # 量级可达数百, 0715 曾 263/267) — 与 panel 日志同例折叠为一行计数, 不让
@@ -3761,6 +3793,14 @@ def render_daily_action_v2(
     for trade in run.open_positions:
         label = _pad_to(_label(trade.ticker), _LABEL_WIDTH)
         advice = "建议次日退出" if trade.shadow_would_exit_next_open else "维持持有"
+        if trade.shadow_would_exit_next_open and shadow_next_session is not None:
+            maturity = getattr(trade, "projected_exit_date", None)
+            if (
+                isinstance(maturity, date)
+                and not isinstance(maturity, datetime)
+                and maturity > shadow_next_session
+            ):
+                advice += "（早于合约到期）"
         pnl = getattr(trade, "shadow_unrealized_pct", None)
         pnl_clause = ""
         if isinstance(pnl, Real) and not isinstance(pnl, bool) and math.isfinite(pnl):
@@ -4883,12 +4923,50 @@ def _render_candidate_list(
         lines.append(f"  {Fore.WHITE}...其余 {rest} 只略 (强度更低){Style.RESET_ALL}")
 
 
-def _gap_shadow_line_parts(journal_dir: Path | str) -> str | None:
+def _gap_shadow_matured_clause(
+    pack_dir: Path | str | None, *, total: int
+) -> str | None:
+    """事实行 (sidecar 分类总体) ↔ 读数行 (pack 结果成熟总体) 的口径桥接子句
+    (R208 Op1; 2026-09-13 对抗审查: 34 分类 vs 24 成熟两总体此前无任何衔接,
+    「未观测」易被误读成「结果未观测」; 纯披露 宪法 #2, fail-open 家族纪律).
+
+    M = pack skip.n + keep.n (严格 int/非 bool/非负); pack 缺失/损坏/形状不符
+    → None (子句省略, 行其余部分不变); M > total = 工件矛盾 → None 不渲染
+    矛盾读数 (R119 P3 家族)。
+    """
+    if pack_dir is None:
+        return None
+    found = _latest_gap_shadow_pack(pack_dir)
+    if found is None:
+        return None
+    _path, payload = found
+    matured = 0
+    for label in ("skip", "keep"):
+        bucket = payload.get(label)
+        if not isinstance(bucket, dict):
+            return None
+        n = bucket.get("n")
+        if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+            return None
+        matured += n
+    if matured > total:
+        return None
+    return f" · 结果成熟 {matured}/{total}"
+
+
+def _gap_shadow_line_parts(
+    journal_dir: Path | str, pack_dir: Path | str | None = None
+) -> str | None:
     """gap 影子可见性行文案单一实现 (R200 Op1; 纯披露 宪法 #2, fail-open 家族纪律).
 
     v1 渲染 (tracker._dir + 进程内 summary) 与 v2 装配 (canonical sidecar 位置,
     无进程内新增) 共用同一文案; sidecar 缺失/损坏/空 → None, 绝不让披露行阻断
     主流程。
+
+    R208 Op1: 「未观测」正名「gap 缺失」— 该计数是 gap 数据缺席 (would_skip
+    为 None), 与读数行的「结果成熟」(T+10 到期入样) 是两个总体, 旧词恰与后者
+    撞名。``pack_dir`` 显式传入时 (v2 装配 canonical 目录; v1 wrapper 不传保持
+    旧行) 追加「结果成熟 M/累计」桥接子句 (见 :func:`_gap_shadow_matured_clause`)。
     """
     try:
         from src.screening.offensive.gap_shadow import (
@@ -4903,9 +4981,13 @@ def _gap_shadow_line_parts(journal_dir: Path | str) -> str | None:
         return None
     skips = sum(1 for e in entries if e.get("would_skip") is True)
     unobservable = sum(1 for e in entries if e.get("would_skip") is None)
-    return (
-        f"gap 影子: 累计 {len(entries)} 笔 · would-skip {skips} · 未观测 {unobservable}"
+    line = (
+        f"gap 影子: 累计 {len(entries)} 笔 · would-skip {skips} · gap 缺失 {unobservable}"
     )
+    bridge = _gap_shadow_matured_clause(pack_dir, total=len(entries))
+    if bridge:
+        line += bridge
+    return line
 
 
 def _gap_shadow_operator_line(tracker: PaperTracker) -> str | None:
