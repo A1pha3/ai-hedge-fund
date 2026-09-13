@@ -32,10 +32,17 @@ from src.screening.offensive.trade_lifecycle import TradeState
 def _isolate_alignment_summary(tmp_path, monkeypatch):
     """R120b: 宿主真实 realized_vs_court_alignment.json 在场时, 宇宙对齐行会渲染进
     本文件全部渲染输出 (『宇宙 not in text』等全文断言误中) — 默认隔离保持 hermetic;
-    显式对齐行测试 (test_daily_action_v2_render 内) 自行 monkeypatch 覆盖此默认值。"""
+    显式对齐行测试 (test_daily_action_v2_render 内) 自行 monkeypatch 覆盖此默认值。
+    R207 Op1: court 表 manifest 同款隔离 — 宿主真实 manifest_v1.json 在场时,
+    陈旧性子句会依据夹具 summary 日期 (20260905 < 真实构建日) 泄入全部渲染
+    输出, 与 R120b 同族。"""
     from src.screening.offensive import daily_action as _da
 
     monkeypatch.setattr(_da, "_ALIGNMENT_SUMMARY_PATH", tmp_path / "no-alignment.json")
+    monkeypatch.setattr(
+        _da, "_COURT_TABLE_MANIFEST_PATH", tmp_path / "no-manifest.json",
+        raising=False,
+    )
 
 
 def _sessions() -> tuple[date, ...]:
@@ -513,6 +520,122 @@ def test_alignment_line_realization_gap_direction_and_sample_tail(
     assert line is not None
     assert "方向一致 15 · 相反 0" in line
     assert "样本不足 n=15 < 30" in line and "只披露不判定" in line
+
+
+def _write_manifest(base, built_at):
+    """R207 Op1: court 表 manifest 测试夹具 — 只写消费面读取的 built_at 键."""
+    import json
+
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / "manifest_v1.json"
+    payload = {} if built_at is None else {"built_at": built_at}
+    p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return p
+
+
+def test_alignment_line_staleness_clause_when_summary_behind_table(
+    tmp_path, monkeypatch
+):
+    """R207 Op1: summary 对账日 < court 表构建日 → 陈旧性子句恰在窗口子句后
+    出行 (生产者实落横线形态 built_at)。夜刷链单写者前提『build skip ⇒ 表
+    未变』被 out-of-band 重建打破 — 同屏两说家族经此路径复发, 必须显形."""
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary_with_gap()
+    payload["date"] = "20260911"
+    monkeypatch.setattr(
+        da, "_ALIGNMENT_SUMMARY_PATH",
+        _write_alignment(tmp_path / "summary", payload),
+    )
+    manifest = _write_manifest(tmp_path / "manifest", "2026-09-12")
+    line = da._render_universe_alignment_line(manifest_path=manifest)
+    assert line is not None
+    assert "⚠ 对账落后于 court 表构建（20260911 < 20260912）" in line
+
+
+def test_alignment_line_staleness_clause_accepts_plain_8digit_built_at(
+    tmp_path, monkeypatch,
+):
+    """8 位纯数字形态 built_at 同接受 (守卫不假设生产者只落横线形态)."""
+    from src.screening.offensive import daily_action as da
+
+    payload = _alignment_summary_with_gap()
+    payload["date"] = "20260911"
+    monkeypatch.setattr(
+        da, "_ALIGNMENT_SUMMARY_PATH",
+        _write_alignment(tmp_path / "summary", payload),
+    )
+    manifest = _write_manifest(tmp_path / "manifest", "20260912")
+    line = da._render_universe_alignment_line(manifest_path=manifest)
+    assert line is not None
+    assert "⚠ 对账落后于 court 表构建（20260911 < 20260912）" in line
+
+
+def _staleness_quiet_line(tmp_path, monkeypatch, built_at, raw=None):
+    """quiet 形态公共断言体: 子句省略且行与无 manifest 形态逐字节一致."""
+    from src.screening.offensive import daily_action as da
+
+    monkeypatch.setattr(
+        da, "_ALIGNMENT_SUMMARY_PATH",
+        _write_alignment(tmp_path / "summary", _alignment_summary_with_gap()),
+    )
+    baseline_line = da._render_universe_alignment_line()
+    assert baseline_line is not None
+    if raw is not None:
+        base = tmp_path / "manifest"
+        base.mkdir(parents=True, exist_ok=True)
+        manifest = base / "manifest_v1.json"
+        manifest.write_text(raw, encoding="utf-8")
+    elif built_at is not None:
+        manifest = _write_manifest(tmp_path / "manifest", built_at)
+    else:
+        manifest = tmp_path / "manifest" / "absent.json"
+    line = da._render_universe_alignment_line(manifest_path=manifest)
+    assert line == baseline_line
+    return baseline_line
+
+
+def test_alignment_line_no_staleness_clause_when_summary_current(
+    tmp_path, monkeypatch,
+):
+    """同日构建 (日期粒度不可排序) → 安静零噪声 (R109 先例)."""
+    _staleness_quiet_line(tmp_path, monkeypatch, "2026-09-05")
+
+
+def test_alignment_line_no_staleness_clause_when_table_older(
+    tmp_path, monkeypatch,
+):
+    """表早于 summary (正常夜刷后) → 安静零噪声."""
+    _staleness_quiet_line(tmp_path, monkeypatch, "2026-09-04")
+
+
+@pytest.mark.parametrize(
+    "poison",
+    [
+        "banana", "202609121", "2026-9-12", "2026-09-12extra",
+        20260912, True, None, {"v": "20260912"}, ["2026-09-12"],
+    ],
+)
+def test_alignment_line_staleness_clause_poison_built_at_omitted(
+    poison, tmp_path, monkeypatch,
+):
+    """built_at 毒化 (str 非法形态/int/bool/None/dict) → 子句省略不渲染垃圾
+    (R119 P1 家族: 形状守卫不过 → None → 安静)."""
+    _staleness_quiet_line(tmp_path, monkeypatch, poison)
+
+
+def test_alignment_line_staleness_clause_manifest_missing_omitted(
+    tmp_path, monkeypatch,
+):
+    """manifest 缺失 → 子句省略 (fail-open: 不假装有交叉核对)."""
+    _staleness_quiet_line(tmp_path, monkeypatch, None)
+
+
+def test_alignment_line_staleness_clause_manifest_corrupt_omitted(
+    tmp_path, monkeypatch,
+):
+    """manifest 损坏 (非 JSON) → 子句省略不崩 (R119 家族)."""
+    _staleness_quiet_line(tmp_path, monkeypatch, None, raw="<html>not json</html>")
 
 
 def test_alignment_line_realization_gap_sufficient_sample_no_tail(

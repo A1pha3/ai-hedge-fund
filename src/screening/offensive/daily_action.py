@@ -1639,6 +1639,11 @@ _COURT_REFRESH_STATUS_PATH = Path("data/reports/court_refresh_status.json")
 # 宇宙对齐 canonical summary (R118 Op1): 夜刷链 build 成功后单写者落盘,
 # 本模块 _render_universe_alignment_line 消费 (形状守卫 fail-open)。
 _ALIGNMENT_SUMMARY_PATH = Path("data/reports/realized_vs_court_alignment.json")
+# court 表构建 manifest (R207 Op1): 生产者 = btst_court_build.py (built_at
+# 字段, 实测落 'YYYY-MM-DD' 横线形态) — 对账行新鲜度交叉核对的数据源。
+_COURT_TABLE_MANIFEST_PATH = Path(
+    "data/research/btst_court/event_tables/manifest_v1.json"
+)
 _DATE_8_RE = re.compile(r"[0-9]{8}")
 # gap 影子配对读数报告目录 (R201 Op1): 夜刷 shadow_pack 单写者落盘
 # (gap_shadow_pack_YYYYMMDD.json), 本模块 _gap_shadow_reading_line 消费。
@@ -2240,9 +2245,38 @@ def _render_stop_loss_readiness_line(
         return None
 
 
+def _court_table_build_day(
+    manifest_path: str | Path | None = None,
+) -> str | None:
+    """court 表构建日 (YYYYMMDD 8 位串) — R207 Op1 对账新鲜度交叉核对源.
+
+    夜刷链是 summary 单写者 (R118), 其设计前提『build skip ⇒ 表未变』被
+    out-of-band 重建打破 (R195 期证据会话实证): 表已前进而 summary 停在
+    旧世代。本读取器只认形状: dict + built_at 串横线剥离后恰 8 位数字
+    ('YYYY-MM-DD' 或 'YYYYMMDD'); 文件缺失/损坏/非 dict/毒化 → None
+    (fail-open 家族纪律 R119 — 子句省略, 绝不渲染垃圾)。
+    """
+    path = (
+        Path(manifest_path) if manifest_path is not None
+        else _COURT_TABLE_MANIFEST_PATH
+    )
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    built_at = data.get("built_at")
+    if not isinstance(built_at, str):
+        return None
+    digits = built_at.replace("-", "")
+    return digits if _DATE_8_RE.fullmatch(digits) is not None else None
+
+
 def _render_universe_alignment_line(
     summary_path: str | Path | None = None,
     as_of=None,
+    manifest_path: str | Path | None = None,
 ) -> str | None:
     """宇宙对齐行 (R118 Op1): 证据宇宙 vs 生产宇宙的对账状态 + realized 兑现。
 
@@ -2332,6 +2366,12 @@ def _render_universe_alignment_line(
             and isinstance(window.get("end"), str) and window.get("end")
         ):
             head += f" · court 请求窗 {window['start']}..{window['end']}"
+    # R207 Op1: 对账新鲜度交叉核对 — summary 对账日 < court 表构建日 → 显形
+    # (恰在窗口子句后 = 误读发生点: 陈旧请求窗冒充覆盖)。同日/早于/manifest
+    # 缺失/损坏/built_at 毒化 → 安静省略 (R109 零噪声 + fail-open 家族)。
+    build_day = _court_table_build_day(manifest_path)
+    if build_day is not None and build_day > report_date:
+        head += f" · ⚠ 对账落后于 court 表构建（{report_date} < {build_day}）"
     head += f"）：生产 BUY {total} · matched {matched} · 分裂 {split}"
     latest_split = data.get("latest_split_signal_date")
     if isinstance(latest_split, str) and latest_split:
