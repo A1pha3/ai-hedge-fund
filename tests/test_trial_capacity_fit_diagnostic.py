@@ -143,6 +143,58 @@ def test_small_n_clusters_disclosed_not_judged():
     assert payload["not_fitted_stats"]["cluster_ci_low_90"] is None
 
 
+def test_price_quantiles_pinned_exact():
+    """R213 Op2 P04 钉: 分位数索引 off-by-one (idx+1) 当场咬住。"""
+    frame = pd.DataFrame(
+        {
+            "symbol": ["A", "B", "C", "D"],
+            "signal_date": ["2026-09-01"] * 4,
+            "regime": ["normal"] * 4,
+            "signal_close": [30.0, 10.0, 25.0, 12.0],
+            "gross_ret_t10": [0.0] * 4,
+        }
+    )
+    payload = mod.analyze(frame, genesis_envelope())
+    # 排序 [10, 12, 25, 30]; idx=int(q*3): p10→0, p25→0, p50→1, p75→2, p90→2
+    assert payload["price_quantiles_cny"] == {
+        "p10": 10.0, "p25": 10.0, "p50": 12.0, "p75": 25.0, "p90": 25.0,
+    }
+
+
+def test_nonpositive_price_excluded_without_crash():
+    """R213 Op2 P05 钉: 零/负价行必须走排除分支 (计数如实), 不得流入
+    fits_trial (其 typed raise 会炸穿 analyze) — 排除削弱变异当场咬住。"""
+    frame = pd.DataFrame(
+        {
+            "symbol": ["A", "B", "C", "D"],
+            "signal_date": ["2026-09-01"] * 4,
+            "regime": ["normal"] * 4,
+            "signal_close": [10.0, 0.0, -5.0, 12.0],
+            "gross_ret_t10": [0.0, 0.0, 0.0, 0.0],
+        }
+    )
+    payload = mod.analyze(frame, genesis_envelope())
+    assert payload["n_candidates"] == 2
+    assert payload["n_price_invalid_excluded"] == 2
+    assert payload["candidate_fit_rate"] == 1.0
+
+
+def test_candidate_fit_rate_precision_pinned():
+    """R213 Op2 P06 钉: fit 率 4dp 舍入精度 (3/7=0.4286), 2dp 变异当场咬住。"""
+    prices = [10.0, 11.0, 12.0, 30.0, 40.0, 50.0, 60.0]  # 3 fit / 7
+    frame = pd.DataFrame(
+        {
+            "symbol": [f"T{i}" for i in range(len(prices))],
+            "signal_date": ["2026-09-01"] * len(prices),
+            "regime": ["normal"] * len(prices),
+            "signal_close": prices,
+            "gross_ret_t10": [0.0] * len(prices),
+        }
+    )
+    payload = mod.analyze(frame, genesis_envelope())
+    assert payload["candidate_fit_rate"] == 0.4286
+
+
 def test_what_if_scale_monotone_and_formula():
     prices = [10.0, 30.0, 50.0, 70.0, 90.0]
     frame = pd.DataFrame(
