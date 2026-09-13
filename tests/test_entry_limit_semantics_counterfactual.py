@@ -405,3 +405,121 @@ def test_no_wall_clock_in_report(world: Path) -> None:
     report = _report(world)
     forbidden = {"generated_at", "now", "timestamp", "built_at"}
     assert not forbidden.intersection(report)
+
+
+# ---------------------------------------------------------------------------
+# R210 Op2 对抗性钉 (变异探针真盲区收口; 7 钉 + 1 不变量钉)
+# ---------------------------------------------------------------------------
+
+def _bucket_row(gap: float) -> dict:
+    return {
+        "gap_t1_open": gap,
+        "s1_verdict": "FILLED",
+        "s2_net": 0.01,
+        "s1_net": 0.0,
+        "signal_date": "20250701",
+    }
+
+
+def test_bucket_boundary_gap_exactly_at_threshold_is_high() -> None:
+    # P05/P06: gap == GAP_HIGH_THRESHOLD 必须归高开桶 (>= 与 < 互斥完备,
+    # 边界行不得在重构中静默换桶或双计)
+    boundary = _bucket_row(counterfactual.GAP_HIGH_THRESHOLD)
+    just_below = _bucket_row(counterfactual.GAP_HIGH_THRESHOLD - 1e-9)
+    buckets = {
+        b["label"]: b for b in bucket_split([boundary, just_below])
+    }
+    assert buckets["gap_high"]["admitted"] == 1
+    assert buckets["gap_low"]["admitted"] == 1
+
+
+def test_limit_cents_rejects_float_truncation() -> None:
+    # P11: 19.9/4.1 的 ×100 落在浮点截断陷阱 (1989.99…/409.99…),
+    # int() 直转少 1 分, 必须 round 吸收误差
+    assert counterfactual._limit_cents(19.9) == 1990
+    assert counterfactual._limit_cents(4.1) == 410
+    assert counterfactual._limit_cents(10.0) == 1000
+
+
+def test_price_effect_counts_only_strictly_better(world: Path) -> None:
+    # P10: 平价成交行 (open==limit, C/D) 不得计入优于开盘
+    report = _report(world)
+    assert report["price_effect"]["n"] == 3
+    assert report["price_effect"]["n_better_than_open"] == 1
+
+
+def test_one_price_limit_up_t1_is_disclosed_unknown(world: Path) -> None:
+    # P04: T+1 涨停一字 (四价合一于围栏) → UNKNOWN one_price_limit_up
+    # 如实披露, 绝不误并成交集 — 涨停突破策略的核心人群, 此前无行为钉
+    t1 = next_session_after(_SESSIONS, "20250703")
+    _write_daily(world, "600006.SH", t1, (11.00, 11.00, 11.00, 11.00, 10.00))
+    lock = _event_row("600006.SH", "20250703", 10.00, 0.0)
+    lock["gap_t1_open"] = 0.10
+    lock["exit_open_t10"] = 11.2
+    table = world / "event_table_lock.csv.gz"
+    base = pd.read_csv(world / "event_table_v1.csv.gz")
+    pd.concat([base, pd.DataFrame([lock])]).to_csv(
+        table, index=False, compression="gzip"
+    )
+    rows = build_rows(
+        load_universe(table), raw_dir=world / "raw" / "daily", sessions=_SESSIONS
+    )
+    lock_row = next(r for r in rows if r["ts_code"] == "600006.SH")
+    assert lock_row["s1_verdict"] == "UNKNOWN"
+    assert lock_row["s1_reason"] == "one_price_limit_up"
+    assert lock_row["s1_fill_cents"] is None
+    assert lock_row["s1_net"] is None
+
+
+def test_unknown_rows_disclosure_keeps_all_within_cap(world: Path) -> None:
+    # P14: cap(50) 内的 UNKNOWN 披露必须全量保留, 截断不得静默收窄
+    extra = []
+    for i in range(6):
+        row = _event_row(f"60010{i}.SH", "20250703", 9.0 + i, 0.0)
+        row["gap_t1_open"] = 0.01
+        row["exit_open_t10"] = 9.5 + i
+        extra.append(row)
+    table = world / "event_table_unknown.csv.gz"
+    base = pd.read_csv(world / "event_table_v1.csv.gz")
+    pd.concat([base, pd.DataFrame(extra)]).to_csv(
+        table, index=False, compression="gzip"
+    )
+    rows = build_rows(
+        load_universe(table), raw_dir=world / "raw" / "daily", sessions=_SESSIONS
+    )
+    report = assemble_report(
+        rows, window={"start": "20250701", "end": "20250704"}
+    )
+    assert report["counts"]["unknown"] == 6
+    assert len(report["unknown_rows"]) == 6
+
+
+def test_render_md_prints_ci_low_before_high(
+    world: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # P15: CI 展示必须 [low, high] 次序 (决策阅读面反转即 RED)
+    monkeypatch.setattr(counterfactual, "MIN_CELL_N", 4)
+    universe = load_universe(world / "event_table_v1.csv.gz")
+    rows = build_rows(
+        universe, raw_dir=world / "raw" / "daily", sessions=_SESSIONS
+    )
+    report = assemble_report(
+        rows, window={"start": "20250701", "end": "20250702"}
+    )
+    ci = report["delta_per_admitted"]["cluster_ci"]
+    assert ci is not None
+    md = render_md(report)
+    fmt = counterfactual._fmt
+    assert md.index(fmt(ci["ci_low"])) < md.index(fmt(ci["ci_high"]))
+
+
+def test_universe_rows_always_have_s2_net(world: Path) -> None:
+    # P13 等价性的不变量钉: candidate_universe 要求 gross_ret_t10 非空,
+    # 故 admitted 行 s2_net 恒非 None (paired == rows, 稀释分支不可达)。
+    # 该不变量若失效 (宇宙口径演化), P13 稀释变异即成为真盲区。
+    rows = build_rows(
+        load_universe(world / "event_table_v1.csv.gz"),
+        raw_dir=world / "raw" / "daily",
+        sessions=_SESSIONS,
+    )
+    assert rows and all(r["s2_net"] is not None for r in rows)
