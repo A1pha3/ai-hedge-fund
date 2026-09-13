@@ -5063,3 +5063,30 @@ def test_read_anchor_keeps_signal_day_fill_facts(tmp_path):
     )
     sec_end = next(i for i, ln in enumerate(all_lines) if "持仓退出建议" in ln)
     assert any("000909" in ln for ln in all_lines[sec_start:sec_end])
+
+
+def test_wall_clock_seam_returns_real_today():
+    """R206 Op2 M07 BLIND 定谳钉: 墙钟接缝体无钉 — 默认墙钟测 patch 接缝本体,
+    接缝函数体 (date.today()) 拆为固定日后全部测试绿. 本钉锁体: 同进程同日
+    语义下接缝必须返回真实墙钟日 (除非墙钟真被冻结, 那是另一类环境故障)."""
+    import src.screening.offensive.daily_action as da_module
+
+    assert da_module._wall_clock_today() == date.today()
+
+
+def test_verbose_holding_days_keep_signal_day_anchor(tmp_path):
+    """R206 Op2 M12 BLIND 定谳钉: verbose 持有天数角色分流无钉 — debug 行改读
+    时刻锚后全部测试绿 (后向持有天数被读时刻膨胀, 周末读多 2 天). 本钉锁
+    「持有 N 天」按信号日计: 注入 today 后移 2 日, 持有天数不变."""
+    run, sessions, _t, _r = _run_with_open_position(tmp_path)
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view, today=date(2026, 9, 8), verbose=True)
+    # 用 debug 行专属签名筛选 (影子行含「维持持有」会误命中)
+    debug_row = next(
+        line for line in text.splitlines() if "影子退出线" in line
+    )
+    assert "000909" in debug_row
+    # entry sessions[15] → 信号日 sessions[20]: 持有 5 天 (9/6-9/1, 连续日历);
+    # 读锚 9/8 会膨胀为 7 — 本钉锁定后向天数不随读锚后移.
+    assert "持有 5 天" in debug_row
+    assert "持有 7 天" not in debug_row
