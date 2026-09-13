@@ -2644,6 +2644,51 @@ def test_gap_reference_line_poison_typed_warning(tmp_path):
     assert "20990101" in line
 
 
+def test_gap_reference_line_wired_into_v2_render(case, monkeypatch):
+    """R205 Op2: 执行面缺口参考行的 v2 装配接线钉。
+
+    M12 变异探针实锤 (r205-op2): render_daily_action_v2 的接线块拆除后
+    声明套件 354 全绿 (BLIND) — 拆线 = 披露从操作员视图静默消失。本钉
+    hermetic (读数面 monkeypatch, 不读宿主真实 data/reports), 断言行在
+    装配输出中在场且 Op1 作用域措辞两层贯通。
+    """
+    from src.screening.offensive import gap_disclosure as gd
+
+    reference = {
+        "evidence_date": "20260912",
+        "window_end": "20260909",
+        "n_hi": 158,
+        "e_hi": -0.0404,
+        "n_lo": 1489,
+        "e_lo": 0.0042,
+        "split_stable": False,
+        "pooled": {
+            "consistent": True,
+            "penalty_first": 0.0563,
+            "e_hi_first": -0.0490,
+            "n_hi_first": 91,
+            "penalty_second": 0.0313,
+            "e_hi_second": -0.0286,
+            "n_hi_second": 67,
+            "n_lo_first": 482,
+            "n_lo_second": 1007,
+        },
+        "total_n": 1647,
+    }
+    monkeypatch.setattr(gd, "gap_execution_reference", lambda reports_dir: reference)
+    service, _repository, as_of, _sessions = case
+    context = service.advance_lifecycle(as_of)
+    run = service.complete_run(context, candidates=())
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    line = next(
+        ln for ln in text.splitlines() if ln.startswith("执行面缺口参考")
+    )
+    assert "分桶罚分跨半不一致" in line
+    assert "· 罚分跨半不一致" not in line
+    assert "聚合罚分两半 +5.63pp/+3.13pp 同号" in line
+
+
 def test_day_cohort_line_poison_typed_warning_cohort_glob(case, tmp_path):
     """cohort 语境行: cohort 报告族毒文件同等显形 (glob 参数族覆盖)。"""
     from datetime import date as _date
