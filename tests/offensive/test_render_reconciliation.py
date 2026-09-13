@@ -522,6 +522,16 @@ def test_alignment_line_realization_gap_direction_and_sample_tail(
     assert "样本不足 n=15 < 30" in line and "只披露不判定" in line
 
 
+def test_staleness_isolation_fixture_self_proof(tmp_path):
+    """R207 Op2 夹具自证钉 (M12 定谳 BLIND/环境等价): autouse 隔离夹具拆除
+    在 slot/探针环境行为不可见 (无宿主真实 data/) — 本钉把『夹具在场』从
+    不可证转为有牙: 拆除隔离行 → 本测当场红 (M12 变异复跑实证)。"""
+    from src.screening.offensive import daily_action as da
+
+    assert da._ALIGNMENT_SUMMARY_PATH == tmp_path / "no-alignment.json"
+    assert da._COURT_TABLE_MANIFEST_PATH == tmp_path / "no-manifest.json"
+
+
 def _write_manifest(base, built_at):
     """R207 Op1: court 表 manifest 测试夹具 — 只写消费面读取的 built_at 键."""
     import json
@@ -551,6 +561,10 @@ def test_alignment_line_staleness_clause_when_summary_behind_table(
     line = da._render_universe_alignment_line(manifest_path=manifest)
     assert line is not None
     assert "⚠ 对账落后于 court 表构建（20260911 < 20260912）" in line
+    # R207 Op2 位置钉 (M13 定谳 BLIND): 子句必须恰在头括号内、窗口子句之后
+    # (= 误读发生点; 尾部漂移变异 36 绿实证盲区)。
+    assert line.index("court 请求窗") < line.index("⚠ 对账落后于 court 表构建")
+    assert line.index("⚠ 对账落后于 court 表构建") < line.index("）：生产 BUY")
 
 
 def test_alignment_line_staleness_clause_accepts_plain_8digit_built_at(
@@ -569,6 +583,7 @@ def test_alignment_line_staleness_clause_accepts_plain_8digit_built_at(
     line = da._render_universe_alignment_line(manifest_path=manifest)
     assert line is not None
     assert "⚠ 对账落后于 court 表构建（20260911 < 20260912）" in line
+    assert line.index("⚠ 对账落后于 court 表构建") < line.index("）：生产 BUY")
 
 
 def _staleness_quiet_line(tmp_path, monkeypatch, built_at, raw=None):
