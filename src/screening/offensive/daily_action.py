@@ -4965,8 +4965,10 @@ def _gap_shadow_line_parts(
 
     R208 Op1: 「未观测」正名「gap 缺失」— 该计数是 gap 数据缺席 (would_skip
     为 None), 与读数行的「结果成熟」(T+10 到期入样) 是两个总体, 旧词恰与后者
-    撞名。``pack_dir`` 显式传入时 (v2 装配 canonical 目录; v1 wrapper 不传保持
-    旧行) 追加「结果成熟 M/累计」桥接子句 (见 :func:`_gap_shadow_matured_clause`)。
+    撞名。词面为两渲染面共有 (v1 wrapper 亦改词, R200『v1 输出逐字节不变』自
+    本条起仅对结构成立)。``pack_dir`` 显式传入时 (v2 装配 canonical 目录) 追加
+    「结果成熟 M/累计」桥接子句 (见 :func:`_gap_shadow_matured_clause`); v1
+    wrapper 不传 → 无桥接子句。
     """
     try:
         from src.screening.offensive.gap_shadow import (
