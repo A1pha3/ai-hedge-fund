@@ -5340,9 +5340,18 @@ def test_bridge_clause_renders_when_matured_equals_total(case, tmp_path, monkeyp
 
 
 def test_exit_advice_row_no_flag_when_calendar_loader_raises(tmp_path, monkeypatch):
-    """M11 钉: 日历 loader 抛错 (网络/文件事故) → fail-open 吞掉并省略括注,
-    渲染绝不被披露面异常阻断 (except 收窄即崩)."""
+    """M11 钉: 日历 loader 抛错 → fail-open 吞掉并省略括注 (except 收窄即崩).
+
+    R208 Op2 宿主修正: 新鲜度行 (`_render_evidence_freshness_line`) 选中
+    ``winrate_payoff_decomposition_*.json`` 时无守卫直调同一 loader —— 宿主
+    data/reports 该报告在场时毒化 raise 先在那里爆开, 使本钉宿主恒红而 slot
+    恒绿 (slot 无宿主报告 → 新鲜度行早返回). 指向空 tmp → 毒化 loader 只剩
+    `_next_session_after` 一条触达路径 = 本钉测的真面 (R120b 家族第三次复发:
+    R201 Op2 三测无变异即红 / R207 遗留 / 本条).
+    """
     from src.screening.offensive import daily_action as _da
+
+    _patch_drift_reports_dir(monkeypatch, tmp_path / "absent-drift")
 
     def _raise():
         raise RuntimeError("calendar loader poison")
