@@ -1,4 +1,4 @@
-"""宪章引用卫生守卫 (R211 Op1 建面, Op2 对抗收口) — 方向单一事实源的可机械约束面.
+"""宪章引用卫生守卫 (R211 Op1 建面, Op2 对抗收口, Op3 伪牙修正) — 方向单一事实源的可机械约束面.
 
 docs/winrate_payoff_optimization_charter.md 是 owner 指定的胜率/赔率工作线
 长期方向单一事实源 (活文档, owner 2026-09-12 指令授权持续更新)。守卫只约束
@@ -20,6 +20,7 @@ docs/winrate_payoff_optimization_charter.md 是 owner 指定的胜率/赔率工�
 资产依赖 (R10 slot 自足纪律)。
 """
 
+import ast
 import re
 from pathlib import Path
 
@@ -95,10 +96,16 @@ def test_charter_lever_f_owner_gate_neutrality_pinned():
 
 
 def test_hygiene_guard_self_proof():
-    """G6: 守卫本体在位自证 (函数名 + 正则字面量; 掏空体而留签名的形态
-    不可达属纵深边界, 如实成文不虚报)。"""
+    """G6: 守卫本体在位自证 — ast 级定义名解析 (R211 Op3 伪牙修正)。
+
+    v1 以 `name in source` 断言函数在场: 字符串同时出现在 SELF_PROOF_NAMES
+    元组里, 删除函数定义后断言仍命中 — M06 牙实证 NO-BIT 伪牙 (54d632bd
+    提交信息「牙实证 3/3」与实际 2/3 不符, 本操作修正并如实入册)。ast 解析
+    FunctionDef 定义名后, 删除任一测试函数即 RED; 「掏空函数体而留签名」的
+    形态 ast 名解析仍不可达, 属纵深边界如实成文。"""
     source = Path(__file__).read_text(encoding="utf-8")
-    missing_names = [n for n in SELF_PROOF_NAMES if n not in source]
-    assert missing_names == [], "守卫测试函数缺席: " + ",".join(missing_names)
+    defined = {n.name for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef)}
+    missing_names = [n for n in SELF_PROOF_NAMES if n not in defined]
+    assert missing_names == [], "守卫测试函数定义缺席: " + ",".join(missing_names)
     missing_patterns = [p for p in SELF_PROOF_PATTERNS if p not in source]
     assert missing_patterns == [], "守卫解析正则缺席: " + ",".join(missing_patterns)
