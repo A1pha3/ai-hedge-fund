@@ -2465,12 +2465,15 @@ def _render_gap_reference_line(
     if reference is None:
         # R140 Op3: 毒化形态 typed 显形, 其余 None 形态维持行缺席不变。
         return _poisoned_line("执行面缺口参考", base, today)
+    # R205 Op1: split_note 是分桶层 verdict (split_stable = 各桶方向跨半一致,
+    # R15 镜像), 措辞作用域显形 — 裸『罚分跨半不一致』与紧随的聚合层子句
+    # (『聚合罚分两半…同号』, R188) 并排读即同字两量纲自相矛盾。
     if reference["split_stable"] is True:
-        split_note = "罚分跨半方向稳定"
+        split_note = "分桶罚分跨半方向稳定"
     elif reference["split_stable"] is False:
-        split_note = "罚分跨半不一致（R15 判据: 条件化证据不足）"
+        split_note = "分桶罚分跨半不一致（R15 判据: 条件化证据不足）"
     else:
-        split_note = "跨半稳定性未判定"
+        split_note = "分桶跨半稳定性未判定"
     # R188 Op1: 聚合罚分子句 — split_note 是分桶合取 verdict (R15 镜像, 增量
     # 判别层), 本子句是聚合层 (行文自身的『高开>5% 子集期望』问题) 的直答
     # 读数; pooled 缺席 (旧报告)/畸形 → 空串, 行与修复前逐字节一致。

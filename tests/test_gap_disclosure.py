@@ -261,7 +261,27 @@ class TestRenderGapLine:
         _write_report(tmp_path, payload=_report_json(consistent_count=2))
         line = self._line(tmp_path)
         assert line is not None
-        assert "跨半不一致" in line
+        # R205 Op1: 作用域显形 — split_note 是分桶层 verdict, 裸『罚分跨半不一致』
+        # 与紧随的『聚合罚分两半…同号』并排读即自相矛盾 (同字两量纲)。
+        assert "分桶罚分跨半不一致" in line
+        assert "· 罚分跨半不一致" not in line
+
+    def test_stable_split_wording_scoped(self, tmp_path):
+        """R205 Op1: True 分支同款作用域显形 (此前零钉)。"""
+        _write_report(tmp_path)
+        line = self._line(tmp_path)
+        assert line is not None
+        assert "分桶罚分跨半方向稳定" in line
+        assert "· 罚分跨半方向稳定" not in line
+
+    def test_missing_split_wording_scoped(self, tmp_path):
+        """R205 Op1: None 分支 (split_half 整键缺席) 同款作用域显形 (此前零钉)。"""
+        payload = _report_json()
+        payload["universes"]["production_aligned"]["gap_anatomy"].pop("split_half")
+        _write_report(tmp_path, payload=payload)
+        line = self._line(tmp_path)
+        assert line is not None
+        assert "分桶跨半稳定性未判定" in line
 
     # --- R188 Op1: 聚合罚分子句渲染 (fail-open 家族纪律) ---
 
@@ -298,6 +318,9 @@ class TestRenderGapLine:
             "条件化证据不足） · 聚合罚分两半 +5.63pp/+3.13pp 同号"
             "（高开子集期望 -4.90%/-2.86% · n 91/67） — 竞价后高开>5%"
         ) in line
+        # R205 Op1: 两层并排时裸形式禁止 — 『· 罚分跨半不一致』+『聚合罚分两半
+        # …同号』并排即同字两量纲自相矛盾, 分桶层必须带作用域。
+        assert "· 罚分跨半不一致" not in line
 
     def test_pooled_absent_line_byte_identical(self, tmp_path):
         """旧报告 (无 pooled 键) → 行与修复前逐字节一致 (fail-open 接线家族)。"""
@@ -310,7 +333,7 @@ class TestRenderGapLine:
             f"执行面缺口参考（court 证据构建 20260901，生产对齐 n=1921）："
             f"T+1 开盘高开>5% 子集历史期望 {ref['e_hi']:+.2%}"
             f"（n={ref['n_hi']}） vs ≤5% {ref['e_lo']:+.2%}"
-            f"（n={ref['n_lo']}）· 罚分跨半不一致（R15 判据: 条件化证据不足）"
+            f"（n={ref['n_lo']}）· 分桶罚分跨半不一致（R15 判据: 条件化证据不足）"
             f" — 竞价后高开>5% 时可对照该历史子集期望；仅披露参考，不改变计划与执行决策"
         )
         assert line == expected
