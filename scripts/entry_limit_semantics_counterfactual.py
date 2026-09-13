@@ -52,6 +52,7 @@ import argparse
 import bisect
 import json
 import sys
+from collections.abc import Callable
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -122,13 +123,19 @@ def _session_date(yyyymmdd: str) -> date:
 
 
 def build_rows(
-    universe: "pd.DataFrame", *, raw_dir: Path | str, sessions: list[str]
+    universe: "pd.DataFrame",
+    *,
+    raw_dir: Path | str,
+    sessions: list[str],
+    limit_cents_of: "Callable[[float], int]" = _limit_cents,
 ) -> list[dict[str, Any]]:
     """生产对齐宇宙 × T+1 日线快照 → 每行 S1/S2 反事实判定。
 
-    T+1 快照文件缺失或行缺失 → UNKNOWN 如实披露 (fail-open 单行);
-    快照文件存在但畸形 → CourtBarCsvError 向上传播 (fail-closed, 由
-    main 转 typed 退出) — 半个世界的坏字节比一个 disclosed UNKNOWN 严重。
+    ``limit_cents_of`` 把信号收盘映射为入场限价 (分); 默认恒等语义
+    (限价==快照价), 容忍度梯子 (R211) 以 ×(1+t) 档位注入。T+1 快照
+    文件缺失或行缺失 → UNKNOWN 如实披露 (fail-open 单行); 快照文件
+    存在但畸形 → CourtBarCsvError 向上传播 (fail-closed, 由 main 转
+    typed 退出) — 半个世界的坏字节比一个 disclosed UNKNOWN 严重。
     """
     raw_dir = Path(raw_dir)
     bar_cache: dict[str, dict[str, Any] | None] = {}
@@ -148,7 +155,7 @@ def build_rows(
             "gap_t1_open": (
                 float(rec.gap_t1_open) if pd.notna(rec.gap_t1_open) else None
             ),
-            "limit_cents": _limit_cents(rec.signal_close),
+            "limit_cents": limit_cents_of(rec.signal_close),
             "s2_net": s2_net,
             "s1_verdict": "UNKNOWN",
             "s1_reason": "unset",
