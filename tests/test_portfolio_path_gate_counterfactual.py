@@ -13,7 +13,10 @@
 - fail-closed: 缺入场 bar / 缺出场 offset 统计, 全空 typed 拒绝,
   未知配置 typed 拒绝, baseline ≡ production_aligned identity pin;
 - 确定性: 同输入两次 analyze 逐字节同 payload (无随机数);
-- 渲染契约: md 配置对比/Δ 表/组归因/纪律节.
+- 渲染契约: md 配置对比/Δ 表/组归因/纪律节;
+- Op2 对抗收口三钉: 选择方向可观测 (差异化 gross, P03) / NaN 强度
+  不挤占有限席位 (P16) / ret 非空子句夹具行 (P18); P08 (cap > → >=)
+  为等价变异如实定谳 — 0.60 非 0.08 的整数倍, 边界等值算术不可达.
 """
 
 from __future__ import annotations
@@ -264,6 +267,73 @@ def test_selection_strength_desc_then_ticker_asc(world, tmp_path):
     # 确定性: 同输入重跑同一结果。
     payload2 = analyze(ev, history, daily)
     assert payload == payload2
+
+
+def test_selection_deploys_highest_strength_under_cap(world, tmp_path):
+    # 选择方向可观测钉 (Op2 P03 变异「强度反序」BLIND 收口): cap 7 槽 +
+    # 差异化 gross — 强度降序必须部署高强度高毛利候选; 反序下 A8 被拒、
+    # 7 个 0% 候选入场, 终值不同 → 当场红。
+    strengths = [0.5] * 7 + [0.90]
+    grosses = [0.0] * 7 + [0.05]
+    events = [
+        _event(f"A{i}.SZ", SESSIONS[0], strength=strengths[i - 1], gross10=grosses[i - 1])
+        for i in range(1, 9)
+    ]
+    bars: dict = {}
+    _BARS_LOCAL["bars"] = bars
+    for i in range(1, 9):
+        _bars_for_event(
+            bars, SESSIONS, SESSIONS[0], f"A{i}.SZ",
+            exit_open=10.0 if grosses[i - 1] == 0.0 else 10.5,
+        )
+    ev, history, daily = world(_labels_all_normal(), events, bars)
+    payload = analyze(ev, history, daily)
+    r = payload["results"]["baseline"]
+    assert r["deployed_events"] == 7
+    assert r["anchor_mismatch"] == 0
+    expected = (
+        1.0
+        + TICKER_LIMIT_WEIGHT * (0.05 - ROUNDTRIP_COST)
+        - 6 * TICKER_LIMIT_WEIGHT * ROUNDTRIP_COST
+    )
+    assert r["final_nav"] == pytest.approx(expected)
+
+
+def test_nan_strength_sorts_after_finite(world, tmp_path):
+    # NaN 强度钉 (Op2 P16 变异「NaN 视为最高」BLIND 收口): NaN 候选不得
+    # 挤占有限强度席位 — 7 个有限 0.6 全入场, NaN (+50% 诱饵毛利) 被拒;
+    # 若 NaN 被当成最高强度则 A9 入场、一个有限候选被拒, 终值不同 → 当场红。
+    events = [
+        _event(f"A{i}.SZ", SESSIONS[0], strength=0.6, gross10=0.0)
+        for i in range(1, 8)
+    ]
+    events.append(_event("A9.SZ", SESSIONS[0], strength=float("nan"), gross10=0.50))
+    bars: dict = {}
+    _BARS_LOCAL["bars"] = bars
+    for i in range(1, 8):
+        _bars_for_event(bars, SESSIONS, SESSIONS[0], f"A{i}.SZ")
+    _bars_for_event(bars, SESSIONS, SESSIONS[0], "A9.SZ", exit_open=15.0)
+    ev, history, daily = world(_labels_all_normal(), events, bars)
+    payload = analyze(ev, history, daily)
+    r = payload["results"]["baseline"]
+    assert r["deployed_events"] == 7
+    assert r["final_nav"] == pytest.approx(
+        1.0 - 7 * TICKER_LIMIT_WEIGHT * ROUNDTRIP_COST
+    )
+
+
+def test_ret_nan_rows_excluded_from_pre_gate_universe(world, tmp_path):
+    # ret 非空子句钉 (Op2 P18 变异「ret 非空子句删除」BLIND 收口): 夹具世界
+    # 此前无 NaN 毛利行, 子句被删时全部测试仍绿 (真空泛化)。fillable 但
+    # gross_ret_t10 缺失的行不属于任何配置宇宙, identity pin 面依赖该子句。
+    events = [_event("K1.SZ", SESSIONS[0], gross10=0.0)]
+    events.append(_event("K2.SZ", SESSIONS[0], gross10=float("nan")))
+    ev = pd.DataFrame(events)
+    pre = pre_gate_production_universe(ev)
+    assert set(pre["ts_code"]) == {"K1.SZ"}
+    baseline = pre.loc[pre["gate_blocked"] != True]  # noqa: E712
+    # NaN 行缺席时 identity pin 通过 (与 production_aligned 集合恒等)。
+    assert_baseline_identity(ev, baseline)
 
 
 def test_cash_never_binds_under_cap(world, tmp_path):
