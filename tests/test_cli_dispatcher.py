@@ -968,3 +968,88 @@ def test_daily_action_no_coverage_warn_on_healthy_day(tmp_path, caplog):
     assert rc == 13
     warn_mock.assert_not_called()
     assert not any("信号覆盖断层" in r.message for r in caplog.records)
+
+
+# ===========================================================================
+# R218 Op2: 第三处 complete_daily_action_v2 调用点 (readiness_scan_failed
+# except 回退) 覆盖快照同传 — RED→GREEN (先复现失败再修复) + 变异钉.
+# ===========================================================================
+
+
+def test_daily_action_passes_coverage_to_complete_scan_failed_branch(tmp_path, monkeypatch):
+    """扫描异常回退分支 complete_daily_action_v2 必须收到 signal_coverage kwarg
+    (R218 Op2 — R217 Op1『两处同传』漏掉的第三处调用点).
+
+    扫描失败日 (数据事故日) 恰是操作员最需要看到覆盖断层的时刻 —
+    快照在 dispatch 链已计算, 回退分支却静默丢弃."""
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from src.screening.offensive.daily_action import _CN_TZ
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "reports").mkdir()
+    signal_date = date(2026, 7, 13)
+    sentinel = _r218_coverage_sentinel()
+
+    def _boom(snapshot):
+        raise RuntimeError("injected scan failure")
+
+    run = SimpleNamespace(
+        plans=(),
+        blocked_candidates=(),
+        open_positions=(),
+        service_run=SimpleNamespace(block_reasons=(), capacity_skipped=()),
+    )
+    with (
+        patch(
+            "src.screening.consecutive_recommendation.resolve_report_dir",
+            return_value=tmp_path / "reports",
+        ),
+        patch(
+            "src.screening.offensive.daily_action.resolve_daily_action_signal",
+            return_value=(signal_date, "normal"),
+        ),
+        patch(
+            "src.screening.offensive.daily_action._current_cn_datetime",
+            return_value=datetime(2026, 7, 13, 21, 0, tzinfo=_CN_TZ),
+        ),
+        patch(
+            "src.screening.offensive.setup_output_log.signal_coverage_snapshot",
+            return_value=sentinel,
+        ),
+        patch(
+            "src.screening.offensive.daily_action_snapshot.load_verified_daily_action_snapshot",
+            return_value=SimpleNamespace(
+                snapshot=SimpleNamespace(
+                    regime="normal", signal_date=signal_date
+                ),
+                global_reason=None,
+            ),
+        ),
+        patch(
+            "src.screening.offensive.daily_action.scan_from_verified_snapshot",
+            side_effect=_boom,
+        ),
+        patch(
+            "src.screening.offensive.daily_action.complete_daily_action_v2"
+        ) as complete_mock,
+        patch(
+            "src.screening.offensive.daily_action.render_daily_action_v2",
+            return_value="正文",
+        ),
+        patch("builtins.print"),
+    ):
+        complete_mock.return_value = run
+        rc = dispatcher._resolve_daily_action(
+            ["--daily-action"],
+            open_sessions=(
+                signal_date,
+                signal_date + timedelta(days=1),
+                signal_date + timedelta(days=7),
+            ),
+            ledger_path=tmp_path / "ledger.sqlite3",
+        )
+    assert rc in (0, 13, 14)  # 回退分支照常走阻断/停手渲染
+    kwargs = complete_mock.call_args.kwargs
+    assert kwargs.get("signal_coverage") is sentinel

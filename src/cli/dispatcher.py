@@ -1285,6 +1285,7 @@ def _resolve_daily_action(
                     context,
                     scan,
                     new_entry_block=snapshot_block_reason,
+                    signal_coverage=signal_coverage,
                 )
         # 容量拦截持久证据 (R79; 2026-08-27 实证 14 只 eligible 全被敞口帽拦截
         # 后零痕迹): 检测行有 setup_output_log 守卫, 容量拦截却是只存在于
