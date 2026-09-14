@@ -179,10 +179,15 @@ uv run python scripts/v3_trial_session.py finalize-missed \
   末次 2026-10-16）；stage loss budget 200000 cents（policy 0.02 cap ×
   ¥100,000 资本）
 - 日度驱动（每晚）：
+  0. （推荐前置）`v3_trial_operational_audit.py` 运营对账审计（只读，零写副作用；
+     披露 unmatched_decided_line / deadline_missed / finalize_backlog / 跑道等漂移）
   1. 日度管道产出当日 readiness manifest（~18:30 北京）
   2. `v3_trial_bootstrap.py seed-evidence --signal-session <当日> --execute`
      （首会话必须；后续会话由 decide 幂等复用/追加 regime 修正链）
   3. `v3_trial_session.py decide --signal-session <当日> --execute`
-     （窗口 [当日 15:00 UTC, +24h] 内）
+     （窗口 [当日 15:00 UTC, +24h] 内；R215 审计实证 15:00:01Z 夜跑即
+     DEADLINE_MISSED——截止是 15:00:00Z，夜跑必须提前）
   4. bar 源续传（`btst_court_fetch.py`）+ `advance --through-session <最新>`
+     （R215 审计实证：advance 窗口起点漂移会让更早的已决策行永久留在
+     「无任何台账生命周期痕迹」状态——advance 必须覆盖所有已决策会话的窗口）
   5. 错过会话一律 `finalize-missed` 补 NO_RUN，绝不回头补 decide
