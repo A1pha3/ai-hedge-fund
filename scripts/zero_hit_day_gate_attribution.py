@@ -229,6 +229,19 @@ def summarize_gate_effectiveness(rows: list[dict[str, Any]]) -> dict[str, Any]:
         # R146 Op1: demeaned 头条读数稳健性 — split-half 时间切片 + 日集中度
         # (时间稳定吗? 是否少数日驱动?), additive 键经账本全聚合自动流转。
         "demeaned_robustness": industry_day_demeaned_robustness(rows),
+        # R219 Op1: 门挡集反事实强度分层 — R140 Op2 登记局限 (『门挡集未强度
+        # 条件化』) 收口。0.50 分桶 = 生产可买阈值: >=0.50 桶才是『生产会买而
+        # 被门挡』的机会成本读数, <0.50 桶的反事实 E 是门的保护面证据。
+        "by_counterfactual_strength": {
+            bucket: _pooled(
+                [
+                    r
+                    for r in rows
+                    if _strength_bucket(r.get("counterfactual_strength")) == bucket
+                ]
+            )
+            for bucket in STRENGTH_BUCKETS
+        },
     }
     return summary
 
@@ -467,6 +480,35 @@ def _industry_heat_bucket(industry_day_pct: float | None) -> str:
     return "heat_positive" if value > 0 else "heat_non_positive"
 
 
+STRENGTH_BUCKETS: tuple[str, ...] = (
+    "strength_uncomputable",
+    "<0.50",
+    "0.50-0.60",
+    "0.60-0.70",
+    ">=0.70",
+)
+
+
+def _strength_bucket(value: Any) -> str:
+    """反事实强度分桶 (R219 Op1): 0.50 分桶 = 生产可买阈值.
+
+    bool 是 int 子类 (R147 falsy/bool 毒化纪律同款) 与非数值/非有限一律归
+    strength_uncomputable — 不可计算不冒充 0.0 (0.0 是 <0.50 桶合法值)。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "strength_uncomputable"
+    v = float(value)
+    if not math.isfinite(v):
+        return "strength_uncomputable"
+    if v < 0.50:
+        return "<0.50"
+    if v < 0.60:
+        return "0.50-0.60"
+    if v < 0.70:
+        return "0.60-0.70"
+    return ">=0.70"
+
+
 def _sorted_industries(rows: list[dict[str, Any]]) -> list[str | None]:
     """行内出现过的行业名, 确定性排序 (None 排末位 — 键序稳定)。
 
@@ -497,6 +539,10 @@ def aligned_counterfactual_rows(
         # 旧形态事件缺列 → None (分层归 unknown, 不冒充)。
         ev.setdefault("industry_name", None)
         ev.setdefault("_industry_day_pct", None)
+        # R219 Op1: 旧形态事件缺列 → None (分层归 uncomputable, 不冒充)
+        ev.setdefault("_counterfactual_strength", None)
+        # R219 Op1: 旧形态事件缺列 → None (分层归 uncomputable, 不冒充)
+        ev.setdefault("_counterfactual_strength", None)
     aligned = production_aligned(pd.DataFrame(blocked_evs))
     net_col = net_returns(list(aligned[f"gross_ret_t{PRIMARY_HORIZON}"]))
     return [
@@ -510,14 +556,21 @@ def aligned_counterfactual_rows(
             "industry_day_pct": (
                 None if pd.isna(ind_pct) else float(ind_pct)
             ),
+            # R219 Op1: 反事实强度穿透 (缺列/不可计算 → None 不冒充)
+            "counterfactual_strength": (
+                None
+                if pd.isna(cf_strength) or cf_strength is None
+                else float(cf_strength)
+            ),
             "net": net,
         }
-        for day, ts_code, stage, industry_name, ind_pct, net in zip(
+        for day, ts_code, stage, industry_name, ind_pct, cf_strength, net in zip(
             aligned["signal_date"],
             aligned["ts_code"],
             aligned["_stage"],
             aligned["industry_name"],
             aligned["_industry_day_pct"],
+            aligned["_counterfactual_strength"],
             net_col,
         )
     ]
@@ -542,7 +595,10 @@ def collect_zero_hit_day_attribution(
     )
     from scripts.setup_research import load_industry_day_pct  # noqa: E402
     from src.screening.offensive.data.fund_flow_store import FundFlowStore  # noqa: E402
-    from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup  # noqa: E402
+    from src.screening.offensive.setups.btst_breakout import (  # noqa: E402
+        BtstBreakoutSetup,
+        counterfactual_trigger_strength,
+    )
 
     table_dir = Path(table_dir)
     manifest_path = table_dir / "manifest_v1.json"
@@ -661,6 +717,18 @@ def collect_zero_hit_day_attribution(
                 ev["_industry_day_pct"] = (
                     float(ind_pct) if ind_pct is not None else None
                 )
+                # R219 Op1: 反事实强度 — 门挡集强度条件化 (R140 Op2 登记局限
+                # 收口): 与 detect 同一 ranker 单一实现, 无公式 fork;
+                # None = 不可计算 (如实), 绝不冒充 0.0。
+                ev["_counterfactual_strength"] = counterfactual_trigger_strength(
+                    frame, s, symbol
+                )
+                # R219 Op1: 反事实强度 — 门挡集强度条件化 (R140 Op2 登记局限
+                # 收口): 与 detect 同一 ranker 单一实现, 无公式 fork;
+                # None = 不可计算 (如实), 绝不冒充 0.0。
+                ev["_counterfactual_strength"] = counterfactual_trigger_strength(
+                    frame, s, symbol
+                )
                 blocked_evs.append(ev)
                 day_blocked_n += 1
         dominant = dominant_blocked_family(stage_counts)
@@ -697,9 +765,10 @@ def collect_zero_hit_day_attribution(
         "primary_horizon": PRIMARY_HORIZON,
         "gate_blocked_stages": sorted(NEAR_MISS_STAGES),
         "strength_conditioning": (
-            "门挡集未强度条件化: detect 的强度 ranker 只在全部条件通过后计算, "
-            "_miss 对 miss 恒返回 trigger_strength=0.0 — 门挡集含未达 0.50 "
-            "生产可买阈值的候选, E 方向解读须计入该混合 (R140 Op2 修正)"
+            "R219 Op1 强度条件化已启用 (R140 Op2 登记局限收口): 门挡候选的反事实强度经 "
+            "counterfactual_trigger_strength 与 detect 同一 ranker 单一实现计算 (无公式 fork); "
+            "None=不可计算 (prices 缺失/无触发行/历史不足 — c4_data_short 同边界) 如实单列, "
+            "不冒充 0.0; 0.50 分桶即生产可买阈值, 分层 E 是 owner 门策略判读输入, 只披露不判定"
         ),
         "attribution_caveat": (
             "主导族 = 顺序门的首失败归因 (c0→c4 检测序), 低估后续门 "
@@ -820,6 +889,58 @@ def render_md(payload: Mapping[str, Any]) -> str:
         # R141 Op2: 日混杂 caveat — 热桶读数含市场日效应, 不是门槛机会成本
         lines.append("")
         lines.append(f"注: {caveat}")
+    lines.append("")
+    lines.append("## 门挡集反事实强度分层 (R219 Op1: 与 detect 同一 ranker 单一实现)")
+    lines.append("")
+    lines.append("| 强度桶 | 事件 n | 日 n | 反事实净 E | CI90 下界 |")
+    lines.append("|---|---|---|---|---|")
+    strength_cn = {
+        "strength_uncomputable": "不可计算",
+        "<0.50": "< 0.50 (不达生产阈值)",
+        "0.50-0.60": "0.50-0.60",
+        "0.60-0.70": "0.60-0.70",
+        ">=0.70": ">= 0.70",
+    }
+    for bucket in STRENGTH_BUCKETS:
+        cell = s["by_counterfactual_strength"][bucket]
+        e_str = f"{cell['e'] * 100:+.2f}%" if cell["e"] is not None else "—"
+        ci_str = (
+            f"{cell['ci90_low'] * 100:+.2f}%" if cell["ci90_low"] is not None else "—"
+        )
+        lines.append(
+            f"| {strength_cn[bucket]} | {cell['events']} | {cell['days']} | {e_str} | {ci_str} |"
+        )
+    lines.append("")
+    lines.append(
+        "注: >=0.50 桶 = 生产会买而被门挡的候选 (机会成本读数); <0.50 桶本就不达"
+        "生产可买阈值, 其反事实 E 是门的保护面证据; 不可计算桶如实单列不混入。"
+    )
+    lines.append("")
+    lines.append("## 门挡集反事实强度分层 (R219 Op1: 与 detect 同一 ranker 单一实现)")
+    lines.append("")
+    lines.append("| 强度桶 | 事件 n | 日 n | 反事实净 E | CI90 下界 |")
+    lines.append("|---|---|---|---|---|")
+    strength_cn = {
+        "strength_uncomputable": "不可计算",
+        "<0.50": "< 0.50 (不达生产阈值)",
+        "0.50-0.60": "0.50-0.60",
+        "0.60-0.70": "0.60-0.70",
+        ">=0.70": ">= 0.70",
+    }
+    for bucket in STRENGTH_BUCKETS:
+        cell = s["by_counterfactual_strength"][bucket]
+        e_str = f"{cell['e'] * 100:+.2f}%" if cell["e"] is not None else "—"
+        ci_str = (
+            f"{cell['ci90_low'] * 100:+.2f}%" if cell["ci90_low"] is not None else "—"
+        )
+        lines.append(
+            f"| {strength_cn[bucket]} | {cell['events']} | {cell['days']} | {e_str} | {ci_str} |"
+        )
+    lines.append("")
+    lines.append(
+        "注: >=0.50 桶 = 生产会买而被门挡的候选 (机会成本读数); <0.50 桶本就不达"
+        "生产可买阈值, 其反事实 E 是门的保护面证据; 不可计算桶如实单列不混入。"
+    )
     lines.append("")
     lines.append("## 按行业分层 (SW L1, 成熟事件数降序, 最多 8 行)")
     lines.append("")

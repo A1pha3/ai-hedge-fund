@@ -379,6 +379,175 @@ def _compute_limit_up_streak(prices: pd.DataFrame, trigger_idx: int, limit_up_pc
         return 1
 
 
+def _prepare_trigger_frame(prices: pd.DataFrame | None) -> pd.DataFrame | None:
+    """c0 预备单一实现 (detect 与门挡反事实读面共用).
+
+    空防 + 副本隔离 + index 重置 (Bug fix 沿用: 保证 index=0..n-1, 防 iloc
+    混用) + date_str 派生. 返回 None = prices 缺失/为空 (detect 语义
+    c0_prices_missing).
+    """
+    if prices is None or len(prices) == 0:
+        return None
+    prepared = prices.copy()
+    prepared = prepared.reset_index(drop=True)
+    prepared["date_str"] = pd.to_datetime(prepared["date"]).dt.strftime("%Y%m%d")
+    return prepared
+
+
+def _find_trigger_index(prices: pd.DataFrame, trade_date: str) -> int | None:
+    """trade_date 对应触发行的 positional index; 无该日行返回 None
+    (detect 语义 c0_trigger_row_missing)."""
+    trigger_rows = prices[prices["date_str"] == trade_date]
+    if len(trigger_rows) == 0:
+        return None
+    return int(trigger_rows.index[0])
+
+
+def _strength_components(
+    prices: pd.DataFrame,
+    trigger_idx: int,
+    ref_idx: int,
+    ticker: str,
+    limit_up_pct: float,
+    trade_date: str,
+) -> dict[str, Any]:
+    """5 因子等权 alpha ranker 单一实现 (detect 与门挡反事实读面共用).
+
+    R219 Op1: 原内联于 detect 尾部的 ranker 体原样迁出 — 同输入同因子同
+    公式, detect 返回值逐字节不变 (等价性由既有 btst_breakout 测试套件
+    无修改全绿 + 本提取的等价测试共同证明).
+
+    trigger_strength: 5 因子等权 alpha ranker (0.20 each) + 能量耦合 bonus.
+      board:    002/300 61.1% vs 000/001 44.9% (n=1212, 626 票全 universe 回测)
+      low_vol:  20日已实现波动率 (低波=弹簧压紧) — 池内独立正交轴 (geometry Q6)
+      squeeze:  波动率压缩(弹簧压紧) vs 未压缩 — 弱正向; Q6 后其信息多被 low_vol 连续轴吸收, 暂保留待复核
+      volume:   成交量比率 (温和放量佳, 极端量差; 连续倒U重标定, 见 Q2)
+      range:    涨停日盘中振幅 (倒U; 封板过程质量) — 正交新维度, 单因子 IC 全场最高 (新一轮挖掘)
+    能量耦合: squeeze + low_vol 同时满值 = 完整弹簧释放, 给 0.08 bonus.
+
+    position_score 已移出 strength (2026-08-09, geometry-of-alpha Q6, 本质解):
+    正交性问责发现它与条件4 池过滤 pre_runup≤8% 高度同源 (ρ=-0.756) — 「防追高」
+    被双重计权, position 是 pre_runup 的复印件. 池内 A/B (q6_double_count_ab,
+    n=12049) 证把 position 换成与 pre_runup 正交的低波动轴, 池内 rank IC 从
+    +0.0298 升到 +0.0463 (+55%), 换血方向正确 (放入 +0.48% > 挡出 +0.16%).
+    降权 (position 0.15) 治不好本 — 复印件调小声还是复印件, 换血反而更差.
+    position_score 保留在 metadata 供观测. 见 data/reports/q6_double_count_formula_ab.json.
+
+    weekday_score 已移出 strength (2026-08-09, factor_audit 复核): 当初凭 n=133 单
+    regime 样本「Wed-Fri 78% vs Mon-Tue 51%」给 0.20 权重, 但全量复核 (21232 信号日)
+    无区分度 — E[r] 反号、跨窗 H1 反 H2 正 (方向漂移)、Wilson 未分离. 0.20 权重在
+    稀释真信号 → 移除, 剩 4 项归一化到 0.25 (保持刻度与 _MIN_TRIGGER_STRENGTH 不变).
+    weekday_score 保留在 metadata 供观测 (day-of-week 效应是真信息, 只是不配权重).
+    见 data/reports/factor_audit_decision_pack_2026-08-08.md (Q1).
+
+    连板数因子 — 2026-08-08 因子复核后移除 streak_bonus: 当初 (7/19, commit
+    8c7fc078) 凭 9497 涨停样本「2连板 WR48.0% > 首板 45.5%」给 streak==2 +0.04.
+    但全量复核 (1442 票 / 21232 涨停信号日 / 至 2026-08-07) 双口径同向反转:
+    2连板 WR 39.0% vs 首板 43.3% (−4.25pp raw / −4.47pp exec-adjusted), E[r]
+    同步走弱. 因子前提不再成立 → streak 不再进 trigger_strength, 仅作 metadata
+    暴露供 dogfood 观测. 见 data/reports/streak_factor_revalidation.json.
+
+    Args:
+        prices: 已预备 (_prepare_trigger_frame) 的单 ticker 价格帧
+        trigger_idx: 涨停日 positional index
+        ref_idx: trigger_idx - _PRE_RUNUP_LOOKBACK_DAYS (条件4 前窗口锚)
+        ticker: 代码 (board 因子输入)
+        limit_up_pct: 板块涨停阈值 (streak 观测输入)
+        trade_date: YYYYMMDD (weekday 观测输入)
+
+    Returns:
+        dict: strength/streak 与 8 个分量 (全部归一到 [0,1] 的分量按
+        分量导出契约原样返回, 归一化是点积可比性的前提).
+    """
+    trade_dow = _dt.strptime(trade_date, "%Y%m%d").weekday()  # 0=Mon
+    weekday_score = 1.0 if trade_dow >= 2 else 0.0  # Wed-Fri=1, Mon-Tue=0 (仅观测, 不进 strength)
+    board_score = _board_quality_score(ticker)  # 002/300/301=0.95, 688/60x=0.95, 000/001=0.0 (与 _board_quality_score Q3 校准一致)
+
+    # 低波动因子: 用涨停前 20 日 pct_change 计算 (池内正交轴, 替换 position 进 strength)
+    low_vol_score = _compute_low_vol_score(prices, trigger_idx)
+    # 位置因子: 用涨停前 5 日 close 计算 — 已移出 strength (Q6), 保留供 metadata 观测
+    # 压缩因子: 用涨停前 20 日 high/low/close 计算 (需要更长的历史窗口)
+    pre_window = prices.iloc[ref_idx : trigger_idx]  # 5 个交易日的 OHLCV
+    position_score, squeeze_score = _compute_trend_vol_scores(pre_window, prices, trigger_idx)
+
+    # ★ 成交量因子: 2026-08-09 连续重标定 (factor_audit Q2), 倒 U 映射,
+    # 证据见 _compute_volume_score docstring. 旧 2026-07 阶梯的细分数据已被
+    # 全量复核证伪 (0.9/1.0 倒挂), 不再赘述.
+    volume_score = _compute_volume_score(prices, trigger_idx)
+
+    # 盘中振幅因子 (2026-08-09 新一轮挖掘): 涨停日 (high-low)/prev_close 倒 U 映射.
+    # 正交新维度 (封板过程 vs 涨停前状态), 池内 A/B rank IC +37%. 见 _compute_range_score.
+    range_score = _compute_range_score(prices, trigger_idx)
+
+    # energy_bonus 仅在 squeeze=1.0 且 low_vol 满值 (完整弹簧释放) 时发放 (2026-08-09 Q6).
+    # 原为 position+squeeze 同时=1.0; position 移出 strength 后, 改挂 squeeze + low_vol
+    # (池内正交的压缩轴 + 压缩确认 = 完整弹簧释放). Finding A (2026-07-16): 旧阈值
+    # ``>= 0.5`` 把 squeeze=0.5 (中性/数据不足) 也算"完整弹簧释放" → 发未赚取的 +0.08,
+    # 与 docstring 矛盾, 并把阶段证据不足的票抬过 _MIN_TRIGGER_STRENGTH. 故 squeeze
+    # 须满值 1.0; low_vol 连续值须 >= 0.75 (低波区, 与「压紧」语义一致).
+    energy_bonus = 0.08 if squeeze_score >= 1.0 and low_vol_score >= 0.75 else 0.0
+
+    streak = _compute_limit_up_streak(prices, trigger_idx, limit_up_pct)
+    # weekday/position 已移出 (见上方注释); 5 项各 0.20 + energy_bonus (2026-08-09
+    # range 进 strength, 4→5 分量重新归一化 0.25→0.20, _MIN_TRIGGER_STRENGTH 刻度不变).
+    strength = min(
+        1.0,
+        0.20 * board_score
+        + 0.20 * low_vol_score
+        + 0.20 * squeeze_score
+        + 0.20 * volume_score
+        + 0.20 * range_score
+        + energy_bonus,
+    )
+    return {
+        "weekday_score": weekday_score,
+        "board_score": board_score,
+        "position_score": position_score,
+        "low_vol_score": low_vol_score,
+        "squeeze_score": squeeze_score,
+        "volume_score": volume_score,
+        "range_score": range_score,
+        "energy_bonus": energy_bonus,
+        "streak": streak,
+        "strength": strength,
+    }
+
+
+def counterfactual_trigger_strength(
+    prices: pd.DataFrame | None, trade_date: str, ticker: str
+) -> float | None:
+    """门挡候选的反事实强度读面 (R219 Op1): 与 detect 同一 ranker 单一实现.
+
+    背景: detect 的强度 ranker 只在全部条件通过后计算, _miss 对 miss 恒返回
+    trigger_strength=0.0 (R140 Op2 实锤) — 门挡归因诊断因此无法区分被挡集中
+    哪些已达 0.50 生产可买阈值 (『强度条件化须 fork 公式, 不做』的登记封锁).
+    ranker 5 因子 (board/low_vol/squeeze/volume/range) 只依赖 prices+ticker,
+    不依赖 fund_flow/industry — 通过 c1 涨停形状后的门挡候选 (c2/c3/c4 miss)
+    的反事实强度可从同一价格帧计算, 无公式 fork.
+
+    边界 (如实): 调用方负责门语义 — 本函数不做任何条件门判定, 只算 ranker.
+    prices 缺失/无 trade_date 行/ref_idx<0 (与 detect c4_data_short 同边界:
+    历史不足, 20 日窗口因子失真) 返回 None, 不冒充 0.0 (0.0 是合法强度值,
+    None 才是不可计算).
+    """
+    prepared = _prepare_trigger_frame(prices)
+    if prepared is None:
+        return None
+    trigger_idx = _find_trigger_index(prepared, trade_date)
+    if trigger_idx is None:
+        return None
+    ref_idx = trigger_idx - _PRE_RUNUP_LOOKBACK_DAYS
+    if ref_idx < 0:
+        return None
+    from src.tools.ashare_board_utils import limit_up_pct_for_ticker
+
+    limit_up_pct = limit_up_pct_for_ticker(ticker)
+    components = _strength_components(
+        prepared, trigger_idx, ref_idx, ticker, limit_up_pct, trade_date
+    )
+    return float(components["strength"])
+
+
 class BtstBreakoutSetup(Setup):
     name = "btst_breakout"
     # 数据驱动的 natural_horizon (全池回测 2020-2026, 新 detect 含条件4, execution-adjusted):
@@ -390,16 +559,13 @@ class BtstBreakoutSetup(Setup):
 
     def detect(self, ticker: str, trade_date: str, context: dict[str, Any]) -> DetectionResult:
         prices: pd.DataFrame | None = context.get("prices")
-        if prices is None or len(prices) == 0:
+        prepared = _prepare_trigger_frame(prices)
+        if prepared is None:
             return self._miss(ticker, trade_date, "c0_prices_missing")
-
-        prices = prices.copy()
-        prices = prices.reset_index(drop=True)  # Bug fix: 保证 index=0..n-1, 防 iloc 混用
-        prices["date_str"] = pd.to_datetime(prices["date"]).dt.strftime("%Y%m%d")
-        trigger_rows = prices[prices["date_str"] == trade_date]
-        if len(trigger_rows) == 0:
+        prices = prepared  # Bug fix 沿用: 保证 index=0..n-1, 防 iloc 混用
+        trigger_idx = _find_trigger_index(prices, trade_date)
+        if trigger_idx is None:
             return self._miss(ticker, trade_date, "c0_trigger_row_missing")
-        trigger_idx = trigger_rows.index[0]
         trigger_row = prices.iloc[trigger_idx]
 
         # 条件 1: 今日涨停 (板块自适应: 主板 ≥9.5%, 科创/创业 ≥19.5%, 北交所 ≥29.0%)
@@ -500,75 +666,24 @@ class BtstBreakoutSetup(Setup):
         stop_price = trigger_close * (1 + range_based_stop_pct)
         invalidation = f"价格跌破 {stop_price:.2f} (盘整区底部 {range_low:.2f}, {range_based_stop_pct:+.1%})"
 
-        # trigger_strength: 5 因子等权 alpha ranker (0.20 each) + 能量耦合 bonus.
-        #   board:    002/300 61.1% vs 000/001 44.9% (n=1212, 626 票全 universe 回测)
-        #   low_vol:  20日已实现波动率 (低波=弹簧压紧) — 池内独立正交轴 (geometry Q6)
-        #   squeeze:  波动率压缩(弹簧压紧) vs 未压缩 — 弱正向; Q6 后其信息多被 low_vol 连续轴吸收, 暂保留待复核
-        #   volume:   成交量比率 (温和放量佳, 极端量差; 连续倒U重标定, 见 Q2)
-        #   range:    涨停日盘中振幅 (倒U; 封板过程质量) — 正交新维度, 单因子 IC 全场最高 (新一轮挖掘)
-        # 能量耦合: squeeze + low_vol 同时满值 = 完整弹簧释放, 给 0.08 bonus.
-        #
-        # position_score 已移出 strength (2026-08-09, geometry-of-alpha Q6, 本质解):
-        # 正交性问责发现它与条件4 池过滤 pre_runup≤8% 高度同源 (ρ=-0.756) — 「防追高」
-        # 被双重计权, position 是 pre_runup 的复印件. 池内 A/B (q6_double_count_ab,
-        # n=12049) 证把 position 换成与 pre_runup 正交的低波动轴, 池内 rank IC 从
-        # +0.0298 升到 +0.0463 (+55%), 换血方向正确 (放入 +0.48% > 挡出 +0.16%).
-        # 降权 (position 0.15) 治不好本 — 复印件调小声还是复印件, 换血反而更差.
-        # position_score 保留在 metadata 供观测. 见 data/reports/q6_double_count_formula_ab.json.
-        #
-        # weekday_score 已移出 strength (2026-08-09, factor_audit 复核): 当初凭 n=133 单
-        # regime 样本「Wed-Fri 78% vs Mon-Tue 51%」给 0.20 权重, 但全量复核 (21232 信号日)
-        # 无区分度 — E[r] 反号、跨窗 H1 反 H2 正 (方向漂移)、Wilson 未分离. 0.20 权重在
-        # 稀释真信号 → 移除, 剩 4 项归一化到 0.25 (保持刻度与 _MIN_TRIGGER_STRENGTH 不变).
-        # weekday_score 保留在 metadata 供观测 (day-of-week 效应是真信息, 只是不配权重).
-        # 见 data/reports/factor_audit_decision_pack_2026-08-08.md (Q1).
-
-        trade_dow = _dt.strptime(trade_date, "%Y%m%d").weekday()  # 0=Mon
-        weekday_score = 1.0 if trade_dow >= 2 else 0.0  # Wed-Fri=1, Mon-Tue=0 (仅观测, 不进 strength)
-        board_score = _board_quality_score(ticker)  # 002/300/301=0.95, 688/60x=0.95, 000/001=0.0 (与 _board_quality_score Q3 校准一致)
-
-        # 低波动因子: 用涨停前 20 日 pct_change 计算 (池内正交轴, 替换 position 进 strength)
-        low_vol_score = _compute_low_vol_score(prices, trigger_idx)
-        # 位置因子: 用涨停前 5 日 close 计算 — 已移出 strength (Q6), 保留供 metadata 观测
-        # 压缩因子: 用涨停前 20 日 high/low/close 计算 (需要更长的历史窗口)
-        pre_window = prices.iloc[ref_idx : trigger_idx]  # 5 个交易日的 OHLCV
-        position_score, squeeze_score = _compute_trend_vol_scores(pre_window, prices, trigger_idx)
-
-        # ★ 成交量因子: 2026-08-09 连续重标定 (factor_audit Q2), 倒 U 映射,
-        # 证据见 _compute_volume_score docstring. 旧 2026-07 阶梯的细分数据已被
-        # 全量复核证伪 (0.9/1.0 倒挂), 不再赘述.
-        volume_score = _compute_volume_score(prices, trigger_idx)
-
-        # 盘中振幅因子 (2026-08-09 新一轮挖掘): 涨停日 (high-low)/prev_close 倒 U 映射.
-        # 正交新维度 (封板过程 vs 涨停前状态), 池内 A/B rank IC +37%. 见 _compute_range_score.
-        range_score = _compute_range_score(prices, trigger_idx)
-
-        # energy_bonus 仅在 squeeze=1.0 且 low_vol 满值 (完整弹簧释放) 时发放 (2026-08-09 Q6).
-        # 原为 position+squeeze 同时=1.0; position 移出 strength 后, 改挂 squeeze + low_vol
-        # (池内正交的压缩轴 + 压缩确认 = 完整弹簧释放). Finding A (2026-07-16): 旧阈值
-        # ``>= 0.5`` 把 squeeze=0.5 (中性/数据不足) 也算"完整弹簧释放" → 发未赚取的 +0.08,
-        # 与 docstring 矛盾, 并把阶段证据不足的票抬过 _MIN_TRIGGER_STRENGTH. 故 squeeze
-        # 须满值 1.0; low_vol 连续值须 >= 0.75 (低波区, 与「压紧」语义一致).
-        energy_bonus = 0.08 if squeeze_score >= 1.0 and low_vol_score >= 0.75 else 0.0
-
-        # ★ 连板数因子 — 2026-08-08 因子复核后移除 streak_bonus.
-        # 当初 (7/19, commit 8c7fc078) 凭 9497 涨停样本「2连板 WR48.0% > 首板 45.5%」给
-        # streak==2 +0.04. 但全量复核 (1442 票 / 21232 涨停信号日 / 至 2026-08-07) 双口径
-        # 同向反转: 2连板 WR 39.0% vs 首板 43.3% (−4.25pp raw / −4.47pp exec-adjusted),
-        # E[r] 同步走弱. 因子前提不再成立 → streak 不再进 trigger_strength, 仅作 metadata
-        # 暴露供 dogfood 观测. 见 data/reports/streak_factor_revalidation.json.
-        streak = _compute_limit_up_streak(prices, trigger_idx, limit_up_pct)
-        # weekday/position 已移出 (见上方注释); 5 项各 0.20 + energy_bonus (2026-08-09
-        # range 进 strength, 4→5 分量重新归一化 0.25→0.20, _MIN_TRIGGER_STRENGTH 刻度不变).
-        strength = min(
-            1.0,
-            0.20 * board_score
-            + 0.20 * low_vol_score
-            + 0.20 * squeeze_score
-            + 0.20 * volume_score
-            + 0.20 * range_score
-            + energy_bonus,
+        # R219 Op1 强度条件化: ranker 体提取为 _strength_components 单一实现 —
+        # 与门挡候选反事实强度读面 (counterfactual_trigger_strength) 共用, 消除
+        # 『强度条件化须 fork 公式』的封锁 (R140 Op2 登记)。detect 逐字节等价:
+        # 同输入同因子同公式, 因子考古注释随函数迁移; 局部名逐一复位使下方
+        # metadata/DetectionResult 零改动。
+        components = _strength_components(
+            prices, trigger_idx, ref_idx, ticker, limit_up_pct, trade_date
         )
+        board_score = components["board_score"]
+        low_vol_score = components["low_vol_score"]
+        position_score = components["position_score"]
+        squeeze_score = components["squeeze_score"]
+        volume_score = components["volume_score"]
+        range_score = components["range_score"]
+        weekday_score = components["weekday_score"]
+        energy_bonus = components["energy_bonus"]
+        streak = components["streak"]
+        strength = components["strength"]
 
         return DetectionResult(
             hit=True,

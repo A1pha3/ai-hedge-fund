@@ -275,7 +275,7 @@ class TestRenderMd:
             "generated_at": "20260907",
             "primary_horizon": 10,
             "gate_blocked_stages": sorted(zga.NEAR_MISS_STAGES),
-            "strength_conditioning": "门挡集未强度条件化 (测试fixture)",
+            "strength_conditioning": "强度条件化已启用 (R219 Op1, 测试fixture)",
             "attribution_caveat": "首失败归因低估后续门贡献 (测试fixture)",
             "zero_hit_days_n": 1,
             "replay_hit_days": ["20250701"],
@@ -311,7 +311,7 @@ class TestRenderMd:
         assert "重放 hit 披露" in md and "20250701" in md
         assert "c3 行业/市场状态" in md
         assert "-2.00%" in md  # 日反事实 E
-        assert "局限披露" in md and "未强度条件化" in md
+        assert "局限披露" in md and "强度条件化已启用" in md
         assert "归因 caveat" in md and "首失败归因" in md
 
     def test_missing_values_render_dash_not_crash(self):
@@ -802,7 +802,7 @@ class TestIndustryDayDemeanedRender:
             "generated_at": "20260908",
             "primary_horizon": 10,
             "gate_blocked_stages": sorted(zga.NEAR_MISS_STAGES),
-            "strength_conditioning": "门挡集未强度条件化 (测试fixture)",
+            "strength_conditioning": "强度条件化已启用 (R219 Op1, 测试fixture)",
             "attribution_caveat": "首失败归因低估后续门贡献 (测试fixture)",
             "zero_hit_days_n": 1,
             "replay_hit_days": ["20250701"],
@@ -1491,7 +1491,8 @@ class TestLedgerWriterAllowNanFamilyConvergence:
             sort_keys=True, ensure_ascii=False,
         )
         assert hashlib.sha256(blob.encode()).hexdigest() == (
-            "4717974d040cc31043d8a3e5969c8427594602cd57b0b4a872702ed5524101a7"
+            # R219 Op1 additive key by_counterfactual_strength (R140 Op2 登记局限收口)
+            "f1a55960a4edf1736ce9a31e26049fe04eda4297809db6010cb6ba6563ced5ab"
         )
         mixed = [
             {"day": "20250701", "regime": "normal", "dominant_family": "c2",
@@ -1506,7 +1507,8 @@ class TestLedgerWriterAllowNanFamilyConvergence:
             sort_keys=True, ensure_ascii=False,
         )
         assert hashlib.sha256(blob2.encode()).hexdigest() == (
-            "03ddad958bdb8dfece4c5e4e2b10b966f7b4ed3d961dd8ac7b8cb20b212c2ee1"
+            # R219 Op1 同款 additive key (NaN 输入路径摘要钉重算)
+            "7620f9052ed81a960c9ce1d1efb57816566d3e30b7fdf3adeb7bc81df1786507"
         )
 
 
@@ -1659,3 +1661,91 @@ class TestMainReportWriteFaceR148:
             self._run_main(tmp_path, monkeypatch, payload)
         json_path = report_dir / "zero_hit_day_gate_attribution_20260908.json"
         assert not json_path.exists()
+
+
+class TestCounterfactualStrengthBuckets:
+    """R219 Op1: 反事实强度分桶与分层聚合面."""
+
+    def test_bucket_boundaries_asymmetric(self):
+        assert zga._strength_bucket(0.499) == "<0.50"
+        assert zga._strength_bucket(0.5) == "0.50-0.60"
+        assert zga._strength_bucket(0.599) == "0.50-0.60"
+        assert zga._strength_bucket(0.6) == "0.60-0.70"
+        assert zga._strength_bucket(0.6999) == "0.60-0.70"
+        assert zga._strength_bucket(0.7) == ">=0.70"
+        assert zga._strength_bucket(1.0) == ">=0.70"
+
+    def test_bucket_uncomputable_never_fakes_zero(self):
+        # None/字符串/bool/NaN/Inf 一律 uncomputable — 0.0 是 <0.50 合法值,
+        # 不可计算绝不冒充 (bool 是 int 子类, R147 毒化纪律同款)
+        assert zga._strength_bucket(None) == "strength_uncomputable"
+        assert zga._strength_bucket("0.8") == "strength_uncomputable"
+        assert zga._strength_bucket(True) == "strength_uncomputable"
+        assert zga._strength_bucket(False) == "strength_uncomputable"
+        assert zga._strength_bucket(float("nan")) == "strength_uncomputable"
+        assert zga._strength_bucket(float("inf")) == "strength_uncomputable"
+
+    def test_summarize_stratifies_by_strength(self):
+        rows = [
+            {"day": "20250701", "regime": "normal", "net": 0.05,
+             "dominant_family": "c3_industry", "counterfactual_strength": 0.72},
+            {"day": "20250701", "regime": "normal", "net": -0.03,
+             "dominant_family": "c2_flow", "counterfactual_strength": 0.55},
+            {"day": "20250702", "regime": "normal", "net": 0.01,
+             "dominant_family": "c4_runup", "counterfactual_strength": 0.40},
+            {"day": "20250702", "regime": "crisis", "net": None,
+             "dominant_family": "c2_flow", "counterfactual_strength": None},
+        ]
+        s = zga.summarize_gate_effectiveness(rows)
+        bcs = s["by_counterfactual_strength"]
+        assert set(bcs.keys()) == set(zga.STRENGTH_BUCKETS)
+        assert bcs[">=0.70"]["events"] == 1
+        assert bcs[">=0.70"]["e"] == pytest.approx(0.05)
+        assert bcs["0.50-0.60"]["events"] == 1
+        assert bcs["<0.50"]["events"] == 1
+        # 不可计算行 (含不成熟 None net) 归 uncomputable 且不冒充 E
+        assert bcs["strength_uncomputable"]["events"] == 0
+        assert bcs["strength_uncomputable"]["e"] is None
+
+    def test_summarize_missing_key_rows_land_uncomputable(self):
+        # 旧形态行 (无 counterfactual_strength 键) → None → uncomputable
+        s = zga.summarize_gate_effectiveness(
+            [{"day": "20250701", "regime": "normal", "net": 0.02,
+              "dominant_family": "c2_flow"}]
+        )
+        assert (
+            s["by_counterfactual_strength"]["strength_uncomputable"]["events"] == 1
+        )
+
+    def test_aligned_rows_carry_counterfactual_strength(self):
+        rows = zga.aligned_counterfactual_rows(
+            [
+                _ev("000001.SZ", "20250701", gross_t10=0.10,
+                    _counterfactual_strength=0.77),
+                _ev("000009.SZ", "20250701", gross_t10=0.06),
+            ],
+            {"20250701": "normal"},
+        )
+        by_code = {r["ts_code"]: r for r in rows}
+        assert by_code["000001.SZ"]["counterfactual_strength"] == pytest.approx(0.77)
+        # 缺列事件 → None (不冒充)
+        assert by_code["000009.SZ"]["counterfactual_strength"] is None
+
+    def test_render_has_strength_section(self):
+        payload = {
+            "generated_at": "2026-09-15",
+            "discipline": "纯诊断",
+            "primary_horizon": 10,
+            "gate_blocked_stages": ["c2_flow_below_mean"],
+            "strength_conditioning": "R219 Op1 强度条件化已启用",
+            "attribution_caveat": "caveat",
+            "court_binding": {},
+            "zero_hit_days_n": 1,
+            "replay_hit_days": [],
+            "days": [],
+            "summary": zga.summarize_gate_effectiveness([]),
+        }
+        md = zga.render_md(payload)
+        assert "门挡集反事实强度分层" in md
+        assert "不达生产阈值" in md
+        assert "机会成本读数" in md
