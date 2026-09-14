@@ -52,6 +52,7 @@ PROGRAM = "research.btst.regime"
 LINE_L1 = "shadow-line-btst:sha256:" + "a1" * 32 + ":600162:btst_breakout"
 LINE_L2 = "shadow-line-btst:sha256:" + "b2" * 32 + ":002815:btst_breakout"
 LINE_ORPHAN = "shadow-line-btst:sha256:" + "c3" * 32 + ":300999:btst_breakout"
+LINE_L4 = "shadow-line-btst:sha256:" + "d4" * 32 + ":000001:btst_breakout"
 
 
 def _hex(n: int) -> str:
@@ -166,8 +167,24 @@ def build_trial_root(
     *,
     champion_line_exit: str = "2026-09-10",
     with_orphan_position: bool = True,
+    foreign_trial: bool = False,
+    lowercase_arm_row: bool = False,
+    mixed_session: bool = False,
+    unknown_shape_on_challenger: bool = False,
+    traced_unfilled_line: bool = False,
+    empty_bars: bool = False,
 ) -> Path:
-    """镜像生产 trial root 五库形态的最小夹具 (语义见模块 docstring)."""
+    """镜像生产 trial root 五库形态的最小夹具 (语义见模块 docstring).
+
+    Op2 盲区钉旗标 (默认全关, 基础 23 测的夹具形态逐字节不变):
+    - foreign_trial: 异 trial 的同库决策行 (trial_id 过滤钉);
+    - lowercase_arm_row: 小写 arm 值决策行 (CHAMPION 归一钉);
+    - mixed_session: 同会话双臂不同 reason (mixed 分类钉);
+    - unknown_shape_on_challenger: 09-01 challenger 换未知形状 (发现钉);
+    - traced_unfilled_line: 有生命周期痕迹但无 fill 的决策行
+      (unmatched 判定 trace 语义钉);
+    - empty_bars: 零 bar-set (as_of 回退分支 + bars_gap ==as_of 边界钉).
+    """
     root = tmp_path / "trial"
     (root / "arms").mkdir(parents=True)
 
@@ -201,7 +218,12 @@ def build_trial_root(
             _shadow_json(
                 "2026-09-01",
                 "2026-09-02",
-                [_line(LINE_L1, "600162.SH", champion_line_exit)],
+                [_line(LINE_L1, "600162.SH", champion_line_exit)]
+                + (
+                    [_line(LINE_L4, "000001.SZ", "2026-09-15")]
+                    if traced_unfilled_line
+                    else []
+                ),
             ),
             "t2",
         ),
@@ -220,6 +242,30 @@ def build_trial_root(
         ),
         (TRIAL_ID, "2026-09-08", "c3", "CHALLENGER", _no_trade_json("2026-09-08", "NO_SIGNAL"), "t3"),
     ]
+    if lowercase_arm_row:
+        decisions.append(
+            (TRIAL_ID, "2026-09-04", "c4", "champion", _no_trade_json("2026-09-04", "NO_SIGNAL"), "t4")
+        )
+    if mixed_session:
+        decisions.append(
+            (TRIAL_ID, "2026-09-02", "c5", "CHAMPION", _no_trade_json("2026-09-02", "NO_SIGNAL"), "t5")
+        )
+        decisions.append(
+            (TRIAL_ID, "2026-09-02", "c5", "CHALLENGER", _no_trade_json("2026-09-02", "CAPACITY_EXHAUSTED"), "t5")
+        )
+    if foreign_trial:
+        decisions.append(
+            ("trial-other", "2026-09-03", "cx", "CHAMPION", _no_trade_json("2026-09-03", "NO_SIGNAL"), "tx")
+        )
+    if unknown_shape_on_challenger:
+        decisions = [
+            row if not (row[1] == "2026-09-01" and row[3] == "CHALLENGER")
+            else (
+                TRIAL_ID, "2026-09-01", "c2", "CHALLENGER",
+                json.dumps({"schema_major": 4, "portfolio_id": "pf-x"}), "t2",
+            )
+            for row in decisions
+        ]
     _create_db(
         root / "decisions.sqlite3",
         DECISIONS_TABLES,
@@ -240,6 +286,8 @@ def build_trial_root(
             ("20260910", "b4"),
         ]
     ]
+    if empty_bars:
+        bars = []
     _create_db(
         root / "bars-evidence.sqlite3",
         {"evidence_records": ("evidence_id TEXT, ingested_at TEXT")},
@@ -247,6 +295,19 @@ def build_trial_root(
     )
 
     champion_events = [
+        *(
+            [
+                (
+                    f"noop:champion:{LINE_L4}",
+                    "ENTRY_NO_FILL",
+                    f"shadow:{LINE_L4}",
+                    f"lot:{LINE_L4}",
+                    "2026-09-02T07:00:00Z",
+                )
+            ]
+            if traced_unfilled_line
+            else []
+        ),
         (
             f"fill:champion:{LINE_L1}:ENTRY:1",
             "TRADE_EXECUTED",
@@ -541,6 +602,77 @@ def test_cli_end_to_end(tmp_path: Path) -> None:
     assert rc == 0
     assert out_md.exists() and out_json.exists()
     assert json.loads(out_json.read_text())["as_of"] == "2026-09-10"
+
+
+# ---------------------------------------------------------------------------
+# Op2 盲区钉 (变异探针 P03/P04/P05/P16/P17/P18 存活者收口)
+# ---------------------------------------------------------------------------
+
+
+def test_foreign_trial_rows_scoped_out(tmp_path: Path) -> None:
+    """P03 钉: trial_id 过滤删除时异 trial 决策行混入 → 计数漂移当场红."""
+    root = build_trial_root(tmp_path, foreign_trial=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    assert len(audit.decisions) == 6
+    assert all(
+        session != "2026-09-03" for session, _arm in audit.decisions
+    )
+
+
+def test_lowercase_arm_row_normalized_to_canonical(tmp_path: Path) -> None:
+    """P04 钉: 小写 arm 行必须归一进 CHAMPION 键, 不游离."""
+    root = build_trial_root(tmp_path, lowercase_arm_row=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    decision = audit.decisions[("2026-09-04", "CHAMPION")]
+    assert decision.reason == "NO_SIGNAL"
+    assert len(audit.decisions) == 7
+
+
+def test_mixed_reason_session_classified_as_mixed(tmp_path: Path) -> None:
+    """P05 钉: 双臂不同 reason 的会话分类必须保留双值, 不折叠."""
+    root = build_trial_root(tmp_path, mixed_session=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    md = render_md(audit)
+    assert "| 2026-09-02 | 2026-09-16 | NO_SIGNAL | CAPACITY_EXHAUSTED | ✗ |" in md
+    # 会话级聚合视图 (matrix 单元格逐臂) 不等价于折叠; 直接断言 _classify 面
+    from scripts.v3_trial_operational_audit import _classify
+    combined = _classify(
+        [
+            audit.decisions[("2026-09-02", "CHAMPION")],
+            audit.decisions[("2026-09-02", "CHALLENGER")],
+        ]
+    )
+    assert combined == "mixed:CAPACITY_EXHAUSTED,NO_SIGNAL"
+
+
+def test_unknown_shape_decision_flagged(tmp_path: Path) -> None:
+    """P16 钉: 未识别形状必须产生 unknown_decision_shape 发现, 不静默."""
+    root = build_trial_root(tmp_path, unknown_shape_on_challenger=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    assert audit.decisions[("2026-09-01", "CHALLENGER")].shape == "unknown_shape"
+    assert audit.finding_counts["unknown_decision_shape"] == 1
+
+
+def test_empty_bars_fallback_bars_gap_includes_as_of_boundary(tmp_path: Path) -> None:
+    """P17 钉: 零 bar-set 时 as_of 回退到最后报名会话, bars_gap 的 <= 边界
+    必须把 ==as_of 的会话也计入 (只在回退分支可观测)."""
+    root = build_trial_root(tmp_path, empty_bars=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    assert audit.as_of == "2026-09-15"
+    gaps = {f.signal_session for f in audit.findings if f.code == FINDING_BARS_GAP}
+    assert "2026-09-15" in gaps
+
+
+def test_traced_but_unfilled_line_not_unmatched(tmp_path: Path) -> None:
+    """P18 钉: unmatched 语义 = 无任何生命周期痕迹 (trace), 非 = 无 fill;
+    有痕迹但未成交的行不得误报 unmatched."""
+    root = build_trial_root(tmp_path, traced_unfilled_line=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    unmatched = [f for f in audit.findings if f.code == FINDING_UNMATCHED_LINE]
+    assert [(f.signal_session, "002815.SZ" in f.detail) for f in unmatched] == [
+        ("2026-09-08", True)
+    ]
+    assert all("000001.SZ" not in f.detail for f in unmatched)
 
 
 def test_cli_typed_error_exit_2(tmp_path: Path) -> None:
