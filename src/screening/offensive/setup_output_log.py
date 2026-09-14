@@ -44,6 +44,7 @@ import math
 import os
 import stat
 import tempfile
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -688,21 +689,63 @@ def warn_missing_signal_log_sessions(
     从未运行的环境里会产生上千天的噪声。advisory only — 读取/解析失败静默
     返回 [], 不改变任何交易语义。
     """
+    coverage = signal_coverage_snapshot(
+        before=before,
+        calendar_path=calendar_path,
+        log_dir=log_dir,
+        lookback_sessions=lookback_sessions,
+    )
+    if coverage is None:
+        return []
+    if coverage.missing:
+        warn_signal_coverage_gap(coverage, max_show=max_show)
+    return list(coverage.missing)
+
+
+@dataclass(frozen=True)
+class SignalCoverageView:
+    """信号覆盖快照 (R217 Op1): 覆盖真相进报告面的最小投影。
+
+    ``recent_sessions`` = 审计窗内交易日数; ``missing`` = 无 setup_output_log
+    的信号日 (升序)。渲染与告警共用同一份事实, 不做第二套日历/日志读取。
+    """
+
+    recent_sessions: int
+    missing: tuple[str, ...]
+
+
+def signal_coverage_snapshot(
+    *,
+    before: str,
+    calendar_path: Path | str = _DEFAULT_CALENDAR,
+    log_dir: Path | str = _DEFAULT_DIR,
+    lookback_sessions: int = 30,
+) -> SignalCoverageView | None:
+    """读权威日历并审计覆盖缺口, 返回覆盖快照。
+
+    ``warn_missing_signal_log_sessions`` 的读面单一实现 (R217 Op1): 日历
+    缺失/畸形 → None (advisory fail-open, 与既有契约一致); 缺口判定复用
+    :func:`audit_signal_log_coverage` 单一实现 (文件存在含 0 字节即覆盖)。
+    """
     try:
         sessions = json.loads(Path(calendar_path).read_text(encoding="utf-8"))
         if not isinstance(sessions, list):
-            return []
+            return None
     except (OSError, json.JSONDecodeError):
-        return []
+        return None
     recent = [s for s in sessions if isinstance(s, str) and s < before][-lookback_sessions:]
     gaps = audit_signal_log_coverage(recent, before=before, log_dir=log_dir)
-    if gaps:
-        logger.warning(
-            "⚠ 信号覆盖断层: 最近 %d 个交易日中 %d 个无 setup_output_log "
-            "(--daily-action 未运行, 这些日的 setup 信号已永久丢失, 无法补录): %s%s",
-            len(recent),
-            len(gaps),
-            ",".join(gaps[-max_show:]),
-            " ..." if len(gaps) > max_show else "",
-        )
-    return gaps
+    return SignalCoverageView(recent_sessions=len(recent), missing=tuple(gaps))
+
+
+def warn_signal_coverage_gap(coverage: SignalCoverageView, *, max_show: int = 10) -> None:
+    """覆盖断层告警的单一文案实现 — log 哨点与报告面共用同一事实源。"""
+    missing = list(coverage.missing)
+    logger.warning(
+        "⚠ 信号覆盖断层: 最近 %d 个交易日中 %d 个无 setup_output_log "
+        "(--daily-action 未运行, 这些日的 setup 信号已永久丢失, 无法补录): %s%s",
+        coverage.recent_sessions,
+        len(missing),
+        ",".join(missing[-max_show:]),
+        " ..." if len(missing) > max_show else "",
+    )

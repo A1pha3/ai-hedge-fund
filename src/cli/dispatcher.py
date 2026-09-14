@@ -1197,6 +1197,20 @@ def _resolve_daily_action(
                 )
             except Exception:
                 logger.warning("daily-action readiness snapshot load failed", exc_info=True)
+        # 信号覆盖快照 (R217 Op1): 计算一次, 两个 complete 调用点同传 —
+        # 覆盖真相进报告面 (9:25 决策面可见), 告警文案走单一实现.
+        # advisory, 无论快照是否阻断都跑 (断跑检测独立于当日就绪状态).
+        signal_coverage = None
+        try:
+            from src.screening.offensive.setup_output_log import (
+                signal_coverage_snapshot,
+            )
+
+            signal_coverage = signal_coverage_snapshot(
+                before=signal_date.strftime("%Y%m%d")
+            )
+        except Exception:  # noqa: BLE001 - advisory, 绝不阻断信号生成
+            logger.debug("信号覆盖快照失败 (advisory)", exc_info=True)
         if verified is None or verified.snapshot is None:
             snapshot_block_reason = snapshot_block_reason or (
                 verified.global_reason if verified is not None else "readiness_snapshot_load_failed"
@@ -1208,6 +1222,7 @@ def _resolve_daily_action(
                 context,
                 scan,
                 new_entry_block=snapshot_block_reason,
+                signal_coverage=signal_coverage,
             )
         else:
             try:
@@ -1259,6 +1274,7 @@ def _resolve_daily_action(
                     new_entry_block=(
                         "setup_output_log_write_failed" if log_write_failed else None
                     ),
+                    signal_coverage=signal_coverage,
                 )
             except Exception:
                 logger.warning("daily-action readiness snapshot scan failed", exc_info=True)
@@ -1325,19 +1341,17 @@ def _resolve_daily_action(
                 "daily-action scan run log failed (advisory, 不阻断)",
                 exc_info=True,
             )
-        # 信号覆盖断层哨点 (2026-08-17 BUG-1; 2026-08-18 审查项 2 接入 v2 路径):
-        # 此前只挂在 legacy generate_daily_action — 生产 --daily-action 走本函数
-        # (scan_from_verified_snapshot + DailyActionService), 哨点从不执行, 华正
-        # 新材型断跑 (8-05~8-11 等 19/30 交易日无日志) 在本路径零检测. advisory,
-        # 无论快照是否阻断都跑 (断跑检测独立于当日就绪状态).
-        try:
-            from src.screening.offensive.setup_output_log import (
-                warn_missing_signal_log_sessions,
-            )
+        # 信号覆盖断层哨点 (2026-08-17 BUG-1; R217 Op1 起报告面共用同一快照):
+        # 文案走 warn_signal_coverage_gap 单一实现 (与渲染行同一份事实).
+        if signal_coverage is not None and signal_coverage.missing:
+            try:
+                from src.screening.offensive.setup_output_log import (
+                    warn_signal_coverage_gap,
+                )
 
-            warn_missing_signal_log_sessions(before=signal_date.strftime("%Y%m%d"))
-        except Exception:  # noqa: BLE001 - advisory, 绝不阻断信号生成
-            logger.debug("信号覆盖断层检查失败 (advisory)", exc_info=True)
+                warn_signal_coverage_gap(signal_coverage)
+            except Exception:  # noqa: BLE001 - advisory, 绝不阻断信号生成
+                logger.debug("信号覆盖断层告警失败 (advisory)", exc_info=True)
         verbose = "--verbose" in argv
         rendered = render_daily_action_v2(v2_run, verbose=verbose)
         # 结论先行: 结论块一律置于正文之前 — 操作员第一眼看到当天最重要的事实.

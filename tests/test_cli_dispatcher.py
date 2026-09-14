@@ -322,9 +322,9 @@ class TestDispatchEarlyFlags(unittest.TestCase):
                     return_value=datetime(2026, 7, 10, 21, 0, tzinfo=_CN_TZ),
                 ),
                 patch(
-                    "src.screening.offensive.setup_output_log.warn_missing_signal_log_sessions",
-                    return_value=[],
-                ) as warn_sentinel,
+                    "src.screening.offensive.setup_output_log.signal_coverage_snapshot",
+                    return_value=None,
+                ) as coverage_sentinel,
                 patch("builtins.print"),
             ):
                 rc = dispatcher._resolve_daily_action(
@@ -333,8 +333,9 @@ class TestDispatchEarlyFlags(unittest.TestCase):
                     ledger_path=Path(tmp) / "v2.sqlite3",
                 )
 
-        # 哨点以信号日为界审计 (before=YYYYMMDD), 无论就绪是否阻断都要跑.
-        warn_sentinel.assert_called_once_with(before="20260710")
+        # 哨点以信号日为界审计 (before=YYYYMMDD), 无论就绪是否阻断都要跑
+        # (R217 Op1: 快照计算一次, 两处 complete 调用点同传).
+        coverage_sentinel.assert_called_once_with(before="20260710")
         # tmp 目录无就绪清单 → 数据护栏阻断 rc=13 (与既有契约一致).
         self.assertEqual(rc, 13)
 

@@ -884,6 +884,11 @@ class DailyActionV2Run:
     # 恢复日程必须含它 (9/11 实录: 最大释放 cohort 于释放前一日从日程消失,
     # cap 恢复注记挂错日期). 旧构造点不传 → () 优雅降级 (与 funnel 同款).
     pending_exit_releases: tuple[Any, ...] = ()
+    # signal_coverage: 信号覆盖快照 (R217 Op1; 纯披露 宪法 #2) — 覆盖断层
+    # (setup_output_log 缺失日) 从 log-WARNING 升入报告面, 9:25 决策面与
+    # JSON 消费者可见. 旧构造点不传 → None 渲染省略 (与 funnel 同款优雅降级);
+    # 健康日 (缺失 0) 零行, 与既有输出逐字节一致.
+    signal_coverage: Any | None = None
 
 
 _BLOCK_REASON_ZH = {
@@ -1542,6 +1547,7 @@ def complete_daily_action_v2(
     shadow_prices: Any | None = None,
     gap_shadow_journal_dir: Path | str | None = None,
     gap_shadow_pack_dir: Path | str | None = None,
+    signal_coverage: Any | None = None,
 ) -> DailyActionV2Run:
     """Build the v2 display view after lifecycle has already advanced."""
     if not all(isinstance(candidate, PlanCandidate) for candidate in scan.candidates):
@@ -1619,6 +1625,7 @@ def complete_daily_action_v2(
         pending_exit_releases=getattr(
             service_run, "pending_exit_releases", ()
         ),
+        signal_coverage=signal_coverage,
     )
 
 
@@ -3463,6 +3470,43 @@ def _next_session_after(as_of: date) -> date | None:
         return None
 
 
+def _signal_coverage_clause(coverage: Any) -> str | None:
+    """信号覆盖行 (R217 Op1): 覆盖断层从 log-WARNING 升入报告面。
+
+    缺失==0 是健康静默 (返回 None — 与既有输出逐字节一致, 不渲染
+    "缺失 0" 常驻噪声); 形状非法 (None / recent 非正 int / bool 毒化 /
+    missing 非 tuple-list / 元素非 8 位日期串 / missing>recent) fail-open
+    整行省略 (R157-R159 家族纪律), 绝不阻断渲染。
+    """
+    try:
+        if coverage is None:
+            return None
+        recent = coverage.recent_sessions
+        missing = coverage.missing
+        if type(recent) is not int or recent <= 0:
+            return None
+        if isinstance(missing, (str, bytes)) or not isinstance(
+            missing, (tuple, list)
+        ):
+            return None
+        items = list(missing)
+        if any(
+            type(item) is not str or len(item) != 8 or not item.isdigit()
+            for item in items
+        ):
+            return None
+        if len(items) > recent or not items:
+            return None
+    except (TypeError, AttributeError, ValueError):
+        return None
+    shown = ",".join(items[-10:])
+    suffix = " ..." if len(items) > 10 else ""
+    return (
+        f"信号覆盖：最近 {recent} 个交易日缺失 {len(items)} 日"
+        f" (--daily-action 未运行, 信号无法补录): {shown}{suffix}"
+    )
+
+
 def render_daily_action_v2(
     run: DailyActionV2Run, *, verbose: bool = False, today: date | None = None
 ) -> str:
@@ -3947,6 +3991,14 @@ def render_daily_action_v2(
                 if n
             )
             lines.append(f"  就绪拦截分桶：{readiness_parts}")
+        lines.append("")
+
+    # ---- 信号覆盖: 覆盖断层从 log-WARNING 升入报告面 (R217 Op1; 纯披露) ----
+    # 9:25 决策面必须能看到扫描宇宙完整性 — 缺失日 setup 信号永久丢失.
+    # 健康日 (缺失 0) / coverage None / 形状非法 → 零行, 与既有输出逐字节一致.
+    coverage_clause = _signal_coverage_clause(getattr(run, "signal_coverage", None))
+    if coverage_clause:
+        lines.append(coverage_clause)
         lines.append("")
 
     # ---- 排除名单可见性 (2026-08-23 Item 5): 配置不是隐形政策 ----

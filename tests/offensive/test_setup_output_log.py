@@ -909,3 +909,128 @@ def test_writer_explicit_out_dir_still_wins(monkeypatch, tmp_path):
     path = sol.log_scan_run(_date(2026, 8, 31), (), (), regime="normal", out_dir=explicit)
     assert explicit in path.parents
     assert not (tmp_path / "module-default").exists()
+
+
+# ---------------------------------------------------------------------------
+# R217 Op1: 信号覆盖快照读面 + 告警文案单一实现
+# ---------------------------------------------------------------------------
+
+
+def _write_calendar(tmp_path, sessions):
+    import json
+
+    path = tmp_path / "trade_calendar.json"
+    path.write_text(json.dumps(sessions), encoding="utf-8")
+    return path
+
+
+def test_signal_coverage_snapshot_counts_recent_and_missing(tmp_path):
+    """快照 = 审计窗交易日数 + 无 setup_output_log 的信号日 (升序)."""
+    from src.screening.offensive.setup_output_log import signal_coverage_snapshot
+
+    calendar = _write_calendar(
+        tmp_path,
+        ["20260803", "20260804", "20260805", "20260806", "20260807"],
+    )
+    log_dir = tmp_path / "setup_output_log"
+    log_dir.mkdir()
+    (log_dir / "20260803.jsonl").write_text("", encoding="utf-8")
+    (log_dir / "20260805.jsonl").write_text("", encoding="utf-8")
+
+    view = signal_coverage_snapshot(
+        before="20260807",
+        calendar_path=calendar,
+        log_dir=log_dir,
+        lookback_sessions=30,
+    )
+    assert view is not None
+    assert view.recent_sessions == 4  # 严格早于 before 的 4 个会话
+    assert view.missing == ("20260804", "20260806")
+
+
+def test_signal_coverage_snapshot_healthy_day_zero_missing(tmp_path):
+    """全部覆盖 → missing 为空 tuple (falsy-zero: 健康静默是合法状态)."""
+    from src.screening.offensive.setup_output_log import signal_coverage_snapshot
+
+    calendar = _write_calendar(tmp_path, ["20260803", "20260804"])
+    log_dir = tmp_path / "setup_output_log"
+    log_dir.mkdir()
+    (log_dir / "20260803.jsonl").write_text("", encoding="utf-8")
+    (log_dir / "20260804.jsonl").write_text("", encoding="utf-8")
+
+    view = signal_coverage_snapshot(
+        before="20260804", calendar_path=calendar, log_dir=log_dir
+    )
+    assert view is not None
+    assert view.recent_sessions == 1
+    assert view.missing == ()
+
+
+def test_signal_coverage_snapshot_calendar_unreadable_returns_none(tmp_path):
+    """日历缺失/畸形 → None (advisory fail-open, 绝不抛)."""
+    from src.screening.offensive.setup_output_log import signal_coverage_snapshot
+
+    assert signal_coverage_snapshot(
+        before="20260804",
+        calendar_path=tmp_path / "missing.json",
+        log_dir=tmp_path,
+    ) is None
+    bad = tmp_path / "bad.json"
+    bad.write_text("not-json{", encoding="utf-8")
+    assert signal_coverage_snapshot(
+        before="20260804", calendar_path=bad, log_dir=tmp_path
+    ) is None
+
+
+def test_warn_missing_signal_log_sessions_refactor_contract(tmp_path, caplog):
+    """重构后既有契约逐字节不变: 返回缺失列表 + 告警文案同一实现."""
+    import logging
+
+    from src.screening.offensive.setup_output_log import (
+        warn_missing_signal_log_sessions,
+    )
+
+    calendar = _write_calendar(
+        tmp_path, ["20260803", "20260804", "20260805", "20260806"]
+    )
+    log_dir = tmp_path / "setup_output_log"
+    log_dir.mkdir()
+    (log_dir / "20260803.jsonl").write_text("", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        gaps = warn_missing_signal_log_sessions(
+            before="20260806", calendar_path=calendar, log_dir=log_dir
+        )
+    assert gaps == ["20260804", "20260805"]
+    assert any("信号覆盖断层" in r.message and "2 个" in r.message for r in caplog.records)
+
+    # 健康日: 无告警, 返回空列表 (caplog.clear — caplog 跨块累积记录)
+    (log_dir / "20260804.jsonl").write_text("", encoding="utf-8")
+    (log_dir / "20260805.jsonl").write_text("", encoding="utf-8")
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        gaps = warn_missing_signal_log_sessions(
+            before="20260806", calendar_path=calendar, log_dir=log_dir
+        )
+    assert gaps == []
+    assert not any("信号覆盖断层" in r.message for r in caplog.records)
+
+
+def test_warn_signal_coverage_gap_truncation(tmp_path, caplog):
+    """>10 缺失截断 ' ...' — 与既有日志语义逐字相同."""
+    import logging
+
+    from src.screening.offensive.setup_output_log import (
+        SignalCoverageView,
+        warn_signal_coverage_gap,
+    )
+
+    missing = tuple(f"202608{d:02d}" for d in range(1, 13))  # 12 天
+    view = SignalCoverageView(recent_sessions=30, missing=missing)
+    with caplog.at_level(logging.WARNING):
+        warn_signal_coverage_gap(view)
+    text = caplog.records[-1].getMessage()
+    assert "最近 30 个交易日中 12 个" in text
+    assert text.rstrip().endswith("...")
+    assert "20260801" not in text  # 只显最后 10 个
+    assert "20260803" in text

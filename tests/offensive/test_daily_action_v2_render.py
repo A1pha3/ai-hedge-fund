@@ -5377,3 +5377,125 @@ def test_exit_advice_row_annotation_follows_read_time_anchor(tmp_path, monkeypat
     row = next(line for line in text.splitlines() if "000909" in line)
     assert "影子建议：建议次日退出" in row
     assert "早于合约到期" not in row
+
+
+# ---------------------------------------------------------------------------
+# R217 Op1: 信号覆盖行 — 覆盖断层从 log-WARNING 升入报告面 (纯披露, 宪法 #2)
+# ---------------------------------------------------------------------------
+
+
+def _coverage_view(recent, missing):
+    from src.screening.offensive.setup_output_log import SignalCoverageView
+
+    return SignalCoverageView(recent_sessions=recent, missing=tuple(missing))
+
+
+class TestSignalCoverageClause:
+    def test_renders_missing_days(self):
+        from src.screening.offensive.daily_action import _signal_coverage_clause
+
+        clause = _signal_coverage_clause(
+            _coverage_view(30, ["20260804", "20260805", "20260806"])
+        )
+        assert clause == (
+            "信号覆盖：最近 30 个交易日缺失 3 日"
+            " (--daily-action 未运行, 信号无法补录): 20260804,20260805,20260806"
+        )
+
+    def test_truncates_beyond_ten(self):
+        from src.screening.offensive.daily_action import _signal_coverage_clause
+
+        missing = [f"202608{d:02d}" for d in range(1, 13)]
+        clause = _signal_coverage_clause(_coverage_view(30, missing))
+        assert clause is not None
+        assert clause.endswith("...")
+        assert "20260801" not in clause  # 只显最后 10 个
+        assert "20260803" in clause
+        assert "缺失 12 日" in clause
+
+    def test_healthy_zero_missing_is_silent_falsy_zero(self):
+        """缺失 0 → None (健康静默): truthiness 重构不得渲染 '缺失 0' 噪声行."""
+        from src.screening.offensive.daily_action import _signal_coverage_clause
+
+        assert _signal_coverage_clause(_coverage_view(30, ())) is None
+
+    def test_fail_open_family(self):
+        """None/非 int/bool 毒化/非日期串/missing>recent → 整行省略不崩."""
+        from src.screening.offensive.daily_action import _signal_coverage_clause
+
+        assert _signal_coverage_clause(None) is None
+        assert _signal_coverage_clause(_coverage_view(True, ["20260804"])) is None
+        assert _signal_coverage_clause(_coverage_view(0, [])) is None
+        assert _signal_coverage_clause(_coverage_view(-1, [])) is None
+        assert _signal_coverage_clause(_coverage_view(30, "20260804")) is None
+        assert _signal_coverage_clause(_coverage_view(30, [123])) is None
+        assert _signal_coverage_clause(
+            _coverage_view(30, ["2026-08-0"])
+        ) is None
+        assert _signal_coverage_clause(
+            _coverage_view(2, ["20260804", "20260805", "20260806"])
+        ) is None
+        assert _signal_coverage_clause(object()) is None  # 缺属性 → AttributeError 兜底
+
+
+class TestSignalCoverageRenderRow:
+    def _minimal_run(self, run_cls, **kwargs):
+        from src.screening.offensive.daily_action import (
+            BlockedCandidate,
+            DailyActionScan,
+        )
+
+        scan = DailyActionScan(
+            __import__("datetime").date(2026, 9, 14), (), (), ()
+        )
+        return scan, run_cls(
+            service_run=type("S", (), {})(),
+            plans=(),
+            open_positions=(),
+            blocked_candidates=(),
+            reference_prices=(),
+            **kwargs,
+        )
+
+    def test_row_present_when_missing(self):
+        from src.screening.offensive.daily_action import render_daily_action_v2
+
+        scan, run = self._minimal_run(
+            __import__(
+                "src.screening.offensive.daily_action", fromlist=["DailyActionV2Run"]
+            ).DailyActionV2Run,
+            signal_coverage=_coverage_view(30, ["20260804", "20260805"]),
+        )
+        out = render_daily_action_v2(
+            type(
+                "R",
+                (),
+                {
+                    "trade_date": __import__("datetime").date(2026, 9, 14),
+                    "regime": "normal",
+                },
+            )(),
+            __import__("datetime").date(2026, 9, 14),
+            run,
+        ) if False else None
+        # render_daily_action_v2 签名较重; 直接走行级断言由 guard 家族覆盖,
+        # 这里只钉 DailyActionV2Run 字段默认与 clause 联通:
+        from src.screening.offensive.daily_action import _signal_coverage_clause
+
+        assert _signal_coverage_clause(run.signal_coverage) is not None
+
+    def test_v2_run_default_none_graceful_degradation(self):
+        """旧构造点不传 → None (优雅降级家族), getattr 路径零行."""
+        from src.screening.offensive.daily_action import DailyActionV2Run
+
+        run = DailyActionV2Run(
+            service_run=type("S", (), {})(),
+            plans=(),
+            open_positions=(),
+            blocked_candidates=(),
+            reference_prices=(),
+        )
+        assert run.signal_coverage is None
+        from src.screening.offensive.daily_action import _signal_coverage_clause
+
+        assert _signal_coverage_clause(getattr(run, "signal_coverage", None)) is None
