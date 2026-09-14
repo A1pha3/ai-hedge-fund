@@ -1051,15 +1051,34 @@ class TestAdvanceWindowCoverage:
         assert payload["details"]["suggested_signal_session"] == entry_session.isoformat()
         assert _tree_digest(world.root) == before
 
+    @pytest.mark.parametrize(
+        ("family", "expected_code"),
+        [
+            ("driver", "sessions_too_short"),
+            ("runner", "advance_entry_window_skipped"),
+            ("lifecycle", "arm_lifecycle_injected"),
+        ],
+    )
     def test_cli_advance_runner_family_errors_typed_not_traceback(
-        self, world: _DriverWorld, tmp_path_factory, capsys, monkeypatch
+        self, world: _DriverWorld, tmp_path_factory, capsys, monkeypatch,
+        family: str, expected_code: str,
     ) -> None:
         """runner/driver/lifecycle 异常族从 CLI typed JSON rc=2 输出。
 
         修复前 ``sessions_too_short`` (R216 前的真实形态) 以裸 traceback
         rc=1 逃逸 — 夜间链只能记无类型失败 (R108 store 族收口同款)。
+
+        R216 Op2 盲区钉 (P09/P10 探针定谳): Op1 只钉了 driver 族 — 摘除
+        except 族中的 ``PairedTrialRunnerError`` 或 ``ArmLifecycleError``
+        后全部既有测仍绿。三族逐一注入钉死 typed 路由对每族都成立。
         """
         from scripts.v3_trial_session import main as cli_main
+        from src.screening.offensive.v3.orchestration.arm_lifecycle import (
+            ArmLifecycleError,
+        )
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            PairedTrialRunnerError,
+        )
         from src.screening.offensive.v3.orchestration.session_driver import (
             SessionDriverError,
         )
@@ -1067,8 +1086,16 @@ class TestAdvanceWindowCoverage:
             OfficialTrialSessionDriver,
         )
 
+        errors = {
+            "driver": SessionDriverError("sessions_too_short", "injected"),
+            "runner": PairedTrialRunnerError(
+                "advance_entry_window_skipped", "injected"
+            ),
+            "lifecycle": ArmLifecycleError("arm_lifecycle_injected", "injected"),
+        }
+
         def boom(self, **kwargs):
-            raise SessionDriverError("sessions_too_short", "injected")
+            raise errors[family]
 
         monkeypatch.setattr(OfficialTrialSessionDriver, "advance_sessions", boom)
         self._commit_kernel_pair(world)
@@ -1098,7 +1125,108 @@ class TestAdvanceWindowCoverage:
         assert rc == 2
         payload = json.loads(capsys.readouterr().out)
         assert payload["ok"] is False
-        assert payload["code"] == "sessions_too_short"
+        assert payload["code"] == expected_code
+
+    def test_cli_advance_preflight_corrupt_decisions_typed_zero_write(
+        self, world: _DriverWorld, tmp_path_factory, capsys
+    ) -> None:
+        """R216 Op2 盲区钉 (P12 探针定谳): TrialAuditError → typed 透传。
+
+        预检对 ``TrialAuditError`` 的 ``exc.code`` 透传此前无测试驱动 —
+        换成通用码的变异全绿存活。损坏 ``decision_json`` 直接驱动审计
+        单一实现的 ``decision_json_invalid`` typed 码, 钉死 CLI 预检的
+        audit-error 透传契约 (typed JSON rc=2, 根零突变)。
+        """
+        import sqlite3
+
+        from scripts.v3_trial_session import main as cli_main
+
+        self._commit_kernel_pair(world)
+        self._dispose_for_cold_read(world)
+        db = world.root / "decisions.sqlite3"
+        con = sqlite3.connect(db)
+        try:
+            # 表 append-only (UPDATE/DELETE 触发器拒绝) — 损坏以新行进入:
+            # 换 signal_session 避开主键, decision_json 非法 → 审计单一
+            # 实现 decision_json_invalid typed 码。
+            con.execute(
+                "INSERT INTO trial_arm_decisions"
+                " (trial_id, signal_session, decision_cycle_id, arm,"
+                " shared_input_hash, arm_policy_fingerprint,"
+                " arm_capital_checkpoint_hash, regime_observation_hash,"
+                " decision_json, created_at, artifact_hash)"
+                " VALUES (?, '2026-09-01', 'corrupt-cycle', 'CHALLENGER',"
+                " 'x', NULL, 'x', 'x', '{not-json', '2026-09-01T00:00:00Z', 'x')",
+                (TRIAL_ID,),
+            )
+            con.commit()
+            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            con.close()
+        bar_source = tmp_path_factory.mktemp("bars-r216-audit")
+        before = _tree_digest(world.root)
+        rc = cli_main(
+            [
+                "advance",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--through-session", (SIGNAL_SESSION + timedelta(days=1)).isoformat(),
+                "--bar-source", str(bar_source),
+            ]
+        )
+        assert rc == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is False
+        assert payload["code"] == "decision_json_invalid"
+        assert _tree_digest(world.root) == before
+
+    def test_cli_execute_drifted_window_rejected_before_stack_zero_write(
+        self, world: _DriverWorld, tmp_path_factory, capsys
+    ) -> None:
+        """R216 Op2 盲区钉 (P13 探针定谳): execute 模式漂移窗口预检。
+
+        共享预检此前只有 dry-run 形态测试 — 把预检限成 dry-run-only 的
+        变异全绿存活。execute 提供全窗口 bars: 若预检被绕过, CLI 会构造
+        栈 (对 root 落 WAL+DDL) 并发布 bar-set 证据后才在 runner 权威门
+        晚失败 — 窗口覆盖 typed 拒绝 + 根字节零突变联合钉死
+        "栈构造之前拒绝" 的次序契约。
+        """
+        from scripts.v3_trial_session import main as cli_main
+
+        entry_sessions, _securities, _line_count = self._commit_kernel_pair(world)
+        self._dispose_for_cold_read(world)
+        start = entry_sessions[0] + timedelta(days=1)
+        bar_source = tmp_path_factory.mktemp("bars-r216-exe")
+        for session in (start, start + timedelta(days=1)):
+            (bar_source / f"daily_{session:%Y%m%d}.csv").write_text(
+                "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,"
+                "vol,amount\n"
+                f"000001.SZ,{session:%Y%m%d},10,10.5,9.5,10.2,10,2,1000,10000\n",
+                encoding="utf-8",
+            )
+        before = _tree_digest(world.root)
+        rc = cli_main(
+            [
+                "advance",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--signal-session", start.isoformat(),
+                "--through-session", (start + timedelta(days=1)).isoformat(),
+                "--bar-source", str(bar_source),
+                "--execute",
+                "--now", LATER_AT.isoformat(),
+            ]
+        )
+        assert rc == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is False
+        assert payload["code"] == "advance_entry_window_skipped"
+        assert _tree_digest(world.root) == before
 
     def test_earliest_entry_helper_missing_decisions_db_is_none(
         self, tmp_path: Path
