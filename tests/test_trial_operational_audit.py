@@ -22,6 +22,8 @@ import json
 import math
 import sqlite3
 import sys
+from dataclasses import replace
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -45,6 +47,65 @@ from scripts.v3_trial_operational_audit import (  # noqa: E402
     render_json,
     render_md,
 )
+from src.screening.offensive.v3.evidence.market_bars import (  # noqa: E402
+    build_bar_set_envelope,
+    derive_bar_set,
+)
+from src.screening.offensive.v3.execution.lifecycle import DailyBar  # noqa: E402
+
+
+def _maybe_add_no_fill_bar_set(
+    root: Path,
+    bars: list,
+    *,
+    resolvable: bool,
+    touched: bool,
+    suspended: bool,
+    locked: bool,
+    blob_corrupt: bool,
+    blob_missing: bool,
+    session_mismatch: bool,
+) -> list:
+    """R220 Op1 核销面夹具: 为 L2 entry 会话落一张真实 bar-set 证据
+    (bar-set blob 先行 + 信封 payload_content_hash 内层绑定 + record_json
+    行), 镜像生产 blob-before-envelope 存储形态 (两段 hex 布局)."""
+    if not any(
+        [resolvable, touched, suspended, locked, blob_corrupt, blob_missing, session_mismatch]
+    ):
+        return bars
+    session = date(2026, 9, 8) if session_mismatch else date(2026, 9, 9)
+    bar = DailyBar(
+        security_id="002815.SZ",
+        session=session,
+        open_cents=1700,
+        high_cents=1750,
+        low_cents=1695,
+        close_cents=1720,
+        limit_up_cents=1870,
+        limit_down_cents=1530,
+        suspended=suspended,
+    )
+    if touched:
+        bar = replace(
+            bar, open_cents=1520, high_cents=1550, low_cents=1500, close_cents=1540
+        )
+    if locked:
+        bar = replace(
+            bar, open_cents=1870, high_cents=1870, low_cents=1870, close_cents=1870
+        )
+    bar_set = derive_bar_set(session=session, bars={"002815.SZ": bar})
+    blob = bar_set.canonical_bytes()
+    digest = hashlib.sha256(blob).hexdigest()
+    envelope = build_bar_set_envelope(
+        bar_set, observed_at=datetime(2026, 9, 9, 15, 6, tzinfo=timezone.utc)
+    )
+    record_json = json.dumps({"evidence": json.loads(envelope.model_dump_json())})
+    blob_path = root / "blobs" / digest[:2] / digest[2:4] / digest
+    if not blob_missing:
+        blob_path.parent.mkdir(parents=True, exist_ok=True)
+        blob_path.write_bytes(b"corrupt" if blob_corrupt else blob)
+    return list(bars) + [("market:bars:20260909", "b9", record_json, 1)]
+
 
 TRIAL_ID = "trial-btst-regime-r1"
 PROGRAM = "research.btst.regime"
@@ -113,6 +174,7 @@ def _line(line_id: str, security: str, exit_session: str) -> dict:
         "security_id": security,
         "target_exit_session": exit_session,
         "target_quantity_units": 100,
+        "limit_price_cents": 1601,
     }
 
 
@@ -173,6 +235,14 @@ def build_trial_root(
     unknown_shape_on_challenger: bool = False,
     traced_unfilled_line: bool = False,
     empty_bars: bool = False,
+    no_fill_resolvable: bool = False,
+    no_fill_touched: bool = False,
+    no_fill_suspended: bool = False,
+    no_fill_locked: bool = False,
+    no_fill_zero_quantity: bool = False,
+    no_fill_blob_corrupt: bool = False,
+    no_fill_blob_missing: bool = False,
+    no_fill_session_mismatch: bool = False,
 ) -> Path:
     """镜像生产 trial root 五库形态的最小夹具 (语义见模块 docstring).
 
@@ -184,6 +254,10 @@ def build_trial_root(
     - traced_unfilled_line: 有生命周期痕迹但无 fill 的决策行
       (unmatched 判定 trace 语义钉);
     - empty_bars: 零 bar-set (as_of 回退分支 + bars_gap ==as_of 边界钉).
+    - no_fill_*: R220 Op1 核销面钉 (resolvable=忠实 no-fill 可核销 /
+      touched=限价触及仍不算核销 / suspended / locked=UNKNOWN 族不可核销 /
+      zero_quantity=数量零短路 / blob_corrupt|missing / session_mismatch
+      = typed fail-closed 面).
     """
     root = tmp_path / "trial"
     (root / "arms").mkdir(parents=True)
@@ -236,7 +310,14 @@ def build_trial_root(
             _shadow_json(
                 "2026-09-08",
                 "2026-09-09",
-                [_line(LINE_L2, "002815.SZ", "2026-09-22")],
+                [
+                    _line(LINE_L2, "002815.SZ", "2026-09-22")
+                    if not no_fill_zero_quantity
+                    else {
+                        **_line(LINE_L2, "002815.SZ", "2026-09-22"),
+                        "target_quantity_units": 0,
+                    }
+                ],
             ),
             "t3",
         ),
@@ -278,7 +359,7 @@ def build_trial_root(
     )
 
     bars = [
-        (f"market:bars:{yyyymmdd}", ingested)
+        (f"market:bars:{yyyymmdd}", ingested, None, None)
         for yyyymmdd, ingested in [
             ("20260828", "b1"),
             ("20260901", "b2"),
@@ -288,10 +369,31 @@ def build_trial_root(
     ]
     if empty_bars:
         bars = []
+    bars = _maybe_add_no_fill_bar_set(
+        root,
+        bars,
+        resolvable=no_fill_resolvable,
+        touched=no_fill_touched,
+        suspended=no_fill_suspended,
+        locked=no_fill_locked,
+        blob_corrupt=no_fill_blob_corrupt,
+        blob_missing=no_fill_blob_missing,
+        session_mismatch=no_fill_session_mismatch,
+    )
     _create_db(
         root / "bars-evidence.sqlite3",
-        {"evidence_records": ("evidence_id TEXT, ingested_at TEXT")},
-        {"evidence_records": (("evidence_id", "ingested_at"), bars)},
+        {
+            "evidence_records": (
+                "evidence_id TEXT, ingested_at TEXT,"
+                " record_json TEXT, revision INTEGER"
+            )
+        },
+        {
+            "evidence_records": (
+                ("evidence_id", "ingested_at", "record_json", "revision"),
+                bars,
+            )
+        },
     )
 
     champion_events = [
@@ -684,3 +786,122 @@ def test_cli_typed_error_exit_2(tmp_path: Path) -> None:
         ]
     )
     assert rc == 2
+
+
+# ---------------------------------------------------------------------------
+# R220 Op1: 无痕迹行核销面 (no-fill verified vs 真结算缺失)
+# ---------------------------------------------------------------------------
+
+
+def test_no_fill_resolvable_line_verified(tmp_path: Path) -> None:
+    """忠实 no-fill: 限价未触及 → unmatched 消失, 核销行落地 (md+json)."""
+    root = build_trial_root(tmp_path, no_fill_resolvable=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    unmatched = [f for f in audit.findings if f.code == FINDING_UNMATCHED_LINE]
+    assert unmatched == []
+    assert len(audit.no_fill_resolutions) == 1
+    row = audit.no_fill_resolutions[0]
+    assert (row.arm, row.security_id, row.entry_session) == (
+        "CHAMPION",
+        "002815.SZ",
+        "2026-09-09",
+    )
+    assert row.reason == "limit_not_touched"
+    assert row.day_low_cents == 1695
+    assert row.limit_price_cents == 1601
+    md = render_md(audit)
+    assert "## 无痕迹行核销 (no-fill verified)" in md
+    assert "| CHAMPION | 2026-09-08 | 002815.SZ | 2026-09-09 | 1601 | 1695 | limit_not_touched |" in md
+    assert "no_fill_verified (已核销, 非发现): 1" in md
+    payload = json.loads(render_json(audit))
+    assert payload["no_fill_resolutions"][0]["reason"] == "limit_not_touched"
+    assert payload["finding_counts"].get(FINDING_UNMATCHED_LINE) is None
+
+
+def test_no_fill_zero_noise_when_no_resolutions(trial_root: Path) -> None:
+    """零噪声: 无核销时 md 不出核销段, json 空列表, 零噪声逐字节一致家族."""
+    audit = build_audit(trial_root, TRIAL_ID, PROGRAM)
+    assert audit.no_fill_resolutions == ()
+    md = render_md(audit)
+    assert "## 无痕迹行核销" not in md  # 核销段零噪声 (纪律段静态文案不触发)
+    assert "no_fill_verified" in md  # 跑道计数行仍在 (值为 0)
+    assert "no_fill_verified (已核销, 非发现): 0" in md
+    payload = json.loads(render_json(audit))
+    assert payload["no_fill_resolutions"] == []
+
+
+def test_unmatched_detail_carries_unverified_note(trial_root: Path) -> None:
+    """基础夹具 (entry 会话无 bar-set): unmatched 保留且附不可核销原因."""
+    audit = build_audit(trial_root, TRIAL_ID, PROGRAM)
+    unmatched = [f for f in audit.findings if f.code == FINDING_UNMATCHED_LINE]
+    assert len(unmatched) == 1
+    assert "002815.SZ" in unmatched[0].detail
+    assert "无法核销无成交 (bar 缺失)" in unmatched[0].detail
+
+
+def test_no_fill_touched_stays_unmatched(tmp_path: Path) -> None:
+    """限价触及 (low ≤ limit) 而台账零痕迹 — 必须保留为疑似结算缺失."""
+    root = build_trial_root(tmp_path, no_fill_touched=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    unmatched = [f for f in audit.findings if f.code == FINDING_UNMATCHED_LINE]
+    assert len(unmatched) == 1
+    assert "疑似结算缺失" in unmatched[0].detail
+    assert audit.no_fill_resolutions == ()
+
+
+def test_no_fill_suspended_stays_unmatched(tmp_path: Path) -> None:
+    """停牌 → UNKNOWN → 不可核销, 发现保留."""
+    root = build_trial_root(tmp_path, no_fill_suspended=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    unmatched = [f for f in audit.findings if f.code == FINDING_UNMATCHED_LINE]
+    assert len(unmatched) == 1
+    assert "停牌" in unmatched[0].detail
+    assert audit.no_fill_resolutions == ()
+
+
+def test_no_fill_locked_stays_unmatched(tmp_path: Path) -> None:
+    """一字涨停锁 → UNKNOWN → 不可核销, 发现保留."""
+    root = build_trial_root(tmp_path, no_fill_locked=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    unmatched = [f for f in audit.findings if f.code == FINDING_UNMATCHED_LINE]
+    assert len(unmatched) == 1
+    assert "一字涨停锁" in unmatched[0].detail
+    assert audit.no_fill_resolutions == ()
+
+
+def test_no_fill_zero_quantity_resolved(tmp_path: Path) -> None:
+    """数量零短路 (核心首分支同款): 无 bar-set 也核销, reason 如实."""
+    root = build_trial_root(tmp_path, no_fill_zero_quantity=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    unmatched = [f for f in audit.findings if f.code == FINDING_UNMATCHED_LINE]
+    assert unmatched == []
+    assert len(audit.no_fill_resolutions) == 1
+    row = audit.no_fill_resolutions[0]
+    assert row.reason == "permit_quantity_zero"
+    assert row.day_low_cents is None
+
+
+def test_no_fill_blob_corrupt_typed(tmp_path: Path) -> None:
+    """blob 字节与 sha256 绑定不符 → typed fail-closed."""
+    root = build_trial_root(tmp_path, no_fill_resolvable=True, no_fill_blob_corrupt=True)
+    with pytest.raises(TrialAuditError) as excinfo:
+        build_audit(root, TRIAL_ID, PROGRAM)
+    assert excinfo.value.code == "bar_payload_corrupt"
+
+
+def test_no_fill_blob_missing_typed(tmp_path: Path) -> None:
+    """hash 行在场而 blob 缺失 → typed fail-closed."""
+    root = build_trial_root(tmp_path, no_fill_resolvable=True, no_fill_blob_missing=True)
+    with pytest.raises(TrialAuditError) as excinfo:
+        build_audit(root, TRIAL_ID, PROGRAM)
+    assert excinfo.value.code == "bar_payload_missing"
+
+
+def test_no_fill_session_mismatch_typed(tmp_path: Path) -> None:
+    """blob 会话归属与 evidence_id 错位 → typed fail-closed (交叉核对)."""
+    root = build_trial_root(
+        tmp_path, no_fill_resolvable=True, no_fill_session_mismatch=True
+    )
+    with pytest.raises(TrialAuditError) as excinfo:
+        build_audit(root, TRIAL_ID, PROGRAM)
+    assert excinfo.value.code == "bar_session_mismatch"

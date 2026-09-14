@@ -22,18 +22,38 @@
 - ``as_of`` 从 bar-set 证据派生 (不取墙钟), 同输入报告逐字节可复现.
 - 纯诊断 (宪法 #2): 只披露不判定; 不改任何策略/gate/排程/仓位语义.
 - 决策形状双态识别: schema_major==4 ShadowDecision (counterfactual_lines)
-  与 kernel NoTrade (reason 字段); 其他形状 typed 标记不猜测.
+  与 kernel NoTrade (reason 字段); 其他形状 typed 标记不猜测。
+- 无痕迹行核销 (R220 Op1): unmatched 行经锁定判定表 ``resolve_open_execution``
+  (单一实现, 无公式 fork) 在『命令未迟到』投影下重评估 — 未触及限价在任何
+  命令时序下都不成交, 判定 NO_FILL → ``no_fill_verified`` 核销 (忠实无成交,
+  非结算缺失); touched / UNKNOWN (缺 bar / 停牌 / 一字涨停锁) 一律保留为
+  unmatched 发现并附核销失败原因. 核销只 import 纯模型与纯函数, 绝不构造
+  repository / engine (零连接副作用).
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sqlite3
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+
+from src.screening.offensive.v3.contracts import ExecutionSide
+from src.screening.offensive.v3.evidence.market_bars import DailyBarSetEvidence
+from src.screening.offensive.v3.execution.lifecycle import (
+    DailyBar,
+    OpenExecutionVerdict,
+    REASON_MISSING_BAR,
+    REASON_ONE_PRICE_LIMIT_UP,
+    REASON_PERMIT_QUANTITY_ZERO,
+    REASON_SUSPENDED_BAR,
+    resolve_open_execution,
+)
 
 SPINE_DB = "spine.sqlite3"
 DECISIONS_DB = "decisions.sqlite3"
@@ -89,7 +109,12 @@ REQUIRED_COLUMNS: dict[str, dict[str, tuple[str, ...]]] = {
         ),
     },
     BARS_DB: {
-        "evidence_records": ("evidence_id", "ingested_at"),
+        "evidence_records": (
+            "evidence_id",
+            "ingested_at",
+            "revision",
+            "record_json",
+        ),
     },
     "capital.sqlite3": {
         "economic_events": (
@@ -199,6 +224,10 @@ class DecidedLine:
     shadow_line_id: str
     security_id: str
     target_exit_session: str | None
+    # R220 Op1: 核销面所需行字段 (缺失/异型归 None → 该行不可核销, 不崩溃;
+    # bool 毒化按 R147 纪律归 None)
+    limit_price_cents: int | None = None
+    target_quantity_units: int | None = None
 
 
 @dataclass(frozen=True)
@@ -210,6 +239,12 @@ class ParsedDecision:
     lines: tuple[DecidedLine, ...]
     target_entry_session: str | None
     created_at: str
+
+
+def _opt_int(raw: dict, key: str) -> int | None:
+    """严格 int 提取 (bool 毒化归 None — R147 纪律); 缺失/异型不可核销."""
+    value = raw.get(key)
+    return value if type(value) is int else None
 
 
 def parse_decision(signal_session: str, arm: str, decision_json: str, created_at: str) -> ParsedDecision:
@@ -242,6 +277,8 @@ def parse_decision(signal_session: str, arm: str, decision_json: str, created_at
                         if raw.get("target_exit_session") is not None
                         else None
                     ),
+                    limit_price_cents=_opt_int(raw, "limit_price_cents"),
+                    target_quantity_units=_opt_int(raw, "target_quantity_units"),
                 )
             )
         entry = payload.get("target_entry_session")
@@ -322,6 +359,206 @@ def read_bar_sessions(root: Path) -> dict[str, str]:
             raise TrialAuditError("duplicate_bar_set", {"signal_session": session})
         bars[session] = str(ingested_at)
     return bars
+
+
+#: 核销投影 (R220 Op1): 审计无法从耐久工件恢复 advance 的命令时序, 故以
+#: 『命令未迟到』投影评估锁定判定表 — 该投影只可能给出非迟到路径的判定;
+#: touched / UNKNOWN 仍保留为发现, 因此投影不会把疑似结算缺失伪装成忠实
+#: 无成交。迟到命令在核心语义里是 UNKNOWN (保现金, 零资本痕迹) — 与
+#: NO_FILL 同为零痕迹, 但不可核销, 如实保留。
+_PROJECTION_COMMAND_AT = datetime.min.replace(tzinfo=timezone.utc)
+_PROJECTION_SEND_DEADLINE = datetime.max.replace(tzinfo=timezone.utc)
+
+_UNVERIFIED_REASON_ZH = {
+    REASON_MISSING_BAR: "bar 缺失",
+    REASON_SUSPENDED_BAR: "停牌",
+    REASON_ONE_PRICE_LIMIT_UP: "一字涨停锁",
+}
+
+
+@dataclass(frozen=True)
+class LineResolution:
+    """单行无痕迹核销评估 (resolved=True → no_fill_verified)."""
+
+    resolved: bool
+    kind: str
+    reason: str
+    note: str
+    day_low_cents: int | None = None
+
+
+def classify_unmatched_line(
+    line: DecidedLine,
+    entry_session: str | None,
+    bars: dict[str, DailyBar] | None,
+) -> LineResolution:
+    """把一个无痕迹决策行按核心结算语义重评估为已核销或不可核销.
+
+    数量为 0 的行走核心 ``settle_proxy_open`` 首分支同款短路 (恒 NO_FILL,
+    不触判定表); 其余行走锁定判定表 ``resolve_open_execution`` (单一实现,
+    无公式 fork)。
+    """
+
+    if line.target_quantity_units == 0:
+        return LineResolution(
+            resolved=True,
+            kind="no_fill_verified",
+            reason=REASON_PERMIT_QUANTITY_ZERO,
+            note="数量为 0 (permit quantity zero) — 忠实无成交",
+        )
+    if (
+        line.limit_price_cents is None
+        or line.target_quantity_units is None
+        or line.limit_price_cents <= 0
+        or line.target_quantity_units < 0
+    ):
+        return LineResolution(
+            resolved=False,
+            kind="unverified_missing_fields",
+            reason="missing_fields",
+            note="行缺 limit/quantity 字段或取值非法, 无法核销",
+        )
+    if entry_session is None:
+        return LineResolution(
+            resolved=False,
+            kind="unverified_missing_fields",
+            reason="missing_fields",
+            note="决策缺 target_entry_session, 无法核销",
+        )
+    bar = (bars or {}).get(line.security_id)
+    resolution = resolve_open_execution(
+        side=ExecutionSide.ENTRY,
+        limit_price_cents=line.limit_price_cents,
+        bar=bar,
+        command_at=_PROJECTION_COMMAND_AT,
+        send_deadline=_PROJECTION_SEND_DEADLINE,
+    )
+    if resolution.verdict is OpenExecutionVerdict.NO_FILL:
+        return LineResolution(
+            resolved=True,
+            kind="no_fill_verified",
+            reason=resolution.reason,
+            note=(
+                f"entry {entry_session} 限价 {line.limit_price_cents} 未触及"
+                f" (当日最低 {bar.low_cents}) — 忠实无成交"
+            ),
+            day_low_cents=bar.low_cents,
+        )
+    if resolution.verdict is OpenExecutionVerdict.FILLED:
+        return LineResolution(
+            resolved=False,
+            kind="unverified_limit_touched",
+            reason=resolution.reason,
+            note=(
+                f"entry {entry_session} 限价已触及"
+                f" (当日最低 {bar.low_cents} ≤ {line.limit_price_cents})"
+                " 而台账零痕迹 — 疑似结算缺失"
+            ),
+            day_low_cents=bar.low_cents,
+        )
+    zh = _UNVERIFIED_REASON_ZH.get(resolution.reason, resolution.reason)
+    return LineResolution(
+        resolved=False,
+        kind="unverified_unknown",
+        reason=resolution.reason,
+        note=f"entry {entry_session} 无法核销无成交 ({zh})",
+    )
+
+
+@dataclass(frozen=True)
+class NoFillResolution:
+    """已核销的无痕迹决策行 (审计对账面的 resolved 类别, 非发现)."""
+
+    arm: str
+    signal_session: str
+    security_id: str
+    shadow_line_id: str
+    entry_session: str | None
+    limit_price_cents: int | None
+    reason: str
+    day_low_cents: int | None
+
+
+def _entry_bars_for_sessions(
+    root: Path, entry_sessions: set[str]
+) -> dict[str, dict[str, DailyBar]]:
+    """entry 会话 (YYYY-MM-DD) → security_id → DailyBar (bar-set 证据冷读).
+
+    真实链与 ``bars_from_record`` 同构: record_json → 信封内层
+    ``payload_content_hash`` → blobs 布局冷读 → sha256 复核 →
+    ``DailyBarSetEvidence`` 严格解码 (单一实现) → 会话归属交叉核对。
+    """
+
+    if not entry_sessions:
+        return {}
+    con = _ro_connect(root / BARS_DB)
+    try:
+        _require_columns(con, BARS_DB, "evidence_records")
+        out: dict[str, dict[str, DailyBar]] = {}
+        for session in sorted(entry_sessions):
+            compact = session.replace("-", "")
+            if len(compact) != 8 or not compact.isdigit():
+                raise TrialAuditError("entry_session_invalid", {"entry_session": session})
+            row = con.execute(
+                "SELECT record_json FROM evidence_records"
+                " WHERE evidence_id = ? ORDER BY revision DESC LIMIT 1",
+                (f"market:bars:{compact}",),
+            ).fetchone()
+            if row is None or row[0] is None:
+                # 该 entry 会话无 bar-set 证据 → 分类面如实 unverified
+                continue
+            try:
+                record = json.loads(row[0])
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise TrialAuditError(
+                    "bar_record_json_invalid",
+                    {"evidence_id": f"market:bars:{compact}", "error": str(exc)},
+                ) from exc
+            envelope = record.get("evidence") if isinstance(record, dict) else None
+            content_hash = (
+                envelope.get("payload_content_hash")
+                if isinstance(envelope, dict)
+                else None
+            )
+            if not isinstance(content_hash, str) or len(content_hash) != 64:
+                raise TrialAuditError(
+                    "bar_payload_unbound",
+                    {"evidence_id": f"market:bars:{compact}"},
+                )
+            blob_path = (
+                root / "blobs" / content_hash[:2] / content_hash[2:4] / content_hash
+            )
+            if not blob_path.is_file():
+                raise TrialAuditError(
+                    "bar_payload_missing",
+                    {"evidence_id": f"market:bars:{compact}", "path": str(blob_path)},
+                )
+            blob = blob_path.read_bytes()
+            if hashlib.sha256(blob).hexdigest() != content_hash:
+                raise TrialAuditError(
+                    "bar_payload_corrupt",
+                    {"evidence_id": f"market:bars:{compact}"},
+                )
+            try:
+                bar_set = DailyBarSetEvidence.model_validate_json(blob, strict=True)
+            except Exception as exc:  # noqa: BLE001 — 解码失败 fail-closed
+                raise TrialAuditError(
+                    "bar_set_decode_failed",
+                    {"evidence_id": f"market:bars:{compact}", "error": str(exc)},
+                ) from exc
+            if bar_set.session.isoformat() != session:
+                raise TrialAuditError(
+                    "bar_session_mismatch",
+                    {
+                        "evidence_id": f"market:bars:{compact}",
+                        "bar_session": bar_set.session.isoformat(),
+                        "entry_session": session,
+                    },
+                )
+            out[session] = {b.security_id: b.to_bar() for b in bar_set.bars}
+        return out
+    finally:
+        con.close()
 
 
 @dataclass(frozen=True)
@@ -445,6 +682,7 @@ class TrialAudit:
     ledgers: dict[str, ArmLedger]
     findings: tuple[Finding, ...] = field(default_factory=tuple)
     arm_summaries: tuple[ArmSummary, ...] = field(default_factory=tuple)
+    no_fill_resolutions: tuple[NoFillResolution, ...] = field(default_factory=tuple)
 
     @property
     def decided_sessions(self) -> set[str]:
@@ -491,7 +729,8 @@ def build_audit(
             {"research_program": research_program, "trial_root": str(trial_root)},
         )
 
-    # F1 unmatched_decided_line / F7 unknown shape
+    # F1 unmatched_decided_line / F7 unknown shape / no-fill 核销 (R220 Op1)
+    unmatched: list[tuple[str, str, ParsedDecision, DecidedLine]] = []
     for (session, arm), decision in sorted(decisions.items()):
         if decision.shape == DECISION_SHAPE_UNKNOWN:
             findings.append(
@@ -500,14 +739,49 @@ def build_audit(
         for line in decision.lines:
             ledger = ledgers.get(arm.lower())
             if ledger is not None and line.shadow_line_id not in ledger.traced_line_ids:
-                findings.append(
-                    Finding(
-                        FINDING_UNMATCHED_LINE,
-                        arm,
-                        session,
-                        f"{line.security_id} {line.shadow_line_id[:48]}…",
-                    )
+                unmatched.append((session, arm, decision, line))
+    entry_sessions = {
+        decision.target_entry_session
+        for _s, _a, decision, _l in unmatched
+        if decision.target_entry_session is not None
+    }
+    entry_bars = (
+        _entry_bars_for_sessions(trial_root, entry_sessions)
+        if entry_sessions
+        else {}
+    )
+    no_fill_resolutions: list[NoFillResolution] = []
+    for session, arm, decision, line in unmatched:
+        resolution = classify_unmatched_line(
+            line,
+            decision.target_entry_session,
+            entry_bars.get(decision.target_entry_session or ""),
+        )
+        if resolution.resolved:
+            no_fill_resolutions.append(
+                NoFillResolution(
+                    arm=arm,
+                    signal_session=session,
+                    security_id=line.security_id,
+                    shadow_line_id=line.shadow_line_id,
+                    entry_session=decision.target_entry_session,
+                    limit_price_cents=line.limit_price_cents,
+                    reason=resolution.reason,
+                    day_low_cents=resolution.day_low_cents,
                 )
+            )
+            continue
+        findings.append(
+            Finding(
+                FINDING_UNMATCHED_LINE,
+                arm,
+                session,
+                f"{line.security_id} {line.shadow_line_id[:48]}… {resolution.note}",
+            )
+        )
+    no_fill_resolutions.sort(
+        key=lambda r: (r.arm.lower(), r.signal_session, r.security_id, r.shadow_line_id)
+    )
 
     # F2 orphan_position / F3 exit_overdue (决策行 target_exit 联查)
     decided_lines: dict[tuple[str, str], DecidedLine] = {}
@@ -599,6 +873,7 @@ def build_audit(
         ledgers=ledgers,
         findings=tuple(findings),
         arm_summaries=tuple(arm_summaries),
+        no_fill_resolutions=tuple(no_fill_resolutions),
     )
 
 
@@ -670,6 +945,21 @@ def render_md(audit: TrialAudit) -> str:
             lines.append(
                 f"| {finding.code} | {finding.arm or '—'} | {finding.signal_session or '—'} | {finding.detail} |"
             )
+    if audit.no_fill_resolutions:
+        lines += [
+            "",
+            "## 无痕迹行核销 (no-fill verified)",
+            "",
+            "| arm | 会话 | 证券 | entry | 限价(分) | 当日最低(分) | 判定 |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for row in audit.no_fill_resolutions:
+            low = str(row.day_low_cents) if row.day_low_cents is not None else "—"
+            limit = str(row.limit_price_cents) if row.limit_price_cents is not None else "—"
+            lines.append(
+                f"| {row.arm} | {row.signal_session} | {row.security_id} "
+                f"| {row.entry_session or '—'} | {limit} | {low} | {row.reason} |"
+            )
     lines += ["", "## 臂台账摘要", "", "| arm | fills | OPEN | CLOSED | nav 首末 | 总对数增长 | MDD |", "|---|---|---|---|---|---|---|"]
     for summary in audit.arm_summaries:
         nav_span = "—"
@@ -699,6 +989,7 @@ def render_md(audit: TrialAudit) -> str:
         f"- decide_missing: {counts.get(FINDING_DECIDE_MISSING, 0)}",
         f"- deadline_missed: {counts.get(FINDING_DEADLINE_MISSED, 0)}",
         f"- unmatched_decided_line: {counts.get(FINDING_UNMATCHED_LINE, 0)}",
+        f"- no_fill_verified (已核销, 非发现): {len(audit.no_fill_resolutions)}",
         f"- exit_overdue: {counts.get(FINDING_EXIT_OVERDUE, 0)}",
         f"- bars_gap: {counts.get(FINDING_BARS_GAP, 0)}",
         "",
@@ -710,6 +1001,9 @@ def render_md(audit: TrialAudit) -> str:
         "- 纯诊断 (宪法 #2): 只披露不判定; 缺列/改名列/损坏 decision_json 一律"
         " typed fail-closed, 不猜测语义。",
         "- 发现是运营对账事实, 不是权限或证据结论; 处置属 owner/操作员。",
+        "- 无痕迹行核销 (R220 Op1): 以锁定判定表单一实现在『命令未迟到』投影"
+        "下重评估; 未触及限价在任何时序下都不成交, 该投影不扩大核销面"
+        " (touched / UNKNOWN 一律保留为发现)。",
     ]
     return "\n".join(lines) + "\n"
 
@@ -748,6 +1042,19 @@ def audit_to_dict(audit: TrialAudit) -> dict:
             for f in audit.findings
         ],
         "finding_counts": audit.finding_counts,
+        "no_fill_resolutions": [
+            {
+                "arm": r.arm,
+                "signal_session": r.signal_session,
+                "security_id": r.security_id,
+                "shadow_line_id": r.shadow_line_id,
+                "entry_session": r.entry_session,
+                "limit_price_cents": r.limit_price_cents,
+                "reason": r.reason,
+                "day_low_cents": r.day_low_cents,
+            }
+            for r in audit.no_fill_resolutions
+        ],
         "arm_summaries": [
             {
                 "arm": s.arm,
