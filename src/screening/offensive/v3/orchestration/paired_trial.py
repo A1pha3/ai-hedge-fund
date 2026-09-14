@@ -507,6 +507,42 @@ class ForwardPairedTrialRunner:
                     entries_by_arm[arm][entry_session] + lines
                 )
 
+        # 窗口覆盖完备性门 (R216): 入场结算只发生在 entry_session 的精确
+        # 会话匹配上 (无出场那样的 >= 顺延语义), 且跨 run 持仓重建依赖覆盖
+        # 入场会话的全量重放 —— 窗口起点越过任何已决策入场会话都会让该行
+        # 永久失去结算机会且不留台账痕迹 (与合法 no-fill 不可区分, R215
+        # 审计 unmatched 双臂发现的根因族)。fail-closed: 拒绝而不是静默
+        # 跳过; 保守语义不区分该行是否已结算 (覆盖起点的重放幂等收敛,
+        # 零额外成本)。entry_session > through_session 不拦 (未来窗口的
+        # 合法结算)。
+        skipped_entry_sessions = sorted(
+            {
+                entry_session
+                for entries in entries_by_arm.values()
+                for entry_session in entries
+                if entry_session < sessions[0]
+            }
+        )
+        if skipped_entry_sessions:
+            lines_affected = sum(
+                len(entries[entry_session])
+                for entries in entries_by_arm.values()
+                for entry_session in skipped_entry_sessions
+                if entry_session in entries
+            )
+            raise PairedTrialRunnerError(
+                "advance_entry_window_skipped",
+                "the advance window starts after a decided entry session;"
+                " entry settlements have no catch-up semantics, so the"
+                " replay window must cover every decided entry session",
+                window_start=sessions[0].isoformat(),
+                skipped_entry_sessions=[
+                    s.isoformat() for s in skipped_entry_sessions
+                ],
+                earliest_entry_session=skipped_entry_sessions[0].isoformat(),
+                lines_affected=lines_affected,
+            )
+
         def command_at(session: date) -> datetime:
             # 15:00 国内收盘 = 07:00 UTC; 影子 proxy 的命令时刻由会话日
             # 确定性派生 (排程显式化留 worker 接线迭代)。

@@ -76,8 +76,14 @@ def _driver(repo, sessions, entries, scenario=CURRENT_COST_SCENARIO):
     )
 
 
-def _line(sec: str, decision: str, limit: int = 1050, exit_limit: int = 900,
-           exit_session: date | None = None, sessions=None) -> OpenLine:
+def _line(
+    sec: str,
+    decision: str,
+    limit: int = 1050,
+    exit_limit: int = 900,
+    exit_session: date | None = None,
+    sessions=None,
+) -> OpenLine:
     return OpenLine(
         decision_id=decision, security_id=sec, quantity=100, limit_price_cents=limit,
         exit_limit_price_cents=exit_limit,
@@ -111,6 +117,40 @@ def test_open_at_end_disclosed_not_force_closed(tmp_path):
     assert result.open_at_end == {"600000.SH": "cyc-1"}
     assert "exit" not in [k[2] for k in result.settlements]
     assert result.conservation_ok
+
+
+def test_single_session_window_settles_entry_and_valuation(tmp_path):
+    """R216: 单会话窗口 (signal==through 的自然日度调用形态) 合法。
+
+    修复前: driver guard ``<2`` 使单会话窗口在 runner 层崩
+    ``sessions_too_short`` — 且 CLI 在 bar-set 证据发布之后才触达该守卫
+    (部分效果失败)。修复后: 该窗口结算到期入场 + 收盘估值, 出场义务由
+    覆盖性门约束的后续窗口承接 (run 循环无跨会话索引依赖)。
+    """
+    only = _sessions(1)[0]
+    repo = _repo(tmp_path, "single")
+    entries = {
+        only: (_line("600000.SH", "cyc-1", exit_session=date(2027, 1, 1)),),
+    }
+    result = _driver(repo, (only,), entries).run()
+    settlement = result.settlements[(only, "600000.SH", "entry")]
+    assert settlement.verdict is OpenExecutionVerdict.FILLED
+    assert settlement.fee_receipt is not None
+    assert result.open_at_end == {"600000.SH": "cyc-1"}
+    assert result.held_by_session == {only: frozenset({"600000.SH"})}
+    assert result.conservation_ok, result.conservation_details
+    # 单会话窗口重放幂等: 同窗口重驱收敛 (估值/入场幂等键), 守恒不变
+    replay = _driver(repo, (only,), entries).run()
+    assert replay.settlements.keys() == result.settlements.keys()
+    assert replay.open_at_end == result.open_at_end
+    assert replay.conservation_ok, replay.conservation_details
+
+
+def test_empty_sessions_still_rejected(tmp_path):
+    repo = _repo(tmp_path, "empty")
+    with pytest.raises(SessionDriverError) as ei:
+        _driver(repo, (), {})
+    assert ei.value.code == "sessions_too_short"
 
 
 def test_duplicate_holding_rejected_and_scenarios_independent(tmp_path):

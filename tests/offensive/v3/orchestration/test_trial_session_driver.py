@@ -845,6 +845,280 @@ class TestAdvanceAndFinalize:
         assert again == ()
 
 
+class TestAdvanceWindowCoverage:
+    """R216: advance 窗口覆盖完备性门 (入场结算无追补语义)。
+
+    入场结算只发生在 entry_session 的精确会话匹配上 (无出场那样的 >=
+    顺延语义), 且跨 run 持仓重建依赖覆盖入场会话的全量重放 —— 窗口起点
+    越过已决策入场会话会让该行永久失去结算机会且不留台账痕迹 (与合法
+    no-fill 不可区分, R215 审计 unmatched 双臂发现的根因族)。runner 权威
+    门 + CLI 冷读预检双层 fail-closed。
+
+    夹具说明: 官方栈的 readiness 世界产出 NO_SIGNAL (零候选入选), 驱动
+    不了门与 settlement 消费面 —— 决策对直接取 kernel 冻结世界的真实
+    ShadowDecision 提交进官方栈决策库 (test_trial_arm_store 同源手法)。
+    """
+
+    @staticmethod
+    def _commit_kernel_pair(world: _DriverWorld):
+        from test_shadow_kernel import NOW as KERNEL_NOW, _paired_world
+
+        from src.screening.offensive.v3.contracts.trial import TrialArm
+        from src.screening.offensive.v3.kernel.decide import GrowthKernel
+        from src.screening.offensive.v3.kernel.sizing import SizingConfig
+        from src.screening.offensive.v3.orchestration.trial_store import (
+            TrialArmDecisionRecord,
+        )
+
+        champion_input, challenger_input, *_ = _paired_world()
+        kernel = GrowthKernel(
+            SizingConfig(
+                per_ticker_gross_cap_cents=200_000,
+                per_industry_gross_cap_cents=300_000,
+                per_day_gross_cap_cents=500_000,
+                portfolio_gross_cap_cents=400_000,
+                worst_case_fee_ppm=3_000,
+            )
+        )
+        decisions = {
+            TrialArm.CHAMPION: kernel.decide_shadow(champion_input),
+            TrialArm.CHALLENGER: kernel.decide_shadow(challenger_input),
+        }
+        hash64 = "a" * 64
+        records = []
+        for arm, decision in decisions.items():
+            is_shadow = hasattr(decision, "counterfactual_key")
+            if is_shadow:
+                session = decision.counterfactual_key.signal_session
+                cycle = decision.counterfactual_key.counterfactual_cycle_id
+                fingerprint = decision.shadow_policy_binding.policy_fingerprint
+            else:
+                session = decision.signal_session
+                cycle = decision.decision_cycle_id
+                fingerprint = None
+            records.append(
+                TrialArmDecisionRecord(
+                    trial_id=TRIAL_ID,
+                    signal_session=session,
+                    decision_cycle_id=cycle,
+                    arm=arm,
+                    shared_input_hash=f"{session.isoformat()}/{cycle}",
+                    arm_policy_fingerprint=fingerprint,
+                    arm_capital_checkpoint_hash=hash64,
+                    regime_observation_hash=hash64,
+                    decision=decision,
+                    created_at=KERNEL_NOW,
+                    artifact_hash=decision.content_hash(),
+                )
+            )
+        world.driver.ensure_trial_registration()
+        world.stack.decision_store.commit_pair(records[0], records[1])
+        entry_sessions = sorted(
+            {
+                decision.target_entry_session
+                for decision in decisions.values()
+                if getattr(decision, "target_entry_session", None) is not None
+            }
+        )
+        securities = sorted(
+            {
+                line.security_id
+                for decision in decisions.values()
+                for line in getattr(decision, "counterfactual_lines", ()) or ()
+            }
+        )
+        line_count = sum(
+            len(getattr(decision, "counterfactual_lines", ()) or ())
+            for decision in decisions.values()
+        )
+        return entry_sessions, securities, line_count
+
+    @staticmethod
+    def _bars(sessions, securities) -> dict:
+        from src.screening.offensive.v3.execution.lifecycle import DailyBar
+
+        return {
+            session: {
+                security_id: DailyBar(
+                    security_id=security_id,
+                    session=session,
+                    open_cents=1000,
+                    high_cents=1100,
+                    low_cents=900,
+                    close_cents=1050,
+                    limit_up_cents=1100,
+                    limit_down_cents=900,
+                )
+                for security_id in securities
+            }
+            for session in sessions
+        }
+
+    @staticmethod
+    def _arm_ledger_digest(world: _DriverWorld) -> str:
+        import hashlib
+
+        digest = hashlib.sha256()
+        for arm in ("champion", "challenger"):
+            digest.update(
+                (world.root / "arms" / arm / "capital.sqlite3").read_bytes()
+            )
+        return digest.hexdigest()
+
+    @staticmethod
+    def _dispose_for_cold_read(world: _DriverWorld) -> None:
+        # CLI 是新进程语义: 冷读探测要求事实文件已 checkpoint (R38/R41
+        # 先例 — 活连接让 -wal 留存到冷读之后即假阳性)。
+        world.stack.spine._engine.dispose()
+        world.stack.runner._assembler._governance._engine.dispose()
+        gc.collect()
+
+    def test_window_start_after_decided_entry_rejected_zero_mutation(
+        self, world: _DriverWorld
+    ) -> None:
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            PairedTrialRunnerError,
+        )
+
+        entry_sessions, securities, line_count = self._commit_kernel_pair(world)
+        start = entry_sessions[0] + timedelta(days=1)
+        digest_before = self._arm_ledger_digest(world)
+        with pytest.raises(PairedTrialRunnerError) as ei:
+            world.driver.advance_sessions(
+                signal_session=start,
+                through_session=start + timedelta(days=1),
+                bars_by_session=self._bars(
+                    (start, start + timedelta(days=1)), securities
+                ),
+                now=LATER_AT,
+            )
+        assert ei.value.code == "advance_entry_window_skipped"
+        assert ei.value.details["window_start"] == start.isoformat()
+        assert ei.value.details["earliest_entry_session"] == entry_sessions[0].isoformat()
+        assert ei.value.details["skipped_entry_sessions"] == [
+            entry_sessions[0].isoformat()
+        ]
+        assert ei.value.details["lines_affected"] == line_count
+        # 双臂台账字节级零突变 (bar-set 证据发布是合法的 append-only 事实)
+        assert self._arm_ledger_digest(world) == digest_before
+
+    def test_window_covering_entry_session_settles_lines(
+        self, world: _DriverWorld
+    ) -> None:
+        entry_sessions, securities, _line_count = self._commit_kernel_pair(world)
+        entry_session = entry_sessions[0]
+        # 单会话窗口 [entry..entry]: 起点恰在入场会话 — 门放行且行结算
+        receipt = world.driver.advance_sessions(
+            signal_session=entry_session,
+            through_session=entry_session,
+            bars_by_session=self._bars((entry_session,), securities),
+            now=LATER_AT,
+        )
+        assert all(receipt.conservation_ok_by_arm.values())
+        assert sum(receipt.settlements_by_arm.values()) >= 1
+        assert any("entry" in key for key in receipt.open_at_end_by_arm) or any(
+            receipt.open_at_end_by_arm.values()
+        )
+
+    def test_cli_dry_run_rejects_drifted_window_zero_write(
+        self, world: _DriverWorld, tmp_path_factory, capsys
+    ) -> None:
+        from scripts.v3_trial_session import main as cli_main
+
+        entry_sessions, _securities, _line_count = self._commit_kernel_pair(world)
+        self._dispose_for_cold_read(world)
+        entry_session = entry_sessions[0]
+        start = entry_session + timedelta(days=1)
+        bar_source = tmp_path_factory.mktemp("bars-r216")
+        before = _tree_digest(world.root)
+        rc = cli_main(
+            [
+                "advance",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--signal-session", start.isoformat(),
+                "--through-session", (start + timedelta(days=1)).isoformat(),
+                "--bar-source", str(bar_source),
+            ]
+        )
+        assert rc == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is False
+        assert payload["code"] == "advance_entry_window_skipped"
+        assert payload["details"]["earliest_entry_session"] == entry_session.isoformat()
+        assert payload["details"]["suggested_signal_session"] == entry_session.isoformat()
+        assert _tree_digest(world.root) == before
+
+    def test_cli_advance_runner_family_errors_typed_not_traceback(
+        self, world: _DriverWorld, tmp_path_factory, capsys, monkeypatch
+    ) -> None:
+        """runner/driver/lifecycle 异常族从 CLI typed JSON rc=2 输出。
+
+        修复前 ``sessions_too_short`` (R216 前的真实形态) 以裸 traceback
+        rc=1 逃逸 — 夜间链只能记无类型失败 (R108 store 族收口同款)。
+        """
+        from scripts.v3_trial_session import main as cli_main
+        from src.screening.offensive.v3.orchestration.session_driver import (
+            SessionDriverError,
+        )
+        from src.screening.offensive.v3.orchestration.trial_session_driver import (
+            OfficialTrialSessionDriver,
+        )
+
+        def boom(self, **kwargs):
+            raise SessionDriverError("sessions_too_short", "injected")
+
+        monkeypatch.setattr(OfficialTrialSessionDriver, "advance_sessions", boom)
+        self._commit_kernel_pair(world)
+        self._dispose_for_cold_read(world)
+        bar_source = tmp_path_factory.mktemp("bars-r216b")
+        for session in (SIGNAL_SESSION, SIGNAL_SESSION + timedelta(days=1)):
+            (bar_source / f"daily_{session:%Y%m%d}.csv").write_text(
+                "ts_code,trade_date,open,high,low,close,pre_close,pct_chg,"
+                "vol,amount\n"
+                f"000001.SZ,{session:%Y%m%d},10,10.5,9.5,10.2,10,2,1000,10000\n",
+                encoding="utf-8",
+            )
+        rc = cli_main(
+            [
+                "advance",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--signal-session", SIGNAL_SESSION.isoformat(),
+                "--through-session", (SIGNAL_SESSION + timedelta(days=1)).isoformat(),
+                "--bar-source", str(bar_source),
+                "--execute",
+                "--now", LATER_AT.isoformat(),
+            ]
+        )
+        assert rc == 2
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is False
+        assert payload["code"] == "sessions_too_short"
+
+    def test_earliest_entry_helper_missing_decisions_db_is_none(
+        self, tmp_path: Path
+    ) -> None:
+        from scripts.v3_trial_session import _earliest_decided_entry_session
+
+        assert _earliest_decided_entry_session(tmp_path, TRIAL_ID) is None
+
+    def test_earliest_entry_helper_reads_committed_pair(
+        self, world: _DriverWorld
+    ) -> None:
+        from scripts.v3_trial_session import _earliest_decided_entry_session
+
+        assert _earliest_decided_entry_session(world.root, TRIAL_ID) is None
+        entry_sessions, _securities, _line_count = self._commit_kernel_pair(world)
+        assert _earliest_decided_entry_session(world.root, TRIAL_ID) == (
+            entry_sessions[0]
+        )
+
+
 class TestFinalizeDryRunPlanFidelity:
     """R51 Op2: finalize dry-run 披露 spine 级 NO_RUN 计划 (enroll R50 Op2 同族).
 
@@ -865,6 +1139,9 @@ class TestFinalizeDryRunPlanFidelity:
         # spine 级诚实边界: 08-06 的 pair 落在决策库 (spine 无终态行)、
         # 08-13 无 pair 且 assessment 已过 — 两者都是 spine 级候选;
         # pair 排除属 decision-store truth, execute 面权威执行 (注记成文)。
+        world.stack.spine._engine.dispose()
+        world.stack.runner._assembler._governance._engine.dispose()
+        gc.collect()
         before = _tree_digest(world.root) + _tree_digest(world.identity_dir)
         rc = cli_main(
             [
@@ -968,6 +1245,7 @@ class TestFinalizeDryRunPlanFidelity:
 # ---------------------------------------------------------------------------
 # Adversarial: state conflicts / mismatches / CLI dry-run zero-write
 # ---------------------------------------------------------------------------
+
 
 class TestAdversarial:
     def test_regime_state_conflict_rejected(self, world: _DriverWorld) -> None:

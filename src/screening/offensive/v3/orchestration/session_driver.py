@@ -106,8 +106,12 @@ class SessionLifecycleDriver:
         send_deadline: Callable[[date], datetime],
         bar_for: Callable[[date, str], "DailyBar | None"],
     ) -> None:
-        if len(sessions) < 2:
-            raise SessionDriverError("sessions_too_short", "need at least two sessions")
+        if not sessions:
+            # R216: 单会话窗口 (signal==through 的自然日度调用形态) 合法 —
+            # 结算该会话的到期入场 + 收盘估值即可; 出场与 UNKNOWN 顺延需要
+            # 跨会话时由后续窗口覆盖 (覆盖性由 runner 的
+            # advance_entry_window_skipped 门强制)。空窗口仍 fail-closed。
+            raise SessionDriverError("sessions_too_short", "need at least one session")
         self._repository = repository
         self._arm = arm
         self._scenario = scenario

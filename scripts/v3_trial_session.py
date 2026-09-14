@@ -40,7 +40,9 @@ def _fail(code: str, message: str, **details: object) -> int:
     return 2
 
 
-def _fail_typed(exc: "TrialSessionDriverError | EvidenceStoreError | TrialStoreError") -> int:
+def _fail_typed(exc) -> int:
+    # duck-typed 契约: exc.code/.details (driver/store/runner/lifecycle/
+    # audit 六族异常同形); 注解不做静态引用 (名字均函数内局部 import)。
     """按 ``_fail`` 输出契约透传任一 store/driver 类型化异常 (R47, R108b 收口).
 
     ``exc.code`` 是权威码; details 里的同名 ``code`` 键显式弃用 —
@@ -403,6 +405,30 @@ def _advance_window_sessions(
     return window
 
 
+def _earliest_decided_entry_session(trial_root: Path, trial_id: str) -> date | None:
+    """冷读决策库, 返回最早已决策入场会话; 无决策库/无入场行 → None。
+
+    解析单一实现复用运营审计工具 (R215); 决策库存在性前置检查 (trial
+    首个 decide 之前的 bootstrap advance 合法形态), immutable=1 只读
+    (R35/R50/R51 冷读零写痕纪律), 不构造任何 repository。解析分歧由
+    ``TrialAuditError`` (同 .code/.details 契约) typed 拒绝。
+    """
+    if not (trial_root / "decisions.sqlite3").is_file():
+        return None
+    from scripts.v3_trial_operational_audit import (
+        DECISION_SHAPE_SHADOW,
+        read_decisions,
+    )
+
+    decisions = read_decisions(trial_root, trial_id)
+    entry_sessions = [
+        date.fromisoformat(parsed.target_entry_session)
+        for parsed in decisions.values()
+        if parsed.shape == DECISION_SHAPE_SHADOW and parsed.target_entry_session
+    ]
+    return min(entry_sessions) if entry_sessions else None
+
+
 def _cmd_advance(args: argparse.Namespace) -> int:
     identity_dir = Path(args.identity_dir)
     trial_root = Path(args.trial_root)
@@ -424,6 +450,29 @@ def _cmd_advance(args: argparse.Namespace) -> int:
         signal_session=signal_session,
         through_session=through_session,
     )
+    # R216 窗口覆盖预检 (dry-run 与 execute 共用, 栈构造之前零写): 入场
+    # 结算无追补语义, 窗口起点必须 <= 最早已决策入场会话 —— runner 权威门
+    # (advance_entry_window_skipped) 的 CLI 前置层, 让 dry-run 即报,
+    # execute 不再先发布 bar-set 再晚失败。决策面冷读 immutable=1,
+    # 解析单一实现复用运营审计工具。
+    from scripts.v3_trial_operational_audit import TrialAuditError
+
+    try:
+        earliest_entry = _earliest_decided_entry_session(trial_root, args.trial_id)
+    except TrialAuditError as exc:
+        details = dict(exc.details)
+        details.pop("code", None)
+        return _fail(exc.code, str(exc), **details)
+    if earliest_entry is not None and earliest_entry < window[0]:
+        return _fail(
+            "advance_entry_window_skipped",
+            "the advance window starts after a decided entry session;"
+            " entry settlements have no catch-up semantics — rerun with"
+            " --signal-session covering the earliest decided entry",
+            window_start=window[0].isoformat(),
+            earliest_entry_session=earliest_entry.isoformat(),
+            suggested_signal_session=earliest_entry.isoformat(),
+        )
     source = Path(args.bar_source)
     if not source.is_dir():
         return _fail("bar_source_missing", str(source))
@@ -514,6 +563,15 @@ def _cmd_advance(args: argparse.Namespace) -> int:
         OfficialTrialSessionDriver,
         TrialSessionDriverError,
     )
+    from src.screening.offensive.v3.orchestration.arm_lifecycle import (
+        ArmLifecycleError,
+    )
+    from src.screening.offensive.v3.orchestration.paired_trial import (
+        PairedTrialRunnerError,
+    )
+    from src.screening.offensive.v3.orchestration.session_driver import (
+        SessionDriverError,
+    )
     from src.screening.offensive.v3.orchestration.trial_store import TrialStoreError
 
     identity = load_governance_identity(identity_dir, trusted_at=now)
@@ -533,6 +591,15 @@ def _cmd_advance(args: argparse.Namespace) -> int:
     except TrialSessionDriverError as exc:
         return _fail_typed(exc)
     except (EvidenceStoreError, TrialStoreError) as exc:
+        return _fail_typed(exc)
+    except (
+        PairedTrialRunnerError,
+        SessionDriverError,
+        ArmLifecycleError,
+    ) as exc:
+        # R216: runner/driver/lifecycle 三族类型化异常此前从 advance 裸逃逸
+        # 为 rc=1 traceback (sessions_too_short 是真实可达形态), 夜间链只能
+        # 记无类型失败 (R108 store 族收口同款)。
         return _fail_typed(exc)
     return _ok(
         {
