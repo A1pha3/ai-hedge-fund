@@ -1963,3 +1963,133 @@ class TestR221Op2Pins:
         md = zga.render_md(payload)
         assert "(排" not in md
         assert "结构性排除" not in md
+
+
+class TestGateExcludedMirrorRows:
+    """R222 Op1: 镜像行单一实现 — counts 降为派生, net 可聚合。"""
+
+    def test_crisis_mature_rows_with_net(self):
+        evs = [
+            _ev("000001.SZ", "20250702", gross_t10=0.10, gate_blocked=True),
+            _ev("000002.SZ", "20250702", gross_t10=-0.03, gate_blocked=True),
+        ]
+        rows = zga.gate_excluded_mirror_rows(evs)
+        assert len(rows) == 2
+        by_code = {r["ts_code"]: r for r in rows}
+        assert by_code["000001.SZ"]["net"] == pytest.approx(0.10 - ROUNDTRIP_COST)
+        assert by_code["000002.SZ"]["net"] == pytest.approx(-0.03 - ROUNDTRIP_COST)
+        assert all(r["day"] == "20250702" for r in rows)
+
+    def test_regime_carried_from_event(self):
+        evs = [
+            _ev("000001.SZ", "20250702", gross_t10=0.10, gate_blocked=True, regime="crisis"),
+            _ev("000002.SZ", "20250703", gross_t10=0.05, gate_blocked=True, regime="risk_off"),
+        ]
+        rows = zga.gate_excluded_mirror_rows(evs)
+        by_code = {r["ts_code"]: r for r in rows}
+        assert by_code["000001.SZ"]["regime"] == "crisis"
+        assert by_code["000002.SZ"]["regime"] == "risk_off"
+
+    def test_normal_rows_never_in_mirror(self):
+        evs = [_ev("000001.SZ", "20250701", gross_t10=0.10)]
+        assert zga.gate_excluded_mirror_rows(evs) == []
+
+    def test_production_excluded_rows_not_in_mirror(self):
+        evs = [
+            _ev("000001.SZ", "20250702", gross_t10=0.10, gate_blocked=True, st_name=True),
+            _ev("000002.SZ", "20250702", gross_t10=None, gate_blocked=True),
+        ]
+        assert zga.gate_excluded_mirror_rows(evs) == []
+
+    def test_unfillable_missing_exit_key_no_crash(self):
+        # R221 PIN-A 家族: 缺 exit 键经镜像行读面不崩不计
+        ev = _ev("000001.SZ", "20250702", gross_t10=None, gate_blocked=True, fillable=False)
+        del ev["gross_ret_t10"]
+        assert zga.gate_excluded_mirror_rows([ev]) == []
+
+    def test_counts_wrapper_equals_derived(self):
+        evs = [
+            _ev("000001.SZ", "20250702", gross_t10=0.10, gate_blocked=True),
+            _ev("000002.SZ", "20250702", gross_t10=-0.03, gate_blocked=True),
+            _ev("000004.SZ", "20250703", gross_t10=0.21, gate_blocked=True),
+            _ev("000005.SZ", "20250702", gross_t10=0.10, gate_blocked=True, st_name=True),
+        ]
+        rows = zga.gate_excluded_mirror_rows(evs)
+        derived: dict = {}
+        for r in rows:
+            derived[r["day"]] = derived.get(r["day"], 0) + 1
+        assert zga.gate_excluded_mature_counts(evs) == derived == {"20250702": 2, "20250703": 1}
+
+
+class TestSummarizeRegimeGateMirror:
+    def test_empty_rows_honest_shape(self):
+        s = zga.summarize_regime_gate_mirror([])
+        assert s["pooled"]["events"] == 0 and s["pooled"]["e"] is None
+        assert s["by_regime"] == {}
+
+    def test_pooled_arithmetic_and_days(self):
+        rows = [
+            {"day": "20250702", "regime": "crisis", "ts_code": "000001.SZ", "net": 0.02},
+            {"day": "20250702", "regime": "crisis", "ts_code": "000002.SZ", "net": -0.01},
+            {"day": "20250703", "regime": "risk_off", "ts_code": "000004.SZ", "net": 0.03},
+        ]
+        s = zga.summarize_regime_gate_mirror(rows)
+        assert s["pooled"]["events"] == 3
+        assert s["pooled"]["e"] == pytest.approx((0.02 - 0.01 + 0.03) / 3)
+        assert s["pooled"]["days"] == 2
+        # n < MIN_CELL_N → CI None (只披露)
+        assert s["pooled"]["ci90_low"] is None
+
+    def test_by_regime_split_sorted_keys(self):
+        rows = [
+            {"day": "20250702", "regime": "risk_off", "ts_code": "000002.SZ", "net": 0.01},
+            {"day": "20250703", "regime": "crisis", "ts_code": "000001.SZ", "net": -0.02},
+        ]
+        s = zga.summarize_regime_gate_mirror(rows)
+        assert list(s["by_regime"].keys()) == ["crisis", "risk_off"]
+        assert s["by_regime"]["crisis"]["e"] == pytest.approx(-0.02)
+        assert s["by_regime"]["risk_off"]["e"] == pytest.approx(0.01)
+
+    def test_nan_net_not_counted_not_crash(self):
+        rows = [{"day": "20250702", "regime": "crisis", "ts_code": "000001.SZ", "net": float("nan")}]
+        s = zga.summarize_regime_gate_mirror(rows)
+        assert s["pooled"]["events"] == 0 and s["pooled"]["e"] is None
+        assert s["by_regime"] == {}
+
+
+class TestRenderRegimeGateMirror:
+    def _payload_with_mirror(self) -> dict:
+        payload = TestRenderStructuralExclusion._payload(self)
+        payload["regime_gate_mirror"] = {
+            "discipline": "非生产口径镜像反事实 (测试fixture)",
+            "pooled": {"events": 3, "days": 2, "e": -0.021, "ci90_low": None},
+            "by_regime": {
+                "crisis": {"events": 2, "days": 1, "e": -0.032, "ci90_low": None, "winrate": 0.0},
+                "risk_off": {"events": 1, "days": 1, "e": 0.001, "ci90_low": None, "winrate": 1.0},
+            },
+        }
+        return payload
+
+    def test_mirror_section_renders(self):
+        md = zga.render_md(self._payload_with_mirror())
+        assert "regime 门镜像反事实" in md
+        assert "非生产口径" in md
+        assert "crisis" in md and "risk_off" in md
+        assert "-2.10%" in md
+
+    def test_missing_key_zero_noise(self):
+        payload = TestRenderStructuralExclusion._payload(self)
+        md = zga.render_md(payload)
+        assert "regime 门镜像反事实" not in md
+
+    def test_zero_mature_no_section(self):
+        payload = self._payload_with_mirror()
+        payload["regime_gate_mirror"]["pooled"]["events"] = 0
+        md = zga.render_md(payload)
+        assert "regime 门镜像反事实" not in md
+
+    def test_malformed_payload_no_crash(self):
+        payload = TestRenderStructuralExclusion._payload(self)
+        payload["regime_gate_mirror"] = "garbage"
+        md = zga.render_md(payload)
+        assert "regime 门镜像反事实" not in md

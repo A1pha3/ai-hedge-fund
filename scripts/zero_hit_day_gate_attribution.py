@@ -574,20 +574,22 @@ def aligned_counterfactual_rows(
     ]
 
 
-def gate_excluded_mature_counts(
+def gate_excluded_mirror_rows(
     blocked_evs: list[dict[str, Any]],
-) -> dict[str, int]:
-    """regime 阻断行中『若不阻断会进入生产宇宙且有可计算 t10 反事实』的逐日计数。
+) -> list[dict[str, Any]]:
+    """regime 阻断行的镜像反事实行 (除 regime 门外全生产口径, 含净收益)。
 
-    R221 Op1 结构性排除披露: crisis/risk_off 日事件被 production_aligned →
-    candidate_universe 按构造排除 (gate_blocked != True), 逐日明细表的
-    『成熟 0』是结构而非未成熟 — 不披露则被误读为数据缺失。本读面只取
-    gate_blocked 行、在 gate_blocked 维度翻转为放行的镜像帧上重跑
-    production_aligned 单一实现 (零公式 fork), 以 _finite_net 同一成熟谓词
-    逐日计数; 仅披露计数, 不产出任何 E 聚合, 不改变生产对齐宇宙语义。
+    R221 Op1 结构性排除披露 → R222 Op1 升级单一实现: crisis/risk_off 日
+    事件被 production_aligned → candidate_universe 按构造排除
+    (gate_blocked != True), 逐日明细表的『成熟 0』是结构而非未成熟 — 不披
+    露则被误读为数据缺失。本读面只取 gate_blocked 行、在 gate_blocked 维度
+    翻转为放行的镜像帧上重跑 production_aligned 单一实现 (零公式 fork),
+    返回成熟行 {day, regime, ts_code, net}; 计数 (gate_excluded_mature_counts)
+    与 E 聚合 (summarize_regime_gate_mirror) 均为派生, 生产对齐宇宙语义
+    本身零改变。
     """
     if not blocked_evs:
-        return {}
+        return []
     for ev in blocked_evs:
         ev.setdefault(f"gross_ret_t{PRIMARY_HORIZON}", None)
         ev.setdefault("industry_name", None)
@@ -596,16 +598,86 @@ def gate_excluded_mature_counts(
     frame = pd.DataFrame(blocked_evs)
     blocked_mask = frame["gate_blocked"] == True  # noqa: E712
     if not blocked_mask.any():
-        return {}
+        return []
     mirrored = frame.loc[blocked_mask].copy()
     mirrored["gate_blocked"] = False  # 披露投影: 仅翻 regime 维度
     aligned = production_aligned(mirrored)
     net_col = net_returns(list(aligned[f"gross_ret_t{PRIMARY_HORIZON}"]))
+    rows: list[dict[str, Any]] = []
+    for day, regime_label, ts_code, net in zip(
+        aligned["signal_date"].astype(str),
+        aligned["regime"],
+        aligned["ts_code"],
+        net_col,
+    ):
+        net = _finite_net(net)
+        if net is None:
+            continue  # 不成熟/非有限 — 不入镜像行 (与 counts 原谓词一致)
+        rows.append(
+            {
+                "day": str(day),
+                "regime": None if pd.isna(regime_label) else str(regime_label),
+                "ts_code": str(ts_code),
+                "net": net,
+            }
+        )
+    return rows
+
+
+def gate_excluded_mature_counts(
+    blocked_evs: list[dict[str, Any]],
+) -> dict[str, int]:
+    """regime 阻断行中『若不阻断会进入生产宇宙且有可计算 t10 反事实』的逐日计数。
+
+    R222 Op1 起降为 gate_excluded_mirror_rows 的派生读面 (R221 原语义逐字
+    节不变: 只数可计算反事实行, 不产出任何 E 聚合)。
+    """
     counts: dict[str, int] = {}
-    for day, net in zip(aligned["signal_date"].astype(str), net_col):
-        if _finite_net(net) is not None:
-            counts[day] = counts.get(day, 0) + 1
+    for row in gate_excluded_mirror_rows(blocked_evs):
+        counts[row["day"]] = counts.get(row["day"], 0) + 1
     return counts
+
+
+def summarize_regime_gate_mirror(
+    mirror_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """镜像行聚合 — pooled + by_regime 分解 (非生产口径, 只披露不判定)。
+
+    E/CI 与报告既有聚合同一实现族: _finite_net 成熟谓词 + 有限点和溢出
+    守卫 + cluster_boot_ci_low (n>=MIN_CELL_N)。镜像行不是『生产会做什么』
+    的反事实 (production 会因 regime gate 不交易这些日), 是门挡信息量的
+    无偏读数; regime gate 自身的保护价值另有 hit 行证据 (winrate 分解
+    all_candidates 口径), 判读语境由 render 注披露。
+    """
+    def _pool(subset: list[dict[str, Any]]) -> dict[str, Any]:
+        rets = [v for r in subset if (v := _finite_net(r["net"])) is not None]
+        days = [r["day"] for r in subset if _finite_net(r["net"]) is not None]
+        if not rets:
+            return {"events": 0, "days": 0, "e": None, "ci90_low": None}
+        e = sum(rets) / len(rets)
+        if not math.isfinite(e):
+            e = None
+        ci = (
+            cluster_boot_ci_low(rets, days)
+            if e is not None and len(rets) >= MIN_CELL_N
+            else None
+        )
+        return {"events": len(rets), "days": len(set(days)), "e": e, "ci90_low": ci}
+
+    # 只保留有成熟净值的行为 regime 键 — 全 NaN 行的 regime 是空桶, 零噪声
+    # 纪律下不出现 (与 pooled 的诚实空形一致, 不虚构结构)。
+    named = [
+        r
+        for r in mirror_rows
+        if r.get("regime") and _finite_net(r["net"]) is not None
+    ]
+    return {
+        "pooled": _pool(mirror_rows),
+        "by_regime": {
+            regime: _pool([r for r in named if r["regime"] == regime])
+            for regime in sorted({r["regime"] for r in named})
+        },
+    }
 
 
 def collect_zero_hit_day_attribution(
@@ -781,7 +853,12 @@ def collect_zero_hit_day_attribution(
     # R221 Op1: 结构性排除披露 — crisis/risk_off 日门挡行被生产对齐宇宙按
     # 构造排除 (candidate_universe 排除 gate_blocked 行), 『成熟 0』是结构
     # 而非未成熟; 逐日可计算反事实计数如实披露 (additive 键), 不聚合 E。
-    excluded_by_day = gate_excluded_mature_counts(blocked_evs)
+    # R222 Op1: 镜像行单一实现 — 计数降为派生, 另聚合镜像 E (非生产口径
+    # 顶层键 regime_gate_mirror, 与 aligned 聚合边界不混淆)。
+    mirror_rows = gate_excluded_mirror_rows(blocked_evs)
+    excluded_by_day: dict[str, int] = {}
+    for m_row in mirror_rows:
+        excluded_by_day[m_row["day"]] = excluded_by_day.get(m_row["day"], 0) + 1
     for d in day_records:
         d["mature_n"] = sum(1 for r in rows if r["day"] == d["day"])
         d["counterfactual_e"] = day_counterfactual_e(
@@ -817,6 +894,19 @@ def collect_zero_hit_day_attribution(
         "replay_hit_days": [d["day"] for d in day_records if d["replay_hits"] > 0],
         "days": day_records,
         "summary": summarize_gate_effectiveness(rows),
+        # R222 Op1: regime 门镜像反事实 (非生产口径, 仅披露) — 镜像行不是
+        # 『生产会做什么』的反事实, 是门挡信息量读数; 与 aligned 聚合
+        # (summary.*) 边界不混淆, 故为顶层键。
+        "regime_gate_mirror": {
+            "discipline": (
+                "非生产口径镜像反事实: 除 regime 门外全生产口径 "
+                "(fillable/ST/degraded/行业/排除名单/低价照常过滤, 仅 gate_blocked "
+                "维度翻转); production 会因 regime gate 不交易这些日, 本读数是门挡"
+                "信息量而非机会成本判定; regime gate 自身保护价值另有 hit 行证据 "
+                "(winrate 分解 all_candidates 口径); 只披露不判定"
+            ),
+            **summarize_regime_gate_mirror(mirror_rows),
+        },
     }
     return payload
 
@@ -946,6 +1036,55 @@ def render_md(payload: Mapping[str, Any]) -> str:
         "注: >=0.50 桶 = 生产会买而被门挡的候选 (机会成本读数); <0.50 桶本就不达"
         "生产可买阈值, 其反事实 E 是门的保护面证据; 不可计算桶如实单列不混入。"
     )
+    # R222 Op1: regime 门镜像反事实段 — 非生产口径只披露; 缺键/非 dict/
+    # 零成熟 fail-open 整段省略 (零噪声家族)。
+    mirror = payload.get("regime_gate_mirror")
+    mirror_pooled = mirror.get("pooled") if isinstance(mirror, dict) else None
+    if (
+        isinstance(mirror_pooled, dict)
+        and isinstance(mirror_pooled.get("events"), int)
+        and not isinstance(mirror_pooled.get("events"), bool)
+        and mirror_pooled["events"] > 0
+    ):
+        lines.append("")
+        lines.append("## regime 门镜像反事实 (非生产口径, 仅披露)")
+        lines.append("")
+        discipline = mirror.get("discipline")
+        if discipline:
+            lines.append(f"**口径披露**: {discipline}")
+            lines.append("")
+        lines.append("| 池化 | 事件 n | 日 n | 反事实净 E | CI90 下界 |")
+        lines.append("|---|---|---|---|---|")
+        mp_e = mirror_pooled.get("e")
+        mp_ci = mirror_pooled.get("ci90_low")
+        mp_e_str = f"{mp_e * 100:+.2f}%" if mp_e is not None else "—"
+        mp_ci_str = f"{mp_ci * 100:+.2f}%" if mp_ci is not None else "—"
+        lines.append(
+            f"| 门挡镜像 (pooled) | {mirror_pooled['events']} | "
+            f"{mirror_pooled.get('days', '—')} | {mp_e_str} | {mp_ci_str} |"
+        )
+        by_regime = mirror.get("by_regime")
+        if isinstance(by_regime, dict):
+            for regime_label in sorted(by_regime):
+                cell = by_regime[regime_label]
+                if not isinstance(cell, dict):
+                    continue
+                rg_e = cell.get("e")
+                rg_ci = cell.get("ci90_low")
+                rg_e_str = f"{rg_e * 100:+.2f}%" if rg_e is not None else "—"
+                rg_ci_str = f"{rg_ci * 100:+.2f}%" if rg_ci is not None else "—"
+                lines.append(
+                    f"| {regime_label} | {cell.get('events', '—')} | "
+                    f"{cell.get('days', '—')} | {rg_e_str} | {rg_ci_str} |"
+                )
+        lines.append("")
+        lines.append(
+            "注: 镜像行 = 危机/避险日被生产对齐宇宙结构性排除的门挡行 (除 regime 门"
+            "外全生产口径), 不是『生产会做什么』的反事实——production 会因 regime "
+            "gate 不交易这些日; 本读数是门挡信息量, 不等于机会成本判定。regime "
+            "gate 自身的保护价值另有 hit 行证据 (winrate 分解 all_candidates 口径);"
+            " 任何据此的门策略变化 = 新证据世代 owner 决策。"
+        )
     lines.append("")
     lines.append("## 按行业分层 (SW L1, 成熟事件数降序, 最多 8 行)")
     lines.append("")
