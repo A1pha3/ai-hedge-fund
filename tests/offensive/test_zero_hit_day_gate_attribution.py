@@ -1925,3 +1925,41 @@ class TestRenderStructuralExclusion:
         # 故未暴露 — 收口后恰渲染一次, 此钉防同族静默回归。
         md = zga.render_md(self._payload())
         assert md.count("## 门挡集反事实强度分层") == 1
+
+
+class TestR221Op2Pins:
+    """R221 Op2 对抗收口: 3 SURVIVORS 定谳后的盲区钉。
+
+    P14 (真盲区): unfillable 事件不带 exit 键 (_build_event 不可成交分支
+    原样形态) 经 gate_excluded_mature_counts 必须不崩不误计 — setdefault
+    家族是承载性防御 (镜像 aligned_counterfactual_rows 的同款契约)。
+    P12/P16 (collect-loop 夹具世界缺口, R219 P12 先例): 接线在 hermetic
+    世界不可达, 宿主真实冒烟覆盖 (20260915 报告 77 日 N>0 / 强度 0
+    uncomputable), 不虚钉。
+    """
+
+    def test_p14_unfillable_event_without_exit_key_no_crash(self):
+        ev = _ev("000001.SZ", "20250702", gross_t10=None, gate_blocked=True, fillable=False)
+        del ev["gross_ret_t10"]  # _build_event 不可成交分支不带 exit 键
+        # 恰一条不可成交缺键行 → 不崩且不计 (不进入镜像生产宇宙)
+        assert zga.gate_excluded_mature_counts([ev]) == {}
+
+    def test_p14_unfillable_missing_key_alongside_mature_row(self):
+        ev_bad = _ev("000001.SZ", "20250702", gross_t10=None, gate_blocked=True, fillable=False)
+        del ev_bad["gross_ret_t10"]
+        ev_ok = _ev("000002.SZ", "20250702", gross_t10=0.07, gate_blocked=True)
+        assert zga.gate_excluded_mature_counts([ev_bad, ev_ok]) == {"20250702": 1}
+
+    def test_p14_normal_day_unfillable_missing_key_still_empty(self):
+        ev = _ev("000001.SZ", "20250701", gross_t10=None, gate_blocked=False, fillable=False)
+        del ev["gross_ret_t10"]
+        assert zga.gate_excluded_mature_counts([ev]) == {}
+
+    def test_float_poisoned_count_no_marker(self):
+        # R147 家族延伸: float 毒化计数不冒充 int 计数 (生产 collect 写 int;
+        # 外部改写为 7.0 时诚实降级为无标记, 不渲染 '0 (排 7.0)')
+        payload = TestRenderStructuralExclusion._payload(self)
+        payload["days"][1]["gate_excluded_mature_n"] = 7.0
+        md = zga.render_md(payload)
+        assert "(排" not in md
+        assert "结构性排除" not in md
