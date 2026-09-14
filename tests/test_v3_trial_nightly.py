@@ -718,6 +718,45 @@ def test_real_pair_enumerator_fail_closed_on_decision_json_shapes(fake_repo: Pat
     assert proc.returncode == 3
     assert proc.stdout.strip() == ""
 
+    # target_entry_session 形状漂移 (恰 10 位但无连字符) → rc=3 (R223 Op2 P12 钉:
+    # ISO 形状校验弱化 (仅查长度) 会让 "2026010800" 放行, min_entry 字典序
+    # 比较中毒 — 用例必须恰被连字符检查拒绝而非长度检查, 否则是假牙)
+    proc = _run_enum(
+        fake_repo, enum_body,
+        pairs=["2026-01-01"],
+        spine_rows=[("research.btst.regime", "2026-01-01", "2026-01-15")],
+        entries={"2026-01-01": "2026010800"},
+    )
+    assert proc.returncode == 3
+    assert proc.stdout.strip() == ""
+    assert "target_entry_session malformed" in proc.stderr
+
+
+def test_advance_multi_advance_row_drift_is_fail_closed(fake_repo: Path) -> None:
+    # R223 Op2 P15 钉: 枚举器输出多行 ADVANCE = 漂移形态 — 选取面 (head/tail)
+    # 必须不可达, 恰一行契约违例 → pair_enumeration_failed (绝不静默选一行)
+    _seed_pair_stores(
+        fake_repo,
+        pairs=["2026-01-01", "2026-01-08"],
+        spine_rows=[("research.btst.regime", "2026-01-01", "2026-01-15"),
+                    ("research.btst.regime", "2026-01-08", "2026-01-22")],
+    )
+    bar_source = _write_bars(fake_repo, ["20260115"])
+    stub_enum = _write_stub(
+        fake_repo / "stub_enum_py",
+        '#!/bin/bash\nprintf "ADVANCE 2026-01-01 2026-01-15\\nADVANCE 2026-01-08 2026-01-22\\n"\nexit 0\n',
+    )
+    proc = _run_nightly(fake_repo, "--selftest-once",
+                        extra_env={"V3N_BAR_SOURCE": bar_source,
+                                   "V3N_ENUM_PY": stub_enum})
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    records = _history(fake_repo)
+    advance = next(r for r in records if r["stage"] == "advance"
+                   and r["detail"] != "skipped_no_bars")
+    assert advance["rc"] == 3
+    assert advance["detail"] == "pair_enumeration_failed"
+    assert not [l for l in _invocations(fake_repo) if " advance " in f" {l} "]
+
 
 def test_selftest_touches_no_lock_or_pid(fake_repo: Path) -> None:
     _run_nightly(fake_repo, "--selftest-once")

@@ -352,14 +352,18 @@ elif [ -z "$LATEST_BAR_DASH" ]; then
     echo "[$(date '+%F %T')] [v3-nightly] advance 跳过: bar 源无快照 ($BAR_SOURCE)"
     record "advance" 0 "skipped_no_bars"
 else
-    # 单窗契约: 枚举器首行 "ADVANCE <S*> <A_S*>" (漂移形态 fail-closed)
-    ADVANCE_ROW="$(printf '%s\n' "$PAIR_ROWS" | sed -n 's/^ADVANCE //p' | head -1)"
+    # 单窗契约: 枚举器输出恰一行 "ADVANCE <S*> <A_S*>" + 可选 "BREACH ..."
+    # (多 ADVANCE 行 = 枚举器漂移, 行选取面 head/tail 一律不可达, fail-closed;
+    #  R223 Op2 P15 钉)
+    ADVANCE_ROWS="$(printf '%s\n' "$PAIR_ROWS" | sed -n 's/^ADVANCE //p')"
+    ADVANCE_ROW_COUNT="$(printf '%s\n' "$ADVANCE_ROWS" | grep -c '.')"
     BREACH_ROW="$(printf '%s\n' "$PAIR_ROWS" | sed -n 's/^BREACH //p' | head -1)"
-    if [ -z "$ADVANCE_ROW" ] || printf '%s' "$PAIR_ROWS" | grep -qv '^ADVANCE \|^BREACH '; then
-        echo "[$(date '+%F %T')] [v3-nightly] advance 枚举输出形态漂移 (非 ADVANCE/BREACH 行, fail-closed)"
+    if [ -z "$ADVANCE_ROWS" ] || [ "$ADVANCE_ROW_COUNT" -ne 1 ] || printf '%s' "$PAIR_ROWS" | grep -qv '^ADVANCE \|^BREACH '; then
+        echo "[$(date '+%F %T')] [v3-nightly] advance 枚举输出形态漂移 (非恰一行 ADVANCE/BREACH 行, fail-closed)"
         record "advance" 3 "pair_enumeration_failed"
         FAILS=$((FAILS + 1))
     else
+        ADVANCE_ROW="$ADVANCE_ROWS"
         S="${ADVANCE_ROW%% *}"; MAX_ASSESS="${ADVANCE_ROW##* }"
         THROUGH="$MAX_ASSESS"
         if [ "$LATEST_BAR_DASH" \< "$THROUGH" ]; then THROUGH="$LATEST_BAR_DASH"; fi
