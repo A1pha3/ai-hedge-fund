@@ -2093,3 +2093,79 @@ class TestRenderRegimeGateMirror:
         payload["regime_gate_mirror"] = "garbage"
         md = zga.render_md(payload)
         assert "regime 门镜像反事实" not in md
+
+
+class TestR222Op2Pins:
+    """R222 Op2 对抗收口: 9 SURVIVORS 定谳后的盲区钉。
+
+    真盲区六钉 (P03/P04/P09/P12/P13/P14); P05 为行为等价对照探针 (方法论
+    对照, 无钉语义); P15/P16 为 collect-loop 夹具世界缺口 (R219 P12 /
+    R221 P12+P16 先例) — hermetic 不可达, 宿主冒烟覆盖 (20260915 报告
+    regime_gate_mirror 段渲染 3284 行实证接线活着), 不虚钉。
+    """
+
+    def test_p03_inf_gross_not_zero_in_mirror(self):
+        # P03 可达路径 = inf gross (NaN 被 candidate_universe notna 前置拦截,
+        # inf 经 net_returns 透传到达镜像行 _finite_net): 非有限净值不得冒充
+        # 0 收益入镜像行 (P03 变异: 归零分支 → inf 行计入为 0.0)
+        evs = [
+            _ev("000001.SZ", "20250702", gross_t10=float("inf"), gate_blocked=True),
+            _ev("000002.SZ", "20250702", gross_t10=0.04, gate_blocked=True),
+        ]
+        rows = zga.gate_excluded_mirror_rows(evs)
+        assert [r["ts_code"] for r in rows] == ["000002.SZ"]
+
+    def test_p04_missing_regime_key_none_not_nan_string(self):
+        # 旧形态事件缺 regime 键 → 镜像行 regime=None, 不字符化为 'nan',
+        # 且不入 by_regime (named 过滤 falsy regime)
+        ev_ok = _ev("000002.SZ", "20250702", gross_t10=0.04, gate_blocked=True)
+        ev_bad = _ev("000001.SZ", "20250702", gross_t10=0.06, gate_blocked=True)
+        del ev_bad["regime"]
+        rows = zga.gate_excluded_mirror_rows([ev_bad, ev_ok])
+        by_code = {r["ts_code"]: r for r in rows}
+        assert by_code["000001.SZ"]["regime"] is None
+        assert by_code["000002.SZ"]["regime"] == "normal"
+        summary = zga.summarize_regime_gate_mirror(rows)
+        assert list(summary["by_regime"].keys()) == ["normal"]
+
+    def test_p09_overflow_net_guarded_to_none(self):
+        # 有限点和溢出 → e=None 不冒充 inf (R146/R147 聚合级守卫同族)
+        rows = [
+            {"day": "20250702", "regime": "crisis", "ts_code": "000001.SZ", "net": 1e308},
+            {"day": "20250703", "regime": "crisis", "ts_code": "000002.SZ", "net": 1e308},
+        ]
+        s = zga.summarize_regime_gate_mirror(rows)
+        assert s["pooled"]["e"] is None
+        assert s["by_regime"]["crisis"]["e"] is None
+
+    def test_p12_bool_events_gate_no_section(self):
+        # pooled.events bool 毒化不渲染镜像段 (R147 家族)
+        payload = TestRenderStructuralExclusion._payload(self)
+        payload["regime_gate_mirror"] = {
+            "discipline": "x",
+            "pooled": {"events": True, "days": 1, "e": -0.02, "ci90_low": None},
+            "by_regime": {},
+        }
+        md = zga.render_md(payload)
+        assert "regime 门镜像反事实" not in md
+
+    def test_p13_mirror_dict_without_pooled_no_crash(self):
+        # dict 但缺 pooled 键 → 整段省略不崩 (P13 变异 KeyError)
+        payload = TestRenderStructuralExclusion._payload(self)
+        payload["regime_gate_mirror"] = {"by_regime": {}}
+        md = zga.render_md(payload)
+        assert "regime 门镜像反事实" not in md
+
+    def test_p14_by_regime_render_order_sorted(self):
+        # render by_regime 行按字典序 (crisis 在 risk_off 前), reverse 变异当场可见
+        payload = TestRenderStructuralExclusion._payload(self)
+        payload["regime_gate_mirror"] = {
+            "discipline": "x",
+            "pooled": {"events": 2, "days": 2, "e": -0.01, "ci90_low": None},
+            "by_regime": {
+                "risk_off": {"events": 1, "days": 1, "e": 0.001, "ci90_low": None},
+                "crisis": {"events": 1, "days": 1, "e": -0.02, "ci90_low": None},
+            },
+        }
+        md = zga.render_md(payload)
+        assert md.index("| crisis |") < md.index("| risk_off |")
