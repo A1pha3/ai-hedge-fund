@@ -54,6 +54,25 @@ from src.screening.offensive.v3.evidence.market_bars import (  # noqa: E402
 from src.screening.offensive.v3.execution.lifecycle import DailyBar  # noqa: E402
 
 
+def _l2_line(zero_qty: bool, negative_qty: bool, bool_qty: bool) -> dict:
+    """R220 Op2: L2 行数量面三变体 (零短路 / 负数量 / bool 毒化)."""
+    line = _line(LINE_L2, "002815.SZ", "2026-09-22")
+    if zero_qty:
+        line["target_quantity_units"] = 0
+    if negative_qty:
+        line["target_quantity_units"] = -5
+    if bool_qty:
+        line["target_quantity_units"] = True
+    return line
+
+
+def _shadow_json_no_entry(session: str, lines: list[dict]) -> str:
+    """R220 Op2: 缺 target_entry_session 的 shadow 决策 (P15 钉夹具)."""
+    payload = json.loads(_shadow_json(session, session, lines))
+    payload.pop("target_entry_session")
+    return json.dumps(payload)
+
+
 def _maybe_add_no_fill_bar_set(
     root: Path,
     bars: list,
@@ -65,12 +84,16 @@ def _maybe_add_no_fill_bar_set(
     blob_corrupt: bool,
     blob_missing: bool,
     session_mismatch: bool,
+    null_record: bool = False,
+    bad_hash: bool = False,
+    revision_order: bool = False,
 ) -> list:
     """R220 Op1 核销面夹具: 为 L2 entry 会话落一张真实 bar-set 证据
     (bar-set blob 先行 + 信封 payload_content_hash 内层绑定 + record_json
     行), 镜像生产 blob-before-envelope 存储形态 (两段 hex 布局)."""
     if not any(
-        [resolvable, touched, suspended, locked, blob_corrupt, blob_missing, session_mismatch]
+        [resolvable, touched, suspended, locked, blob_corrupt, blob_missing,
+         session_mismatch, null_record, bad_hash, revision_order]
     ):
         return bars
     session = date(2026, 9, 8) if session_mismatch else date(2026, 9, 9)
@@ -93,6 +116,30 @@ def _maybe_add_no_fill_bar_set(
         bar = replace(
             bar, open_cents=1870, high_cents=1870, low_cents=1870, close_cents=1870
         )
+    if null_record:
+        return list(bars) + [("market:bars:20260909", "b9", None, 1)]
+    if bad_hash:
+        record_json = json.dumps({"evidence": {"payload_content_hash": "xyz"}})
+        return list(bars) + [("market:bars:20260909", "b9", record_json, 1)]
+    if revision_order:
+        rows = []
+        for rev, low in ((1, 1695), (2, 1500)):
+            bar_rev = replace(bar, low_cents=low, open_cents=1520 if rev == 2 else 1700)
+            bar_set_rev = derive_bar_set(session=session, bars={"002815.SZ": bar_rev})
+            blob_rev = bar_set_rev.canonical_bytes()
+            digest_rev = hashlib.sha256(blob_rev).hexdigest()
+            envelope_rev = build_bar_set_envelope(
+                bar_set_rev,
+                observed_at=datetime(2026, 9, 9, 15, 6, tzinfo=timezone.utc),
+            )
+            record_rev = json.dumps(
+                {"evidence": json.loads(envelope_rev.model_dump_json())}
+            )
+            blob_path_rev = root / "blobs" / digest_rev[:2] / digest_rev[2:4] / digest_rev
+            blob_path_rev.parent.mkdir(parents=True, exist_ok=True)
+            blob_path_rev.write_bytes(blob_rev)
+            rows.append(("market:bars:20260909", f"b9r{rev}", record_rev, rev))
+        return list(bars) + rows
     bar_set = derive_bar_set(session=session, bars={"002815.SZ": bar})
     blob = bar_set.canonical_bytes()
     digest = hashlib.sha256(blob).hexdigest()
@@ -114,6 +161,7 @@ LINE_L1 = "shadow-line-btst:sha256:" + "a1" * 32 + ":600162:btst_breakout"
 LINE_L2 = "shadow-line-btst:sha256:" + "b2" * 32 + ":002815:btst_breakout"
 LINE_ORPHAN = "shadow-line-btst:sha256:" + "c3" * 32 + ":300999:btst_breakout"
 LINE_L4 = "shadow-line-btst:sha256:" + "d4" * 32 + ":000001:btst_breakout"
+LINE_L3 = "shadow-line-btst:sha256:" + "e5" * 32 + ":002815:btst_breakout"
 
 
 def _hex(n: int) -> str:
@@ -243,6 +291,13 @@ def build_trial_root(
     no_fill_blob_corrupt: bool = False,
     no_fill_blob_missing: bool = False,
     no_fill_session_mismatch: bool = False,
+    no_fill_negative_quantity: bool = False,
+    no_fill_bool_quantity: bool = False,
+    no_fill_no_entry: bool = False,
+    no_fill_null_record: bool = False,
+    no_fill_bad_hash: bool = False,
+    no_fill_revision_order: bool = False,
+    no_fill_challenger_line: bool = False,
 ) -> Path:
     """镜像生产 trial root 五库形态的最小夹具 (语义见模块 docstring).
 
@@ -258,6 +313,12 @@ def build_trial_root(
       touched=限价触及仍不算核销 / suspended / locked=UNKNOWN 族不可核销 /
       zero_quantity=数量零短路 / blob_corrupt|missing / session_mismatch
       = typed fail-closed 面).
+    - no_fill_* R220 Op2 盲区钉: negative_quantity=负数量走 missing_fields
+      不冒充零短路 / bool_quantity=JSON bool 毒化归 None (R147) /
+      no_entry=决策缺 target_entry_session 不崩 / null_record=record_json
+      空值行如实 unverified 不崩 / bad_hash=短哈希 typed unbound /
+      revision_order=活跃修订 (max revision) 赢 / challenger_line=双臂核销
+      行排序契约.
     """
     root = tmp_path / "trial"
     (root / "arms").mkdir(parents=True)
@@ -307,21 +368,28 @@ def build_trial_root(
             "2026-09-08",
             "c3",
             "CHAMPION",
-            _shadow_json(
-                "2026-09-08",
-                "2026-09-09",
-                [
-                    _line(LINE_L2, "002815.SZ", "2026-09-22")
-                    if not no_fill_zero_quantity
-                    else {
-                        **_line(LINE_L2, "002815.SZ", "2026-09-22"),
-                        "target_quantity_units": 0,
-                    }
-                ],
+            (
+                _shadow_json("2026-09-08", "2026-09-09", [_l2_line(
+                    no_fill_zero_quantity, no_fill_negative_quantity,
+                    no_fill_bool_quantity)])
+                if not no_fill_no_entry
+                else _shadow_json_no_entry(
+                    "2026-09-08",
+                    [_l2_line(no_fill_zero_quantity, no_fill_negative_quantity,
+                              no_fill_bool_quantity)])
             ),
             "t3",
         ),
-        (TRIAL_ID, "2026-09-08", "c3", "CHALLENGER", _no_trade_json("2026-09-08", "NO_SIGNAL"), "t3"),
+        (
+            TRIAL_ID,
+            "2026-09-08",
+            "c3",
+            "CHALLENGER",
+            _shadow_json("2026-09-08", "2026-09-09", [_line(LINE_L3, "002815.SZ", "2026-09-22")])
+            if no_fill_challenger_line
+            else _no_trade_json("2026-09-08", "NO_SIGNAL"),
+            "t3",
+        ),
     ]
     if lowercase_arm_row:
         decisions.append(
@@ -379,6 +447,9 @@ def build_trial_root(
         blob_corrupt=no_fill_blob_corrupt,
         blob_missing=no_fill_blob_missing,
         session_mismatch=no_fill_session_mismatch,
+        null_record=no_fill_null_record,
+        bad_hash=no_fill_bad_hash,
+        revision_order=no_fill_revision_order,
     )
     _create_db(
         root / "bars-evidence.sqlite3",
@@ -905,3 +976,80 @@ def test_no_fill_session_mismatch_typed(tmp_path: Path) -> None:
     with pytest.raises(TrialAuditError) as excinfo:
         build_audit(root, TRIAL_ID, PROGRAM)
     assert excinfo.value.code == "bar_session_mismatch"
+
+
+# ---------------------------------------------------------------------------
+# R220 Op2: 七真盲区钉 (P01/P03/P07R/P10/P12/P15/P18 存活者收口)
+# ---------------------------------------------------------------------------
+
+
+def test_no_fill_negative_quantity_stays_unverified(tmp_path: Path) -> None:
+    """P01 钉: 负数量走 missing_fields, 不冒充数量零短路核销."""
+    root = build_trial_root(tmp_path, no_fill_negative_quantity=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    unmatched = [f for f in audit.findings if f.code == FINDING_UNMATCHED_LINE]
+    assert len(unmatched) == 1
+    assert "行缺 limit/quantity 字段或取值非法" in unmatched[0].detail
+    assert audit.no_fill_resolutions == ()
+
+
+def test_no_fill_bool_quantity_poison_stays_unverified(tmp_path: Path) -> None:
+    """P18 钉: JSON bool 数量 (true) 经严格 int 提取归 None → missing_fields."""
+    root = build_trial_root(tmp_path, no_fill_bool_quantity=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    unmatched = [f for f in audit.findings if f.code == FINDING_UNMATCHED_LINE]
+    assert len(unmatched) == 1
+    assert "行缺 limit/quantity 字段或取值非法" in unmatched[0].detail
+    assert audit.no_fill_resolutions == ()
+
+
+def test_no_fill_missing_entry_session_stays_unverified(tmp_path: Path) -> None:
+    """P15 钉: 决策缺 target_entry_session → 如实 unverified, 不崩不核销."""
+    root = build_trial_root(tmp_path, no_fill_no_entry=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    unmatched = [f for f in audit.findings if f.code == FINDING_UNMATCHED_LINE]
+    assert len(unmatched) == 1
+    assert "决策缺 target_entry_session, 无法核销" in unmatched[0].detail
+    assert audit.no_fill_resolutions == ()
+
+
+def test_no_fill_null_record_json_stays_unverified(tmp_path: Path) -> None:
+    """P12 钉: record_json 空值行 → 如实 unverified (continue), 不崩."""
+    root = build_trial_root(tmp_path, no_fill_null_record=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    unmatched = [f for f in audit.findings if f.code == FINDING_UNMATCHED_LINE]
+    assert len(unmatched) == 1
+    assert "无法核销无成交 (bar 缺失)" in unmatched[0].detail
+    assert audit.no_fill_resolutions == ()
+
+
+def test_no_fill_bad_hash_typed_unbound(tmp_path: Path) -> None:
+    """P10 钉: 短哈希载荷绑定 → typed bar_payload_unbound (非 missing)."""
+    root = build_trial_root(tmp_path, no_fill_bad_hash=True)
+    with pytest.raises(TrialAuditError) as excinfo:
+        build_audit(root, TRIAL_ID, PROGRAM)
+    assert excinfo.value.code == "bar_payload_unbound"
+
+
+def test_no_fill_active_revision_wins(tmp_path: Path) -> None:
+    """P03 钉: 同 evidence_id 双修订, 活跃修订 (max revision) 必须赢 —
+    rev2 (限价触及) 是活跃真相 → 保留疑似结算缺失发现, 绝不取 rev1 误核销."""
+    root = build_trial_root(tmp_path, no_fill_revision_order=True)
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    unmatched = [f for f in audit.findings if f.code == FINDING_UNMATCHED_LINE]
+    assert len(unmatched) == 1
+    assert "疑似结算缺失" in unmatched[0].detail
+    assert audit.no_fill_resolutions == ()
+
+
+def test_no_fill_resolution_order_deterministic(tmp_path: Path) -> None:
+    """P07/P07R 钉: 双臂核销行排序契约 — 小写 arm 序 (CHALLENGER 先),
+    与插入序无关; 渲染与 json 逐字节确定性依赖此契约."""
+    root = build_trial_root(
+        tmp_path, no_fill_resolvable=True, no_fill_challenger_line=True
+    )
+    audit = build_audit(root, TRIAL_ID, PROGRAM)
+    assert [r.arm for r in audit.no_fill_resolutions] == ["CHALLENGER", "CHAMPION"]
+    assert all(r.reason == "limit_not_touched" for r in audit.no_fill_resolutions)
+    md = render_md(audit)
+    assert md.index("CHALLENGER | 2026-09-08") < md.index("CHAMPION | 2026-09-08")

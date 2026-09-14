@@ -337,18 +337,30 @@ def read_decisions(root: Path, trial_id: str) -> dict[tuple[str, str], ParsedDec
 
 
 def read_bar_sessions(root: Path) -> dict[str, str]:
-    """signal_session(YYYY-MM-DD) → ingested_at (market:bars: 证据)."""
+    """signal_session(YYYY-MM-DD) → ingested_at (market:bars: 证据).
+
+    R220 Op2 修订感知: 同 evidence_id 的多行是合法修订链, 取 max revision
+    为活跃投影 (与 _entry_bars_for_sessions 同一规则); 不同 evidence_id
+    映射同会话仍 fail-closed (id 内嵌会话, 正常不可达, 防御 id 语义漂移).
+    """
     con = _ro_connect(root / BARS_DB)
     try:
         _require_columns(con, BARS_DB, "evidence_records")
         rows = con.execute(
-            "SELECT evidence_id, ingested_at FROM evidence_records ORDER BY ingested_at"
+            "SELECT evidence_id, ingested_at, revision FROM evidence_records"
+            " ORDER BY ingested_at"
         ).fetchall()
     finally:
         con.close()
-    bars: dict[str, str] = {}
-    for evidence_id, ingested_at in rows:
+    latest: dict[str, tuple[int | None, str]] = {}
+    for evidence_id, ingested_at, revision in rows:
         evidence_id = str(evidence_id)
+        rev = revision if type(revision) is int else None
+        prior = latest.get(evidence_id)
+        if prior is None or (rev is not None and (prior[0] is None or rev > prior[0])):
+            latest[evidence_id] = (rev, str(ingested_at))
+    bars: dict[str, str] = {}
+    for evidence_id, (_rev, ingested_at) in latest.items():
         if not evidence_id.startswith(BAR_EVIDENCE_PREFIX):
             continue
         raw = evidence_id[len(BAR_EVIDENCE_PREFIX):]
@@ -357,7 +369,7 @@ def read_bar_sessions(root: Path) -> dict[str, str]:
         session = f"{raw[0:4]}-{raw[4:6]}-{raw[6:8]}"
         if session in bars:
             raise TrialAuditError("duplicate_bar_set", {"signal_session": session})
-        bars[session] = str(ingested_at)
+        bars[session] = ingested_at
     return bars
 
 
