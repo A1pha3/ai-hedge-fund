@@ -21,11 +21,18 @@
 #                 manifest』按权威日历分流 — 交易日响亮失败
 #                 trading_day_no_manifest (烧会话不可再静默假绿); 周末/假日
 #                 维持静默; 日历过期/不可读响亮 calendar_stale/calendar_unresolved。
-#   4. advance  — pair 执行窗口推进 (v3_trial_session.py advance --execute)
-#                 只推进 decisions 库已有 pair 的会话; through =
-#                 min(spine T+10 评估会话, bar 源最新会话); 枚举面 fail-closed。
-#                 冷读只见已 checkpoint 主文件: crash 残留 WAL 的 pair 本夜
-#                 不可见 → skipped_no_pairs, 次夜追平 (失败方向=欠推进)。
+#   4. advance  — 执行窗口单窗推进 (v3_trial_session.py advance --execute;
+#                 R223 Op1): 每夜恰一次, 信号会话 = 枚举器选出的 deepest
+#                 advanceable pair (S <= min_entry, 无入场时 = 最新 pair),
+#                 through = min(该 pair spine 评估日, bar 源最新会话)。
+#                 R216 覆盖门 x CLI 冻结切片的合取下, per-pair 逐窗对
+#                 S > min_entry 结构性被拒 (20260914 实录 3× rc=2 逐夜
+#                 累积 = 纯浪费); RUN pair 超出 S* 可达视野的出场义务以
+#                 rc=0 pending_exit_horizon_breach 响亮披露 (runner 层
+#                 缺口, 独立 operation 承载)。枚举面 fail-closed: 决策库/
+#                 spine/decision_json 分歧 → 阶段失败; 冷读只见已
+#                 checkpoint 主文件: crash 残留 WAL 的 pair 本夜不可见 →
+#                 skipped_no_pairs, 次夜追平 (失败方向=欠推进)。
 #   5. finalize — 错过会话 NO_RUN 补记 (v3_trial_session.py finalize-missed --execute)
 #
 # 每阶段一条 JSONL 记录进 logs/cron/v3_nightly_history.jsonl
@@ -63,11 +70,18 @@ NOW_HHMM="${V3N_NOW_HHMM:-$(date +%H%M)}"
 TODAY_COMPACT="${V3N_TODAY:-$(date +%Y%m%d)}"
 TODAY_DASH="${TODAY_COMPACT:0:4}-${TODAY_COMPACT:4:2}-${TODAY_COMPACT:6:2}"
 
-# advance pair 枚举器 (immutable 冷读, 零写入; R35/R37 冷读纪律):
+# advance 窗口枚举器 (immutable 冷读, 零写入; R35/R37 冷读纪律; R223 Op1
+# entry-aware 单窗契约): 输出恰两形态行 —
+#   "ADVANCE <S*> <A_S*>"   S* = deepest pair <= min_entry (无任何入场时 =
+#                           最新 pair), A_S* = 其 spine 评估日 (切片末端);
+#   ["BREACH <P,...>"]      存在 P > S* 的 RUN pair 时如实列出 (其出场义务
+#                           超出可达视野 = runner 层缺口, 上层 rc=0 响亮披露)。
 # decisions 库缺失/无表 = 尚无 pair (合法形态, 空输出);
-# 决策库与 spine 分歧 (pair 会话缺 T+10 注册 / spine 缺失) = 真实损坏面,
+# fail-closed: 决策库与 spine 分歧 (pair 会话缺 T+10 注册 / spine 缺失) /
+# decision_json 列缺失 / json 畸形 / RUN 决策缺 target_entry_session →
 # 非零退出 → 阶段失败, 绝不静默跳过 (P2-1: 宽吞会假装没看到坏记录)。
 PAIR_ENUM_PY=$(cat <<'PYEOF'
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -78,10 +92,10 @@ if not Path(decisions_db).is_file():
     raise SystemExit(0)
 conn = sqlite3.connect(f"file:{decisions_db}?mode=ro&immutable=1", uri=True)
 try:
-    pairs = [row[0] for row in conn.execute(
-        "SELECT DISTINCT signal_session FROM trial_arm_decisions"
+    rows = conn.execute(
+        "SELECT signal_session, decision_json FROM trial_arm_decisions"
         " ORDER BY signal_session"
-    )]
+    ).fetchall()
 except sqlite3.OperationalError as exc:
     if "no such table" in str(exc):
         print("")
@@ -90,12 +104,15 @@ except sqlite3.OperationalError as exc:
     raise SystemExit(3)
 finally:
     conn.close()
+if not rows:
+    print("")
+    raise SystemExit(0)
 if not Path(spine_db).is_file():
     print("spine missing", file=sys.stderr)
     raise SystemExit(3)
 conn = sqlite3.connect(f"file:{spine_db}?mode=ro&immutable=1", uri=True)
 try:
-    rows = conn.execute(
+    spine_rows = conn.execute(
         "SELECT signal_session, assessment_date FROM expected_sessions"
         " WHERE research_program_id = ?",
         (program,),
@@ -105,12 +122,56 @@ except sqlite3.OperationalError as exc:
     raise SystemExit(3)
 finally:
     conn.close()
-assessments = dict(rows)
-for session in pairs:
+assessments = dict(spine_rows)
+pairs = []
+entries = []
+for session, decision_json in rows:
     if session not in assessments:
         print(f"pair session {session} absent from spine", file=sys.stderr)
         raise SystemExit(3)
-print(";".join(f"{s} {assessments[s]}" for s in pairs))
+    if session not in pairs:
+        pairs.append(session)
+    try:
+        decision = json.loads(decision_json)
+    except (json.JSONDecodeError, TypeError):
+        print(f"decision_json unparseable at {session}", file=sys.stderr)
+        raise SystemExit(3)
+    if not isinstance(decision, dict):
+        print(f"decision_json not an object at {session}", file=sys.stderr)
+        raise SystemExit(3)
+    entry = decision.get("target_entry_session")
+    if entry is not None:
+        if not isinstance(entry, str) or len(entry) != 10 or entry[4] != "-":
+            print(f"target_entry_session malformed at {session}", file=sys.stderr)
+            raise SystemExit(3)
+        entries.append((session, entry))
+    elif "artifact_kind" in decision:
+        # kernel 决策工件 (RUN 形态) 缺 target_entry_session = 键漂移 —
+        # 不得静默冒充 no-trade (min_entry 派生错误会让 nightly 误选窗口)
+        print(f"decision artifact missing target_entry_session at {session}",
+              file=sys.stderr)
+        raise SystemExit(3)
+# R223 Op1: R216 覆盖门 (窗口起点 <= 一切已决策入场会话, 入场结算无 catch-up)
+# x CLI 冻结切片 (每窗 reach = 信号+10) 的合取下, 可 advance 窗口恰为
+# S <= min_entry (冻结于最早入场)。per-pair 逐窗对 S > min_entry 结构性被拒
+# (20260914 实录: 逐夜确定性 rc=2 纯浪费)。单窗取 deepest advanceable pair
+# 覆盖全部新到 bar 会话的驱动 (重放幂等); 无任何入场时全部窗口可 advance,
+# 取最新 pair (与无入场 trial 的现行行为兼容)。
+if entries:
+    min_entry = min(e for _, e in entries)
+    advanceable = [s for s in pairs if s <= min_entry]
+    if not advanceable:
+        print("no advanceable pair: min_entry precedes every pair", file=sys.stderr)
+        raise SystemExit(3)
+    star = advanceable[-1]
+else:
+    star = pairs[-1]
+print(f"ADVANCE {star} {assessments[star]}")
+breach = sorted(
+    {s for s, _ in entries if s > star}
+)
+if breach:
+    print("BREACH " + ",".join(breach))
 PYEOF
 )
 
@@ -259,8 +320,18 @@ else
     fi
 fi
 
-# ---- 阶段 4: advance 执行窗口推进 (runbook 日度步 4; 只推进已有 pair 的会话) ----
-echo "[$(date '+%F %T')] [v3-nightly] === 阶段 advance: pair 执行窗口推进 ==="
+# ---- 阶段 4: advance 执行窗口推进 (runbook 日度步 4; R223 Op1 单窗) ----
+# 每夜恰一次 advance: 信号会话 = 枚举器选出的 deepest advanceable pair (S*),
+# through = min(A_S*, bar 源最新会话)。约束链: R216 覆盖门要求窗口起点 <=
+# 一切已决策入场会话 (入场结算无 catch-up), CLI 冻结切片限定每窗 reach =
+# 信号+10 → 可 advance 窗口恰为 S <= min_entry; per-pair 逐窗对 S > min_entry
+# 结构性被拒 (20260914 实录 3× rc=2 逐夜累积 = 纯浪费)。RUN pair 超出 S* 可达
+# 视野的出场义务 = runner 层缺口, 以 rc=0 pending_exit_horizon_breach 响亮
+# 披露 (不计失败; 独立 operation 修复前的结构性事实)。
+# 枚举面 fail-closed: 决策库/spine 分歧、decision_json 形态漂移 → 阶段失败;
+# 冷读只见已 checkpoint 主文件: crash 残留 WAL 的 pair 本夜不可见 →
+# skipped_no_pairs, 次夜追平 (失败方向=欠推进)。
+echo "[$(date '+%F %T')] [v3-nightly] === 阶段 advance: 执行窗口单窗推进 ==="
 LATEST_BAR="$(ls "$BAR_SOURCE"/daily_*.csv 2>/dev/null \
     | sed -n 's/.*daily_\([0-9]\{8\}\)\.csv/\1/p' | sort | tail -1)"
 LATEST_BAR_DASH=""
@@ -271,7 +342,7 @@ PAIR_ROWS="$("$ENUM_PY" -c "$PAIR_ENUM_PY" \
     "$TRIAL_ROOT/decisions.sqlite3" "$TRIAL_ROOT/spine.sqlite3" "$RESEARCH_PROGRAM")"
 rc=$?
 if [ "$rc" -ne 0 ]; then
-    echo "[$(date '+%F %T')] [v3-nightly] advance pair 枚举失败 rc=$rc (决策库/spine 分歧, fail-closed)"
+    echo "[$(date '+%F %T')] [v3-nightly] advance pair 枚举失败 rc=$rc (决策库/spine/decision_json 分歧, fail-closed)"
     record "advance" "$rc" "pair_enumeration_failed"
     FAILS=$((FAILS + 1))
 elif [ -z "$PAIR_ROWS" ]; then
@@ -281,39 +352,49 @@ elif [ -z "$LATEST_BAR_DASH" ]; then
     echo "[$(date '+%F %T')] [v3-nightly] advance 跳过: bar 源无快照 ($BAR_SOURCE)"
     record "advance" 0 "skipped_no_bars"
 else
-    IFS=';' read -r -a PAIR_ITEMS <<< "$PAIR_ROWS"
-    for item in "${PAIR_ITEMS[@]}"; do
-        S="${item%% *}"; ASSESS="${item##* }"
-        THROUGH="$ASSESS"
+    # 单窗契约: 枚举器首行 "ADVANCE <S*> <A_S*>" (漂移形态 fail-closed)
+    ADVANCE_ROW="$(printf '%s\n' "$PAIR_ROWS" | sed -n 's/^ADVANCE //p' | head -1)"
+    BREACH_ROW="$(printf '%s\n' "$PAIR_ROWS" | sed -n 's/^BREACH //p' | head -1)"
+    if [ -z "$ADVANCE_ROW" ] || printf '%s' "$PAIR_ROWS" | grep -qv '^ADVANCE \|^BREACH '; then
+        echo "[$(date '+%F %T')] [v3-nightly] advance 枚举输出形态漂移 (非 ADVANCE/BREACH 行, fail-closed)"
+        record "advance" 3 "pair_enumeration_failed"
+        FAILS=$((FAILS + 1))
+    else
+        S="${ADVANCE_ROW%% *}"; MAX_ASSESS="${ADVANCE_ROW##* }"
+        THROUGH="$MAX_ASSESS"
         if [ "$LATEST_BAR_DASH" \< "$THROUGH" ]; then THROUGH="$LATEST_BAR_DASH"; fi
         if [ ! "$S" \< "$THROUGH" ]; then
             echo "[$(date '+%F %T')] [v3-nightly] advance 跳过 $S: through=$THROUGH 未越过信号会话 (T+1 bar 未到)"
             record "advance" 0 "skipped_no_new_bars:$S"
-            continue
-        fi
-        echo "[$(date '+%F %T')] [v3-nightly] advance $S → $THROUGH (评估窗至 $ASSESS)"
-        OUT=$("$PY" "$TRIAL_CLI" advance \
-            --identity-dir "$IDENTITY_DIR" \
-            --trial-root "$TRIAL_ROOT" \
-            --trial-id "$TRIAL_ID" \
-            --research-program "$RESEARCH_PROGRAM" \
-            --calendar "$CALENDAR" \
-            --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --execute \
-            --signal-session "$S" \
-            --through-session "$THROUGH" \
-            --bar-source "$BAR_SOURCE" 2>&1)
-        rc=$?
-        printf '%s\n' "$OUT"
-        if [ "$rc" -eq 0 ]; then
-            record "advance" 0 "ok:$S->$THROUGH"
         else
-            CODE=$(typed_code "$OUT")
-            echo "[$(date '+%F %T')] [v3-nightly] advance 类型化拒绝 rc=$rc code=${CODE:-unknown} ($S)"
-            record "advance" "$rc" "${CODE:-advance_failed}:$S"
-            FAILS=$((FAILS + 1))
+            echo "[$(date '+%F %T')] [v3-nightly] advance 单窗 $S → $THROUGH (评估窗至 $MAX_ASSESS)"
+            OUT=$("$PY" "$TRIAL_CLI" advance \
+                --identity-dir "$IDENTITY_DIR" \
+                --trial-root "$TRIAL_ROOT" \
+                --trial-id "$TRIAL_ID" \
+                --research-program "$RESEARCH_PROGRAM" \
+                --calendar "$CALENDAR" \
+                --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                --execute \
+                --signal-session "$S" \
+                --through-session "$THROUGH" \
+                --bar-source "$BAR_SOURCE" 2>&1)
+            rc=$?
+            printf '%s\n' "$OUT"
+            if [ "$rc" -eq 0 ]; then
+                record "advance" 0 "ok:$S->$THROUGH"
+            else
+                CODE=$(typed_code "$OUT")
+                echo "[$(date '+%F %T')] [v3-nightly] advance 类型化拒绝 rc=$rc code=${CODE:-unknown} ($S)"
+                record "advance" "$rc" "${CODE:-advance_failed}:$S"
+                FAILS=$((FAILS + 1))
+            fi
         fi
-    done
+        if [ -n "$BREACH_ROW" ]; then
+            echo "[$(date '+%F %T')] [v3-nightly] 警告: RUN pair 超出可达视野 (出场义务需 runner 层 flat-start 放宽, 独立 operation 承载): $BREACH_ROW"
+            record "advance" 0 "pending_exit_horizon_breach:$BREACH_ROW"
+        fi
+    fi
 fi
 
 # ---- 阶段 5: finalize-missed (幂等 NO_RUN 补记) ----

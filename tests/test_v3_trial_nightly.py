@@ -22,8 +22,17 @@ R55 补全的两处断层:
   R57 收紧: decide 门的「无 manifest」三分性 — 交易日 (今日 ∈ 权威日历)
   响亮失败 trading_day_no_manifest (烧会话不可再静默); 周末/假日维持静默;
   日历过期/不可读响亮 calendar_stale/calendar_unresolved (fail-closed)。
-- advance 只推进 decisions 库已有 pair 的会话; 枚举面 fail-closed
-  (pair 不在 spine / spine 缺失 → 阶段失败, 绝不静默跳过)。
+- advance 每夜恰一次 deepest-advanceable-window 推进 (R223 Op1): 信号会话 =
+  S* (deepest pair <= min_entry; 无任何入场时 = 最新 pair), through =
+  min(A_S*, bar 源最新会话)。约束链 (生产实录): R216 覆盖门要求窗口起点
+  <= 全 trial 一切已决策入场会话 (入场结算无 catch-up), CLI 冻结切片限定
+  每窗 reach = 信号+10 → 可 advance 窗口恰为 S <= min_entry (冻结于最早
+  入场); per-pair 逐窗在首个入场后结构性被拒 (20260914 实录: 3× rc=2
+  advance_entry_window_skipped 逐夜累积 = 纯浪费)。枚举面 fail-closed
+  (pair 不在 spine / decision_json 列缺失 / json 畸形 / RUN 无 entry →
+  阶段失败, 绝不静默跳过); RUN pair P > S* 的出场义务超出可达视野 =
+  runner 层缺口, 以 rc=0 pending_exit_horizon_breach 响亮披露 (独立
+  operation 修复前的结构性事实, 非已核销类假阳性)。
 - selftest 面 (--selftest-once) 零锁、零 pid、零生产状态。
 """
 
@@ -133,21 +142,62 @@ def _invocations(fake_repo: Path) -> list[str]:
     return path.read_text().splitlines()
 
 
+_NO_ENTRY_DECISION_JSON = json.dumps(
+    {
+        "decision_cycle_id": "c",
+        "detail": "no candidates",
+        "kernel_input_hash": "sha256:x",
+        "portfolio_id": "p",
+        "reason": "NO_SIGNAL",
+        "signal_session": "unused",
+    }
+)
+
+
+def _run_decision_json(entry_session: str | None, session: str = "unused") -> str:
+    """RUN 决策 = 生产 27 键形态的 minimal 投影 (target_entry_session 在场);
+    no-trade 决策 = 生产 6 键形态 (键缺席)。"""
+    if entry_session is None:
+        return _NO_ENTRY_DECISION_JSON
+    return json.dumps(
+        {
+            "artifact_kind": "ShadowDecision",
+            "decision_cycle_id": "c",
+            "kernel_input_hash": "sha256:x",
+            "portfolio_id": "p",
+            "signal_session": session,
+            "target_entry_session": entry_session,
+        }
+    )
+
+
 def _seed_pair_stores(fake_repo: Path, *, pairs: list[str],
-                      spine_rows: list[tuple[str, str]]) -> None:
-    """在 fake trial root 里构造 decisions/spine 冷读形态 (hermetic)。"""
+                      spine_rows: list[tuple[str, str]],
+                      entries: dict[str, str | None] | None = None,
+                      decision_json: dict[str, str] | None = None) -> None:
+    """在 fake trial root 里构造 decisions/spine 冷读形态 (hermetic)。
+
+    entries: pair 会话 → target_entry_session (RUN 决策); 缺省键 = no-trade。
+    decision_json: pair 会话 → 原始 JSON 覆盖 (畸形注入测试用)。
+    """
+    entries = entries or {}
+    decision_json = decision_json or {}
     root = fake_repo / TRIAL_ROOT_REL
     root.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(root / "decisions.sqlite3")
     conn.execute(
         "CREATE TABLE trial_arm_decisions ("
         "trial_id TEXT NOT NULL, signal_session TEXT NOT NULL,"
-        " decision_cycle_id TEXT NOT NULL, arm TEXT NOT NULL)"
+        " decision_cycle_id TEXT NOT NULL, arm TEXT NOT NULL,"
+        " decision_json TEXT NOT NULL)"
     )
     for session in pairs:
+        payload = decision_json.get(
+            session, _run_decision_json(entries.get(session), session)
+        )
         conn.execute(
-            "INSERT INTO trial_arm_decisions VALUES ('t', ?, 'c', 'champion')",
-            (session,),
+            "INSERT INTO trial_arm_decisions VALUES ('t', ?, 'c', 'champion', ?)",
+            (session, payload),
         )
     conn.commit()
     conn.close()
@@ -444,6 +494,229 @@ def test_advance_enumeration_failure_is_fail_closed(fake_repo: Path) -> None:
     assert advance["detail"] == "pair_enumeration_failed"
     assert not [l for l in _invocations(fake_repo) if " advance " in f" {l} "]
     assert next(r for r in records if r["stage"] == "finalize")["rc"] == 0
+
+
+# ---- R223 Op1: deepest-advanceable-window advance (v1 单窗全跨度假设被生产
+# dry-run 证伪: 窗口被冻结排程切片限定 = 信号+10 会话) ----
+# 20260914 实录同构: pair 01-01..01-14, 入场簇 01-08 (pair 01-07)/01-09
+# (pair 01-08) → min_entry=01-08, S* = 01-08, 窗口 [01-08..min(01-22, bar)]。
+# per-pair 逐窗对 S>min_entry 结构性被 R216 覆盖门拒绝 = 逐夜确定性 rc=2。
+
+
+def test_advance_deepest_advanceable_window_with_entry_cluster(fake_repo: Path) -> None:
+    pairs = ["2026-01-01", "2026-01-02", "2026-01-05", "2026-01-06", "2026-01-07",
+             "2026-01-08", "2026-01-09", "2026-01-12", "2026-01-13", "2026-01-14"]
+    assessments = {
+        "2026-01-01": "2026-01-15", "2026-01-02": "2026-01-16",
+        "2026-01-05": "2026-01-19", "2026-01-06": "2026-01-20",
+        "2026-01-07": "2026-01-21", "2026-01-08": "2026-01-22",
+        "2026-01-09": "2026-01-23", "2026-01-12": "2026-01-26",
+        "2026-01-13": "2026-01-27", "2026-01-14": "2026-01-28",
+    }
+    _seed_pair_stores(
+        fake_repo,
+        pairs=pairs,
+        spine_rows=[("research.btst.regime", s, a) for s, a in assessments.items()],
+        entries={"2026-01-07": "2026-01-08", "2026-01-08": "2026-01-09"},
+    )
+    bar_source = _write_bars(fake_repo, [f"202601{d:02d}" for d in range(1, 16)])
+    proc = _run_nightly(fake_repo, "--selftest-once",
+                        extra_env={"V3N_BAR_SOURCE": bar_source})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    advance_lines = [l for l in _invocations(fake_repo) if " advance " in f" {l} "]
+    # per-pair 形态 (修复前) 会对全部 10 个 pair 各发一次调用 — 单窗契约恰好一次
+    assert len(advance_lines) == 1, advance_lines
+    line = f" {advance_lines[0]} "
+    # S* = deepest pair <= min_entry(01-08) = 01-08 (非最早 pair 01-01, 非最新 01-14)
+    assert "--signal-session 2026-01-08" in line
+    # through = min(A_S*=01-22, 最新 bar 01-15) = 01-15
+    assert "--through-session 2026-01-15" in line
+    records = _history(fake_repo)
+    advance = next(r for r in records if r["stage"] == "advance")
+    assert advance["rc"] == 0
+    assert advance["detail"] == "ok:2026-01-08->2026-01-15"
+    # 全部 pair 的出场在 S*+10 视野内 (BREACH 空) → 无披露行
+    assert not [r for r in records if "pending_exit_horizon_breach" in r["detail"]]
+
+
+def test_advance_breach_disclosure_recorded_when_run_pair_beyond_horizon(fake_repo: Path) -> None:
+    # RUN pair (01-14) 超出 S* 可达视野 (01-08+10=01-22 < A_01-14=01-28) →
+    # runner 层缺口的结构性披露: rc=0 响亮行, 不计入失败 (非已核销类假阳性)
+    pairs = ["2026-01-07", "2026-01-08", "2026-01-14"]
+    assessments = {
+        "2026-01-07": "2026-01-21", "2026-01-08": "2026-01-22",
+        "2026-01-14": "2026-01-28",
+    }
+    _seed_pair_stores(
+        fake_repo,
+        pairs=pairs,
+        spine_rows=[("research.btst.regime", s, a) for s, a in assessments.items()],
+        entries={"2026-01-07": "2026-01-08", "2026-01-08": "2026-01-09",
+                 "2026-01-14": "2026-01-15"},
+    )
+    bar_source = _write_bars(fake_repo, ["20260115"])
+    proc = _run_nightly(fake_repo, "--selftest-once",
+                        extra_env={"V3N_BAR_SOURCE": bar_source})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    records = _history(fake_repo)
+    advance_ok = next(r for r in records if r["stage"] == "advance"
+                      and r["detail"].startswith("ok:"))
+    assert advance_ok["detail"] == "ok:2026-01-08->2026-01-15"
+    breach = next(r for r in records if "pending_exit_horizon_breach" in r["detail"])
+    assert breach["rc"] == 0
+    assert "2026-01-14" in breach["detail"]
+    # 披露行不计入整体失败数
+    assert proc.returncode == 0
+
+
+def _read_nightly_enum_body() -> str:
+    import re
+
+    script = NIGHTLY.read_text(encoding="utf-8")
+    match = re.search(r'PAIR_ENUM_PY=\$\(cat <<\'PYEOF\'\n(.*?)\nPYEOF\n\)', script, re.DOTALL)
+    assert match, "PAIR_ENUM_PY heredoc not found in nightly script"
+    return match.group(1)
+
+
+def _run_enum(fake_repo: Path, enum_body: str, *, pairs: list[str],
+              spine_rows: list[tuple[str, str]],
+              entries: dict[str, str | None] | None = None,
+              decision_json: dict[str, str] | None = None,
+              with_column: bool = True) -> subprocess.CompletedProcess:
+    import shutil
+
+    root = fake_repo / TRIAL_ROOT_REL
+    if root.exists():
+        shutil.rmtree(root)
+    if with_column:
+        _seed_pair_stores(fake_repo, pairs=pairs, spine_rows=spine_rows,
+                          entries=entries, decision_json=decision_json)
+    else:
+        root.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(root / "decisions.sqlite3")
+        conn.execute(
+            "CREATE TABLE trial_arm_decisions ("
+            "trial_id TEXT NOT NULL, signal_session TEXT NOT NULL,"
+            " decision_cycle_id TEXT NOT NULL, arm TEXT NOT NULL)"
+        )
+        for session in pairs:
+            conn.execute(
+                "INSERT INTO trial_arm_decisions VALUES ('t', ?, 'c', 'champion')",
+                (session,),
+            )
+        conn.commit()
+        conn.close()
+        conn = sqlite3.connect(root / "spine.sqlite3")
+        conn.execute(
+            "CREATE TABLE expected_sessions ("
+            "research_program_id TEXT NOT NULL, signal_session TEXT NOT NULL,"
+            " assessment_date TEXT NOT NULL)"
+        )
+        conn.executemany(
+            "INSERT INTO expected_sessions VALUES (?, ?, ?)", spine_rows
+        )
+        conn.commit()
+        conn.close()
+    return subprocess.run(
+        [sys.executable, "-c", enum_body,
+         str(root / "decisions.sqlite3"), str(root / "spine.sqlite3"),
+         "research.btst.regime"],
+        capture_output=True, text=True, timeout=TIMEOUT_S,
+    )
+
+
+def test_real_pair_enumerator_deepest_window_and_breach(fake_repo: Path) -> None:
+    enum_body = _read_nightly_enum_body()
+
+    # 入场簇形态: ADVANCE 行 = (S*=01-08, A=01-22); BREACH 空
+    proc = _run_enum(
+        fake_repo, enum_body,
+        pairs=["2026-01-01", "2026-01-07", "2026-01-08", "2026-01-12"],
+        spine_rows=[("research.btst.regime", "2026-01-01", "2026-01-15"),
+                    ("research.btst.regime", "2026-01-07", "2026-01-21"),
+                    ("research.btst.regime", "2026-01-08", "2026-01-22"),
+                    ("research.btst.regime", "2026-01-12", "2026-01-26")],
+        entries={"2026-01-07": "2026-01-08", "2026-01-08": "2026-01-09"},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == ["ADVANCE 2026-01-08 2026-01-22"]
+
+    # RUN pair 超视野: BREACH 行列出全部 P > S* 的 RUN pair
+    proc = _run_enum(
+        fake_repo, enum_body,
+        pairs=["2026-01-07", "2026-01-08", "2026-01-12", "2026-01-14"],
+        spine_rows=[("research.btst.regime", "2026-01-07", "2026-01-21"),
+                    ("research.btst.regime", "2026-01-08", "2026-01-22"),
+                    ("research.btst.regime", "2026-01-12", "2026-01-26"),
+                    ("research.btst.regime", "2026-01-14", "2026-01-28")],
+        entries={"2026-01-07": "2026-01-08", "2026-01-08": "2026-01-09",
+                 "2026-01-12": "2026-01-13", "2026-01-14": "2026-01-15"},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == [
+        "ADVANCE 2026-01-08 2026-01-22",
+        "BREACH 2026-01-12,2026-01-14",
+    ]
+
+    # 无任何入场: S* = 最新 pair (与无入场 trial 的现行行为兼容), 无 BREACH
+    proc = _run_enum(
+        fake_repo, enum_body,
+        pairs=["2026-01-01", "2026-01-02"],
+        spine_rows=[("research.btst.regime", "2026-01-01", "2026-01-15"),
+                    ("research.btst.regime", "2026-01-02", "2026-01-16")],
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == ["ADVANCE 2026-01-02 2026-01-16"]
+
+    # 零 pair: 空 stdout rc=0 → 上层 skipped_no_pairs
+    proc = _run_enum(fake_repo, enum_body, pairs=[], spine_rows=[])
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+
+    # 发散: pair 不在 spine → rc=3, 无 stdout
+    proc = _run_enum(
+        fake_repo, enum_body,
+        pairs=["2026-01-01"],
+        spine_rows=[("research.btst.regime", "2026-02-02", "2026-02-16")],
+    )
+    assert proc.returncode == 3
+    assert proc.stdout.strip() == ""
+    assert "absent from spine" in proc.stderr
+
+
+def test_real_pair_enumerator_fail_closed_on_decision_json_shapes(fake_repo: Path) -> None:
+    enum_body = _read_nightly_enum_body()
+
+    # decision_json 列缺失 (schema 漂移) → rc=3
+    proc = _run_enum(
+        fake_repo, enum_body,
+        pairs=["2026-01-01"],
+        spine_rows=[("research.btst.regime", "2026-01-01", "2026-01-15")],
+        with_column=False,
+    )
+    assert proc.returncode == 3
+    assert proc.stdout.strip() == ""
+
+    # decision_json 畸形 (不可解析) → rc=3
+    proc = _run_enum(
+        fake_repo, enum_body,
+        pairs=["2026-01-01"],
+        spine_rows=[("research.btst.regime", "2026-01-01", "2026-01-15")],
+        decision_json={"2026-01-01": "{not-json"},
+    )
+    assert proc.returncode == 3
+    assert proc.stdout.strip() == ""
+
+    # RUN 决策缺 target_entry_session (json 键漂移) → rc=3, 不冒充无入场
+    proc = _run_enum(
+        fake_repo, enum_body,
+        pairs=["2026-01-01"],
+        spine_rows=[("research.btst.regime", "2026-01-01", "2026-01-15")],
+        decision_json={"2026-01-01": json.dumps(
+            {"artifact_kind": "ShadowDecision", "decision_cycle_id": "c"})},
+    )
+    assert proc.returncode == 3
+    assert proc.stdout.strip() == ""
 
 
 def test_selftest_touches_no_lock_or_pid(fake_repo: Path) -> None:

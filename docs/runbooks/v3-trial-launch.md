@@ -110,6 +110,19 @@ uv run python scripts/v3_trial_session.py advance \
     through_session 在 dry-run 即拒（`advance_window_not_in_schedule`）；
     execute 只解析窗口内快照（driver 面同款整窗口预检——任一会话缺失
     时零 bar 发布）。
+    ⚠ **窗口形状（R223 Op1 单窗 = deepest advanceable）**：两条硬约束的
+    合取——R216 覆盖门要求窗口起点 ≤ 全 trial 一切已决策入场会话
+    （`advance_entry_window_skipped`：入场结算无 catch-up 语义，起点越过
+    任何已决策入场即 fail-closed 拒绝）；CLI 冻结切片限定每窗 reach =
+    信号+10。故可 advance 窗口恰为 **S ≤ min_entry**（最早入场会话，冻结
+    于首个 RUN pair+1），per-pair 逐窗推进在首个入场后结构性被拒
+    （2026-09-14 实录：此后每夜逐对 rc=2 确定性累积）。夜间链（R223 起）
+    每夜恰一次 advance：`--signal-session <S*> --through-session
+    <min(A_S*, 最新 bar)>`，S* = deepest pair ≤ min_entry（无任何入场时 =
+    最新 pair）。人工补驱动用同一形状。RUN pair 超出 S* 可达视野（S*+10）
+    的出场义务 = runner 层缺口（flat-start 放宽候选，独立 operation 承载），
+    夜间链以 rc=0 `pending_exit_horizon_breach` 响亮披露——看到该行请勿
+    手工绕过窗口约束，等待 runner 层修复。
     ⚠ **不可用 `data/price_cache/` 作 bar-source**：它是 qfq 前复权且无
     `pre_close`（`src/tools/price.py`），限价围栏/资本标记口径全错——
     数据完整性红线（AGENTS.md）。
@@ -187,7 +200,10 @@ uv run python scripts/v3_trial_session.py finalize-missed \
   3. `v3_trial_session.py decide --signal-session <当日> --execute`
      （窗口 [当日 15:00 UTC, +24h] 内；R215 审计实证 15:00:01Z 夜跑即
      DEADLINE_MISSED——截止是 15:00:00Z，夜跑必须提前）
-  4. bar 源续传（`btst_court_fetch.py`）+ `advance --through-session <最新>`
-     （R215 审计实证：advance 窗口起点漂移会让更早的已决策行永久留在
-     「无任何台账生命周期痕迹」状态——advance 必须覆盖所有已决策会话的窗口）
+  4. bar 源续传（`btst_court_fetch.py`）+ 单窗 advance（R223 Op1）：夜间链
+     自动取 `--signal-session <S*> --through-session <min(A_S*, 最新 bar)>`
+     （S* = deepest pair ≤ min_entry，无入场时 = 最新 pair），每夜恰一次；
+     人工补驱动用同一形状（R215 审计实证：窗口起点漂移会让更早的已决策行
+     永久留在「无任何台账生命周期痕迹」状态；per-pair 逐窗形状在首个入场后
+     被 R216 覆盖门确定性拒绝——不要回退到逐对形状）
   5. 错过会话一律 `finalize-missed` 补 NO_RUN，绝不回头补 decide
