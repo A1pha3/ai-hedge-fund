@@ -1034,3 +1034,77 @@ def test_warn_signal_coverage_gap_truncation(tmp_path, caplog):
     assert text.rstrip().endswith("...")
     assert "20260801" not in text  # 只显最后 10 个
     assert "20260803" in text
+
+
+# ===========================================================================
+# R218 Op1 对抗收口 (R217 Op1 覆盖面真盲区钉)
+#
+# 变异探针定谳 (隔离 worktree 实跑, 17 探针 8 TEETH + 9 真盲区): 本节三钉
+# 对应 P03/P04/P06 — 各自变异在既有 364 测全绿下存活, 收口后当场红.
+# ===========================================================================
+
+
+def test_signal_coverage_snapshot_non_list_calendar_fail_open(tmp_path):
+    """日历 JSON 合法但非列表 (dict/标量) → None (fail-open 契约; P03 钉).
+
+    变异探针 P03: 摘除 isinstance(sessions, list) 守卫后 dict 日历的 keys
+    被当作 session 列表消费, 快照从 fail-open 变成静默错误视图."""
+    from src.screening.offensive.setup_output_log import signal_coverage_snapshot
+
+    for payload in ('{"20260901": "x"}', '42', '"20260901"', "null"):
+        cal = tmp_path / "cal.json"
+        cal.write_text(payload, encoding="utf-8")
+        assert (
+            signal_coverage_snapshot(
+                before="20260910", calendar_path=cal, log_dir=tmp_path
+            )
+            is None
+        ), payload
+
+
+def test_signal_coverage_snapshot_malformed_elements_filtered_not_crash(tmp_path):
+    """日历混入非字符串元素 → 过滤而非 TypeError (元素守卫; P04 钉).
+
+    变异探针 P04: 摘除 isinstance(s, str) 守卫后 int/None 元素与 before
+    直接比较 TypeError, advisory 读面变成崩溃面."""
+    from src.screening.offensive.setup_output_log import (
+        signal_coverage_snapshot,
+        warn_missing_signal_log_sessions,
+    )
+
+    cal = tmp_path / "cal.json"
+    cal.write_text(
+        json.dumps(["20260901", 123, None, "20260905"]), encoding="utf-8"
+    )
+    view = signal_coverage_snapshot(
+        before="20260910", calendar_path=cal, log_dir=tmp_path
+    )
+    assert view is not None
+    assert view.recent_sessions == 2  # 只有 str 元素进入审计窗
+    assert view.missing == ("20260901", "20260905")
+    gaps = warn_missing_signal_log_sessions(
+        before="20260910", calendar_path=cal, log_dir=tmp_path
+    )
+    assert gaps == ["20260901", "20260905"]
+
+
+def test_warn_signal_coverage_gap_exact_max_show_no_ellipsis(caplog):
+    """恰 max_show=10 缺失 → 无 ' ...' 截断标记 (边界; P06 钉).
+
+    变异探针 P06: > 改 >= 后恰 10 缺失的告警误加截断标记, 操作员误以为
+    还有更多缺失日未显示."""
+    import logging
+
+    from src.screening.offensive.setup_output_log import (
+        SignalCoverageView,
+        warn_signal_coverage_gap,
+    )
+
+    missing = tuple(f"202608{d:02d}" for d in range(1, 11))  # 恰 10 天
+    view = SignalCoverageView(recent_sessions=30, missing=missing)
+    with caplog.at_level(logging.WARNING):
+        warn_signal_coverage_gap(view)
+    text = caplog.records[-1].getMessage()
+    assert "最近 30 个交易日中 10 个" in text
+    assert "20260801" in text  # 恰 10 → 全显, 无截断
+    assert not text.rstrip().endswith("...")

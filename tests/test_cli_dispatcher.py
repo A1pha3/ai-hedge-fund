@@ -783,3 +783,188 @@ def test_daily_action_log_write_passes_plan_backed_tickers(tmp_path, monkeypatch
     # 空台账 → 守卫参数为空集 (键存在即可证接线)
     assert "plan_backed_tickers" in log_write.call_args.kwargs
     assert log_write.call_args.kwargs["plan_backed_tickers"] == set()
+
+
+# ===========================================================================
+# R218 Op1 对抗收口 (R217 Op1 覆盖面真盲区钉)
+#
+# 本节三钉对应 P14/P15/P16 — R217 Op1 的『两处 complete 调用点同传』在
+# 两个分支上都无 kwargs 断言 (探针摘除 kwarg 后 364 测全绿), 健康日告警
+# 静默也无断言 (探针摘除 .missing 门后全绿, 健康日会常驻噪声告警).
+# ===========================================================================
+
+
+def _r218_coverage_sentinel():
+    from src.screening.offensive.setup_output_log import SignalCoverageView
+
+    return SignalCoverageView(recent_sessions=30, missing=("20260804",))
+
+
+def test_daily_action_passes_coverage_to_complete_blocked_branch(tmp_path):
+    """阻断分支 complete_daily_action_v2 必须收到 signal_coverage kwarg
+    (P15 钉 — 两处同传的阻断侧从未被断言)."""
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from src.screening.offensive.daily_action import _CN_TZ
+
+    sentinel = _r218_coverage_sentinel()
+    with tempfile.TemporaryDirectory() as tmp:
+        with (
+            patch(
+                "src.screening.offensive.daily_action.resolve_daily_action_signal",
+                return_value=(date(2026, 7, 10), "normal"),
+            ),
+            patch(
+                "src.screening.offensive.daily_action._current_cn_datetime",
+                return_value=datetime(2026, 7, 10, 21, 0, tzinfo=_CN_TZ),
+            ),
+            patch(
+                "src.screening.offensive.setup_output_log.signal_coverage_snapshot",
+                return_value=sentinel,
+            ),
+            patch(
+                "src.screening.offensive.daily_action.complete_daily_action_v2"
+            ) as complete_mock,
+            patch(
+                "src.screening.offensive.daily_action.render_daily_action_v2",
+                return_value="正文",
+            ),
+            patch("builtins.print"),
+        ):
+            complete_mock.return_value = SimpleNamespace(
+                plans=(),
+                open_positions=(),
+                blocked_candidates=(),
+                capacity_skipped=(),
+                service_run=SimpleNamespace(
+                    block_reasons=(), capacity_skipped=()
+                ),
+            )
+            rc = dispatcher._resolve_daily_action(
+                ["--daily-action"],
+                open_sessions=(date(2026, 7, 10), date(2026, 7, 13)),
+                ledger_path=tmp_path / "v2.sqlite3",
+            )
+    assert rc == 13  # tmp 无就绪清单 → 数据护栏阻断 (与既有契约一致)
+    kwargs = complete_mock.call_args.kwargs
+    assert kwargs.get("signal_coverage") is sentinel
+
+
+def test_daily_action_passes_coverage_to_complete_normal_branch(tmp_path, monkeypatch):
+    """正常分支 complete_daily_action_v2 必须收到 signal_coverage kwarg
+    (P14 钉 — 两处同传的正常侧同样无断言, 探针摘除后全绿)."""
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from src.screening.offensive.daily_action import _CN_TZ
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "reports").mkdir()
+    signal_date = date(2026, 7, 13)
+    sentinel = _r218_coverage_sentinel()
+    run = SimpleNamespace(
+        plans=(),
+        blocked_candidates=(),
+        open_positions=(),
+        service_run=SimpleNamespace(
+            block_reasons=("drawdown_circuit_breaker",), capacity_skipped=()
+        ),
+    )
+    with (
+        patch(
+            "src.screening.consecutive_recommendation.resolve_report_dir",
+            return_value=tmp_path / "reports",
+        ),
+        patch(
+            "src.screening.offensive.daily_action.resolve_daily_action_signal",
+            return_value=(signal_date, "normal"),
+        ),
+        patch(
+            "src.screening.offensive.daily_action._current_cn_datetime",
+            return_value=datetime(2026, 7, 13, 21, 0, tzinfo=_CN_TZ),
+        ),
+        patch(
+            "src.screening.offensive.setup_output_log.signal_coverage_snapshot",
+            return_value=sentinel,
+        ),
+        patch(
+            "src.screening.offensive.daily_action_snapshot.load_verified_daily_action_snapshot",
+            return_value=SimpleNamespace(
+                snapshot=SimpleNamespace(
+                    regime="normal", signal_date=signal_date
+                ),
+                global_reason=None,
+            ),
+        ),
+        patch(
+            "src.screening.offensive.daily_action.scan_from_verified_snapshot",
+            return_value=SimpleNamespace(
+                signal_date=signal_date,
+                candidates=(),
+                blocked_candidates=(),
+                reference_prices=(),
+            ),
+        ),
+        patch(
+            "src.screening.offensive.daily_action.complete_daily_action_v2"
+        ) as complete_mock,
+        patch(
+            "src.screening.offensive.daily_action.render_daily_action_v2",
+            return_value="正文",
+        ),
+        patch("builtins.print"),
+    ):
+        complete_mock.return_value = run
+        rc = dispatcher._resolve_daily_action(
+            ["--daily-action"],
+            open_sessions=(
+                signal_date,
+                signal_date + timedelta(days=1),
+                signal_date + timedelta(days=7),
+            ),
+            ledger_path=tmp_path / "ledger.sqlite3",
+        )
+    assert rc == 14  # 回撤熔断 → 策略性停手 (与既有夹具契约一致)
+    kwargs = complete_mock.call_args.kwargs
+    assert kwargs.get("signal_coverage") is sentinel
+
+
+def test_daily_action_no_coverage_warn_on_healthy_day(tmp_path, caplog):
+    """健康日 (缺失 0) → warn_signal_coverage_gap 零调用 (P16 钉).
+
+    变异探针 P16: 摘除 .missing 门后健康日每次运行都发覆盖断层告警 —
+    常驻噪声让真断层告警失去信号价值."""
+    from datetime import datetime
+    from unittest.mock import Mock
+
+    from src.screening.offensive.daily_action import _CN_TZ
+    from src.screening.offensive.setup_output_log import SignalCoverageView
+
+    with tempfile.TemporaryDirectory() as tmp:
+        with (
+            patch(
+                "src.screening.offensive.daily_action.resolve_daily_action_signal",
+                return_value=(date(2026, 7, 10), "normal"),
+            ),
+            patch(
+                "src.screening.offensive.daily_action._current_cn_datetime",
+                return_value=datetime(2026, 7, 10, 21, 0, tzinfo=_CN_TZ),
+            ),
+            patch(
+                "src.screening.offensive.setup_output_log.signal_coverage_snapshot",
+                return_value=SignalCoverageView(recent_sessions=30, missing=()),
+            ),
+            patch(
+                "src.screening.offensive.setup_output_log.warn_signal_coverage_gap"
+            ) as warn_mock,
+            patch("builtins.print"),
+        ):
+            rc = dispatcher._resolve_daily_action(
+                ["--daily-action"],
+                open_sessions=(date(2026, 7, 10), date(2026, 7, 13)),
+                ledger_path=tmp_path / "v2.sqlite3",
+            )
+    assert rc == 13
+    warn_mock.assert_not_called()
+    assert not any("信号覆盖断层" in r.message for r in caplog.records)

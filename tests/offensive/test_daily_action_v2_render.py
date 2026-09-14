@@ -5499,3 +5499,106 @@ class TestSignalCoverageRenderRow:
         from src.screening.offensive.daily_action import _signal_coverage_clause
 
         assert _signal_coverage_clause(getattr(run, "signal_coverage", None)) is None
+
+
+# ===========================================================================
+# R218 Op1 对抗收口 (R217 Op1 覆盖面真盲区钉)
+#
+# 本节三钉对应 P10/P12/P13 — P13 定谳尤其关键: 前任『渲染联通』测试
+# (test_row_present_when_missing) 的 render 调用被 `if False else None`
+# 短路, 实渲染的是 None — 摘除 lines.append(coverage_clause) 后 364 测
+# 全绿, 渲染联通从未被执行. 本钉补上真实 render_daily_action_v2 断言.
+# ===========================================================================
+
+
+def test_signal_coverage_clause_all_missing_boundary_renders():
+    """missing==recent (全缺) → 仍渲染 (边界; P10 钉).
+
+    变异探针 P10: len(items) > recent 改 >= 后全缺形态整行被吞 — 恰是
+    最严重断跑形态 (审计窗内零覆盖) 的反向失明."""
+    from src.screening.offensive.daily_action import _signal_coverage_clause
+    from src.screening.offensive.setup_output_log import SignalCoverageView
+
+    view = SignalCoverageView(recent_sessions=2, missing=("20260804", "20260805"))
+    clause = _signal_coverage_clause(view)
+    assert clause is not None
+    assert "缺失 2 日" in clause
+
+
+def test_signal_coverage_clause_exact_ten_no_ellipsis():
+    """恰 10 缺失 → 无 ' ...' 截断标记 (边界; P12 钉).
+
+    变异探针 P12: > 改 >= 后恰 10 缺失的渲染行误加截断标记, 与告警行
+    语义漂移 (告警侧同款边界由 P06 钉独立看守)."""
+    from src.screening.offensive.daily_action import _signal_coverage_clause
+    from src.screening.offensive.setup_output_log import SignalCoverageView
+
+    missing = tuple(f"202608{d:02d}" for d in range(1, 11))  # 恰 10
+    clause = _signal_coverage_clause(SignalCoverageView(30, missing))
+    assert clause is not None
+    assert "20260801" in clause  # 恰 10 → 全显
+    assert not clause.endswith("...")
+
+
+class _R218Valuation:
+    """渲染级 pin 的台账替身 — 净值三参数最小真值."""
+
+    nav = 1_000_000
+    peak = 1_000_000
+    drawdown = 0.0
+    stale_tickers = ()
+
+
+class _R218ServiceRun:
+    """显式枚举 render_daily_action_v2 直接访问的 service_run 属性;
+    未列出的属性走 AttributeError → getattr 默认值语义 (fail-open)."""
+
+    from datetime import date as _date
+
+    trade_date = _date(2026, 9, 14)
+    block_reasons = ()
+    block_reason = None
+    exit_plans = ()
+    completed_exits = ()
+    new_plans = ()
+    skipped_plans = ()
+    deferred_exits = ()
+    blocked_tickers = ()
+    ticker_gate_blocks = ()
+    valuation = _R218Valuation()
+
+
+def _r218_render_run(signal_coverage):
+    from src.screening.offensive.daily_action import DailyActionV2Run
+
+    return DailyActionV2Run(
+        service_run=_R218ServiceRun(),
+        plans=(),
+        open_positions=(),
+        blocked_candidates=(),
+        reference_prices=(),
+        signal_coverage=signal_coverage,
+    )
+
+
+def test_signal_coverage_row_really_renders_in_full_view():
+    """覆盖行必须真正渲染进 render_daily_action_v2 全文 (P13 钉).
+
+    健康日 (coverage None) 零行同步钉死 — 报告面与既有输出逐字节一致
+    的承诺必须有渲染级证据, 不止 clause 级."""
+    from datetime import date as _date
+
+    from src.screening.offensive.daily_action import render_daily_action_v2
+    from src.screening.offensive.setup_output_log import SignalCoverageView
+
+    run = _r218_render_run(SignalCoverageView(30, ("20260804", "20260805")))
+    out = render_daily_action_v2(run, today=_date(2026, 9, 14))
+    rows = [ln for ln in out.splitlines() if "信号覆盖" in ln]
+    assert len(rows) == 1, out
+    assert "缺失 2 日" in rows[0]
+    assert "20260804" in rows[0] and "20260805" in rows[0]
+
+    healthy = render_daily_action_v2(
+        _r218_render_run(None), today=_date(2026, 9, 14)
+    )
+    assert "信号覆盖" not in healthy
