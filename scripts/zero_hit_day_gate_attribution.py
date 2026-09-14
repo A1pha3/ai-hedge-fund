@@ -541,8 +541,6 @@ def aligned_counterfactual_rows(
         ev.setdefault("_industry_day_pct", None)
         # R219 Op1: 旧形态事件缺列 → None (分层归 uncomputable, 不冒充)
         ev.setdefault("_counterfactual_strength", None)
-        # R219 Op1: 旧形态事件缺列 → None (分层归 uncomputable, 不冒充)
-        ev.setdefault("_counterfactual_strength", None)
     aligned = production_aligned(pd.DataFrame(blocked_evs))
     net_col = net_returns(list(aligned[f"gross_ret_t{PRIMARY_HORIZON}"]))
     return [
@@ -574,6 +572,40 @@ def aligned_counterfactual_rows(
             net_col,
         )
     ]
+
+
+def gate_excluded_mature_counts(
+    blocked_evs: list[dict[str, Any]],
+) -> dict[str, int]:
+    """regime 阻断行中『若不阻断会进入生产宇宙且有可计算 t10 反事实』的逐日计数。
+
+    R221 Op1 结构性排除披露: crisis/risk_off 日事件被 production_aligned →
+    candidate_universe 按构造排除 (gate_blocked != True), 逐日明细表的
+    『成熟 0』是结构而非未成熟 — 不披露则被误读为数据缺失。本读面只取
+    gate_blocked 行、在 gate_blocked 维度翻转为放行的镜像帧上重跑
+    production_aligned 单一实现 (零公式 fork), 以 _finite_net 同一成熟谓词
+    逐日计数; 仅披露计数, 不产出任何 E 聚合, 不改变生产对齐宇宙语义。
+    """
+    if not blocked_evs:
+        return {}
+    for ev in blocked_evs:
+        ev.setdefault(f"gross_ret_t{PRIMARY_HORIZON}", None)
+        ev.setdefault("industry_name", None)
+        ev.setdefault("_industry_day_pct", None)
+        ev.setdefault("_counterfactual_strength", None)
+    frame = pd.DataFrame(blocked_evs)
+    blocked_mask = frame["gate_blocked"] == True  # noqa: E712
+    if not blocked_mask.any():
+        return {}
+    mirrored = frame.loc[blocked_mask].copy()
+    mirrored["gate_blocked"] = False  # 披露投影: 仅翻 regime 维度
+    aligned = production_aligned(mirrored)
+    net_col = net_returns(list(aligned[f"gross_ret_t{PRIMARY_HORIZON}"]))
+    counts: dict[str, int] = {}
+    for day, net in zip(aligned["signal_date"].astype(str), net_col):
+        if _finite_net(net) is not None:
+            counts[day] = counts.get(day, 0) + 1
+    return counts
 
 
 def collect_zero_hit_day_attribution(
@@ -723,12 +755,6 @@ def collect_zero_hit_day_attribution(
                 ev["_counterfactual_strength"] = counterfactual_trigger_strength(
                     frame, s, symbol
                 )
-                # R219 Op1: 反事实强度 — 门挡集强度条件化 (R140 Op2 登记局限
-                # 收口): 与 detect 同一 ranker 单一实现, 无公式 fork;
-                # None = 不可计算 (如实), 绝不冒充 0.0。
-                ev["_counterfactual_strength"] = counterfactual_trigger_strength(
-                    frame, s, symbol
-                )
                 blocked_evs.append(ev)
                 day_blocked_n += 1
         dominant = dominant_blocked_family(stage_counts)
@@ -752,11 +778,16 @@ def collect_zero_hit_day_attribution(
     rows = aligned_counterfactual_rows(blocked_evs, regime)
     for r in rows:
         r["dominant_family"] = dominant_by_day.get(r["day"])
+    # R221 Op1: 结构性排除披露 — crisis/risk_off 日门挡行被生产对齐宇宙按
+    # 构造排除 (candidate_universe 排除 gate_blocked 行), 『成熟 0』是结构
+    # 而非未成熟; 逐日可计算反事实计数如实披露 (additive 键), 不聚合 E。
+    excluded_by_day = gate_excluded_mature_counts(blocked_evs)
     for d in day_records:
         d["mature_n"] = sum(1 for r in rows if r["day"] == d["day"])
         d["counterfactual_e"] = day_counterfactual_e(
             [r["net"] for r in rows if r["day"] == d["day"]]
         )
+        d["gate_excluded_mature_n"] = excluded_by_day.get(d["day"], 0)
 
     event_table = table_dir / str(manifest.get("artifact", "event_table_v1.parquet"))
     payload = {
@@ -889,32 +920,6 @@ def render_md(payload: Mapping[str, Any]) -> str:
         # R141 Op2: 日混杂 caveat — 热桶读数含市场日效应, 不是门槛机会成本
         lines.append("")
         lines.append(f"注: {caveat}")
-    lines.append("")
-    lines.append("## 门挡集反事实强度分层 (R219 Op1: 与 detect 同一 ranker 单一实现)")
-    lines.append("")
-    lines.append("| 强度桶 | 事件 n | 日 n | 反事实净 E | CI90 下界 |")
-    lines.append("|---|---|---|---|---|")
-    strength_cn = {
-        "strength_uncomputable": "不可计算",
-        "<0.50": "< 0.50 (不达生产阈值)",
-        "0.50-0.60": "0.50-0.60",
-        "0.60-0.70": "0.60-0.70",
-        ">=0.70": ">= 0.70",
-    }
-    for bucket in STRENGTH_BUCKETS:
-        cell = s["by_counterfactual_strength"][bucket]
-        e_str = f"{cell['e'] * 100:+.2f}%" if cell["e"] is not None else "—"
-        ci_str = (
-            f"{cell['ci90_low'] * 100:+.2f}%" if cell["ci90_low"] is not None else "—"
-        )
-        lines.append(
-            f"| {strength_cn[bucket]} | {cell['events']} | {cell['days']} | {e_str} | {ci_str} |"
-        )
-    lines.append("")
-    lines.append(
-        "注: >=0.50 桶 = 生产会买而被门挡的候选 (机会成本读数); <0.50 桶本就不达"
-        "生产可买阈值, 其反事实 E 是门的保护面证据; 不可计算桶如实单列不混入。"
-    )
     lines.append("")
     lines.append("## 门挡集反事实强度分层 (R219 Op1: 与 detect 同一 ranker 单一实现)")
     lines.append("")
@@ -1091,11 +1096,37 @@ def render_md(payload: Mapping[str, Any]) -> str:
             if d["counterfactual_e"] is not None
             else "—"
         )
+        # R221 Op1: 结构性排除披露 — crisis/risk_off 日『成熟 0』是生产宇宙
+        # 按构造排除 gate_blocked 行的结构而非未成熟; N>0 才渲染 (零噪声
+        # 家族), bool 毒化不冒充计数 (R147 纪律), normal 日行逐字节不变。
+        mature_cell = str(d["mature_n"])
+        excluded_n = d.get("gate_excluded_mature_n")
+        if (
+            d["mature_n"] == 0
+            and isinstance(excluded_n, int)
+            and not isinstance(excluded_n, bool)
+            and excluded_n > 0
+        ):
+            mature_cell = f"0 (排 {excluded_n})"
         lines.append(
             f"| {d['day']} | {d['regime']} | "
             f"{fam_cn.get(d['dominant_family'], d['dominant_family'])} | "
-            f"{d['candidates']} | {d['gate_blocked_n']} | {d['mature_n']} | {e_str} | "
+            f"{d['candidates']} | {d['gate_blocked_n']} | {mature_cell} | {e_str} | "
             f"{d['replay_hits']} |"
+        )
+    if any(
+        isinstance(d.get("gate_excluded_mature_n"), int)
+        and not isinstance(d.get("gate_excluded_mature_n"), bool)
+        and d.get("gate_excluded_mature_n") > 0
+        for d in payload["days"]
+    ):
+        lines.append("")
+        lines.append(
+            "注: 成熟列『0 (排 N)』= 该日 regime ∈ {crisis, risk_off} 的门挡行被生产对齐"
+            "宇宙结构性排除 (candidate_universe 按构造排除 gate_blocked 行), 与 T+10 未走完的"
+            "『未成熟』语义不同; N = 若 regime 门不阻断会进入生产宇宙且有可计算 t10 反事实"
+            "的行数 (镜像帧仅翻 gate_blocked 维度重跑 production_aligned 单一实现, 只计数"
+            "不聚合 E, 只披露不判定)。"
         )
     # R143 Op2 F2: 落账状态人读可见 (R115 threshold_record MD 告警行
     # 同款纪律) — 缺键/非 dict 零新增行, 旧 payload 渲染逐字节不变。

@@ -1749,3 +1749,179 @@ class TestCounterfactualStrengthBuckets:
         assert "门挡集反事实强度分层" in md
         assert "不达生产阈值" in md
         assert "机会成本读数" in md
+
+
+class TestGateExcludedMatureCounts:
+    """R221 Op1: 结构性排除披露读面 — crisis/risk_off 门挡行的可计算反事实计数。
+
+    candidate_universe 按构造排除 gate_blocked 行, 逐日明细表『成熟 0』是
+    结构而非未成熟; 本读面在 gate_blocked 维度翻转为放行的镜像帧上重跑
+    production_aligned 单一实现, 逐日计数可计算反事实行; 只计数不聚合 E。
+    """
+
+    def test_empty_input_empty_counts(self):
+        assert zga.gate_excluded_mature_counts([]) == {}
+
+    def test_crisis_blocked_mature_row_counted(self):
+        evs = [
+            _ev("000001.SZ", "20250702", gross_t10=0.10, gate_blocked=True),
+            _ev("000002.SZ", "20250702", gross_t10=-0.03, gate_blocked=True),
+        ]
+        assert zga.gate_excluded_mature_counts(evs) == {"20250702": 2}
+
+    def test_normal_rows_never_counted(self):
+        # normal 日事件不在排除面 (gate_blocked=False) → 空 dict
+        evs = [_ev("000001.SZ", "20250701", gross_t10=0.10)]
+        assert zga.gate_excluded_mature_counts(evs) == {}
+
+    def test_production_excluded_rows_not_counted(self):
+        # gate_blocked 但其余生产排除维度不过 → 不会进入镜像生产宇宙, 不计
+        evs = [
+            _ev("000001.SZ", "20250702", gross_t10=0.10, gate_blocked=True, st_name=True),
+            _ev("000002.SZ", "20250702", gross_t10=0.10, gate_blocked=True, degraded=True),
+            _ev("000004.SZ", "20250702", gross_t10=0.10, gate_blocked=True, price_ge_3=False),
+            _ev("000005.SZ", "20250702", gross_t10=0.10, gate_blocked=True, excluded_ticker=True),
+            _ev("000006.SZ", "20250702", gross_t10=0.10, gate_blocked=True, industry_missing=True),
+            _ev("000007.SZ", "20250702", gross_t10=0.10, gate_blocked=True, fillable=False),
+            _ev("000008.SZ", "20250702", gross_t10=None, gate_blocked=True),
+            # 恰一条全过 → 计 1
+            _ev("000009.SZ", "20250702", gross_t10=0.06, gate_blocked=True),
+        ]
+        assert zga.gate_excluded_mature_counts(evs) == {"20250702": 1}
+
+    def test_asymmetric_two_day_counts(self):
+        evs = [
+            _ev("000001.SZ", "20250702", gross_t10=0.10, gate_blocked=True),
+            _ev("000002.SZ", "20250702", gross_t10=-0.03, gate_blocked=True),
+            _ev("000004.SZ", "20250703", gross_t10=0.21, gate_blocked=True),
+        ]
+        assert zga.gate_excluded_mature_counts(evs) == {"20250702": 2, "20250703": 1}
+
+    def test_mixed_normal_and_crisis_days_count_only_blocked(self):
+        evs = [
+            _ev("000001.SZ", "20250701", gross_t10=0.10, gate_blocked=False),
+            _ev("000002.SZ", "20250702", gross_t10=0.05, gate_blocked=True),
+        ]
+        assert zga.gate_excluded_mature_counts(evs) == {"20250702": 1}
+
+    def test_deterministic_per_call(self):
+        evs = [_ev("000001.SZ", "20250702", gross_t10=0.10, gate_blocked=True)]
+        first = zga.gate_excluded_mature_counts(evs)
+        second = zga.gate_excluded_mature_counts(evs)
+        assert first == second == {"20250702": 1}
+
+    def test_nan_t10_not_counted(self):
+        evs = [_ev("000001.SZ", "20250702", gross_t10=float("nan"), gate_blocked=True)]
+        assert zga.gate_excluded_mature_counts(evs) == {}
+
+
+class TestRenderStructuralExclusion:
+    """R221 Op1: 日表『0 (排 N)』披露渲染契约。"""
+
+    def _payload(self) -> dict:
+        base = {
+            "generated_at": "20260907",
+            "primary_horizon": 10,
+            "gate_blocked_stages": sorted(zga.NEAR_MISS_STAGES),
+            "strength_conditioning": "强度条件化 (测试fixture)",
+            "attribution_caveat": "归因 caveat (测试fixture)",
+            "zero_hit_days_n": 2,
+            "replay_hit_days": [],
+            "court_binding": {
+                "window_start": "20250701",
+                "window_end": "20260904",
+                "rows": 1950,
+                "content_digest": "sha256:abc",
+            },
+            "days": [
+                {
+                    "day": "20250701",
+                    "regime": "normal",
+                    "dominant_family": "c3_industry",
+                    "candidates": 81,
+                    "gate_blocked_n": 3,
+                    "mature_n": 2,
+                    "counterfactual_e": -0.02,
+                    "replay_hits": 0,
+                },
+                {
+                    "day": "20250702",
+                    "regime": "crisis",
+                    "dominant_family": "c2_flow",
+                    "candidates": 48,
+                    "gate_blocked_n": 38,
+                    "mature_n": 0,
+                    "counterfactual_e": None,
+                    "replay_hits": 0,
+                    "gate_excluded_mature_n": 7,
+                },
+            ],
+            "summary": zga.summarize_gate_effectiveness(
+                [_row("20250701", "normal", "c3_industry", -0.01)]
+            ),
+        }
+        return base
+
+    def _day_rows(self, md: str) -> list[str]:
+        rows = []
+        in_table = False
+        for line in md.splitlines():
+            if line.startswith("| 信号日 |"):
+                in_table = True
+                continue
+            if in_table and line.startswith("|"):
+                if set(line.replace("|", "").replace("-", "").strip()) == set():
+                    continue  # 分隔行
+                rows.append(line)
+            elif in_table:
+                break
+        return rows
+
+    def test_crisis_exclusion_cell_rendered(self):
+        md = zga.render_md(self._payload())
+        assert "| 0 (排 7) |" in md
+        assert "结构性排除" in md  # 披露注在场
+        # normal 日行不受影响
+        assert any("20250701" in r and "| 2 |" in r for r in self._day_rows(md))
+
+    def test_normal_row_exact_legacy_format(self):
+        payload = self._payload()
+        payload["days"][0]["gate_excluded_mature_n"] = 3  # normal 日 N>0 也不改格式
+        md = zga.render_md(payload)
+        day_rows = self._day_rows(md)
+        assert day_rows[0] == (
+            "| 20250701 | normal | c3 行业/市场状态 | 81 | 3 | 2 | -2.00% | 0 |"
+        )
+
+    def test_crisis_zero_computable_stays_plain_zero(self):
+        payload = self._payload()
+        payload["days"][1]["gate_excluded_mature_n"] = 0
+        md = zga.render_md(payload)
+        day_rows = self._day_rows(md)
+        assert "| 0 (排" not in day_rows[1]
+        assert "| 0 |" in day_rows[1]
+        assert "结构性排除" not in md  # 无排除行 → 披露注零噪声省略
+
+    def test_missing_key_fail_open_zero_noise(self):
+        # 旧 payload (无 gate_excluded_mature_n 键) 渲染逐字节不变家族:
+        # 无 '(排' 单元格、无披露注
+        payload = self._payload()
+        del payload["days"][1]["gate_excluded_mature_n"]
+        md = zga.render_md(payload)
+        assert "(排" not in md
+        assert "结构性排除" not in md
+
+    def test_bool_poisoned_count_not_rendered(self):
+        # R147 家族: bool 毒化不冒充计数
+        payload = self._payload()
+        payload["days"][1]["gate_excluded_mature_n"] = True
+        md = zga.render_md(payload)
+        assert "(排" not in md
+        assert "结构性排除" not in md
+
+    def test_strength_strata_table_rendered_exactly_once(self):
+        # R221 Op1 A5 冒烟实锤: R219 Op1 编辑事故使 HEAD 渲染块重复 (探针
+        # HEAD render 输出表头 count==2), 宿主 00:54 报告系重复引入前生成
+        # 故未暴露 — 收口后恰渲染一次, 此钉防同族静默回归。
+        md = zga.render_md(self._payload())
+        assert md.count("## 门挡集反事实强度分层") == 1
