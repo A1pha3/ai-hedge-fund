@@ -370,3 +370,63 @@ def test_main_wires_dual_fingerprint_gate_ast_pin():
         isinstance(node, ast.Call) and getattr(node.func, "id", "") == "overwrite_allowed"
         for node in ast.walk(fn)
     ), "main() 不得绕过三态门直呼 overwrite_allowed"
+
+
+def test_main_wiring_surface_ast_pin():
+    # R230 Op2 探针运动补钉 (P10-P14 真盲区家族, 全部 RED-on-mutant 先证):
+    # AST 结构钉的已知致盲形态 — 恒假死分支 / 披露字段不并入 / 单键内联 /
+    # manifest 单指纹 — 逐项钉死 (R229 P15-P17 家族续)。
+    source = (Path(__file__).resolve().parents[1] / "scripts" / "ob_court_build.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source)
+    fn = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main"][0]
+    gate_call = [
+        node
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "evaluate_formula_change_gate"
+    ][0]
+    # P13: fingerprint_keys 必须引用 OB_FINGERPRINT_KEYS 单一来源 (内联元组
+    # 漂移成单键后 price_returns 漂移静默放行的旧缺口不可回归)
+    fk = [kw for kw in gate_call.keywords if kw.arg == "fingerprint_keys"][0]
+    assert isinstance(fk.value, ast.Name) and fk.value.id == "OB_FINGERPRINT_KEYS"
+    # P11: manifest 必须并入 **gate.manifest_fields (R229 P16 家族 — 门放行
+    # 的等价/force 披露不得在落盘 manifest 时被静默丢弃)
+    assert any(
+        isinstance(d, ast.Dict)
+        and any(
+            k is None and isinstance(v, ast.Attribute) and v.attr == "manifest_fields"
+            for k, v in zip(d.keys, d.values)
+        )
+        for d in ast.walk(fn)
+    ), "manifest 必须并入 **gate.manifest_fields"
+    # P14: manifest formula_fingerprint 必须写 new_fps 双指纹单一来源
+    # (只记 oversold 单键 = price_returns 组件失去下一轮门判定资格)
+    assert any(
+        isinstance(d, ast.Dict)
+        and any(
+            isinstance(k, ast.Constant)
+            and k.value == "formula_fingerprint"
+            and isinstance(v, ast.Name)
+            and v.id == "new_fps"
+            for k, v in zip(d.keys, d.values)
+        )
+        for d in ast.walk(fn)
+    ), "manifest formula_fingerprint 必须携带 new_fps 双指纹"
+    # P10: 恒假 If 是 AST 结构钉的致盲形态 (死分支保语法失语义) — main()
+    # 禁止任何可静态判定恒假的测试 (裸 False 与 False and X 两形态均被
+    # P10 探针实证致盲, 本钉判别力经两形态突变当场红证明)
+
+    def _is_dead_test(t):
+        if isinstance(t, ast.Constant) and t.value is False:
+            return True
+        return isinstance(t, ast.BoolOp) and isinstance(t.op, ast.And) and any(
+            isinstance(v, ast.Constant) and v.value is False for v in t.values
+        )
+
+    dead = [n for n in ast.walk(fn) if isinstance(n, ast.If) and _is_dead_test(n.test)]
+    assert not dead, "main() 不得含恒假死分支 (门拒绝路径必须活的)"
+    # P12: rebuild_count 递增锚 (R229 P17 词法钉先例) — 沿袭计数语义不可丢
+    assert 'rebuild_count = int(prior_manifest.get("rebuild_count", 0)) + 1' in source

@@ -543,3 +543,22 @@ def test_multi_key_unrecorded_prior_component_not_gate_falsely(tmp_path):
     )
     assert gate.allowed is True
     assert gate.manifest_fields == {}
+
+
+def test_multi_key_drift_keys_canonical_sorted_order(tmp_path):
+    # P02 探针翻转钉: drift_keys 披露必须 canonical sorted 序 —
+    # fingerprint_keys 传入序与 sorted 序分歧时 (双组件双漂移) 输出必须不变。
+    prior_fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "cc"}
+    new_fps = {"oversold_bounce_sha256": "bb", "price_returns_sha256": "dd"}
+    gate = evaluate_formula_change_gate(
+        _multi_manifest(prior_fps),
+        None,
+        new_fps,
+        _candidate(_prior_rows()),
+        force=True,
+        fingerprint_keys=("price_returns_sha256", "oversold_bounce_sha256"),
+    )
+    assert gate.allowed is True
+    drift_keys = gate.manifest_fields["formula_drift_keys"]
+    assert drift_keys == sorted(drift_keys)
+    assert drift_keys == ["oversold_bounce_sha256", "price_returns_sha256"]
