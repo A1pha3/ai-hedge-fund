@@ -3100,6 +3100,15 @@ def _render_evidence_freshness_line(
     目录内未来日期文件名, 异常文案照常出行 (异常显形职责不因守卫失效);
     其余报告缺失/纯损坏形态维持整行省略。证据消费面 (先验漂移行/强度桶
     行/gap 参考行) 由守卫 fail-closed 保护, 与本行显形面互补。
+
+    R231 Op1 (冻结断言与陈旧性解耦): status 文件只记「最后一次夜刷运行」;
+    夜刷外重建 (R229/R230 force 恢复先例) 会使报告/账本日期晚于失败
+    status, 旧文案在该形态渲染「陈旧 0 个交易日」与「恢复前证据冻结在
+    上述日期」同屏自相矛盾 (生产 20260916 实录)。修复后 tail 三态: 证据
+    实际陈旧 (报告 dist 达阈值或覆盖停滞) → 冻结文案逐字节不变; 证据
+    新鲜 + 夜刷失败 → 按 status 自报日期与报告日关系分「先于当前证据
+    （报告/账本已刷新）/仍新鲜」两文案, 恒带「无冻结读数」; diag-only
+    软尾不变。本行仍是纯披露 — 不进入任何计划/评分/仓位/退出决策路径。
     """
     try:
         from src.screening.offensive.gap_disclosure import latest_decomposition_report
@@ -3223,6 +3232,7 @@ def _render_evidence_freshness_line(
                 dist_text = f"陈旧 {days} 个自然日（交易日折算不可用）"
 
         refresh_clause = ""
+        status_day = None
         if status is not None and status.get("ok") is False:
             # R139 Op2 归因因果序: fetch.error → build.error → build.skipped —
             # fetch 失败时 build 必 skipped ('fetch_failed' 泛化标签), 旧序让
@@ -3277,12 +3287,35 @@ def _render_evidence_freshness_line(
                 if window_is_data_truth
                 else f"court 请求窗至 {window_end}"
             )
-        tail = (
-            " — 失败步骤的报告/账本停留在最后成功夜，其余判定面照常刷新；"
-            "仅披露不改变决策"
-            if diag_only
-            else " — 判定面夜刷可能中断，恢复前证据冻结在上述日期；仅披露不改变决策"
-        )
+        if refresh_clause and not (stale or window_stall_dist is not None):
+            # R231 Op1: 夜刷失败 × 证据新鲜 — 冻结断言必须与测得的陈旧性耦合。
+            # status 文件只记「最后一次夜刷运行」的结果; 夜刷外重建 (R229/R230
+            # force 恢复先例) 会把报告/账本刷到晚于失败夜, 旧文案在该形态下把
+            # 「陈旧 0 个交易日」读数与「恢复前证据冻结在上述日期」断言同屏
+            # 渲染 (生产 20260916 实录), 训练操作员忽略告警 (R229 护栏疲劳
+            # 同构)。status 自报日期早于报告日 (双方 8 位数字串才可比) →
+            # 诚实归因「先于当前证据」; 日期缺失/形状非法 → 不声称超越, 只说
+            # 「仍新鲜」。证据实际陈旧 (stale/停滞) 的冻结文案逐字节不变。
+            superseded = (
+                isinstance(status_day, str)
+                and len(status_day) == 8
+                and status_day.isdigit()
+                and report_day > status_day
+            )
+            tail = (
+                " — 夜刷失败先于当前证据（报告/账本已刷新），无冻结读数；"
+                "夜刷链恢复以下次成功运行为准；仅披露不改变决策"
+                if superseded
+                else " — 夜刷失败但报告/账本仍新鲜，无冻结读数；"
+                "夜刷链恢复以下次成功运行为准；仅披露不改变决策"
+            )
+        else:
+            tail = (
+                " — 失败步骤的报告/账本停留在最后成功夜，其余判定面照常刷新；"
+                "仅披露不改变决策"
+                if diag_only
+                else " — 判定面夜刷可能中断，恢复前证据冻结在上述日期；仅披露不改变决策"
+            )
         return (
             "证据新鲜度告警：" + " · ".join(parts) + refresh_clause + diag_clause + tail
         )

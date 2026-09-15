@@ -1184,6 +1184,123 @@ def test_freshness_line_tolerates_corrupt_status(tmp_path, monkeypatch):
     assert "昨夜 court 刷新失败" not in line
 
 
+# ---------- R231 Op1: 夜刷失败 × 证据新鲜 — 冻结断言与陈旧性解耦 ----------
+
+def _patch_fresh_freshness_env(tmp_path, monkeypatch, status_payload):
+    """报告/账本/覆盖全部新鲜 (report 20260828, as_of 0831, dist 1 < 2) +
+    注入指定 court_refresh_status (调用方自定 ok/date 形态)."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, date="20260828")
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260828", c1_lit=True, c2_lit=False, window_end="20260828"),
+    ]))
+    status_dir = tmp_path / "st"
+    status_dir.mkdir(parents=True, exist_ok=True)
+    (status_dir / "court_refresh_status.json").write_text(
+        json.dumps(status_payload, ensure_ascii=False), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        da, "_COURT_REFRESH_STATUS_PATH", status_dir / "court_refresh_status.json"
+    )
+    return _date(2026, 8, 31)
+
+
+def test_freshness_line_failed_status_superseded_by_fresh_evidence(tmp_path, monkeypatch):
+    """R231 Op1 (生产 20260916 实录形态): 夜刷失败 (status 20260827) 早于当前
+    报告 (20260828) — 报告/账本已被夜刷外构建刷新到晚于失败夜, 修复前行把
+    「陈旧 1 个交易日」读数与「恢复前证据冻结在上述日期」断言同屏渲染, 自相
+    矛盾; 修复后该形态改诚实「先于当前证据」文案, 冻结断言绝不出现."""
+    from src.screening.offensive import daily_action as da
+
+    today = _patch_fresh_freshness_env(
+        tmp_path, monkeypatch,
+        {"date": "20260827", "ok": False,
+         "fetch": {"rc": 1, "error": "exit rc=1: fetch boom"},
+         "build": {"skipped": "fetch_failed"}},
+    )
+    line = da._render_evidence_freshness_line(
+        today, calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "court 夜刷状态 失败" in line
+    assert "status 20260827" in line
+    assert "证据冻结在上述日期" not in line
+    assert "夜刷失败先于当前证据" in line
+    assert "无冻结读数" in line
+    assert "仅披露不改变决策" in line
+
+
+def test_freshness_line_failed_status_fresh_not_superseded_wording(tmp_path, monkeypatch):
+    """证据新鲜但 status 日期 (20260830) 晚于报告 (20260828) — 失败未被后续
+    证据超越, 不声称『先于当前证据』, 落「仍新鲜」态; 冻结断言同样不出现."""
+    from src.screening.offensive import daily_action as da
+
+    today = _patch_fresh_freshness_env(
+        tmp_path, monkeypatch,
+        {"date": "20260830", "ok": False,
+         "fetch": {"rc": 0, "error": None},
+         "build": {"rc": 1, "window_start": "20250701",
+                   "error": "exit rc=1: build boom"}},
+    )
+    line = da._render_evidence_freshness_line(
+        today, calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "court 夜刷状态 失败" in line
+    assert "证据冻结在上述日期" not in line
+    assert "夜刷失败先于当前证据" not in line
+    assert "夜刷失败但报告/账本仍新鲜" in line
+    assert "无冻结读数" in line
+
+
+def test_freshness_line_failed_status_without_date_fresh_wording(tmp_path, monkeypatch):
+    """status 无日期键 → 形状守卫拒绝超越声称, 落「仍新鲜」态; 刷新子句保持
+    R115b『日期未知』明语."""
+    from src.screening.offensive import daily_action as da
+
+    today = _patch_fresh_freshness_env(
+        tmp_path, monkeypatch,
+        {"ok": False,
+         "fetch": {"rc": 1, "error": "exit rc=1: fetch boom"},
+         "build": {"skipped": "fetch_failed"}},
+    )
+    line = da._render_evidence_freshness_line(
+        today, calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "status 日期未知" in line
+    assert "证据冻结在上述日期" not in line
+    assert "夜刷失败但报告/账本仍新鲜" in line
+
+
+def test_freshness_line_failed_status_keeps_freeze_text_when_stale(tmp_path, monkeypatch):
+    """证据实际陈旧 (dist 3 ≥ 2) + 夜刷失败 → 现行冻结文案逐字节保真 —
+    R231 只解耦『新鲜证据』形态, 真冻结告警强度不变 (回归钉)."""
+    from datetime import date as _date
+    from src.screening.offensive import daily_action as da
+
+    base = _write_decomposition_report(tmp_path, date="20260826")
+    _patch_drift_reports_dir(monkeypatch, base)
+    _patch_ledger(monkeypatch, _trigger_ledger(tmp_path, [
+        _trigger_rec("20260826", c1_lit=True, c2_lit=False, window_end="20260826"),
+    ]))
+    status_dir = tmp_path / "st"
+    _write_refresh_status(status_dir, ok=False, day="20260827")
+    monkeypatch.setattr(
+        da, "_COURT_REFRESH_STATUS_PATH", status_dir / "court_refresh_status.json"
+    )
+    line = da._render_evidence_freshness_line(
+        _date(2026, 8, 31), calendar_sessions=_freshness_sessions()
+    )
+    assert line is not None
+    assert "陈旧 3 个交易日" in line
+    assert "court 夜刷状态 失败" in line
+    assert "判定面夜刷可能中断，恢复前证据冻结在上述日期" in line
+
+
 # ---------- R139 Op1: 夜刷判定链诊断失败子句 ----------
 
 def _write_refresh_status_full(
