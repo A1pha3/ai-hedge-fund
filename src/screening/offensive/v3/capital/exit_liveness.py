@@ -248,11 +248,24 @@ def derive_exit_obligations(
     """
 
     def slice_for(entry_session: date) -> ScheduleSlice:
+        source = schedule_slice_for_entry
+        if (
+            source is None
+            or isinstance(source, (str, bytes))
+            or not (callable(source) or hasattr(source, "__getitem__"))
+        ):
+            raise _fail(
+                "exit_obligation_schedule_source_invalid",
+                "the injected schedule source is not a slice factory,"
+                " mapping, or callable; pass the official slice factory",
+                entry_settlement_session=entry_session.isoformat(),
+                source_type=type(source).__name__,
+            )
         try:
             slice_ = (
-                schedule_slice_for_entry[entry_session]
-                if hasattr(schedule_slice_for_entry, "__getitem__")
-                else schedule_slice_for_entry(entry_session)
+                source[entry_session]
+                if hasattr(source, "__getitem__")
+                else source(entry_session)
             )
         except KeyError as exc:
             raise _fail(

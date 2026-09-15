@@ -367,6 +367,19 @@ def test_missing_schedule_slice_is_typed(repository) -> None:
     assert excinfo.value.code == "exit_obligation_schedule_unavailable"
 
 
+def test_schedule_source_degenerate_shapes_fail_typed(repository) -> None:
+    """Adversarial close-out: None / scalars leak an untyped TypeError from
+    the source dispatch instead of the typed rejection the module promises."""
+
+    _seeded_repository(repository)
+    view = repository_exit_view(repository)
+    for degenerate in (None, 42, "not-a-source", b"bytes"):
+        with pytest.raises(ExitLivenessError) as excinfo:
+            derive_exit_obligations(view, degenerate)
+        assert excinfo.value.code == "exit_obligation_schedule_source_invalid"
+        assert excinfo.value.details["source_type"] == type(degenerate).__name__
+
+
 _UNSET = object()
 
 
@@ -445,6 +458,75 @@ def test_non_positive_quantity_fails_closed(repository) -> None:
     with pytest.raises(ExitLivenessError) as excinfo:
         derive_exit_obligations(_View(), official_slice_factory())
     assert excinfo.value.code == "exit_obligation_quantity_invalid"
+
+
+def test_real_view_opening_event_kind_is_enforced(repository) -> None:
+    """Adversarial close-out: the real quiet-read view must not mask the
+    opening event's kind. Hybrid world — the open row is synthetic (pointing
+    at a real non-fill event id) while the event lookup runs the real
+    repository query — must be typed-rejected, not silently accepted."""
+
+    _seeded_repository(repository)
+    with repository.engine.connect() as conn:
+        decoy_id = str(
+            conn.execute(
+                sa.text(
+                    "SELECT economic_event_id FROM economic_events"
+                    " WHERE event_kind = 'DIVIDEND_RECEIVABLE' LIMIT 1"
+                )
+            ).scalar_one()
+        )
+
+    real_view = repository_exit_view(repository)
+
+    class _HybridView:
+        def open_position_rows(self):
+            row = real_view.open_position_rows()[0]
+            return (
+                SimpleNamespace(
+                    position_lineage_id=row.position_lineage_id,
+                    economic_lot_id=row.economic_lot_id,
+                    security_id=row.security_id,
+                    state=row.state,
+                    settled_quantity_units=row.settled_quantity_units,
+                    opened_by_event_id=decoy_id,
+                ),
+            )
+
+        def opening_event_for(self, event_id):
+            return real_view.opening_event_for(event_id)
+
+    with pytest.raises(ExitLivenessError) as excinfo:
+        derive_exit_obligations(_HybridView(), official_slice_factory())
+    assert excinfo.value.code == "exit_obligation_opening_event_invalid"
+
+
+def test_non_open_rows_are_skipped_not_derived(repository) -> None:
+    """Adversarial close-out: the derivation's own state gate is defense in
+    depth behind the repository query — a CLOSED row that reaches the view
+    (hostile/future view implementation) must be skipped, never derived into
+    a bogus obligation."""
+
+    _seeded_repository(repository)
+    real_view = repository_exit_view(repository)
+    row = real_view.open_position_rows()[0]
+    stale_closed = SimpleNamespace(
+        position_lineage_id=row.position_lineage_id,
+        economic_lot_id=row.economic_lot_id,
+        security_id=row.security_id,
+        state="CLOSED",
+        settled_quantity_units=300,
+        opened_by_event_id=row.opened_by_event_id,
+    )
+
+    class _View:
+        def open_position_rows(self):
+            return (stale_closed,)
+
+        def opening_event_for(self, event_id):
+            return real_view.opening_event_for(event_id)
+
+    assert derive_exit_obligations(_View(), official_slice_factory()) == ()
 
 
 # -- A3: advisory cross-check against committed line identities ----------------
