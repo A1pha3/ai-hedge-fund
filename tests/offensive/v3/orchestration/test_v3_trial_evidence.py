@@ -87,7 +87,13 @@ def _make_arm_ledger(root: Path, arm: str, ratios: list[tuple[str, int | None, i
 
 
 def _make_governance(
-    root: Path, *, block_rule: str = "monthly", bootstrap_method: str = "wild"
+    root: Path,
+    *,
+    block_rule: str = "monthly",
+    bootstrap_method: str = "wild",
+    seed: int = 42,
+    confidence: str = "0.95",
+    repetitions: int = 10000,
 ) -> None:
     path = root / "governance.sqlite3"
     conn = sqlite3.connect(path)
@@ -111,10 +117,10 @@ def _make_governance(
         "sap_id": TRIAL_ID,
         "primary_metric": "PORTFOLIO_LOG_GROWTH",
         "execution_mode": "daily_bar_proxy",
-        "one_sided_confidence_level": "0.95",
         "bootstrap_method": bootstrap_method,
-        "repetitions": 10000,
-        "seed": 42,
+        "repetitions": repetitions,
+        "seed": seed,
+        "one_sided_confidence_level": confidence,
         "block_rule": block_rule,
     }
     conn.execute(
@@ -418,3 +424,139 @@ def test_frozen_evaluation_blocked_on_unregistered_wild_method(tmp_path) -> None
     frozen = payload["frozen_evaluation"]
     assert frozen["status"] == "blocked"
     assert frozen["code"] == "unregistered_method"
+
+
+# ---------------------------------------------------------------------------
+# R225 Op2 变异钉 (16 探针定谳的 6 个 SURVIVOR: P01/P07/P08/P09/P10/P11)
+# ---------------------------------------------------------------------------
+
+
+def _world_c(
+    tmp_path: Path,
+    *,
+    block_rule: str = "3",
+    bootstrap_method: str = "stationary",
+    seed: int = 7,
+    confidence: str = "0.95",
+    repetitions: int = 3000,
+) -> Path:
+    """12 会话跨月长梯: 非零 delta + seed 可判别 + 跨 9→10 月 (对抗钉)。"""
+    root = tmp_path / "trial-root-c"
+    root.mkdir(parents=True)
+    _make_governance(
+        root,
+        block_rule=block_rule,
+        bootstrap_method=bootstrap_method,
+        seed=seed,
+        confidence=confidence,
+        repetitions=repetitions,
+    )
+    _make_decisions(root, [
+        ("2026-09-17", "CHAMPION", _run_decision("2026-09-17", "600162.SH", "2026-10-05")),
+        ("2026-09-18", "CHAMPION", _run_decision("2026-09-18", "600162.SH", "2026-10-06")),
+        ("2026-09-17", "CHALLENGER", _run_decision("2026-09-17", "600162.SH", "2026-10-05")),
+        ("2026-09-18", "CHALLENGER", _run_decision("2026-09-18", "600162.SH", "2026-10-06")),
+    ])
+    _champ = [
+        (1, 1), (9983805, 10000000), (9996108, 10000000), (10023685, 10000000),
+        (10048739, 10000000), (10027874, 10000000), (10019590, 10000000),
+        (10002317, 10000000), (10009785, 10000000), (10034655, 10000000),
+        (10039112, 10000000), (10045061, 10000000),
+    ]
+    _chal = [
+        (1, 1), (9978706, 10000000), (9959708, 10000000), (9940270, 10000000),
+        (9938932, 10000000), (9968687, 10000000), (9954768, 10000000),
+        (9978000, 10000000), (10006016, 10000000), (10024907, 10000000),
+        (10020101, 10000000), (10011588, 10000000),
+    ]
+    _days = [
+        "2026-09-17", "2026-09-18", "2026-09-21", "2026-09-22", "2026-09-23",
+        "2026-09-24", "2026-09-25", "2026-09-28", "2026-09-29", "2026-09-30",
+        "2026-10-01", "2026-10-02",
+    ]
+    _make_arm_ledger(
+        root, "champion",
+        [(d, n, q) for d, (n, q) in zip(_days, _champ)],
+        [("lot-c-open", "600162.SH", "OPEN")],
+    )
+    _make_arm_ledger(
+        root, "challenger",
+        [(d, n, q) for d, (n, q) in zip(_days, _chal)],
+        [("lot-c-open2", "600162.SH", "OPEN")],
+    )
+    _make_bars(root, _days)
+    return root
+
+
+def test_frozen_bounds_match_single_implementation_crosscheck(tmp_path) -> None:
+    """P07/P08/P09 钉: 非零 delta 世界里 seed/confidence/mean 必须逐值跟随
+    SAP 冻结参数走 (工具值 == 直接调用冻结纯函数), 硬编码/漂移当场红。"""
+    from src.screening.offensive.v3.evidence.paired_statistics import (
+        block_bootstrap_lcb as direct_bootstrap,
+        paired_daily_log_growth,
+    )
+
+    root = _world_c(tmp_path)
+    payload = collect_evidence(root, TRIAL_ID)
+    frozen = payload["frozen_evaluation"]
+    points = build_paired_points(root)
+    deltas = paired_daily_log_growth(points)
+    assert any(d != 0.0 for d in deltas), "世界必须非零 delta (否则钉无牙)"
+    assert frozen["status"] == "ok"
+    assert frozen["mean_delta"] == sum(deltas) / len(deltas)
+    assert frozen["n_deltas"] == len(deltas) == 12
+    # 钉的判别力前置: 本世界的下界必须真的随 seed 变化 (否则钉是假牙)
+    assert direct_bootstrap(
+        deltas, method="stationary", block_length=3, repetitions=3000,
+        seed=7, confidence=0.95,
+    ) != direct_bootstrap(
+        deltas, method="stationary", block_length=3, repetitions=3000,
+        seed=42, confidence=0.95,
+    )
+    expected = direct_bootstrap(
+        deltas,
+        method="stationary",
+        block_length=3,
+        repetitions=3000,
+        seed=7,
+        confidence=0.95,
+    )
+    assert frozen["bootstrap_lcb"] == expected
+
+
+def test_months_spanned_disclosure_across_month_boundary(tmp_path) -> None:
+    """P10 钉: 月跨度披露必须真实计算, 跨 9→10 月世界恒 1 当场红。"""
+    root = _world_c(tmp_path)
+    payload = collect_evidence(root, TRIAL_ID)
+    assert payload["coverage"]["proxies"]["months_spanned_ladder"] == 2
+
+
+def test_noprior_only_date_excluded_from_ladder(tmp_path) -> None:
+    """P01 钉: 只有 NO_PRIOR 行 (无当日 FINITE) 的日期不得入梯 —
+    跳过守卫摘除后该日期进 reference 而 lookup 缺失, 未类型化 KeyError。"""
+    root = tmp_path / "trial-root-d"
+    root.mkdir(parents=True)
+    _make_governance(root, block_rule="2", bootstrap_method="stationary")
+    _make_decisions(root, [("2026-09-01", "CHAMPION", NO_TRADE)])
+    ratios = [
+        ("2026-08-31", None, None),
+        ("2026-09-01", 1, 1),
+        ("2026-09-02", 9990000, 10000000),
+        ("2026-09-03", 9980000, 9990000),
+        ("2026-09-04", 9990000, 9980000),
+    ]
+    _make_arm_ledger(root, "champion", ratios, [])
+    _make_arm_ledger(root, "challenger", ratios, [])
+    points = build_paired_points(root)
+    assert [p.session.isoformat() for p in points] == [
+        "2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04",
+    ]
+
+
+def test_pending_exit_first_declared_exit_wins(tmp_path) -> None:
+    """P11 钉: 多 pair 同票首次声明的评估日确定性胜出 (setdefault 语义),
+    漂移为 last-wins 当场红。"""
+    root = _world_c(tmp_path)
+    payload = collect_evidence(root, TRIAL_ID)
+    champion = payload["pending_exits"]["champion"]
+    assert champion["positions"][0]["target_exit_session"] == "2026-10-05"
