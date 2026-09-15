@@ -110,19 +110,26 @@ uv run python scripts/v3_trial_session.py advance \
     through_session 在 dry-run 即拒（`advance_window_not_in_schedule`）；
     execute 只解析窗口内快照（driver 面同款整窗口预检——任一会话缺失
     时零 bar 发布）。
-    ⚠ **窗口形状（R223 Op1 单窗 = deepest advanceable）**：两条硬约束的
-    合取——R216 覆盖门要求窗口起点 ≤ 全 trial 一切已决策入场会话
-    （`advance_entry_window_skipped`：入场结算无 catch-up 语义，起点越过
-    任何已决策入场即 fail-closed 拒绝）；CLI 冻结切片限定每窗 reach =
-    信号+10。故可 advance 窗口恰为 **S ≤ min_entry**（最早入场会话，冻结
-    于首个 RUN pair+1），per-pair 逐窗推进在首个入场后结构性被拒
-    （2026-09-14 实录：此后每夜逐对 rc=2 确定性累积）。夜间链（R223 起）
-    每夜恰一次 advance：`--signal-session <S*> --through-session
-    <min(A_S*, 最新 bar)>`，S* = deepest pair ≤ min_entry（无任何入场时 =
-    最新 pair）。人工补驱动用同一形状。RUN pair 超出 S* 可达视野（S*+10）
-    的出场义务 = runner 层缺口（flat-start 放宽候选，独立 operation 承载），
-    夜间链以 rc=0 `pending_exit_horizon_breach` 响亮披露——看到该行请勿
-    手工绕过窗口约束，等待 runner 层修复。
+    ⚠ **窗口形状（R223 Op1 单窗化 + R224 Op1 continuation 窗口）**：
+    两条硬约束的合取——R216 覆盖门（R224 放宽为**验证式**）+ CLI 冻结切片
+    （每窗 reach = 信号+10）。夜间链每夜恰一次 advance：
+    `--signal-session <S*> --through-session <min(A_S*, 最新 bar)>`。
+    - 最新 bar 在 deepest advanceable pair（S ≤ min_entry；无任何入场时 =
+      最新 pair）视野内 → S* = 该 pair（与 R223 语义一致）；
+    - 最新 bar 超出其视野（A_S* < 最新 bar）→ S* = earliest pair with
+      A ≥ 最新 bar（**continuation 窗口**，驱动后续 pair 的出场尾段）。
+    门语义（R224）：窗口起点之前的已决策入场行必须**可证明已终结**——
+    臂台账 fill 记录（position 行存在）或锁定判定表对已发布 bar-set 证据
+    重推导的可证 no-fill（limit-not-touched）——否则
+    `advance_entry_window_skipped` 恒拒（UNKNOWN/停牌/缺证据一律不可
+    证明，失败方向 = 欠推进）。驱动器从臂台账 open lots 种子窗口前持仓
+    （身份经 pair 记录交叉核对，不可解析即类型化拒绝），出场 ≥ 顺延语义
+    跨窗口延续；重驱动的重叠会话估值以**首次观测为准**（不回填历史）。
+    人工补驱动用同一形状。
+    最新 bar 超出**一切** pair 窗口 → 夜间链 rc=0
+    `pending_exit_horizon_breach` 响亮披露（rollover 尾段无驱动窗口；
+    R223 v1 的「P > S* 即搁浅」语义随门放宽废止）——看到该行请勿
+    手工绕过窗口约束，该披露意味着 trial 尾段只剩无法驱动的顺延义务。
     ⚠ **不可用 `data/price_cache/` 作 bar-source**：它是 qfq 前复权且无
     `pre_close`（`src/tools/price.py`），限价围栏/资本标记口径全错——
     数据完整性红线（AGENTS.md）。
@@ -200,10 +207,13 @@ uv run python scripts/v3_trial_session.py finalize-missed \
   3. `v3_trial_session.py decide --signal-session <当日> --execute`
      （窗口 [当日 15:00 UTC, +24h] 内；R215 审计实证 15:00:01Z 夜跑即
      DEADLINE_MISSED——截止是 15:00:00Z，夜跑必须提前）
-  4. bar 源续传（`btst_court_fetch.py`）+ 单窗 advance（R223 Op1）：夜间链
-     自动取 `--signal-session <S*> --through-session <min(A_S*, 最新 bar)>`
-     （S* = deepest pair ≤ min_entry，无入场时 = 最新 pair），每夜恰一次；
-     人工补驱动用同一形状（R215 审计实证：窗口起点漂移会让更早的已决策行
-     永久留在「无任何台账生命周期痕迹」状态；per-pair 逐窗形状在首个入场后
-     被 R216 覆盖门确定性拒绝——不要回退到逐对形状）
+  4. bar 源续传（`btst_court_fetch.py`）+ 单窗 advance（R223 单窗化 +
+     R224 continuation 窗口）：夜间链自动取
+     `--signal-session <S*> --through-session <min(A_S*, 最新 bar)>`
+     （S* = frontier-owning pair：bar 在 deepest advanceable pair 视野内
+     → 该 pair；超出 → earliest covering pair 的 continuation 窗口），
+     每夜恰一次；人工补驱动用同一形状（R215 审计实证：窗口起点漂移会让
+     更早的已决策行永久留在「无任何台账生命周期痕迹」状态；R224 起该缺口
+     由验证式门 + 种子持仓收口——不可证明已终结的入场行仍恒拒，不要回退
+     到逐对形状）
   5. 错过会话一律 `finalize-missed` 补 NO_RUN，绝不回头补 decide

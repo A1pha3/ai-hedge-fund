@@ -22,16 +22,16 @@
 #                 trading_day_no_manifest (烧会话不可再静默假绿); 周末/假日
 #                 维持静默; 日历过期/不可读响亮 calendar_stale/calendar_unresolved。
 #   4. advance  — 执行窗口单窗推进 (v3_trial_session.py advance --execute;
-#                 R223 Op1): 每夜恰一次, 信号会话 = 枚举器选出的 deepest
-#                 advanceable pair (S <= min_entry, 无入场时 = 最新 pair),
-#                 through = min(该 pair spine 评估日, bar 源最新会话)。
-#                 R216 覆盖门 x CLI 冻结切片的合取下, per-pair 逐窗对
-#                 S > min_entry 结构性被拒 (20260914 实录 3× rc=2 逐夜
-#                 累积 = 纯浪费); RUN pair 超出 S* 可达视野的出场义务以
-#                 rc=0 pending_exit_horizon_breach 响亮披露 (runner 层
-#                 缺口, 独立 operation 承载)。枚举面 fail-closed: 决策库/
-#                 spine/decision_json 分歧 → 阶段失败; 冷读只见已
-#                 checkpoint 主文件: crash 残留 WAL 的 pair 本夜不可见 →
+#                 R223 Op1 单窗化, R224 Op1 continuation): 每夜恰一次,
+#                 信号会话 = 枚举器选出的 frontier-owning pair (最新 bar
+#                 在 deepest advanceable pair 视野内 → 该 pair; 超出 →
+#                 earliest covering pair 的 continuation 窗口, R224 门放
+#                 宽为验证式后驱动出场尾段), through = min(评估日, 最新
+#                 bar)。最新 bar 超出一切 pair 窗口 → rc=0
+#                 pending_exit_horizon_breach 响亮披露 (rollover 尾段无
+#                 驱动窗口)。枚举面 fail-closed: 决策库/spine/
+#                 decision_json 分歧 → 阶段失败; 冷读只见已 checkpoint
+#                 主文件: crash 残留 WAL 的 pair 本夜不可见 →
 #                 skipped_no_pairs, 次夜追平 (失败方向=欠推进)。
 #   5. finalize — 错过会话 NO_RUN 补记 (v3_trial_session.py finalize-missed --execute)
 #
@@ -71,11 +71,19 @@ TODAY_COMPACT="${V3N_TODAY:-$(date +%Y%m%d)}"
 TODAY_DASH="${TODAY_COMPACT:0:4}-${TODAY_COMPACT:4:2}-${TODAY_COMPACT:6:2}"
 
 # advance 窗口枚举器 (immutable 冷读, 零写入; R35/R37 冷读纪律; R223 Op1
-# entry-aware 单窗契约): 输出恰两形态行 —
-#   "ADVANCE <S*> <A_S*>"   S* = deepest pair <= min_entry (无任何入场时 =
-#                           最新 pair), A_S* = 其 spine 评估日 (切片末端);
-#   ["BREACH <P,...>"]      存在 P > S* 的 RUN pair 时如实列出 (其出场义务
-#                           超出可达视野 = runner 层缺口, 上层 rc=0 响亮披露)。
+# entry-aware 单窗契约; R224 Op1 frontier-owning continuation 窗口): 输出
+# 恰两形态行 —
+#   "ADVANCE <S*> <A_S*>"   S* = 被选 advance 窗口的信号会话, A_S* = 其
+#                           spine 评估日 (切片末端)。选择: 最新 bar F 在
+#                           deepest advanceable pair (S <= min_entry, 无任
+#                           何入场时 = 最新 pair) 视野内 → 该 pair (与 R223
+#                           逐字节兼容); F 超出其视野 → earliest pair with
+#                           assessment >= F (continuation 窗口, R224 门放
+#                           宽后合法驱动出场尾段);
+#   ["BREACH <P,...>"]      F 超出一切 pair 窗口时列出评估窗已耗尽的 RUN
+#                           pair (rollover 尾段无驱动窗口, 上层 rc=0 响亮
+#                           披露; R223 的 v1 BREACH「P > S* 即搁浅」随门放
+#                           宽废止)。
 # decisions 库缺失/无表 = 尚无 pair (合法形态, 空输出);
 # fail-closed: 决策库与 spine 分歧 (pair 会话缺 T+10 注册 / spine 缺失) /
 # decision_json 列缺失 / json 畸形 / RUN 决策缺 target_entry_session →
@@ -87,6 +95,7 @@ import sys
 from pathlib import Path
 
 decisions_db, spine_db, program = sys.argv[1], sys.argv[2], sys.argv[3]
+latest_bar = sys.argv[4] if len(sys.argv) > 4 else ""
 if not Path(decisions_db).is_file():
     print("")
     raise SystemExit(0)
@@ -151,12 +160,13 @@ for session, decision_json in rows:
         print(f"decision artifact missing target_entry_session at {session}",
               file=sys.stderr)
         raise SystemExit(3)
-# R223 Op1: R216 覆盖门 (窗口起点 <= 一切已决策入场会话, 入场结算无 catch-up)
-# x CLI 冻结切片 (每窗 reach = 信号+10) 的合取下, 可 advance 窗口恰为
-# S <= min_entry (冻结于最早入场)。per-pair 逐窗对 S > min_entry 结构性被拒
-# (20260914 实录: 逐夜确定性 rc=2 纯浪费)。单窗取 deepest advanceable pair
-# 覆盖全部新到 bar 会话的驱动 (重放幂等); 无任何入场时全部窗口可 advance,
-# 取最新 pair (与无入场 trial 的现行行为兼容)。
+# R223 Op1: 单窗取 deepest advanceable pair (S <= min_entry, R216 门与 CLI
+# 冻结切片合取下的满覆盖窗), 无任何入场时取最新 pair (现行行为兼容)。
+# R224 Op1: 门放宽为验证式 (已终结入场行可越过) 后, 最新 bar F 超出该窗
+# 视野时取 earliest pair with assessment >= F —— continuation 窗口驱动
+# 出场尾段 (重叠会话按幂等键收敛, 窗口前开仓持仓由 runner 从臂台账种子);
+# F 超出一切 pair 窗口 = rollover 尾段无驱动窗口 → BREACH v2 披露 (评估
+# 窗已耗尽的 RUN pair; R223 v1 的「P > S* 即搁浅」语义随门放宽废止)。
 if entries:
     min_entry = min(e for _, e in entries)
     advanceable = [s for s in pairs if s <= min_entry]
@@ -166,10 +176,16 @@ if entries:
     star = advanceable[-1]
 else:
     star = pairs[-1]
+breach = []
+if latest_bar and assessments[star] < latest_bar:
+    covering = [
+        s for s in pairs if s < latest_bar and assessments[s] >= latest_bar
+    ]
+    if covering:
+        star = covering[0]
+    elif entries:
+        breach = sorted({s for s, _ in entries if assessments[s] < latest_bar})
 print(f"ADVANCE {star} {assessments[star]}")
-breach = sorted(
-    {s for s, _ in entries if s > star}
-)
 if breach:
     print("BREACH " + ",".join(breach))
 PYEOF
@@ -320,14 +336,14 @@ else
     fi
 fi
 
-# ---- 阶段 4: advance 执行窗口推进 (runbook 日度步 4; R223 Op1 单窗) ----
-# 每夜恰一次 advance: 信号会话 = 枚举器选出的 deepest advanceable pair (S*),
-# through = min(A_S*, bar 源最新会话)。约束链: R216 覆盖门要求窗口起点 <=
-# 一切已决策入场会话 (入场结算无 catch-up), CLI 冻结切片限定每窗 reach =
-# 信号+10 → 可 advance 窗口恰为 S <= min_entry; per-pair 逐窗对 S > min_entry
-# 结构性被拒 (20260914 实录 3× rc=2 逐夜累积 = 纯浪费)。RUN pair 超出 S* 可达
-# 视野的出场义务 = runner 层缺口, 以 rc=0 pending_exit_horizon_breach 响亮
-# 披露 (不计失败; 独立 operation 修复前的结构性事实)。
+# ---- 阶段 4: advance 执行窗口推进 (runbook 日度步 4; R223 单窗 + R224 continuation) ----
+# 每夜恰一次 advance: 信号会话 = 枚举器选出的 frontier-owning pair (S*),
+# through = min(A_S*, bar 源最新会话)。F (最新 bar) 在 deepest advanceable
+# pair (S <= min_entry) 视野内 → 该 pair (R223 语义逐字节兼容); F 超出其
+# 视野 → earliest covering pair (assessment >= F) 的 continuation 窗口
+# (R224 门放宽为验证式: 窗口起点之前的入场行须可证明已终结 —— fill 记录
+# 或可证 no-fill —— 否则恒拒)。F 超出一切 pair 窗口 → rc=0
+# pending_exit_horizon_breach 披露 (rollover 尾段无驱动窗口, 不计失败)。
 # 枚举面 fail-closed: 决策库/spine 分歧、decision_json 形态漂移 → 阶段失败;
 # 冷读只见已 checkpoint 主文件: crash 残留 WAL 的 pair 本夜不可见 →
 # skipped_no_pairs, 次夜追平 (失败方向=欠推进)。
@@ -339,7 +355,8 @@ if [ -n "$LATEST_BAR" ]; then
     LATEST_BAR_DASH="${LATEST_BAR:0:4}-${LATEST_BAR:4:2}-${LATEST_BAR:6:2}"
 fi
 PAIR_ROWS="$("$ENUM_PY" -c "$PAIR_ENUM_PY" \
-    "$TRIAL_ROOT/decisions.sqlite3" "$TRIAL_ROOT/spine.sqlite3" "$RESEARCH_PROGRAM")"
+    "$TRIAL_ROOT/decisions.sqlite3" "$TRIAL_ROOT/spine.sqlite3" "$RESEARCH_PROGRAM" \
+    "$LATEST_BAR_DASH")"
 rc=$?
 if [ "$rc" -ne 0 ]; then
     echo "[$(date '+%F %T')] [v3-nightly] advance pair 枚举失败 rc=$rc (决策库/spine/decision_json 分歧, fail-closed)"
@@ -395,7 +412,7 @@ else
             fi
         fi
         if [ -n "$BREACH_ROW" ]; then
-            echo "[$(date '+%F %T')] [v3-nightly] 警告: RUN pair 超出可达视野 (出场义务需 runner 层 flat-start 放宽, 独立 operation 承载): $BREACH_ROW"
+            echo "[$(date '+%F %T')] [v3-nightly] 警告: 最新 bar 超出一切 pair 窗口 (rollover 尾段无驱动窗口; 若仍有持仓其出场义务无法继续驱动, 以披露结案): $BREACH_ROW"
             record "advance" 0 "pending_exit_horizon_breach:$BREACH_ROW"
         fi
     fi

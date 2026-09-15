@@ -18,7 +18,7 @@ authority, not an activation of anything.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
@@ -105,6 +105,7 @@ class SessionLifecycleDriver:
         command_at: Callable[[date], datetime],
         send_deadline: Callable[[date], datetime],
         bar_for: Callable[[date, str], "DailyBar | None"],
+        initial_holdings: Mapping[str, OpenLine] | None = None,
     ) -> None:
         if not sessions:
             # R216: 单会话窗口 (signal==through 的自然日度调用形态) 合法 —
@@ -121,11 +122,29 @@ class SessionLifecycleDriver:
         self._command_at = command_at
         self._send_deadline = send_deadline
         self._bar_for = bar_for
+        # R224 continuation 窗口: 窗口起点前已开仓的持仓由 runner 从臂台账
+        # open lots 种子传入 (身份经 pair 记录确定性重推导) — 没有种子, 窗口
+        # 对窗口前持仓结构性失明 (marks/出场义务全丢), 这是 R216 覆盖门
+        # 严格性的机制根源。种子持仓的出场同样走 ① 的 >= 顺延语义。
+        self._initial_holdings = dict(initial_holdings or {})
+        # R224: 窗口起步的「上次已知收盘」取自臂台账最新 as-observed 估值
+        # (而非窗口局部记忆) —— 种子持仓的停牌顺延语义因此跨窗口成立, 重驱
+        # 动会话的估值跳过 (首次观测为准) 也不再丢失顺延锚点。
         self._last_close: dict[str, int] = {}
+        latest_valuation = ArmLedgerQuietReads(repository).latest_valuation_event()
+        if latest_valuation is not None:
+            _event_id, marks = latest_valuation
+            self._last_close = {
+                security_id: micros // 10_000
+                for security_id, micros in marks.items()
+            }
 
     def run(self) -> SessionDriverResult:
         result = SessionDriverResult()
-        holdings: dict[str, _Holding] = {}
+        holdings: dict[str, _Holding] = {
+            security: _Holding(line=line, entry_session_index=-1)
+            for security, line in self._initial_holdings.items()
+        }
         index_of = {s: i for i, s in enumerate(self._sessions)}
         result.held_by_session = {}  # 驱动器自记: 每会话结算后的持仓集 (marks 过滤事实源)
         for session in self._sessions:
@@ -184,37 +203,99 @@ class SessionLifecycleDriver:
             result.held_by_session[session] = frozenset(holdings)
             # ③ 每会话收盘估值: mark-only VALUATION 事件 + AS_OBSERVED NAV
             # (close_valuation 权威原语; marks=当期持仓集的收盘价, 与 bars 同源
-            # — marks/NAV 驱动属主审查 2026-08-20 的裁决落地)
-            marks = []
-            for security in sorted(holdings):
-                bar = self._bar_for(session, security)
-                if bar is not None and not bar.suspended:
-                    self._last_close[security] = bar.close_cents
-                # 停牌日顺延上次已知收盘 (持仓不可交易, NAV 用最后可观测价);
-                # 从未见过 bar 的持仓不可能存在 (入场成交必先有 bar).
-                last = self._last_close.get(security)
-                if last is None:
-                    raise SessionDriverError(
-                        "held_security_never_marked",
-                        f"{security} held at {session} with no observable close ever",
+            # — marks/NAV 驱动属主审查 2026-08-20 的裁决落地)。R224: 首次
+            # 观测为准 —— re-driven 会话已记录估值即跳过 (跨窗口重驱动的持仓
+            # 集可能与首驱动不同: 跨窗口边界的 lot 已在别处平仓/开仓; 用当下
+            # 持仓重写历史估值 = 回填伪造, 冲突拒收 = 每夜确定性崩溃; 台账
+            # 自身的 empty-marks 重放同一 PIT 原则, 本处推广到非空 marks)。
+            valuation_key = f"{self._arm}:valuation:{session:%Y%m%d}"
+            if not valuation_already_recorded(
+                ArmLedgerQuietReads(self._repository), valuation_key
+            ):
+                marks = []
+                for security in sorted(holdings):
+                    bar = self._bar_for(session, security)
+                    if bar is not None and not bar.suspended:
+                        self._last_close[security] = bar.close_cents
+                    # 停牌日顺延上次已知收盘 (持仓不可交易, NAV 用最后可观测价);
+                    # 从未见过 bar 的持仓不可能存在 (入场成交必先有 bar).
+                    last = self._last_close.get(security)
+                    if last is None:
+                        raise SessionDriverError(
+                            "held_security_never_marked",
+                            f"{security} held at {session} with no observable close ever",
+                        )
+                    marks.append(
+                        ValuationMarkInput(security_id=security, price_micros=last * 10_000)
                     )
-                marks.append(
-                    ValuationMarkInput(security_id=security, price_micros=last * 10_000)
+                self._repository.close_valuation(
+                    ValuationRequest(
+                        idempotency_key=valuation_key,
+                        source_authority="daily-bar-proxy.trial",
+                        effective_at=self._command_at(session),
+                        as_of=self._command_at(session),
+                        expected_stream_version=self._repository.stream_version(),
+                        marks=tuple(marks),
+                    )
                 )
-            self._repository.close_valuation(
-                ValuationRequest(
-                    idempotency_key=f"{self._arm}:valuation:{session:%Y%m%d}",
-                    source_authority="daily-bar-proxy.trial",
-                    effective_at=self._command_at(session),
-                    as_of=self._command_at(session),
-                    expected_stream_version=self._repository.stream_version(),
-                    marks=tuple(marks),
-                )
-            )
         result.open_at_end = {sec: h.line.decision_id for sec, h in holdings.items()}
         result.conservation_ok, details = self._repository.rebuild_projections()
         result.conservation_details = tuple(details)
         return result
+
+
+class ArmLedgerQuietReads:
+    """CapitalRepository 的 quiet 读视图 (R224).
+
+    open lots / position 行 / 最新 as-observed 估值 marks / 观察行存在性
+    等读面在 ``GatewayTransactionContext`` 上; 本视图按
+    ``capital_risk_snapshot`` 同款 quiet-read 惯例 (只读连接 + context)
+    暴露 continuation 窗口所需的四个读面, 不增长 stream/capital version。
+    """
+
+    def __init__(self, repository: CapitalRepository) -> None:
+        self._repository = repository
+
+    def _context(self, conn):
+        from src.screening.offensive.v3.capital.repository import (
+            GatewayTransactionContext,
+        )
+
+        return GatewayTransactionContext(self._repository, conn)
+
+    def position_row(self, position_lineage_id: str, economic_lot_id: str):
+        with self._repository.engine.connect() as conn:
+            return self._context(conn).position_row(position_lineage_id, economic_lot_id)
+
+    def open_position_rows(self) -> tuple:
+        with self._repository.engine.connect() as conn:
+            return self._context(conn).open_position_rows()
+
+    def latest_valuation_event(self):
+        with self._repository.engine.connect() as conn:
+            return self._context(conn).latest_valuation_event()
+
+    def observation_row_for_event(self, kind, event_id):
+        with self._repository.engine.connect() as conn:
+            return self._context(conn).observation_row_for_event(kind, event_id)
+
+
+def valuation_already_recorded(repository: CapitalRepository, valuation_key: str) -> bool:
+    """首次观测为准 (R224): 该估值幂等键的 AS_OBSERVED 观察行是否已在案.
+
+    re-driven 会话的持仓集可能与首驱动不同 (跨窗口边界的 lot 已在别处
+    平仓/开仓), 重算 marks 要么回填伪造历史、要么幂等冲突崩链; 已记录即
+    跳过 —— 与台账 empty-marks 重放路径同一 PIT 原则, 推广到非空 marks。
+    """
+    from src.screening.offensive.v3.capital.nav import ObservationKind
+    from src.screening.offensive.v3.storage.metadata import derive_event_id
+
+    return (
+        repository.observation_row_for_event(
+            ObservationKind.AS_OBSERVED, derive_event_id(valuation_key)
+        )
+        is not None
+    )
 
 
 #: T+10 无条件开盘卖出的限价表达: 卖出下限取 1 分 = 恒触及、按开盘价成交

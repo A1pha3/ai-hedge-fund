@@ -765,7 +765,7 @@ def test_command_time_mirror_pinned_to_paired_trial() -> None:
         == (int(runner_match.group(1)), int(runner_match.group(2)))
     ), "command-time mirror drifted between tool and paired_trial"
     deadline_tool = re.search(r"_SEND_DEADLINE_MINUTES = (\d+)", tool_src)
-    deadline_runner = re.search(r"_td\(minutes=(\d+)\)", runner_src)
+    deadline_runner = re.search(r"timedelta\(minutes=(\d+)\)", runner_src)
     assert deadline_tool and deadline_runner
     assert deadline_tool.group(1) == deadline_runner.group(1), (
         "send-deadline mirror drifted between tool and paired_trial"

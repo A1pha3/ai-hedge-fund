@@ -429,6 +429,121 @@ def _earliest_decided_entry_session(trial_root: Path, trial_id: str) -> date | N
     return min(entry_sessions) if entry_sessions else None
 
 
+def _position_row_exists(ledger_path: Path, lineage: str, lot: str) -> bool:
+    """臂台账 fill 事实冷读: 该 (lineage, lot) 的 position 行存在与否.
+
+    fill 是资本事实 (no-fill 不留资本痕迹), open 或 closed 行存在即证明
+    入场已 FILLED 终结。immutable=1 只读 (R35 冷读纪律): 活 writer 未
+    checkpoint 的 fill 冷读不可见 → 保守 unverified → 门拒绝 (失败方向 =
+    欠推进, 安全侧)。
+    """
+    import sqlite3
+
+    from scripts.v3_trial_operational_audit import TrialAuditError
+
+    if not ledger_path.is_file():
+        raise TrialAuditError("arm_ledger_missing", {"ledger": str(ledger_path)})
+    con = sqlite3.connect(f"file:{ledger_path}?mode=ro&immutable=1", uri=True)
+    try:
+        row = con.execute(
+            "SELECT 1 FROM positions"
+            " WHERE position_lineage_id = ? AND economic_lot_id = ? LIMIT 1",
+            (lineage, lot),
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        raise TrialAuditError(
+            "arm_ledger_unreadable", {"ledger": str(ledger_path), "error": str(exc)}
+        ) from exc
+    finally:
+        con.close()
+    return row is not None
+
+
+def _unverified_pre_window_entry_sessions(
+    *, trial_root: Path, trial_id: str, window_start: date
+) -> list[date]:
+    """窗口起点之前、结算不可证明终结的入场会话 (CLI 前置门验证面).
+
+    与 runner 权威门 (paired_trial._unverified_pre_window_entries) 同一
+    判定语义的两个冷读面: (a) fill 记录 → 臂台账 position 行存在;
+    (b) 可证 no-fill → 锁定判定表 ``resolve_open_execution`` 对已发布
+    bar-set 证据 (审计工具 blobs 冷读单一实现) 重推导 limit-not-touched,
+    命令时序与驱动器同源 (advance_command_at 单一实现)。其余一律
+    unverified。
+    """
+    from scripts.v3_trial_operational_audit import (
+        DECISION_SHAPE_SHADOW,
+        _entry_bars_for_sessions,
+        read_decisions,
+    )
+    from src.screening.offensive.v3.contracts.execution import ExecutionSide
+    from src.screening.offensive.v3.execution.lifecycle import (
+        REASON_LIMIT_NOT_TOUCHED,
+        OpenExecutionVerdict,
+        resolve_open_execution,
+    )
+    from src.screening.offensive.v3.orchestration.paired_trial import (
+        advance_command_at,
+        advance_send_deadline,
+    )
+
+    decisions = read_decisions(trial_root, trial_id)
+    pre_window = sorted(
+        {
+            date.fromisoformat(parsed.target_entry_session)
+            for parsed in decisions.values()
+            if parsed.shape == DECISION_SHAPE_SHADOW
+            and parsed.target_entry_session
+            and date.fromisoformat(parsed.target_entry_session) < window_start
+        }
+    )
+    if not pre_window:
+        return []
+    bars_by_session = _entry_bars_for_sessions(
+        trial_root, {session.isoformat() for session in pre_window}
+    )
+    unverified: list[date] = []
+    for session in pre_window:
+        bars = bars_by_session.get(session.isoformat())
+        session_verified = True
+        for (_, arm), parsed in sorted(decisions.items()):
+            if (
+                parsed.shape != DECISION_SHAPE_SHADOW
+                or parsed.target_entry_session != session.isoformat()
+            ):
+                continue
+            ledger = trial_root / "arms" / arm.lower() / "capital.sqlite3"
+            for line in parsed.lines:
+                if _position_row_exists(
+                    ledger,
+                    f"shadow:{line.shadow_line_id}",
+                    f"lot:{line.shadow_line_id}",
+                ):
+                    continue
+                bar = bars.get(line.security_id) if bars else None
+                if line.limit_price_cents is None:
+                    session_verified = False
+                    break
+                resolution = resolve_open_execution(
+                    side=ExecutionSide.ENTRY,
+                    limit_price_cents=line.limit_price_cents,
+                    bar=bar,
+                    command_at=advance_command_at(session),
+                    send_deadline=advance_send_deadline(session),
+                )
+                if not (
+                    resolution.verdict is OpenExecutionVerdict.NO_FILL
+                    and resolution.reason == REASON_LIMIT_NOT_TOUCHED
+                ):
+                    session_verified = False
+                    break
+            if not session_verified:
+                break
+        if not session_verified:
+            unverified.append(session)
+    return unverified
+
+
 def _cmd_advance(args: argparse.Namespace) -> int:
     identity_dir = Path(args.identity_dir)
     trial_root = Path(args.trial_root)
@@ -450,11 +565,14 @@ def _cmd_advance(args: argparse.Namespace) -> int:
         signal_session=signal_session,
         through_session=through_session,
     )
-    # R216 窗口覆盖预检 (dry-run 与 execute 共用, 栈构造之前零写): 入场
-    # 结算无追补语义, 窗口起点必须 <= 最早已决策入场会话 —— runner 权威门
-    # (advance_entry_window_skipped) 的 CLI 前置层, 让 dry-run 即报,
-    # execute 不再先发布 bar-set 再晚失败。决策面冷读 immutable=1,
-    # 解析单一实现复用运营审计工具。
+    # R216 窗口覆盖预检 (R224 放宽为验证式; dry-run 与 execute 共用, 栈
+    # 构造之前零写): 窗口起点之前的已决策入场行必须可证明已终结 —— 臂台账
+    # fill 记录 (position 行) 或锁定判定表对已发布 bar-set 证据重推导的
+    # 可证 no-fill —— 否则 runner 权威门 (advance_entry_window_skipped)
+    # 必然拒绝, CLI 前置层让 dry-run 即报, execute 不再先发布 bar-set 再晚
+    # 失败。决策/台账/bar 证据三面全部冷读 immutable=1 (R35/R50/R51 零写
+    # 痕纪律), 解析单一实现复用运营审计工具; 命令时序投影与 runner 驱动器
+    # 同源 (advance_command_at 单一实现)。
     from scripts.v3_trial_operational_audit import TrialAuditError
 
     try:
@@ -464,15 +582,31 @@ def _cmd_advance(args: argparse.Namespace) -> int:
         details.pop("code", None)
         return _fail(exc.code, str(exc), **details)
     if earliest_entry is not None and earliest_entry < window[0]:
-        return _fail(
-            "advance_entry_window_skipped",
-            "the advance window starts after a decided entry session;"
-            " entry settlements have no catch-up semantics — rerun with"
-            " --signal-session covering the earliest decided entry",
-            window_start=window[0].isoformat(),
-            earliest_entry_session=earliest_entry.isoformat(),
-            suggested_signal_session=earliest_entry.isoformat(),
-        )
+        try:
+            unverified = _unverified_pre_window_entry_sessions(
+                trial_root=trial_root,
+                trial_id=args.trial_id,
+                window_start=window[0],
+            )
+        except TrialAuditError as exc:
+            details = dict(exc.details)
+            details.pop("code", None)
+            return _fail(exc.code, str(exc), **details)
+        if unverified:
+            return _fail(
+                "advance_entry_window_skipped",
+                "the advance window starts after a decided entry session"
+                " whose settlement is not provably terminal (no capital fill"
+                " record and no provable no-fill under the locked decision"
+                " table) — rerun with --signal-session covering the"
+                " earliest unverified entry",
+                window_start=window[0].isoformat(),
+                earliest_entry_session=earliest_entry.isoformat(),
+                unverified_entry_sessions=[
+                    session.isoformat() for session in unverified
+                ],
+                suggested_signal_session=unverified[0].isoformat(),
+            )
     source = Path(args.bar_source)
     if not source.is_dir():
         return _fail("bar_source_missing", str(source))

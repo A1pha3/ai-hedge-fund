@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta, timezone
 
 from pydantic import model_validator
 
@@ -199,6 +199,162 @@ def committed_candidates(
         payload = producer.candidate_payload(record, expected_signal_session=expected_signal_session)
         committed.append(CommittedBtstCandidate(record=record, payload=payload))
     return tuple(committed)
+
+
+#: 15:00 国内收盘 = 07:00 UTC; 影子 proxy 的命令时刻由会话日确定性派生
+#: (排程显式化留 worker 接线迭代)。模块级单一实现: runner 驱动器与 CLI
+#: 前置门 (脚本层镜像) 必须用同一命令时序投影, settled 验证才与原结算同判。
+_ADVANCE_COMMAND_TIME_OF_DAY = time(7, 0)
+
+
+def advance_command_at(session: date) -> datetime:
+    return datetime.combine(session, _ADVANCE_COMMAND_TIME_OF_DAY, tzinfo=timezone.utc)
+
+
+def advance_send_deadline(session: date) -> datetime:
+    return advance_command_at(session) + timedelta(minutes=5)
+
+
+def _published_pre_window_bars_lookup(
+    bar_repository: object, session: date, *, cutoff: datetime
+) -> dict[str, object] | None:
+    """Published bar-set evidence for one pre-window session (gate face).
+
+    cutoff 钳在首个窗口会话的命令时刻: pre-window 入场会话的 bar-set 由
+    更早的 advance 发布 (严格早于本夜首个窗口会话), PIT 正确且重放确定性
+    (同 cutoff 同判)。未发布 = 不可证明 (None → 保守 unverified); 只吞
+    「cutoff 前未提交」这一缺席码, 其余证据错误 propagate (P2-1: 宽吞会
+    假装没看到坏记录)。
+    """
+    from src.screening.offensive.v3.evidence.market_bars import bars_from_record
+    from src.screening.offensive.v3.evidence.repository import EvidenceStoreError
+
+    try:
+        record = bar_repository.active_revision(  # type: ignore[attr-defined]
+            f"market:bars:{session:%Y%m%d}", cutoff
+        )
+    except EvidenceStoreError as exc:
+        if getattr(exc, "code", "") == "evidence_not_committed_before_cutoff":
+            return None
+        raise
+    return bars_from_record(bar_repository, record, expected_session=session)
+
+
+def _unverified_pre_window_entries(
+    entries_by_arm: dict,
+    pre_window_sessions: list[date],
+    arm_reads: dict,
+    *,
+    bar_lookup,
+) -> list[date]:
+    """Which pre-window entry sessions lack a provably terminal settlement.
+
+    一行已终结当且仅当 (a) 臂台账存在该 (lineage, lot) 的 fill 事实
+    (position 行, open 或 closed —— fill 是资本事实, no-fill 不留资本
+    痕迹), 或 (b) 锁定判定表 ``resolve_open_execution`` 对该会话已发布的
+    bar-set 证据重推导出 ``NO_FILL / limit_not_touched`` (任何命令时序下
+    都不成交, R220 Op1 核销语义)。其余 (UNKNOWN / 停牌 / 缺证据) 一律
+    unverified → 门 fail-closed。双臂逐行核验。
+    """
+    from src.screening.offensive.v3.execution.lifecycle import (
+        REASON_LIMIT_NOT_TOUCHED,
+        OpenExecutionVerdict,
+        resolve_open_execution,
+    )
+    from src.screening.offensive.v3.contracts.execution import ExecutionSide
+
+    unverified: set[date] = set()
+    bars_cache: dict[date, dict[str, object] | None] = {}
+    for arm, entries in entries_by_arm.items():
+        reads = arm_reads[arm]
+        for entry_session in pre_window_sessions:
+            for line in entries.get(entry_session, ()):
+                if (
+                    reads.position_row(
+                        line.position_lineage_id, line.economic_lot_id
+                    )
+                    is not None
+                ):
+                    continue  # FILLED: 资本 fill 事实在案
+                if entry_session not in bars_cache:
+                    bars_cache[entry_session] = bar_lookup(entry_session)
+                bars = bars_cache[entry_session]
+                bar = bars.get(line.security_id) if bars else None
+                resolution = resolve_open_execution(
+                    side=ExecutionSide.ENTRY,
+                    limit_price_cents=line.limit_price_cents,
+                    bar=bar,
+                    command_at=advance_command_at(entry_session),
+                    send_deadline=advance_send_deadline(entry_session),
+                )
+                if (
+                    resolution.verdict is OpenExecutionVerdict.NO_FILL
+                    and resolution.reason == REASON_LIMIT_NOT_TOUCHED
+                ):
+                    continue  # 可证 no-fill: 任何时序下都不成交
+                unverified.add(entry_session)
+    return sorted(unverified)
+
+
+def _seed_initial_holdings(repository, entries_by_arm: dict, *, window_start) -> dict:
+    """窗口起步持仓种子 (R224): 臂台账 open lots → 驱动器可见持仓.
+
+    窗口起步 ``holdings={}`` 是 R216 覆盖门严格性的机制根源 —— continuation
+    窗口必须携带窗口前开仓的持仓 (marks/出场义务), 身份经 pair 记录确定性
+    重推导并交叉核对 (lineage→line, lot/security/quantity 全对齐); 不可
+    解析即类型化拒绝 (fail-closed: 绝不静默丢弃持仓义务, 也绝不冒充身份)。
+    只携带窗口前入场的 lot: 入场会话在本窗口内的 open lot 由窗口内幂等
+    重结算处理 (同 execution_id 收敛), 种子携带反而 duplicate_holding 崩溃
+    (crash-resume 同窗口重放实录)。repository 是暴露 open_position_rows()
+    的读面 (CapitalRepository 或 ArmLedgerQuietReads 视图)。
+    """
+    lines_by_lineage = {
+        line.position_lineage_id: line
+        for lines in entries_by_arm.values()
+        for line in lines
+    }
+    pre_window_lines = {
+        line.position_lineage_id: line
+        for entry_session, lines in entries_by_arm.items()
+        if entry_session < window_start
+        for line in lines
+    }
+    seeded: dict[str, object] = {}
+    for row in repository.open_position_rows():
+        lineage = str(row.position_lineage_id)
+        line = pre_window_lines.get(lineage)
+        if line is None:
+            if lineage in lines_by_lineage:
+                continue  # 窗口内入场的 lot: 由窗口内重结算幂等处理
+            raise PairedTrialRunnerError(
+                "seed_lot_identity_unresolved",
+                "an open capital lot cannot be resolved to a committed pair"
+                " line; carrying it would invent identity, dropping it would"
+                " strand its exit obligation",
+                position_lineage_id=lineage,
+                economic_lot_id=str(row.economic_lot_id),
+            )
+        if (
+            line.economic_lot_id != str(row.economic_lot_id)
+            or line.security_id != str(row.security_id)
+            or line.quantity != int(row.settled_quantity_units or 0)
+        ):
+            raise PairedTrialRunnerError(
+                "seed_lot_identity_unresolved",
+                "an open capital lot does not match its committed pair line"
+                " (lot id / security / quantity divergence)",
+                position_lineage_id=lineage,
+                economic_lot_id=str(row.economic_lot_id),
+            )
+        if line.security_id in seeded:
+            raise PairedTrialRunnerError(
+                "seed_security_conflict",
+                "two open lots map to one security; the driver holds one"
+                " holding per security",
+                security_id=line.security_id,
+            )
+        seeded[line.security_id] = line
+    return seeded
 
 
 def classify_pair_session(
@@ -425,7 +581,6 @@ class ForwardPairedTrialRunner:
         强制; bar 源经 ``evidence_backed_bar_for`` (证据时间轴唯一入口)。
         """
         from collections.abc import Mapping as _Mapping
-        from datetime import time, timedelta as _td
 
         from src.screening.offensive.v3.contracts.trial import TrialArm
         from src.screening.offensive.v3.orchestration.arm_layout import (
@@ -435,6 +590,7 @@ class ForwardPairedTrialRunner:
             evidence_backed_bar_for,
         )
         from src.screening.offensive.v3.orchestration.session_driver import (
+            ArmLedgerQuietReads,
             SessionLifecycleDriver,
             open_line_from_shadow_line,
         )
@@ -507,15 +663,16 @@ class ForwardPairedTrialRunner:
                     entries_by_arm[arm][entry_session] + lines
                 )
 
-        # 窗口覆盖完备性门 (R216): 入场结算只发生在 entry_session 的精确
-        # 会话匹配上 (无出场那样的 >= 顺延语义), 且跨 run 持仓重建依赖覆盖
-        # 入场会话的全量重放 —— 窗口起点越过任何已决策入场会话都会让该行
-        # 永久失去结算机会且不留台账痕迹 (与合法 no-fill 不可区分, R215
-        # 审计 unmatched 双臂发现的根因族)。fail-closed: 拒绝而不是静默
-        # 跳过; 保守语义不区分该行是否已结算 (覆盖起点的重放幂等收敛,
-        # 零额外成本)。entry_session > through_session 不拦 (未来窗口的
-        # 合法结算)。
-        skipped_entry_sessions = sorted(
+        # 窗口覆盖完备性门 (R216, R224 放宽为验证式): 入场结算只发生在
+        # entry_session 的精确会话匹配上 (无出场那样的 >= 顺延语义), 且跨
+        # run 持仓重建依赖覆盖入场会话的全量重放 —— 窗口起点越过已决策入场
+        # 会话时, 该行的结算必须已被证明终结 (资本 fill 记录在案, 或锁定
+        # 判定表对已发布 bar-set 证据重推导出可证 no-fill), 否则窗口起点
+        # 之前的入场行会永久失去结算机会且不留台账痕迹 (与合法 no-fill 不可
+        # 区分, R215 审计 unmatched 双臂发现的根因族)。fail-closed: 不可
+        # 证明即拒绝 (UNKNOWN/缺 bar 证据/无 fill 记录一律不算已终结);
+        # entry_session > through_session 不拦 (未来窗口的合法结算)。
+        pre_window_sessions = sorted(
             {
                 entry_session
                 for entries in entries_by_arm.values()
@@ -523,41 +680,58 @@ class ForwardPairedTrialRunner:
                 if entry_session < sessions[0]
             }
         )
-        if skipped_entry_sessions:
-            lines_affected = sum(
-                len(entries[entry_session])
-                for entries in entries_by_arm.values()
-                for entry_session in skipped_entry_sessions
-                if entry_session in entries
+        arm_repositories: dict = {}
+        if pre_window_sessions:
+            arm_repositories = {
+                arm: open_arm_capital_repository(self._capital_trial_root, arm)
+                for arm in (TrialArm.CHAMPION, TrialArm.CHALLENGER)
+            }
+            unverified_entry_sessions = _unverified_pre_window_entries(
+                entries_by_arm,
+                pre_window_sessions,
+                {
+                    arm: ArmLedgerQuietReads(repository)
+                    for arm, repository in arm_repositories.items()
+                },
+                bar_lookup=lambda session: _published_pre_window_bars_lookup(
+                    self._bar_repository,
+                    session,
+                    cutoff=advance_command_at(sessions[0]),
+                ),
             )
-            raise PairedTrialRunnerError(
-                "advance_entry_window_skipped",
-                "the advance window starts after a decided entry session;"
-                " entry settlements have no catch-up semantics, so the"
-                " replay window must cover every decided entry session",
-                window_start=sessions[0].isoformat(),
-                skipped_entry_sessions=[
-                    s.isoformat() for s in skipped_entry_sessions
-                ],
-                earliest_entry_session=skipped_entry_sessions[0].isoformat(),
-                lines_affected=lines_affected,
-            )
-
-        def command_at(session: date) -> datetime:
-            # 15:00 国内收盘 = 07:00 UTC; 影子 proxy 的命令时刻由会话日
-            # 确定性派生 (排程显式化留 worker 接线迭代)。
-            return datetime.combine(session, time(7, 0), tzinfo=__import__(
-                "datetime"
-            ).timezone.utc)
-
-        def send_deadline(session: date) -> datetime:
-            return command_at(session) + _td(minutes=5)
+            if unverified_entry_sessions:
+                lines_affected = sum(
+                    len(entries[entry_session])
+                    for entries in entries_by_arm.values()
+                    for entry_session in unverified_entry_sessions
+                    if entry_session in entries
+                )
+                raise PairedTrialRunnerError(
+                    "advance_entry_window_skipped",
+                    "the advance window starts after a decided entry session"
+                    " whose settlement is not provably terminal (no capital"
+                    " fill record and no provable no-fill under the locked"
+                    " decision table); entry settlements have no catch-up"
+                    " semantics, so the replay window must cover every"
+                    " unverified entry session",
+                    window_start=sessions[0].isoformat(),
+                    unverified_entry_sessions=[
+                        s.isoformat() for s in unverified_entry_sessions
+                    ],
+                    earliest_entry_session=unverified_entry_sessions[0].isoformat(),
+                    lines_affected=lines_affected,
+                )
 
         bar_for = evidence_backed_bar_for(self._bar_repository, bar_records)
         receipts: dict = {}
         for arm in (TrialArm.CHAMPION, TrialArm.CHALLENGER):
-            repository = open_arm_capital_repository(
+            repository = arm_repositories.get(arm) or open_arm_capital_repository(
                 self._capital_trial_root, arm
+            )
+            initial_holdings = _seed_initial_holdings(
+                ArmLedgerQuietReads(repository),
+                entries_by_arm[arm],
+                window_start=sessions[0],
             )
             driver = SessionLifecycleDriver(
                 repository=repository,
@@ -566,9 +740,10 @@ class ForwardPairedTrialRunner:
                 sessions=sessions,
                 entries_by_session=entries_by_arm[arm],
                 attribution=self._trial_attribution,
-                command_at=command_at,
-                send_deadline=send_deadline,
+                command_at=advance_command_at,
+                send_deadline=advance_send_deadline,
                 bar_for=bar_for,
+                initial_holdings=initial_holdings,
             )
             result = driver.run()
             if not result.conservation_ok:

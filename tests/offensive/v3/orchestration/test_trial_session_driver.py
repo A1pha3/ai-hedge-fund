@@ -62,6 +62,9 @@ from src.screening.offensive.readiness_reference import ReferenceProvenance  # n
 from src.screening.offensive.v3.evidence.governance_identity import (  # noqa: E402
     load_governance_identity,
 )
+from src.screening.offensive.v3.orchestration.arm_layout import (  # noqa: E402
+    open_arm_capital_repository,
+)
 from src.screening.offensive.v3.orchestration.official_trial_stack import (  # noqa: E402
     build_official_trial_stack,
 )
@@ -995,7 +998,9 @@ class TestAdvanceWindowCoverage:
         assert ei.value.code == "advance_entry_window_skipped"
         assert ei.value.details["window_start"] == start.isoformat()
         assert ei.value.details["earliest_entry_session"] == entry_sessions[0].isoformat()
-        assert ei.value.details["skipped_entry_sessions"] == [
+        # R224: 入场从未结算 (无 fill 记录, 无 bar-set 证据可重推导) →
+        # unverified 恒拒 (fail-closed 语义保持, 键名如实更名)
+        assert ei.value.details["unverified_entry_sessions"] == [
             entry_sessions[0].isoformat()
         ]
         assert ei.value.details["lines_affected"] == line_count
@@ -1049,7 +1054,202 @@ class TestAdvanceWindowCoverage:
         assert payload["code"] == "advance_entry_window_skipped"
         assert payload["details"]["earliest_entry_session"] == entry_session.isoformat()
         assert payload["details"]["suggested_signal_session"] == entry_session.isoformat()
+        assert payload["details"]["unverified_entry_sessions"] == [
+            entry_session.isoformat()
+        ]
         assert _tree_digest(world.root) == before
+
+    def _committed_exit_line(self, world: _DriverWorld):
+        keys = world.stack.decision_store.pair_keys(TRIAL_ID)
+        champion_record, _challenger = world.stack.decision_store.pair(keys[0])
+        return champion_record.decision.counterfactual_lines[0]
+
+    def _event_count(self, world: _DriverWorld) -> int:
+        import sqlalchemy as sa
+
+        from src.screening.offensive.v3.contracts.trial import TrialArm
+
+        repository = open_arm_capital_repository(world.root, TrialArm.CHAMPION)
+        with repository.engine.connect() as conn:
+            return conn.execute(
+                sa.text("SELECT COUNT(*) FROM economic_events")
+            ).scalar_one()
+
+    def test_continuation_window_seeds_open_lot_drives_exit_and_replays_clean(
+        self, world: _DriverWorld
+    ) -> None:
+        """R224 核心 e2e: continuation 窗口越过已入场会话合法推进。
+
+        门经臂台账 fill 记录验证入场已终结 → 放行; 驱动器从 open lots 种子
+        携带持仓 → 出场在窗口内驱动; 同窗口重放与跨窗口重叠重驱动幂等收敛
+        (零新事件 —— 估值首次观测为准)。
+        """
+        from src.screening.offensive.v3.contracts.trial import TrialArm
+        from src.screening.offensive.v3.orchestration.session_driver import (
+            ArmLedgerQuietReads,
+        )
+
+        entry_sessions, securities, _line_count = self._commit_kernel_pair(world)
+        entry_session = entry_sessions[0]
+        # star 单会话窗口: 入场结算 (limit 触及 → fill, 资本事实在案)
+        world.driver.advance_sessions(
+            signal_session=entry_session,
+            through_session=entry_session,
+            bars_by_session=self._bars((entry_session,), securities),
+            now=LATER_AT,
+        )
+        line = self._committed_exit_line(world)
+        exit_session = line.target_exit_session
+        repository = open_arm_capital_repository(world.root, TrialArm.CHAMPION)
+        reads = ArmLedgerQuietReads(repository)
+        lot_row = reads.position_row(
+            f"shadow:{line.shadow_line_id}", f"lot:{line.shadow_line_id}"
+        )
+        assert lot_row is not None and lot_row.state == "OPEN"
+        events_after_star = self._event_count(world)
+
+        # continuation 窗口: 起点 > 入场会话, 覆盖出场会话; 信号会话须有
+        # 恰 10 后继会话的冻结切片 → 信号 = 出场 - 10 (出场恰为切片末端)
+        cont_signal = exit_session - timedelta(days=10)
+        window_sessions = tuple(
+            cont_signal + timedelta(days=offset)
+            for offset in range((exit_session - cont_signal).days + 1)
+        )
+        receipt = world.driver.advance_sessions(
+            signal_session=cont_signal,
+            through_session=exit_session,
+            bars_by_session=self._bars(window_sessions, securities),
+            now=LATER_AT,
+        )
+        assert all(receipt.conservation_ok_by_arm.values())
+        # 种子持仓的出场已被驱动: 双臂窗口末端零持仓
+        assert receipt.open_at_end_by_arm == {"CHAMPION": {}, "CHALLENGER": {}}
+        assert reads.open_position_rows() == ()
+
+        # 同窗口重放 + 跨窗口重叠重驱动 (更早窗口一侧): 幂等收敛零新事件
+        events_after_continuation = self._event_count(world)
+        world.driver.advance_sessions(
+            signal_session=cont_signal,
+            through_session=exit_session,
+            bars_by_session=self._bars(window_sessions, securities),
+            now=LATER_AT,
+        )
+        overlap_signal = cont_signal - timedelta(days=1)
+        overlap_sessions = (overlap_signal, cont_signal)
+        world.driver.advance_sessions(
+            signal_session=overlap_signal,
+            through_session=cont_signal,
+            bars_by_session=self._bars(overlap_sessions, securities),
+            now=LATER_AT,
+        )
+        assert self._event_count(world) == events_after_continuation
+        assert events_after_continuation > events_after_star
+
+    def test_continuation_window_allowed_when_entry_no_fill_verified(
+        self, world: _DriverWorld
+    ) -> None:
+        """入场 limit 未触及 (可证 no-fill, 无资本痕迹) → 门经已发布 bar-set
+        证据重推导放行 continuation 窗口 (R220 Op1 no_fill_verified 语义)。"""
+        from src.screening.offensive.v3.contracts.trial import TrialArm
+        from src.screening.offensive.v3.execution.lifecycle import DailyBar
+        from src.screening.offensive.v3.orchestration.session_driver import (
+            ArmLedgerQuietReads,
+        )
+
+        entry_sessions, securities, _line_count = self._commit_kernel_pair(world)
+        entry_session = entry_sessions[0]
+        low = 5000  # kernel 线 limit (~千分位) < low → 任何时序下不触及
+        bars = {
+            session: {
+                security_id: DailyBar(
+                    security_id=security_id,
+                    session=session,
+                    open_cents=low,
+                    high_cents=low + 100,
+                    low_cents=low,
+                    close_cents=low + 50,
+                    limit_up_cents=low + 200,
+                    limit_down_cents=low - 200,
+                )
+                for security_id in securities
+            }
+            for session in (entry_session,)
+        }
+        world.driver.advance_sessions(
+            signal_session=entry_session,
+            through_session=entry_session,
+            bars_by_session=bars,
+            now=LATER_AT,
+        )
+        repository = open_arm_capital_repository(world.root, TrialArm.CHAMPION)
+        assert ArmLedgerQuietReads(repository).open_position_rows() == ()  # 无 fill 事实
+        # continuation: 门从 bar 证据重推导 limit_not_touched → 放行
+        receipt = world.driver.advance_sessions(
+            signal_session=entry_session + timedelta(days=2),
+            through_session=entry_session + timedelta(days=3),
+            bars_by_session=self._bars(
+                (
+                    entry_session + timedelta(days=2),
+                    entry_session + timedelta(days=3),
+                ),
+                securities,
+            ),
+            now=LATER_AT,
+        )
+        assert all(receipt.conservation_ok_by_arm.values())
+
+    def test_continuation_window_rejected_when_entry_unverified(
+        self, world: _DriverWorld
+    ) -> None:
+        """入场会话停牌 (UNKNOWN, 无 fill 记录亦无可证 no-fill) → 恒拒。
+        不可证明的结算缺失绝不冒充已终结 (fail-closed 保持)。"""
+        from src.screening.offensive.v3.execution.lifecycle import DailyBar
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            PairedTrialRunnerError,
+        )
+
+        entry_sessions, securities, _line_count = self._commit_kernel_pair(world)
+        entry_session = entry_sessions[0]
+        bars = {
+            session: {
+                security_id: DailyBar(
+                    security_id=security_id,
+                    session=session,
+                    open_cents=1000,
+                    high_cents=1100,
+                    low_cents=900,
+                    close_cents=1050,
+                    limit_up_cents=1100,
+                    limit_down_cents=900,
+                    suspended=True,
+                )
+                for security_id in securities
+            }
+            for session in (entry_session,)
+        }
+        world.driver.advance_sessions(
+            signal_session=entry_session,
+            through_session=entry_session,
+            bars_by_session=bars,
+            now=LATER_AT,
+        )
+        digest_before = self._arm_ledger_digest(world)
+        start = entry_session + timedelta(days=2)
+        with pytest.raises(PairedTrialRunnerError) as ei:
+            world.driver.advance_sessions(
+                signal_session=start,
+                through_session=start + timedelta(days=1),
+                bars_by_session=self._bars(
+                    (start, start + timedelta(days=1)), securities
+                ),
+                now=LATER_AT,
+            )
+        assert ei.value.code == "advance_entry_window_skipped"
+        assert ei.value.details["unverified_entry_sessions"] == [
+            entry_session.isoformat()
+        ]
+        # 拒绝路径零资本突变
+        assert self._arm_ledger_digest(world) == digest_before
 
     @pytest.mark.parametrize(
         ("family", "expected_code"),
@@ -2925,3 +3125,152 @@ class TestFirstRunAdvanceLifecycle:
                 conn.close()
             facts[arm] = tuple(rows)
         return facts
+
+
+class TestSeedInitialHoldingsUnits:
+    """R224 种子持仓与估值守卫的纯单元面 (鸭子仓库直测, 不依赖官方栈).
+
+    第七轮先例: 防御分支不依赖上游信任层兜底, 用鸭子仓库直接钉死。
+    """
+
+    @staticmethod
+    def _line(shadow_id: str, security: str, quantity: int = 100):
+        from src.screening.offensive.v3.orchestration.session_driver import (
+            OpenLine,
+        )
+
+        return OpenLine(
+            decision_id=shadow_id,
+            security_id=security,
+            quantity=quantity,
+            limit_price_cents=1000,
+            exit_limit_price_cents=1,
+            exit_session=SIGNAL_SESSION,
+            position_lineage_id=f"shadow:{shadow_id}",
+            economic_lot_id=f"lot:{shadow_id}",
+        )
+
+    @staticmethod
+    def _lot_row(lineage: str, lot: str, security: str, quantity: int = 100):
+        class _Row:
+            pass
+
+        row = _Row()
+        row.position_lineage_id = lineage
+        row.economic_lot_id = lot
+        row.security_id = security
+        row.settled_quantity_units = quantity
+        return row
+
+    @staticmethod
+    def _duck_repo(rows):
+        class _Repo:
+            def open_position_rows(self):
+                return tuple(rows)
+
+        return _Repo()
+
+    def test_happy_path_maps_open_lot_to_committed_line(self) -> None:
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            _seed_initial_holdings,
+        )
+
+        line = self._line("sl-1", "600000.SH")
+        repo = self._duck_repo(
+            [self._lot_row(line.position_lineage_id, line.economic_lot_id, "600000.SH")]
+        )
+        seeded = _seed_initial_holdings(
+            repo,
+            {SIGNAL_SESSION: (line,)},
+            window_start=SIGNAL_SESSION + timedelta(days=1),
+        )
+        assert seeded == {"600000.SH": line}
+
+    def test_unresolvable_lineage_fails_closed(self) -> None:
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            PairedTrialRunnerError,
+            _seed_initial_holdings,
+        )
+
+        repo = self._duck_repo(
+            [self._lot_row("shadow:ghost", "lot:ghost", "600000.SH")]
+        )
+        with pytest.raises(PairedTrialRunnerError) as ei:
+            _seed_initial_holdings(
+                repo, {}, window_start=SIGNAL_SESSION + timedelta(days=1)
+            )
+        assert ei.value.code == "seed_lot_identity_unresolved"
+
+    def test_identity_mismatch_fails_closed(self) -> None:
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            PairedTrialRunnerError,
+            _seed_initial_holdings,
+        )
+
+        line = self._line("sl-1", "600000.SH")
+        # lot id 与 line 派生不一致 (身份冒充面) / security 错位 / 数量错位
+        for row in (
+            self._lot_row(line.position_lineage_id, "lot:other", "600000.SH"),
+            self._lot_row(line.position_lineage_id, line.economic_lot_id, "000001.SZ"),
+            self._lot_row(line.position_lineage_id, line.economic_lot_id, "600000.SH", 99),
+        ):
+            with pytest.raises(PairedTrialRunnerError) as ei:
+                _seed_initial_holdings(
+                    self._duck_repo([row]),
+                    {SIGNAL_SESSION: (line,)},
+                    window_start=SIGNAL_SESSION + timedelta(days=1),
+                )
+            assert ei.value.code == "seed_lot_identity_unresolved"
+
+    def test_two_open_lots_same_security_fails_closed(self) -> None:
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            PairedTrialRunnerError,
+            _seed_initial_holdings,
+        )
+
+        line_a = self._line("sl-a", "600000.SH")
+        line_b = self._line("sl-b", "600000.SH")
+        rows = [
+            self._lot_row(line_a.position_lineage_id, line_a.economic_lot_id, "600000.SH"),
+            self._lot_row(line_b.position_lineage_id, line_b.economic_lot_id, "600000.SH"),
+        ]
+        with pytest.raises(PairedTrialRunnerError) as ei:
+            _seed_initial_holdings(
+                self._duck_repo(rows),
+                {SIGNAL_SESSION: (line_a, line_b)},
+                window_start=SIGNAL_SESSION + timedelta(days=1),
+            )
+        assert ei.value.code == "seed_security_conflict"
+
+    def test_in_window_entry_lot_skipped_not_seeded(self) -> None:
+        # crash-resume 同窗口重放: 入场会话在本窗口内的 open lot 由窗口内
+        # 幂等重结算处理, 种子携带反而 duplicate_holding 崩溃 (实录驱动)
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            _seed_initial_holdings,
+        )
+
+        line = self._line("sl-1", "600000.SH")
+        repo = self._duck_repo(
+            [self._lot_row(line.position_lineage_id, line.economic_lot_id, "600000.SH")]
+        )
+        seeded = _seed_initial_holdings(
+            repo, {SIGNAL_SESSION: (line,)}, window_start=SIGNAL_SESSION
+        )
+        assert seeded == {}
+
+    def test_valuation_guard_first_observation_wins(self) -> None:
+        from src.screening.offensive.v3.orchestration.session_driver import (
+            valuation_already_recorded,
+        )
+
+        class _Repo:
+            def __init__(self, row):
+                self._row = row
+                self.calls = []
+
+            def observation_row_for_event(self, kind, event_id):
+                self.calls.append((kind, event_id))
+                return self._row
+
+        assert valuation_already_recorded(_Repo(object()), "champion:valuation:20260915")
+        assert not valuation_already_recorded(_Repo(None), "champion:valuation:20260915")

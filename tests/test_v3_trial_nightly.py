@@ -539,9 +539,10 @@ def test_advance_deepest_advanceable_window_with_entry_cluster(fake_repo: Path) 
     assert not [r for r in records if "pending_exit_horizon_breach" in r["detail"]]
 
 
-def test_advance_breach_disclosure_recorded_when_run_pair_beyond_horizon(fake_repo: Path) -> None:
-    # RUN pair (01-14) 超出 S* 可达视野 (01-08+10=01-22 < A_01-14=01-28) →
-    # runner 层缺口的结构性披露: rc=0 响亮行, 不计入失败 (非已核销类假阳性)
+def test_advance_breach_disclosure_recorded_when_frontier_beyond_all_windows(fake_repo: Path) -> None:
+    # R224 BREACH v2: 最新 bar (01-30) 超出一切 pair 窗口 (最远 A=01-28) →
+    # rollover 尾段无驱动窗口的结构性披露: rc=0 响亮行, 不计入失败;
+    # ADVANCE 回退 deepest advanceable (01-08), through 钳回 A_S*=01-22
     pairs = ["2026-01-07", "2026-01-08", "2026-01-14"]
     assessments = {
         "2026-01-07": "2026-01-21", "2026-01-08": "2026-01-22",
@@ -554,19 +555,53 @@ def test_advance_breach_disclosure_recorded_when_run_pair_beyond_horizon(fake_re
         entries={"2026-01-07": "2026-01-08", "2026-01-08": "2026-01-09",
                  "2026-01-14": "2026-01-15"},
     )
-    bar_source = _write_bars(fake_repo, ["20260115"])
+    bar_source = _write_bars(fake_repo, ["20260130"])
     proc = _run_nightly(fake_repo, "--selftest-once",
                         extra_env={"V3N_BAR_SOURCE": bar_source})
     assert proc.returncode == 0, proc.stdout + proc.stderr
     records = _history(fake_repo)
     advance_ok = next(r for r in records if r["stage"] == "advance"
                       and r["detail"].startswith("ok:"))
-    assert advance_ok["detail"] == "ok:2026-01-08->2026-01-15"
+    assert advance_ok["detail"] == "ok:2026-01-08->2026-01-22"
     breach = next(r for r in records if "pending_exit_horizon_breach" in r["detail"])
     assert breach["rc"] == 0
+    # v2 列出全部评估窗已耗尽的 RUN pair (v1 只列 P > S*, 不含 01-07)
     assert "2026-01-14" in breach["detail"]
+    assert "2026-01-07" in breach["detail"]
     # 披露行不计入整体失败数
     assert proc.returncode == 0
+
+
+def test_advance_continuation_window_selected_when_frontier_beyond_star_horizon(fake_repo: Path) -> None:
+    # R224 continuation: F=01-24 超出星窗视野 (01-08 的 A=01-22) → covering
+    # pair = 01-14 (A=01-28 >= F, earliest) 的 continuation 窗口; 门放宽为
+    # 验证式后该窗口合法 (窗口前入场行由 runner 验证已终结)
+    pairs = ["2026-01-07", "2026-01-08", "2026-01-14"]
+    assessments = {
+        "2026-01-07": "2026-01-21", "2026-01-08": "2026-01-22",
+        "2026-01-14": "2026-01-28",
+    }
+    _seed_pair_stores(
+        fake_repo,
+        pairs=pairs,
+        spine_rows=[("research.btst.regime", s, a) for s, a in assessments.items()],
+        entries={"2026-01-07": "2026-01-08", "2026-01-08": "2026-01-09",
+                 "2026-01-14": "2026-01-15"},
+    )
+    bar_source = _write_bars(fake_repo, ["20260124"])
+    proc = _run_nightly(fake_repo, "--selftest-once",
+                        extra_env={"V3N_BAR_SOURCE": bar_source})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    advance_lines = [l for l in _invocations(fake_repo) if " advance " in f" {l} "]
+    assert len(advance_lines) == 1, advance_lines
+    line = f" {advance_lines[0]} "
+    assert "--signal-session 2026-01-14" in line
+    assert "--through-session 2026-01-24" in line
+    records = _history(fake_repo)
+    advance = next(r for r in records if r["stage"] == "advance")
+    assert advance["rc"] == 0
+    assert advance["detail"] == "ok:2026-01-14->2026-01-24"
+    assert not [r for r in records if "pending_exit_horizon_breach" in r["detail"]]
 
 
 def _read_nightly_enum_body() -> str:
@@ -582,7 +617,8 @@ def _run_enum(fake_repo: Path, enum_body: str, *, pairs: list[str],
               spine_rows: list[tuple[str, str]],
               entries: dict[str, str | None] | None = None,
               decision_json: dict[str, str] | None = None,
-              with_column: bool = True) -> subprocess.CompletedProcess:
+              with_column: bool = True,
+              latest_bar: str = "") -> subprocess.CompletedProcess:
     import shutil
 
     root = fake_repo / TRIAL_ROOT_REL
@@ -617,18 +653,22 @@ def _run_enum(fake_repo: Path, enum_body: str, *, pairs: list[str],
         )
         conn.commit()
         conn.close()
-    return subprocess.run(
-        [sys.executable, "-c", enum_body,
+    argv = [sys.executable, "-c", enum_body,
          str(root / "decisions.sqlite3"), str(root / "spine.sqlite3"),
-         "research.btst.regime"],
-        capture_output=True, text=True, timeout=TIMEOUT_S,
+         "research.btst.regime"]
+    if latest_bar:
+        argv.append(latest_bar)
+    return subprocess.run(
+        argv, capture_output=True, text=True, timeout=TIMEOUT_S,
     )
 
 
 def test_real_pair_enumerator_deepest_window_and_breach(fake_repo: Path) -> None:
     enum_body = _read_nightly_enum_body()
 
-    # 入场簇形态: ADVANCE 行 = (S*=01-08, A=01-22); BREACH 空
+    # 入场簇 + F 在星窗视野内: ADVANCE 行 = (S*=01-08, A=01-22) —— 与 R223
+    # 逐字节兼容; 未来 pair (01-12, 评估窗 01-26 覆盖 F 之后) 不再是 BREACH
+    # (R224 门放宽后其出场尾段由自身 continuation 窗口驱动, v1 BREACH 废止)
     proc = _run_enum(
         fake_repo, enum_body,
         pairs=["2026-01-01", "2026-01-07", "2026-01-08", "2026-01-12"],
@@ -637,11 +677,29 @@ def test_real_pair_enumerator_deepest_window_and_breach(fake_repo: Path) -> None
                     ("research.btst.regime", "2026-01-08", "2026-01-22"),
                     ("research.btst.regime", "2026-01-12", "2026-01-26")],
         entries={"2026-01-07": "2026-01-08", "2026-01-08": "2026-01-09"},
+        latest_bar="2026-01-10",
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.splitlines() == ["ADVANCE 2026-01-08 2026-01-22"]
 
-    # RUN pair 超视野: BREACH 行列出全部 P > S* 的 RUN pair
+    # F 超出星窗视野 (01-10 > 01-08 的 A=01-22? 否 → 换 F=01-24): covering
+    # pair = earliest with assessment >= F = 01-12 (A=01-26) → continuation
+    proc = _run_enum(
+        fake_repo, enum_body,
+        pairs=["2026-01-01", "2026-01-07", "2026-01-08", "2026-01-12"],
+        spine_rows=[("research.btst.regime", "2026-01-01", "2026-01-15"),
+                    ("research.btst.regime", "2026-01-07", "2026-01-21"),
+                    ("research.btst.regime", "2026-01-08", "2026-01-22"),
+                    ("research.btst.regime", "2026-01-12", "2026-01-26")],
+        entries={"2026-01-07": "2026-01-08", "2026-01-08": "2026-01-09",
+                 "2026-01-12": "2026-01-13"},
+        latest_bar="2026-01-24",
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == ["ADVANCE 2026-01-12 2026-01-26"]
+
+    # F 超出一切 pair 窗口: BREACH v2 = 评估窗已耗尽的 RUN pair 全列,
+    # ADVANCE 回退 deepest advanceable (幂等重放, 上层 through 钳制为 A_S*)
     proc = _run_enum(
         fake_repo, enum_body,
         pairs=["2026-01-07", "2026-01-08", "2026-01-12", "2026-01-14"],
@@ -651,11 +709,12 @@ def test_real_pair_enumerator_deepest_window_and_breach(fake_repo: Path) -> None
                     ("research.btst.regime", "2026-01-14", "2026-01-28")],
         entries={"2026-01-07": "2026-01-08", "2026-01-08": "2026-01-09",
                  "2026-01-12": "2026-01-13", "2026-01-14": "2026-01-15"},
+        latest_bar="2026-01-30",
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.splitlines() == [
         "ADVANCE 2026-01-08 2026-01-22",
-        "BREACH 2026-01-12,2026-01-14",
+        "BREACH 2026-01-07,2026-01-08,2026-01-12,2026-01-14",
     ]
 
     # 无任何入场: S* = 最新 pair (与无入场 trial 的现行行为兼容), 无 BREACH
@@ -664,6 +723,7 @@ def test_real_pair_enumerator_deepest_window_and_breach(fake_repo: Path) -> None
         pairs=["2026-01-01", "2026-01-02"],
         spine_rows=[("research.btst.regime", "2026-01-01", "2026-01-15"),
                     ("research.btst.regime", "2026-01-02", "2026-01-16")],
+        latest_bar="2026-01-20",
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.splitlines() == ["ADVANCE 2026-01-02 2026-01-16"]
