@@ -193,3 +193,180 @@ def test_net_ret_65bps_and_journal_anchor_disclosed():
     net = net_ret(gross, 30.0)
     assert abs((net - gross).iloc[0] + 0.0065) < 1e-12  # 2×30bps + 5bps
     assert JOURNAL_ANCHOR["n"] == 56 and JOURNAL_ANCHOR["mean"] == -0.0215
+
+
+# ---------- R230 Op1: 双指纹行为等价实证门 ----------
+# 旧护栏只比对 oversold_bounce_sha256 (price_returns_sha256 漂移被静默放行,
+# 而它是 gross_ret_t3/t5/t10 全部收益列的计算源) — 本节钉死三态门双指纹面:
+# 同指纹放行零披露 / 任一组件漂移即触发等价实证 / 等价失败类型化拒绝 /
+# force 披露含先验 dict 与漂移组件 / main() 接线 AST 结构钉 (R229 P15-P17 家族)。
+
+import ast  # noqa: E402
+
+from btst_court_build import (  # noqa: E402
+    _formula_change_rejection_message,
+    evaluate_formula_change_gate,
+)
+
+OB_FP_KEYS = ("oversold_bounce_sha256", "price_returns_sha256")
+OB_WINDOW = {"start": 20250701, "end": 20250703}
+
+
+def _ob_row(ts, date, *, strength=0.6, ret5=0.02, ret10=0.03):
+    return {
+        "ts_code": ts,
+        "signal_date": date,
+        "regime": "normal",
+        "trigger_strength": strength,
+        "gross_ret_t5": ret5,
+        "gross_ret_t3": 0.01,
+        "gross_ret_t10": ret10,
+    }
+
+
+_OB_ROWS = [
+    _ob_row("000001.SZ", 20250701),
+    _ob_row("000002.SZ", 20250702, strength=0.55, ret5=-0.01, ret10=-0.02),
+    _ob_row("300003.SZ", 20250703, ret10=None),
+]
+
+_OB_COLS = list(_OB_ROWS[0].keys())
+
+
+def _ob_manifest(fps, window=None):
+    return {"formula_fingerprint": dict(fps), "window": window or OB_WINDOW}
+
+
+def _write_ob_prior(tmp_path, rows, fps):
+    frame = pd.DataFrame(rows)[_OB_COLS]
+    path = tmp_path / "ob_event_table_v1.csv.gz"
+    frame.to_csv(path, index=False, compression="gzip")
+    return path
+
+
+def _ob_candidate(rows):
+    return pd.DataFrame(rows)[_OB_COLS]
+
+
+def test_gate_dual_same_fingerprints_allow_zero_disclosure(tmp_path):
+    prior_path = _write_ob_prior(tmp_path, _OB_ROWS, "aa")
+    fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "cc"}
+    gate = evaluate_formula_change_gate(
+        _ob_manifest(fps),
+        prior_path,
+        dict(fps),
+        _ob_candidate(_OB_ROWS),
+        force=False,
+        fingerprint_keys=OB_FP_KEYS,
+    )
+    assert gate.allowed is True
+    assert gate.manifest_fields == {}
+    assert gate.rejection_reason is None
+
+
+def test_gate_price_returns_only_drift_equal_rows_allows_with_disclosure(tmp_path):
+    # 新牙: price_returns_sha256 单独漂移 (收益列计算源变化) 必须进等价实证,
+    # 重叠窗口逐值相等才放行并诚实披露 — 旧 main() 对该漂移零防御。
+    prior_path = _write_ob_prior(tmp_path, _OB_ROWS, "aa")
+    prior_fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "cc"}
+    new_fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "dd"}
+    gate = evaluate_formula_change_gate(
+        _ob_manifest(prior_fps),
+        prior_path,
+        new_fps,
+        _ob_candidate(_OB_ROWS),
+        force=False,
+        fingerprint_keys=OB_FP_KEYS,
+    )
+    assert gate.allowed is True
+    fields = gate.manifest_fields
+    assert fields["formula_change_equivalence_verified"] is True
+    assert fields["prior_formula_fingerprint"] == prior_fps
+    assert fields["equivalence_proof"]["key_columns"] == ["ts_code", "signal_date"]
+    assert fields["equivalence_proof"]["overlap_events"] == 3
+
+
+def test_gate_price_returns_drift_value_mutation_rejects_ob_named(tmp_path):
+    prior_path = _write_ob_prior(tmp_path, _OB_ROWS, "aa")
+    prior_fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "cc"}
+    new_fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "dd"}
+    mutated = [dict(_OB_ROWS[0], gross_ret_t5=0.05)] + _OB_ROWS[1:]
+    gate = evaluate_formula_change_gate(
+        _ob_manifest(prior_fps),
+        prior_path,
+        new_fps,
+        _ob_candidate(mutated),
+        force=False,
+        fingerprint_keys=OB_FP_KEYS,
+    )
+    assert gate.allowed is False
+    assert gate.rejection_reason == "overlap_mismatch"
+    message = _formula_change_rejection_message(
+        gate.rejection_reason, table_label="ob_event_table_v1"
+    )
+    assert message.startswith("ob_event_table_v1 ")
+    assert "--rebuild-force" in message
+
+
+def test_gate_force_discloses_prior_dict_and_drift_keys(tmp_path):
+    prior_fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "cc"}
+    new_fps = {"oversold_bounce_sha256": "bb", "price_returns_sha256": "cc"}
+    gate = evaluate_formula_change_gate(
+        _ob_manifest(prior_fps),
+        None,
+        new_fps,
+        _ob_candidate(_OB_ROWS),
+        force=True,
+        fingerprint_keys=OB_FP_KEYS,
+    )
+    assert gate.allowed is True
+    assert gate.manifest_fields == {
+        "formula_change_forced": True,
+        "prior_formula_fingerprint": prior_fps,
+        "formula_drift_keys": ["oversold_bounce_sha256"],
+    }
+
+
+def test_main_wires_dual_fingerprint_gate_ast_pin():
+    # R229 P15-P17 家族: 纯函数钉全绿而 main() 接线可整体退回旧单态语义 —
+    # AST 结构钉锁死 main() 必经三态门且拒绝路径走 ob 表名消息。
+    source = (Path(__file__).resolve().parents[1] / "scripts" / "ob_court_build.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source)
+    mains = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main"]
+    assert len(mains) == 1
+    fn = mains[0]
+    gate_calls = [
+        node
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "evaluate_formula_change_gate"
+    ]
+    assert len(gate_calls) == 1, "main() 必须恰一次调用 evaluate_formula_change_gate"
+    keywords = {kw.arg for kw in gate_calls[0].keywords}
+    assert "force" in keywords and "fingerprint_keys" in keywords
+    # 双指纹键必须在场 (词法钉): 只比对 oversold 单键的旧形态不可回归
+    assert "price_returns_sha256" in source and "OB_FINGERPRINT_KEYS" in source
+    # 拒绝路径: 门拒绝必须经 SystemExit + _formula_change_rejection_message
+    # (table_label 标 ob 表名); main() 其余既有 fail-closed SystemExit 不约束。
+    gate_rejections = [
+        node
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Raise)
+        and isinstance(node.exc, ast.Call)
+        and getattr(node.exc.func, "id", "") == "SystemExit"
+        and any(
+            isinstance(arg, ast.Call)
+            and getattr(arg.func, "id", "") == "_formula_change_rejection_message"
+            for arg in node.exc.args
+        )
+    ]
+    assert len(gate_rejections) == 1, "门拒绝路径必须恰一处 SystemExit 经 _formula_change_rejection_message"
+    assert "table_label" in source, "拒绝消息必须显式标注 ob 表名"
+    # 旧单态接线不可回归: main() 不得再直呼 overwrite_allowed (决策面唯一经门)
+    assert not any(
+        isinstance(node, ast.Call) and getattr(node.func, "id", "") == "overwrite_allowed"
+        for node in ast.walk(fn)
+    ), "main() 不得绕过三态门直呼 overwrite_allowed"

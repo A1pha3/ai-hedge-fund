@@ -47,6 +47,14 @@ from _btst_court_common import (  # noqa: E402
     load_sessions,
 )
 
+# R230 Op1: 行为等价实证重建门单一实现复用 (btst_court_build 泛化面, R229 Op1
+# 落地); overwrite_allowed 保留同名 re-export 供既有测试/调用方兼容。
+from btst_court_build import (  # noqa: E402
+    _formula_change_rejection_message,
+    evaluate_formula_change_gate,
+    overwrite_allowed,
+)
+
 from src.screening.offensive.data.fund_flow_store import FundFlowStore  # noqa: E402
 from src.screening.offensive.price_returns import chained_return_pct  # noqa: E402
 from src.screening.offensive.setups.oversold_bounce import OversoldBounceSetup  # noqa: E402
@@ -54,6 +62,10 @@ from src.tools.ashare_board_utils import is_beijing_exchange_ts_code  # noqa: E4
 
 OB_RESEARCH_DIR = Path("data/research/ob_court")
 OB_TABLE_DIR = OB_RESEARCH_DIR / "event_tables"
+# 双公式指纹键: detect 源 (OversoldBounceSetup) + 收益列源 (price_returns,
+# gross_ret_t3/t5/t10 经 forward_open_returns) — 任一已记录组件漂移都触发
+# 等价实证门, 不再允许收益列源静默漂移 (R230 Observe 实锤缺口)。
+OB_FINGERPRINT_KEYS = ("oversold_bounce_sha256", "price_returns_sha256")
 
 # 与生产 OversoldBounceSetup 同源 (研究侧声明; 改生产须同步)
 _DROP_THRESHOLD = -20.0
@@ -124,11 +136,8 @@ def ticker_frame(group: pd.DataFrame, upto: str) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
-def overwrite_allowed(prior_fp: str | None, new_fp: str, *, force: bool) -> bool:
-    """防覆盖护栏 (btst_court_build 同族): 指纹变化须开新版本文件, force 例外。"""
-    if not prior_fp or prior_fp == new_fp:
-        return True
-    return bool(force)
+# overwrite_allowed 由 btst_court_build re-export (单一实现, R230 Op1 起);
+# main() 的覆盖决策经 evaluate_formula_change_gate 三态门, 不再直呼本谓词。
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -251,23 +260,35 @@ def main() -> None:
 
     table = pd.DataFrame(events)
     OB_TABLE_DIR.mkdir(parents=True, exist_ok=True)
-    new_fp = _file_sha256("src/screening/offensive/setups/oversold_bounce.py")
-    prior_manifest = OB_TABLE_DIR / "manifest_v1.json"
-    rebuild_count = 0
-    prior_fp: str | None = None
-    forced: dict = {}
-    if prior_manifest.exists():
-        prior = json.loads(prior_manifest.read_text(encoding="utf-8"))
-        prior_fp = prior.get("formula_fingerprint", {}).get("oversold_bounce_sha256")
-        if not overwrite_allowed(prior_fp, new_fp, force=args.rebuild_force):
-            raise SystemExit(
-                f"ob_event_table_v1 已由不同公式指纹构建 ({prior_fp[:8]} → {new_fp[:8]}): "
-                "行为变化须写新版本文件, 不覆盖; 如确要覆盖用 --rebuild-force"
-            )
-        rebuild_count = int(prior.get("rebuild_count", 0)) + 1
-        if prior_fp and prior_fp != new_fp:
-            forced = {"formula_change_forced": True, "prior_formula_fingerprint": prior_fp}
+    new_fps = {
+        "oversold_bounce_sha256": _file_sha256("src/screening/offensive/setups/oversold_bounce.py"),
+        "price_returns_sha256": _file_sha256("src/screening/offensive/price_returns.py"),
+    }
     out = OB_TABLE_DIR / "ob_event_table_v1.csv.gz"
+    prior_manifest_path = OB_TABLE_DIR / "manifest_v1.json"
+    prior_manifest = None
+    rebuild_count = 0
+    if prior_manifest_path.exists():
+        prior_manifest = json.loads(prior_manifest_path.read_text(encoding="utf-8"))
+        rebuild_count = int(prior_manifest.get("rebuild_count", 0)) + 1
+    # R230 Op1: 行为等价实证重建门 (btst 同族单一实现) — 双指纹任一漂移时
+    # 以既有表真实事件为 oracle 在重叠窗口 canonical 行级比对; 逐值相等自动
+    # 放行 + manifest 诚实披露, 不等/形态分歧类型化拒绝, force 逃生门披露
+    # formula_change_forced + prior dict + formula_drift_keys。
+    gate = evaluate_formula_change_gate(
+        prior_manifest,
+        out,
+        new_fps,
+        table,
+        force=args.rebuild_force,
+        fingerprint_keys=OB_FINGERPRINT_KEYS,
+    )
+    if not gate.allowed:
+        raise SystemExit(
+            _formula_change_rejection_message(
+                gate.rejection_reason, table_label="ob_event_table_v1"
+            )
+        )
     table.to_csv(out, index=False, compression="gzip")
 
     xcheck = _cross_check_vs_panel(table)
@@ -275,10 +296,7 @@ def main() -> None:
         "version": 1,
         "built_at": date.today().isoformat(),
         "git_sha": _git_sha(),
-        "formula_fingerprint": {
-            "oversold_bounce_sha256": new_fp,
-            "price_returns_sha256": _file_sha256("src/screening/offensive/price_returns.py"),
-        },
+        "formula_fingerprint": new_fps,
         "window": {"start": WINDOW_A_START, "end": end, "sessions": len(sessions)},
         "primary_horizon": PRIMARY_HORIZON,
         "regime_missing_sessions": regime_missing,
@@ -290,7 +308,7 @@ def main() -> None:
             "OB 无外部权威候选名单 — 宇宙完备性由预筛与 detect 同面板同数学保证",
         ],
         "rebuild_count": rebuild_count,
-        **forced,
+        **gate.manifest_fields,
         "rows": len(table),
         "artifact": out.name,
     }
@@ -304,7 +322,11 @@ def _cross_check_vs_panel(table: pd.DataFrame) -> dict:
     panel_path = Path("data/reports/setup_output_panel.jsonl")
     if not panel_path.exists():
         return {"status": "panel_missing"}
-    recs = [json.loads(l) for l in panel_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    recs = [
+        json.loads(line)
+        for line in panel_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     new_gen = [r for r in recs if r.get("setup") == "oversold_bounce"]
     matched = mismatched = absent = 0
     details: list[dict] = []

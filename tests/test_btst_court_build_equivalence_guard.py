@@ -393,3 +393,153 @@ def test_prior_window_invalid_typed_reject(tmp_path):
         verdict = equivalence_verdict(prior_path, bad, _candidate(_prior_rows()))
         assert verdict.ok is False, bad
         assert verdict.reason == "prior_window_invalid", bad
+
+
+# ---------- A4: 多键指纹门 (R230 Op1 泛化面 — ob_court_build 双指纹复用) ----------
+# dict 形态 new_fp + fingerprint_keys; 单键标量形态 (上方 A3) 行为逐字节不变。
+
+
+def _multi_manifest(fps, window=None):
+    return {"formula_fingerprint": dict(fps), "window": window or WINDOW}
+
+
+OB_FP_KEYS = ("oversold_bounce_sha256", "price_returns_sha256")
+
+
+def test_multi_key_same_fingerprints_allow_without_disclosure(tmp_path):
+    prior_path = _write_prior(tmp_path, _prior_rows())
+    fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "cc"}
+    gate = evaluate_formula_change_gate(
+        _multi_manifest(fps),
+        prior_path,
+        dict(fps),
+        _candidate(_prior_rows()),
+        force=False,
+        fingerprint_keys=OB_FP_KEYS,
+    )
+    assert gate.allowed is True
+    assert gate.manifest_fields == {}
+    assert gate.rejection_reason is None
+
+
+def test_multi_key_missing_prior_allows_without_disclosure(tmp_path):
+    fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "cc"}
+    gate = evaluate_formula_change_gate(
+        None,
+        None,
+        dict(fps),
+        _candidate(_prior_rows()),
+        force=False,
+        fingerprint_keys=OB_FP_KEYS,
+    )
+    assert gate.allowed is True
+    assert gate.manifest_fields == {}
+
+
+def test_multi_key_price_returns_only_drift_triggers_gate(tmp_path):
+    # R230 Observe 实锤缺口的门面: price_returns_sha256 单独漂移必须触发门,
+    # 不再静默放行 (旧 OB main() 只比对 oversold_bounce_sha256)。
+    prior_path = _write_prior(tmp_path, _prior_rows())
+    prior_fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "cc"}
+    new_fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "dd"}
+    gate = evaluate_formula_change_gate(
+        _multi_manifest(prior_fps),
+        prior_path,
+        new_fps,
+        _candidate(_prior_rows()),
+        force=False,
+        fingerprint_keys=OB_FP_KEYS,
+    )
+    assert gate.allowed is True
+    assert gate.rejection_reason is None
+    fields = gate.manifest_fields
+    assert fields["formula_change_equivalence_verified"] is True
+    assert fields["prior_formula_fingerprint"] == prior_fps
+    assert fields["equivalence_proof"]["overlap_events"] == 3
+
+
+def test_multi_key_oversold_only_drift_triggers_gate(tmp_path):
+    prior_path = _write_prior(tmp_path, _prior_rows())
+    prior_fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "cc"}
+    new_fps = {"oversold_bounce_sha256": "bb", "price_returns_sha256": "cc"}
+    gate = evaluate_formula_change_gate(
+        _multi_manifest(prior_fps),
+        prior_path,
+        new_fps,
+        _candidate(_prior_rows()),
+        force=False,
+        fingerprint_keys=OB_FP_KEYS,
+    )
+    assert gate.allowed is True
+    assert gate.rejection_reason is None
+    assert gate.manifest_fields["formula_change_equivalence_verified"] is True
+
+
+def test_multi_key_value_mutation_rejects_typed(tmp_path):
+    prior_path = _write_prior(tmp_path, _prior_rows())
+    prior_fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "cc"}
+    new_fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "dd"}
+    mutated = [dict(_prior_rows()[0], trigger_strength=0.9)] + _prior_rows()[1:]
+    gate = evaluate_formula_change_gate(
+        _multi_manifest(prior_fps),
+        prior_path,
+        new_fps,
+        _candidate(mutated),
+        force=False,
+        fingerprint_keys=OB_FP_KEYS,
+    )
+    assert gate.allowed is False
+    assert gate.rejection_reason == "overlap_mismatch"
+
+
+def test_multi_key_force_discloses_prior_dict_and_drift_keys(tmp_path):
+    prior_fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "cc"}
+    new_fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "dd"}
+    gate = evaluate_formula_change_gate(
+        _multi_manifest(prior_fps),
+        None,
+        new_fps,
+        _candidate(_prior_rows()),
+        force=True,
+        fingerprint_keys=OB_FP_KEYS,
+    )
+    assert gate.allowed is True
+    assert gate.manifest_fields == {
+        "formula_change_forced": True,
+        "prior_formula_fingerprint": prior_fps,
+        "formula_drift_keys": ["price_returns_sha256"],
+    }
+
+
+def test_multi_key_dual_drift_force_lists_both_keys(tmp_path):
+    prior_fps = {"oversold_bounce_sha256": "aa", "price_returns_sha256": "cc"}
+    new_fps = {"oversold_bounce_sha256": "bb", "price_returns_sha256": "dd"}
+    gate = evaluate_formula_change_gate(
+        _multi_manifest(prior_fps),
+        None,
+        new_fps,
+        _candidate(_prior_rows()),
+        force=True,
+        fingerprint_keys=OB_FP_KEYS,
+    )
+    assert gate.allowed is True
+    assert gate.manifest_fields["formula_drift_keys"] == [
+        "oversold_bounce_sha256",
+        "price_returns_sha256",
+    ]
+
+
+def test_multi_key_unrecorded_prior_component_not_gate_falsely(tmp_path):
+    # 先验 manifest 只记录过单组件 (形态早于双指纹扩充) 时不对新组件误报 —
+    # 「无 prior 恒放行」按已记录组件逐键适用, 防护栏不对缺失历史假阳性。
+    prior_path = _write_prior(tmp_path, _prior_rows())
+    gate = evaluate_formula_change_gate(
+        _multi_manifest({"oversold_bounce_sha256": "aa"}),
+        prior_path,
+        {"oversold_bounce_sha256": "aa", "price_returns_sha256": "cc"},
+        _candidate(_prior_rows()),
+        force=False,
+        fingerprint_keys=OB_FP_KEYS,
+    )
+    assert gate.allowed is True
+    assert gate.manifest_fields == {}

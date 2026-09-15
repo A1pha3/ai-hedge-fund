@@ -486,9 +486,37 @@ def _manifest_equivalence_fields(prior_fp: str, verdict: EquivalenceVerdict) -> 
     }
 
 
-def _formula_change_rejection_message(reason: str | None) -> str:
+def _manifest_multi_forced_overwrite_fields(
+    prior_fingerprints: dict, drift_keys: list[str]
+) -> dict:
+    """多键指纹 force 覆盖的 manifest 诚实披露 (全部已记录先验组件 + 漂移组件)."""
+    return {
+        "formula_change_forced": True,
+        "prior_formula_fingerprint": dict(prior_fingerprints),
+        "formula_drift_keys": list(drift_keys),
+    }
+
+
+def _manifest_multi_equivalence_fields(
+    prior_fingerprints: dict, verdict: EquivalenceVerdict
+) -> dict:
+    """多键指纹等价放行路径的 manifest 诚实披露 (dict 形态)."""
+    return {
+        "formula_change_equivalence_verified": True,
+        "prior_formula_fingerprint": dict(prior_fingerprints),
+        "equivalence_proof": {
+            "key_columns": list(verdict.key_columns),
+            "overlap_events": verdict.overlap_events,
+            "overlap_window": dict(verdict.overlap_window or {}),
+        },
+    }
+
+
+def _formula_change_rejection_message(
+    reason: str | None, table_label: str = "event_table_v1"
+) -> str:
     return (
-        f"event_table_v1 重叠窗口行为等价实证失败 ({reason}): "
+        f"{table_label} 重叠窗口行为等价实证失败 ({reason}): "
         "公式指纹变化且重叠窗口事件行不一致 = 真实行为/数据变化, "
         "行为变化须写新版本文件, 不覆盖; 如确要覆盖用 --rebuild-force"
     )
@@ -506,26 +534,51 @@ class FormulaGateOutcome(NamedTuple):
 def evaluate_formula_change_gate(
     prior_manifest: dict | None,
     prior_table_path: Path | str | None,
-    new_fp: str,
+    new_fp: str | dict,
     candidate_table: pd.DataFrame,
     *,
     force: bool,
+    fingerprint_keys: tuple = ("btst_breakout_sha256",),
 ) -> FormulaGateOutcome:
     """公式指纹护栏三态门 (纯函数).
 
-    同指纹/无 prior → 恒放行无披露 (现行语义); 指纹漂移 + force → 放行 +
-    既有强制披露 (比对被旁路); 指纹漂移 + 无 force → 重叠窗口等价实证裁决。
+    单键标量形态 (btst): 同指纹/无 prior → 恒放行无披露 (现行语义); 指纹漂移
+    + force → 放行 + 既有强制披露 (比对被旁路); 指纹漂移 + 无 force → 重叠
+    窗口等价实证裁决。
+    多键 dict 形态 (ob_court_build 双指纹复用, R230 Op1): new_fp 为
+    {fingerprint_key: sha256} 时, 任一**已记录**组件漂移即触发门 — 先验
+    manifest 缺某组件键时该键不参与判定 (「无 prior 恒放行」按已记录组件
+    逐键适用, 不对缺失历史假阳性); 披露的 prior_formula_fingerprint 携带
+    全部已记录组件 (dict), force 披露另附 formula_drift_keys。
     返回 FormulaGateOutcome。
     """
-    prior_fp = (prior_manifest or {}).get("formula_fingerprint", {}).get(
-        "btst_breakout_sha256"
-    )
+    prior_fps = (prior_manifest or {}).get("formula_fingerprint") or {}
+    prior_window = (prior_manifest or {}).get("window") or {}
+    if isinstance(new_fp, dict):
+        prior_known = {
+            k: prior_fps[k] for k in fingerprint_keys if prior_fps.get(k) is not None
+        }
+        drift_keys = sorted(k for k, v in prior_known.items() if new_fp.get(k) != v)
+        if not prior_known or not drift_keys:
+            return FormulaGateOutcome(True, {}, None, None)
+        if force:
+            return FormulaGateOutcome(
+                True,
+                _manifest_multi_forced_overwrite_fields(prior_known, drift_keys),
+                None,
+                None,
+            )
+        verdict = equivalence_verdict(prior_table_path, prior_window, candidate_table)
+        if not verdict.ok:
+            return FormulaGateOutcome(False, {}, verdict.reason, verdict)
+        return FormulaGateOutcome(
+            True, _manifest_multi_equivalence_fields(prior_known, verdict), None, verdict
+        )
+    prior_fp = prior_fps.get(fingerprint_keys[0])
     if overwrite_allowed(prior_fp, new_fp, force=force):
         fields = _manifest_forced_overwrite_fields(prior_fp, new_fp)
         return FormulaGateOutcome(True, fields, None, None)
-    verdict = equivalence_verdict(
-        prior_table_path, (prior_manifest or {}).get("window") or {}, candidate_table
-    )
+    verdict = equivalence_verdict(prior_table_path, prior_window, candidate_table)
     if not verdict.ok:
         return FormulaGateOutcome(False, {}, verdict.reason, verdict)
     return FormulaGateOutcome(True, _manifest_equivalence_fields(prior_fp, verdict), None, verdict)
