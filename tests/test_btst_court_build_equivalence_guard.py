@@ -26,6 +26,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import btst_court_build as btst_court_build_module  # noqa: E402
 from btst_court_build import (  # noqa: E402
     EVENT_KEY_COLUMNS,
     _existing_table_path,
@@ -291,3 +292,104 @@ def test_existing_table_path_prefers_parquet(tmp_path):
     parquet_path = tmp_path / "event_table_v1.parquet"
     parquet_path.touch()
     assert _existing_table_path(tmp_path) == parquet_path
+
+
+# ---------- Op2 对抗收口补钉 (R229 探针运动 SURVIVOR 定谳) ----------
+
+
+def _main_source() -> str:
+    path = Path(btst_court_build_module.__file__)
+    return path.read_text(encoding="utf-8")
+
+
+def test_main_wiring_gate_call_and_rejection_pinned():
+    """P15 盲区钉: main() 必须经三态门, 拒绝必须 SystemExit 带类型化原因消息.
+
+    既有钉全部锚在纯函数面, main() 接线无任何测试执行 — 探针实证把 main 的
+    gate 调用整体旁路 (退回旧单态语义) 时 21 钉全绿。AST 结构钉按仓库守卫
+    家族先例锁定接线形状, 不执行 main。
+    """
+    import ast
+
+    source = _main_source()
+    tree = ast.parse(source)
+    mains = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    ]
+    assert len(mains) == 1
+    fn = mains[0]
+    gate_calls = [
+        node
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", "") == "evaluate_formula_change_gate"
+    ]
+    assert gate_calls, "main 必须经 evaluate_formula_change_gate 三态门 (P15)"
+    rejection_raises = [
+        node
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Raise)
+        and isinstance(node.exc, ast.Call)
+        and getattr(node.exc.func, "id", "") == "SystemExit"
+        and node.exc.args
+        and isinstance(node.exc.args[0], ast.Call)
+        and getattr(node.exc.args[0].func, "id", "")
+        == "_formula_change_rejection_message"
+    ]
+    assert rejection_raises, "拒绝必须 SystemExit(_formula_change_rejection_message(reason))"
+
+
+def test_main_manifest_must_merge_gate_disclosure_fields():
+    """P16 盲区钉: manifest 构造必须并入 gate.manifest_fields (含 **gate 展开)."""
+    import ast
+
+    fn = [
+        node
+        for node in ast.walk(ast.parse(_main_source()))
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    ][0]
+    merged = any(
+        key is None
+        and isinstance(value, ast.Attribute)
+        and value.attr == "manifest_fields"
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Dict)
+        for key, value in zip(node.keys, node.values)
+    )
+    assert merged, "manifest 必须并入 gate.manifest_fields (P16)"
+
+
+def test_main_rebuild_count_lineage_semantics_pinned():
+    """P17 盲区钉: rebuild_count 沿袭递增语义锚定 (词法钉, 仓库 token 守卫先例)."""
+    source = _main_source()
+    assert 'prior_data.get("rebuild_count", 0)' in source
+    assert "rebuild_count = int(" in source
+
+
+def test_verdict_does_not_mutate_caller_inputs(tmp_path):
+    """P18 盲区钉: equivalence_verdict 对调用方候选帧零突变 (纯函数契约)."""
+    rows = _prior_rows() + [_row("000004.SZ", 20250704)]
+    candidate = _candidate(rows)
+    snapshot = candidate.copy(deep=True)
+    prior_path = _write_prior(tmp_path, _prior_rows())
+    verdict = equivalence_verdict(prior_path, WINDOW, candidate)
+    assert verdict.ok is True
+    pd.testing.assert_frame_equal(candidate, snapshot)
+
+
+def test_prior_window_invalid_typed_reject(tmp_path):
+    """P19 盲区钉: manifest window 形状非法 → prior_window_invalid 类型化拒绝,
+    绝不泄漏裸 int() 异常。"""
+    prior_path = _write_prior(tmp_path, _prior_rows())
+    bad_windows = (
+        {},
+        {"start": "garbage", "end": 20250703},
+        {"start": 20250701},
+        {"start": None, "end": None},
+    )
+    for bad in bad_windows:
+        verdict = equivalence_verdict(prior_path, bad, _candidate(_prior_rows()))
+        assert verdict.ok is False, bad
+        assert verdict.reason == "prior_window_invalid", bad
