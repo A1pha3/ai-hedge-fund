@@ -26,9 +26,12 @@ import hashlib
 import json
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import NamedTuple
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -369,6 +372,165 @@ def _manifest_forced_overwrite_fields(prior_fp: str | None, new_fp: str) -> dict
     return {}
 
 
+# ---- R229 Op1: 行为等价实证重建门 -------------------------------------------
+# 文件级 sha256 指纹无法区分「重构」与「行为变化」(R219 Op1 单一实现提取即触发
+# 误报, test_btst_court_build_rebuild_flag.py 文档串早已记录纯注释变更同类)。
+# mismatch 分支不再无条件拒绝, 而是以既有表的真实事件为 oracle: 候选表在重叠
+# 窗口 (prior manifest window) canonical 行级比对逐值相等 → 重构等价实证成立,
+# 自动放行并披露; 任何形态分歧类型化拒绝, force 逃生门与现行语义逐字节不变。
+
+
+EVENT_KEY_COLUMNS = ("ts_code", "signal_date")
+
+
+@dataclass(frozen=True)
+class EquivalenceVerdict:
+    """重叠窗口行为等价实证结论 (ok=False 时 reason 类型化归因)."""
+
+    ok: bool
+    reason: str | None = None
+    overlap_events: int = 0
+    overlap_window: dict | None = None
+    key_columns: tuple = EVENT_KEY_COLUMNS
+
+
+def _existing_table_path(table_dir: Path) -> Path | None:
+    """既有事件表路径 (与写入侧同优先级: parquet 成功则读 parquet)."""
+    for name in ("event_table_v1.parquet", "event_table_v1.csv.gz"):
+        candidate = table_dir / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _load_event_table(path: Path) -> pd.DataFrame:
+    if path.suffix == ".parquet":
+        return pd.read_parquet(path)
+    return pd.read_csv(path)
+
+
+def _normalize_object_nulls(frame: pd.DataFrame) -> pd.DataFrame:
+    """object 列 None→NaN 归一 (csv 往返后 None 已成 NaN, 内存帧未必)."""
+    for col in frame.columns:
+        if frame[col].dtype == object:
+            frame[col] = frame[col].where(frame[col].notna(), np.nan)
+    return frame
+
+
+def equivalence_verdict(
+    prior_table_path: Path | str | None,
+    prior_window: dict,
+    candidate: pd.DataFrame,
+    key_columns: tuple = EVENT_KEY_COLUMNS,
+) -> EquivalenceVerdict:
+    """候选表与既有表在重叠窗口的行为等价实证 (纯函数; 只读先表).
+
+    ok 仅当: 先表可读、双方 key 无重复、列集一致、dtype 按先表对齐、
+    重叠窗口行 key 排序后逐值相等。任何形态分歧带类型化 reason 拒绝 —
+    绝不静默去重/静默截断窗口。
+    """
+    keys = list(key_columns)
+    if prior_table_path is None or not Path(prior_table_path).exists():
+        return EquivalenceVerdict(False, "prior_table_missing", key_columns=keys)
+    prior = _load_event_table(Path(prior_table_path))
+    for frame in (prior, candidate):
+        if frame.duplicated(subset=keys).any():
+            return EquivalenceVerdict(False, "duplicate_event_keys", key_columns=keys)
+    if set(prior.columns) != set(candidate.columns):
+        return EquivalenceVerdict(False, "schema_mismatch", key_columns=keys)
+    try:
+        window_start = int(prior_window["start"])
+        window_end = int(prior_window["end"])
+    except (KeyError, TypeError, ValueError):
+        return EquivalenceVerdict(False, "prior_window_invalid", key_columns=keys)
+    window = {"start": window_start, "end": window_end}
+    cand = candidate.loc[:, list(prior.columns)].copy()
+    for col in prior.columns:
+        try:
+            cand[col] = cand[col].astype(prior[col].dtype)
+        except (TypeError, ValueError):
+            return EquivalenceVerdict(
+                False, "dtype_align_failed", overlap_window=window, key_columns=keys
+            )
+    prior = _normalize_object_nulls(prior)
+    cand = _normalize_object_nulls(cand)
+    prior_overlap = prior[
+        (prior["signal_date"] >= window_start) & (prior["signal_date"] <= window_end)
+    ].sort_values(keys).reset_index(drop=True)
+    cand_overlap = cand[
+        (cand["signal_date"] >= window_start) & (cand["signal_date"] <= window_end)
+    ].sort_values(keys).reset_index(drop=True)
+    n = len(prior_overlap)
+    if n == 0 and len(cand_overlap) == 0:
+        return EquivalenceVerdict(
+            False, "empty_overlap", overlap_window=window, key_columns=keys
+        )
+    if len(cand_overlap) != n or not prior_overlap.equals(cand_overlap):
+        return EquivalenceVerdict(
+            False, "overlap_mismatch", overlap_events=n, overlap_window=window,
+            key_columns=keys,
+        )
+    return EquivalenceVerdict(True, None, n, window, keys)
+
+
+def _manifest_equivalence_fields(prior_fp: str, verdict: EquivalenceVerdict) -> dict:
+    """等价放行路径的 manifest 诚实披露字段."""
+    return {
+        "formula_change_equivalence_verified": True,
+        "prior_formula_fingerprint": prior_fp,
+        "equivalence_proof": {
+            "key_columns": list(verdict.key_columns),
+            "overlap_events": verdict.overlap_events,
+            "overlap_window": dict(verdict.overlap_window or {}),
+        },
+    }
+
+
+def _formula_change_rejection_message(reason: str | None) -> str:
+    return (
+        f"event_table_v1 重叠窗口行为等价实证失败 ({reason}): "
+        "公式指纹变化且重叠窗口事件行不一致 = 真实行为/数据变化, "
+        "行为变化须写新版本文件, 不覆盖; 如确要覆盖用 --rebuild-force"
+    )
+
+
+class FormulaGateOutcome(NamedTuple):
+    """三态门结论: allowed/manifest 披露字段/拒绝原因/等价实证结论."""
+
+    allowed: bool
+    manifest_fields: dict
+    rejection_reason: str | None
+    verdict: EquivalenceVerdict | None
+
+
+def evaluate_formula_change_gate(
+    prior_manifest: dict | None,
+    prior_table_path: Path | str | None,
+    new_fp: str,
+    candidate_table: pd.DataFrame,
+    *,
+    force: bool,
+) -> FormulaGateOutcome:
+    """公式指纹护栏三态门 (纯函数).
+
+    同指纹/无 prior → 恒放行无披露 (现行语义); 指纹漂移 + force → 放行 +
+    既有强制披露 (比对被旁路); 指纹漂移 + 无 force → 重叠窗口等价实证裁决。
+    返回 FormulaGateOutcome。
+    """
+    prior_fp = (prior_manifest or {}).get("formula_fingerprint", {}).get(
+        "btst_breakout_sha256"
+    )
+    if overwrite_allowed(prior_fp, new_fp, force=force):
+        fields = _manifest_forced_overwrite_fields(prior_fp, new_fp)
+        return FormulaGateOutcome(True, fields, None, None)
+    verdict = equivalence_verdict(
+        prior_table_path, (prior_manifest or {}).get("window") or {}, candidate_table
+    )
+    if not verdict.ok:
+        return FormulaGateOutcome(False, {}, verdict.reason, verdict)
+    return FormulaGateOutcome(True, _manifest_equivalence_fields(prior_fp, verdict), None, verdict)
+
+
 def main() -> None:
     args = _parse_args()
     end = args.end or date.today().strftime("%Y%m%d")
@@ -526,19 +688,30 @@ def main() -> None:
     table_dir.mkdir(parents=True, exist_ok=True)
     # 防覆盖护栏 (对抗性审查 2026-08-15): 必须在写入前判定 — 公式指纹变化时拒绝
     # 覆盖既有 v1 (行为变化必须开新版本文件); 同指纹重建 (bug 修复) 允许并记 rebuild_count.
+    # R229 Op1: mismatch 分支升级为行为等价实证门 — 重构类指纹漂移 (文件 sha 变而
+    # 行为不变) 在重叠窗口 canonical 行级比对逐值相等时自动放行并诚实披露;
+    # 真实行为/数据变化必然行值不等 → 仍拒绝; force 逃生门与同指纹语义原样。
     new_fp = _file_sha256("src/screening/offensive/setups/btst_breakout.py")
     prior_manifest = table_dir / "manifest_v1.json"
     rebuild_count = 0
-    prior_fp: str | None = None
+    prior_data: dict | None = None
     if prior_manifest.exists():
-        prior = json.loads(prior_manifest.read_text(encoding="utf-8"))
-        prior_fp = prior.get("formula_fingerprint", {}).get("btst_breakout_sha256")
-        if not overwrite_allowed(prior_fp, new_fp, force=args.rebuild_force):
-            raise SystemExit(
-                f"event_table_v1 已由不同公式指纹构建 ({prior_fp[:8]} → {new_fp[:8]}): "
-                "行为变化须写新版本文件, 不覆盖; 如确要覆盖用 --rebuild-force"
-            )
-        rebuild_count = int(prior.get("rebuild_count", 0)) + 1
+        prior_data = json.loads(prior_manifest.read_text(encoding="utf-8"))
+        rebuild_count = int(prior_data.get("rebuild_count", 0)) + 1
+    gate = evaluate_formula_change_gate(
+        prior_data,
+        _existing_table_path(table_dir),
+        new_fp,
+        table,
+        force=args.rebuild_force,
+    )
+    if not gate.allowed:
+        raise SystemExit(_formula_change_rejection_message(gate.rejection_reason))
+    if gate.verdict is not None and gate.verdict.ok:
+        print(
+            f"  [guard] 指纹漂移经重叠窗口等价实证放行 "
+            f"({gate.verdict.overlap_events} 行, prior manifest window)"
+        )
     out = table_dir / "event_table_v1.parquet"
     try:
         table.to_parquet(out, index=False)
@@ -568,7 +741,7 @@ def main() -> None:
         "zero_hit_days": zero_hit_day_audit(day_audit),
         "cross_check_vs_panel": xcheck,
         "rebuild_count": rebuild_count,
-        **_manifest_forced_overwrite_fields(prior_fp, new_fp),
+        **gate.manifest_fields,
         "rows": len(table),
         "artifact": out.name,
     }
