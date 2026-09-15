@@ -231,6 +231,7 @@ def _run_refresh(fake_repo: Path, *extra_env: dict) -> subprocess.CompletedProce
         "V3R_REPO": str(fake_repo),
         "V3R_PY": str(fake_repo / "stub_py"),
         "V3R_BARS_FETCH": str(fake_repo / "bars_fetch_dummy"),
+        "V3R_FLOW_REMEDIATE": str(fake_repo / "flow_backfill_dummy"),
         "V3R_LHB_FETCH": str(fake_repo / "lhb_fetch_dummy"),
         "V3R_FRESHNESS": str(fake_repo / "freshness_dummy"),
         "V3R_COURT_BUILD": str(fake_repo / "court_build_dummy"),
@@ -247,7 +248,7 @@ def _history(fake_repo: Path) -> list[dict]:
     path = fake_repo / "logs" / "cron" / "research_refresh_history.jsonl"
     if not path.exists():
         return []
-    return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
 @pytest.fixture()
@@ -261,15 +262,19 @@ def test_refresh_all_stages_ok_in_order(refresh_repo: Path) -> None:
     proc = _run_refresh(refresh_repo)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     records = _history(refresh_repo)
-    # R72: court 重建插入为第 3 阶段 (bars→lhb→court_build→freshness)
-    assert [r["stage"] for r in records] == ["bars", "lhb", "court_build", "freshness"]
+    # R232 Op1: flow_backfill 插入为第 2 阶段 (bars→flow_backfill→lhb→court_build→freshness)
+    assert [r["stage"] for r in records] == [
+        "bars", "flow_backfill", "lhb", "court_build", "freshness",
+    ]
     assert all(r["rc"] == 0 for r in records)
     invocations = (refresh_repo / "stub_invocations.jsonl").read_text().splitlines()
-    assert len(invocations) == 4
-    assert invocations[1].startswith("lhb_fetch_dummy ") or "/lhb_fetch_dummy " in invocations[1]
-    assert invocations[1].endswith("--today 20260105")
-    assert "court_build_dummy" in invocations[2]
-    assert "freshness_dummy" in invocations[3]
+    assert len(invocations) == 5
+    assert invocations[1].startswith("flow_backfill_dummy ") or "/flow_backfill_dummy " in invocations[1]
+    assert invocations[1].endswith("--execute")
+    assert invocations[2].startswith("lhb_fetch_dummy ") or "/lhb_fetch_dummy " in invocations[2]
+    assert invocations[2].endswith("--today 20260105")
+    assert "court_build_dummy" in invocations[3]
+    assert "freshness_dummy" in invocations[4]
 
 
 def test_refresh_stage_failure_recorded_without_aborting(refresh_repo: Path) -> None:
@@ -283,8 +288,29 @@ def test_refresh_stage_failure_recorded_without_aborting(refresh_repo: Path) -> 
     lhb = next(r for r in records if r["stage"] == "lhb")
     assert lhb["rc"] == 3
     assert lhb["detail"] == "lhb_api_failed"
-    # R72: court_build 与 freshness 在 lhb 失败后照常执行
-    assert [r["stage"] for r in records] == ["bars", "lhb", "court_build", "freshness"]
+    # R232 Op1: flow_backfill 与 court_build/freshness 在 lhb 失败后照常执行
+    assert [r["stage"] for r in records] == [
+        "bars", "flow_backfill", "lhb", "court_build", "freshness",
+    ]
+
+
+def test_refresh_flow_backfill_failure_recorded_without_aborting(refresh_repo: Path) -> None:
+    # R232 Op1: flow_backfill 失败 (超窗类型化拒绝 rc=2) — 后续阶段照常, 整体 rc=1
+    proc = _run_refresh(refresh_repo, {
+        "V3R_FAIL_STAGE": "flow_backfill_dummy", "V3R_FAIL_RC": "2",
+        "V3R_FAIL_STDOUT": '{"ok": false, "code": "plan_window_exceeds_cap"}',
+    })
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    records = _history(refresh_repo)
+    flow = next(r for r in records if r["stage"] == "flow_backfill")
+    assert flow["rc"] == 2
+    assert flow["detail"] == "plan_window_exceeds_cap"
+    assert [r["stage"] for r in records] == [
+        "bars", "flow_backfill", "lhb", "court_build", "freshness",
+    ]
+    assert [r["stage"] for r in records if r["stage"] != "flow_backfill"] == [
+        "bars", "lhb", "court_build", "freshness",
+    ]
 
 
 def test_refresh_preflight_failure_exits_97_zero_stages(refresh_repo: Path) -> None:

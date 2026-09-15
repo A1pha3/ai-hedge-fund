@@ -5,11 +5,15 @@
 #   1. bars      — 权威研究面板续传 (scripts/btst_court_fetch.py, 幂等跳过已有日;
 #                  23:05 v3 夜间链的 fetch 阶段保持不动, 本阶段只是把新鲜度提前到
 #                  晚间研究时段)
-#   2. lhb       — 龙虎榜续传 (scripts/fetch_lhb_daily.py; 修复旧 except:pass 静默
+#   2. flow_backfill — 资金流缺口自愈 (scripts/flow_backfill_remediate.py, R232
+#                  Op1: 哨兵 detect→plan→heal→prove 闭环; 停牌复牌票掉出候选集
+#                  后复牌日 flow 无人补的 chronic 缺口当夜收敛; 超 30 交易日大窗
+#                  类型化拒绝留人工)
+#   3. lhb       — 龙虎榜续传 (scripts/fetch_lhb_daily.py; 修复旧 except:pass 静默
 #                  死亡 — 2026-07-07 起停更 53 天)
-#   3. court     — court 事件表重建 (scripts/btst_court_build.py, 纯本地 raw,
+#   4. court     — court 事件表重建 (scripts/btst_court_build.py, 纯本地 raw,
 #                  指纹幂等; R72: 无自动化则 bench 重评触发器永不到期)
-#   4. freshness — 新鲜度门 (scripts/research_freshness.py 只读仪表; 六数据集
+#   5. freshness — 新鲜度门 (scripts/research_freshness.py 只读仪表; 六数据集
 #                  latest vs 权威日历期望会话, rc=陈旧数据集数)
 #
 # price_cache/fund_flow_cache/industry_index 由 18:01 v2 管道保鲜, 本驱动器不重复
@@ -28,6 +32,7 @@ set -u
 REPO="${V3R_REPO:-/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork}"
 PY="${V3R_PY:-$REPO/.venv/bin/python}"
 BARS_FETCH="${V3R_BARS_FETCH:-scripts/btst_court_fetch.py}"
+FLOW_REMEDIATE="${V3R_FLOW_REMEDIATE:-scripts/flow_backfill_remediate.py}"
 LHB_FETCH="${V3R_LHB_FETCH:-scripts/fetch_lhb_daily.py}"
 FRESHNESS="${V3R_FRESHNESS:-scripts/research_freshness.py}"
 COURT_BUILD="${V3R_COURT_BUILD:-scripts/btst_court_build.py}"
@@ -75,7 +80,25 @@ else
     FAILS=$((FAILS + 1))
 fi
 
-# ---- 阶段 2: 龙虎榜续传 (期望会话锚定今日) ----
+# ---- 阶段 2: 资金流缺口自愈 (R232 Op1: 哨兵 detection-only 结构病闭环) ----
+# 停牌复牌票掉出候选集后复牌日资金流行无人补 → BTST 条件 2 失真; 本阶段
+# detect(哨兵单一实现)→plan(纯函数, 超窗类型化拒绝)→heal(按日全市场批量幂等
+# 回填)→prove(复扫)。位于 bars 后 (需最新价格缓存算 lag) court 前 (court 消费
+# flow)。fail-open 同族: 失败只进 history, 不阻断后续阶段。
+echo "[$(date '+%F %T')] [research-refresh] === 阶段 flow_backfill: 资金流缺口自愈 ==="
+OUT=$("$PY" "$FLOW_REMEDIATE" --execute 2>&1)
+rc=$?
+printf '%s\n' "$OUT" | tail -3
+if [ "$rc" -eq 0 ]; then
+    record "flow_backfill" 0 "ok"
+else
+    CODE=$(typed_code "$OUT")
+    echo "[$(date '+%F %T')] [research-refresh] flow_backfill 失败 rc=$rc code=${CODE:-unknown} (缺口未自愈; 次夜重试或人工排查)"
+    record "flow_backfill" "$rc" "${CODE:-flow_backfill_failed}"
+    FAILS=$((FAILS + 1))
+fi
+
+# ---- 阶段 3: 龙虎榜续传 (期望会话锚定今日) ----
 echo "[$(date '+%F %T')] [research-refresh] === 阶段 lhb: 龙虎榜续传 ==="
 OUT=$("$PY" "$LHB_FETCH" --today "$TODAY" 2>&1)
 rc=$?
@@ -89,7 +112,7 @@ else
     FAILS=$((FAILS + 1))
 fi
 
-# ---- 阶段 3: court 事件表重建 (纯本地 raw; 指纹幂等) ----
+# ---- 阶段 4: court 事件表重建 (纯本地 raw; 指纹幂等) ----
 echo "[$(date '+%F %T')] [research-refresh] === 阶段 court: 事件表重建 ==="
 OUT=$("$PY" "$COURT_BUILD" 2>&1)
 rc=$?
@@ -103,7 +126,7 @@ else
     FAILS=$((FAILS + 1))
 fi
 
-# ---- 阶段 4: 新鲜度门 (只读仪表; rc=陈旧数据集数) ----
+# ---- 阶段 5: 新鲜度门 (只读仪表; rc=陈旧数据集数) ----
 echo "[$(date '+%F %T')] [research-refresh] === 阶段 freshness: 新鲜度门 ==="
 OUT=$("$PY" "$FRESHNESS" --today "$TODAY" 2>&1)
 rc=$?
