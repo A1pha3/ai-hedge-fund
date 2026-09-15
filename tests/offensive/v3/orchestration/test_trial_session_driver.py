@@ -1251,6 +1251,148 @@ class TestAdvanceWindowCoverage:
         # 拒绝路径零资本突变
         assert self._arm_ledger_digest(world) == digest_before
 
+    def test_pre_window_bar_published_in_command_deadline_band_is_not_verified(
+        self, world: _DriverWorld
+    ) -> None:
+        """P03 钉: no-fill 入场的 bar-set 证据 available_at 落在 continuation
+        首个窗口会话的 (command_at, send_deadline] 带内 (同夜手工 advance 先行
+        发布的可达形态) → cutoff=command_at 判不可见 → unverified 恒拒。
+        cutoff 放宽到 deadline 即为变异放行面 (PIT 保守语义)。"""
+        from src.screening.offensive.v3.execution.lifecycle import DailyBar
+        from src.screening.offensive.v3.orchestration.paired_trial import (
+            PairedTrialRunnerError,
+            advance_command_at,
+        )
+
+        entry_sessions, securities, _line_count = self._commit_kernel_pair(world)
+        entry_session = entry_sessions[0]
+        low = 5000  # limit 未触及 → 无 fill 记录, 验证只能走 bar 证据重推导
+        bars = {
+            session: {
+                security_id: DailyBar(
+                    security_id=security_id,
+                    session=session,
+                    open_cents=low,
+                    high_cents=low + 100,
+                    low_cents=low,
+                    close_cents=low + 50,
+                    limit_up_cents=low + 200,
+                    limit_down_cents=low - 200,
+                )
+                for security_id in securities
+            }
+            for session in (entry_session,)
+        }
+        cont_signal = entry_session + timedelta(days=5)
+        # 入场 bar 证据的发布时刻钉在 continuation 首会话 (command_at, deadline] 带内;
+        # store ingested_at 来自 world clock (advance now 参数不改变 store 时钟),
+        # 故必须显式前移 world.now 才能构造该带内形态
+        band_now = advance_command_at(cont_signal) + timedelta(minutes=2)
+        world.now = band_now
+        world.driver.advance_sessions(
+            signal_session=entry_session,
+            through_session=entry_session,
+            bars_by_session=bars,
+            now=band_now,
+        )
+        world.now = LATER_AT
+        with pytest.raises(PairedTrialRunnerError) as ei:
+            world.driver.advance_sessions(
+                signal_session=cont_signal,
+                through_session=cont_signal + timedelta(days=1),
+                bars_by_session=self._bars(
+                    (cont_signal, cont_signal + timedelta(days=1)), securities
+                ),
+                now=LATER_AT,
+            )
+        assert ei.value.code == "advance_entry_window_skipped"
+        assert ei.value.details["unverified_entry_sessions"] == [entry_session.isoformat()]
+
+    def test_seeded_holding_suspended_first_session_defers_to_ledger_close(
+        self, world: _DriverWorld
+    ) -> None:
+        """P10 钉: continuation 首个会话挂牌时, 种子持仓的顺延锚取自台账
+        最新估值 (跨窗口成立); 无锚变异 → held_security_never_marked 崩溃。"""
+        from src.screening.offensive.v3.execution.lifecycle import DailyBar
+
+        entry_sessions, securities, _line_count = self._commit_kernel_pair(world)
+        entry_session = entry_sessions[0]
+        world.driver.advance_sessions(
+            signal_session=entry_session,
+            through_session=entry_session,
+            bars_by_session=self._bars((entry_session,), securities),
+            now=LATER_AT,
+        )
+        cont_signal = entry_session + timedelta(days=5)  # 恰 10 后继会话
+        s1 = cont_signal + timedelta(days=1)
+        s2 = cont_signal + timedelta(days=2)
+
+        def _bar(session: date) -> dict:
+            suspended = session == cont_signal  # 窗口首会话即挂牌 (种子持仓首驱动)
+            return {
+                security_id: DailyBar(
+                    security_id=security_id,
+                    session=session,
+                    open_cents=1000,
+                    high_cents=1100,
+                    low_cents=900,
+                    close_cents=1050,
+                    limit_up_cents=1100,
+                    limit_down_cents=900,
+                    suspended=suspended,
+                )
+                for security_id in securities
+            }
+
+        receipt = world.driver.advance_sessions(
+            signal_session=cont_signal,
+            through_session=s2,
+            bars_by_session={s: _bar(s) for s in (cont_signal, s1, s2)},
+            now=LATER_AT,
+        )
+        assert all(receipt.conservation_ok_by_arm.values())
+        # 种子持仓仍在 (出场未到期), 但挂牌首会话未崩
+        assert receipt.open_at_end_by_arm["CHAMPION"]
+
+    def test_cli_dry_run_allows_verified_continuation_window(
+        self, world: _DriverWorld, tmp_path_factory, capsys
+    ) -> None:
+        """P15/P16 钉: 入场已被 fill 记录证明终结时, CLI dry-run 对
+        continuation 窗口放行 (rc 0)。P15 (验证面恒败变异) 使 verified 冒充
+        unverified → 假拒; P16 (台账读面列漂移) 使 fill 查找失败 → 假拒。"""
+        from scripts.v3_trial_session import main as cli_main
+
+        entry_sessions, securities, _line_count = self._commit_kernel_pair(world)
+        entry_session = entry_sessions[0]
+        world.driver.advance_sessions(
+            signal_session=entry_session,
+            through_session=entry_session,
+            bars_by_session=self._bars((entry_session,), securities),
+            now=LATER_AT,
+        )
+        self._dispose_for_cold_read(world)
+        cont_signal = entry_session + timedelta(days=5)
+        w1 = cont_signal + timedelta(days=1)
+        w2 = cont_signal + timedelta(days=2)
+        bar_source = tmp_path_factory.mktemp("bars-verified")
+        for session in (cont_signal, w1, w2):
+            (bar_source / f"daily_{session:%Y%m%d}.csv").write_text("", encoding="utf-8")
+        rc = cli_main(
+            [
+                "advance",
+                "--identity-dir", str(world.identity_dir),
+                "--trial-root", str(world.root),
+                "--trial-id", TRIAL_ID,
+                "--calendar", str(world.calendar_path),
+                "--signal-session", cont_signal.isoformat(),
+                "--through-session", w2.isoformat(),
+                "--bar-source", str(bar_source),
+            ]
+        )
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+
     @pytest.mark.parametrize(
         ("family", "expected_code"),
         [

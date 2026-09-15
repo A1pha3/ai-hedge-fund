@@ -698,6 +698,22 @@ def test_real_pair_enumerator_deepest_window_and_breach(fake_repo: Path) -> None
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.splitlines() == ["ADVANCE 2026-01-12 2026-01-26"]
 
+    # 多 covering: F=01-24 时 covering = [01-12(A 01-26), 01-14(A 01-28)]
+    # → earliest covering (01-12); [-1] 变异即选 01-14 (P11 钉)
+    proc = _run_enum(
+        fake_repo, enum_body,
+        pairs=["2026-01-07", "2026-01-08", "2026-01-12", "2026-01-14"],
+        spine_rows=[("research.btst.regime", "2026-01-07", "2026-01-21"),
+                    ("research.btst.regime", "2026-01-08", "2026-01-22"),
+                    ("research.btst.regime", "2026-01-12", "2026-01-26"),
+                    ("research.btst.regime", "2026-01-14", "2026-01-28")],
+        entries={"2026-01-07": "2026-01-08", "2026-01-08": "2026-01-09",
+                 "2026-01-12": "2026-01-13", "2026-01-14": "2026-01-15"},
+        latest_bar="2026-01-24",
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == ["ADVANCE 2026-01-12 2026-01-26"]
+
     # F 超出一切 pair 窗口: BREACH v2 = 评估窗已耗尽的 RUN pair 全列,
     # ADVANCE 回退 deepest advanceable (幂等重放, 上层 through 钳制为 A_S*)
     proc = _run_enum(
