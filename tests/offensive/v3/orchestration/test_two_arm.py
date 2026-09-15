@@ -637,3 +637,114 @@ class TestResumeContract:
         champion = plan.arm_plans[0]
         assert isinstance(champion.entries[0], ArmSessionEntries)
         assert champion.entries[0].lines[0].decision_id == "dec-a"
+
+
+# ---------------------------------------------------------------------------
+# Adversarial-round pins (2026-09-15, probe campaign survivors + defect family)
+# ---------------------------------------------------------------------------
+
+#: Fixed-world golden digest: pins the digest *algorithm and prefix*, not
+#: just its collision/equality behavior — a same-length hash swap (e.g.
+#: blake2s-256) or a prefix change is an operator-visible artifact drift and
+#: must break this pin, not silently re-key every stored resume digest.
+GOLDEN_DIGEST = (
+    "sha256:164edd0d259e30aa72b14b47a17eef4693a3440b4d4d5071622573e10f7bd603"
+)
+
+
+class TestAdversarialPins:
+    def _line(self) -> ArmEntryLine:
+        return ArmEntryLine(
+            decision_id="dec-g",
+            security_id="600519.SH",
+            quantity_units=200,
+            limit_price_cents=1_500,
+            position_lineage_id="shadow:dec-g",
+            economic_lot_id="lot:dec-g",
+        )
+
+    def test_plan_digest_is_golden_pinned(self) -> None:
+        plan = derive_two_arm_plan(
+            trial_id="trial-golden",
+            window=(date(2026, 9, 9), date(2026, 9, 10)),
+            entries_by_arm={
+                TrialArm.CHAMPION: {date(2026, 9, 9): (self._line(),)},
+                TrialArm.CHALLENGER: {},
+            },
+        )
+        assert plan.plan_digest() == GOLDEN_DIGEST
+
+    def test_mixed_type_session_keys_fail_typed(self) -> None:
+        # Pre-fix this leaked a raw TypeError from sorted() over mixed keys.
+        line = self._line()
+        with pytest.raises(TwoArmOrchestrationError) as exc:
+            derive_two_arm_plan(
+                trial_id="trial-1",
+                window=WINDOW,
+                entries_by_arm={
+                    TrialArm.CHAMPION: {
+                        WINDOW[0]: (line,),
+                        "2026-09-10": (line,),
+                    },
+                    TrialArm.CHALLENGER: {},
+                },
+            )
+        assert exc.value.code == "two_arm_entries_invalid"
+
+    def test_datetime_members_fail_typed(self) -> None:
+        # datetime is a date subclass; pre-fix it survived the isinstance
+        # gate and died as a raw pydantic ValidationError at construction.
+        moment = datetime(2026, 9, 9, 7, 0, tzinfo=timezone.utc)
+        with pytest.raises(TwoArmOrchestrationError) as exc:
+            derive_two_arm_plan(
+                trial_id="trial-1",
+                window=(WINDOW[0], moment),
+                entries_by_arm={
+                    TrialArm.CHAMPION: {},
+                    TrialArm.CHALLENGER: {},
+                },
+            )
+        assert exc.value.code == "two_arm_window_invalid"
+        line = self._line()
+        with pytest.raises(TwoArmOrchestrationError) as exc:
+            derive_two_arm_plan(
+                trial_id="trial-1",
+                window=WINDOW,
+                entries_by_arm={
+                    TrialArm.CHAMPION: {moment: (line,)},
+                    TrialArm.CHALLENGER: {},
+                },
+            )
+        assert exc.value.code == "two_arm_entries_invalid"
+
+    def test_watermark_ignores_restated_final_rows(self, repository) -> None:
+        # Hybrid world pin: a synthetic RESTATED_FINAL observation row with
+        # a later as_of, queried through the real repository — the watermark
+        # is session-progress of AS_OBSERVED valuations, not of any
+        # observation kind (P10 kind-filter removal must stay RED).
+        _genesis(repository)
+        _close_valuation(repository, WINDOW[0])
+        with repository.engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO nav_observations ("
+                    " nav_observation_id, portfolio_id, observation_kind,"
+                    " supersedes_observation_id, as_of, recorded_at,"
+                    " capital_version, created_by_event_id, nav_cents,"
+                    " issued_unit_quanta, live_unit_quanta,"
+                    " unit_price_numerator, unit_price_denominator,"
+                    " log_growth_kind, log_growth_nav_numerator,"
+                    " log_growth_nav_denominator)"
+                    " VALUES ('nav-restated-pin', 'pf-two-arm',"
+                    " 'RESTATED_FINAL', NULL, :as_of, :recorded_at,"
+                    " 1, 'evt-restated-pin', 100000000, 10000, 10000,"
+                    " 1000, 1, 'NO_PRIOR_OBSERVATION', NULL, NULL)"
+                ),
+                {
+                    "as_of": (_at(WINDOW[2]) + timedelta(hours=2)).isoformat(),
+                    "recorded_at": (
+                        _at(WINDOW[2]) + timedelta(hours=3)
+                    ).isoformat(),
+                },
+            )
+        assert arm_drive_watermark(repository) == WINDOW[0]

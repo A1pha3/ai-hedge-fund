@@ -159,10 +159,13 @@ def _validated_window(window: Sequence[date]) -> tuple[date, ...]:
             "two_arm_window_invalid",
             "the advance window must carry at least one session",
         )
-    if any(not isinstance(s, date) for s in sessions):
+    # Exact type, not isinstance: a datetime is a date subclass but strict
+    # canonical contracts refuse it, and the refusal must be typed before
+    # model construction turns it into a raw ValidationError.
+    if any(type(s) is not date for s in sessions):
         raise _fail(
             "two_arm_window_invalid",
-            "every advance-window session must be a date",
+            "every advance-window session must be a plain date",
         )
     if list(sessions) != sorted(sessions) or len(set(sessions)) != len(sessions):
         raise _fail(
@@ -182,16 +185,23 @@ def _canonical_entries(
             arm=arm.value,
             entries_type=type(raw_entries).__name__,
         )
-    sessions = sorted(raw_entries)
-    canonical: list[ArmSessionEntries] = []
-    for session in sessions:
-        if not isinstance(session, date):
+    # Keys are exact-type-checked and typed-rejected BEFORE any ordering:
+    # sorted() over mixed key types (date vs str) leaks a raw TypeError,
+    # and a datetime key would survive an isinstance check only to die as
+    # an untyped pydantic ValidationError at model construction (both
+    # closed 2026-09-15 adversarial round; R227 schedule-source family).
+    keys = list(raw_entries)
+    for key in keys:
+        if type(key) is not date:
             raise _fail(
                 "two_arm_entries_invalid",
-                "every entry session must be a date",
+                "every entry session must be a plain date",
                 arm=arm.value,
-                session=repr(session),
+                session=repr(key),
             )
+    sessions = sorted(keys)
+    canonical: list[ArmSessionEntries] = []
+    for session in sessions:
         lines = raw_entries[session]
         if not isinstance(lines, Sequence) or isinstance(lines, (str, bytes)):
             raise _fail(
