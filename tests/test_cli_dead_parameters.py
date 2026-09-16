@@ -118,21 +118,51 @@ def test_flags_have_parseable_names():
             )
 
 
+def _dead_flags(source: str) -> dict[str, int]:
+    """死参数判定单一实现: 声明未消费 → {dest: line} (保序按声明行号)。
+
+    主守卫与守卫自证 (test_guard_detects_synthetic_dead_flag) 必须经本函数
+    判定 — 判定逻辑只许有一份, 致盲它则自证当场翻红, 不存在 test-body
+    局部的静默致盲面 (R233 Op2 M4 盲区补钉)。
+    """
+    declared = _declared_flag_dests(source)
+    consumed = _consumed_arg_names(source)
+    return {
+        dest: line for dest, line in declared.items() if dest not in consumed
+    }
+
+
 def test_night_chain_cli_flags_are_consumed():
     """主守卫: 家族内每个声明的旗标都有消费点 (args.X / getattr(args, "x"))。
 
     死参数 = 接口说谎: 调用方传参被静默忽略 (M14 --threshold 形态)。修复
     只有两种合法形态 — 接通消费或摘除声明; 不允许声明与消费脱钩。
+    判定经 _dead_flags 单一实现 (与自证测试同源, 致盲共享判定 = 自证翻红)。
     """
     for rel in NIGHT_CHAIN_CLIS:
         source = (PROJECT_ROOT / rel).read_text(encoding="utf-8")
-        declared = _declared_flag_dests(source)
-        consumed = _consumed_arg_names(source)
-        dead = sorted(set(declared) - consumed)
+        dead = _dead_flags(source)
         assert not dead, (
             f"{rel} 存在死参数 (声明未消费, 调用方传参被静默忽略): "
-            + ", ".join(f"--{name} (L{declared[name]})" for name in dead)
+            + ", ".join(f"--{name} (L{line})" for name, line in dead.items())
         )
+
+
+def test_family_list_floor_membership():
+    """清单下限钉 (R233 Op2 M8 盲区补钉): 原始缺陷主与夜链五阶段脚本必须
+    始终在列 — 从 NIGHT_CHAIN_CLIS 收窄成员 = 给死参数家族开无声豁免口,
+    与守卫目的相反; 新增成员合法, 移除下限成员必须显式改本钉。"""
+    floor = {
+        "scripts/flow_backfill_remediate.py",
+        "scripts/fund_flow_freshness_sentinel.py",
+        "scripts/btst_court_fetch.py",
+        "scripts/fetch_lhb_daily.py",
+        "scripts/btst_court_build.py",
+        "scripts/research_freshness.py",
+        "scripts/backfill_fund_flow_cache.py",
+    }
+    missing = sorted(floor - set(NIGHT_CHAIN_CLIS))
+    assert not missing, f"家族清单被收窄, 下限成员缺失: {missing}"
 
 
 DEAD_FLAG_SOURCE = (
@@ -155,15 +185,13 @@ CONSUMED_FLAG_SOURCE = (
 
 def test_guard_detects_synthetic_dead_flag():
     """守卫自证 (guard-the-guard): 合成死参数必须被判死, 消费后必须放行 —
-    防守卫未来退化为恒绿空转 (无 teeth 即无守卫)。"""
-    dead = set(_declared_flag_dests(DEAD_FLAG_SOURCE)) - _consumed_arg_names(
-        DEAD_FLAG_SOURCE
-    )
-    assert dead == {"ghost"}, f"合成死参数未被判定: {dead}"
+    防守卫未来退化为恒绿空转 (无 teeth 即无守卫)。判定经 _dead_flags 单一
+    实现 — 与主守卫同源, 致盲共享判定函数则本测试当场翻红 (R233 Op2 M4
+    盲区补钉的 RED-on-mutant 面)。"""
+    dead = _dead_flags(DEAD_FLAG_SOURCE)
+    assert list(dead) == ["ghost"], f"合成死参数未被判定: {list(dead)}"
 
-    alive = set(_declared_flag_dests(CONSUMED_FLAG_SOURCE)) - _consumed_arg_names(
-        CONSUMED_FLAG_SOURCE
-    )
+    alive = _dead_flags(CONSUMED_FLAG_SOURCE)
     assert not alive, "已消费旗标被误判死参数"
 
     dest_src = (
@@ -175,9 +203,7 @@ def test_guard_detects_synthetic_dead_flag():
         "    return args.renamed\n"
     )
     assert set(_declared_flag_dests(dest_src)) == {"renamed"}, "dest= 改名未按 dest 解析"
-    assert not (
-        set(_declared_flag_dests(dest_src)) - _consumed_arg_names(dest_src)
-    ), "dest= 改名后被消费不得误报死参数"
+    assert not _dead_flags(dest_src), "dest= 改名后被消费不得误报死参数"
 
     getattr_src = (
         "import argparse\n"
@@ -188,9 +214,34 @@ def test_guard_detects_synthetic_dead_flag():
         "    if getattr(args, 'opt_in', False):\n"
         "        pass\n"
     )
-    assert not (
-        set(_declared_flag_dests(getattr_src)) - _consumed_arg_names(getattr_src)
+    assert not _dead_flags(
+        getattr_src
     ), "getattr(args, ...) 消费形态不得误报死参数"
+
+
+def test_refresh_sh_stage_defaults_point_at_real_scripts():
+    """接线默认值钉 (R233 Op2 M7 盲区补钉): research_data_refresh.sh 各阶段
+    ``VAR="${V3R_X:-scripts/...}"`` 的默认路径必须指向仓库内真实存在的脚本。
+    hermetic 测试经 V3R_* 注入面运行, 从不消费默认值 — 默认值漂移 (脚本改名/
+    笔误) 只会在夜链 history JSONL 里以 rc≠0 显形, 本钉把它提前到测试面。"""
+    import re
+
+    refresh_sh = PROJECT_ROOT / "scripts" / "research_data_refresh.sh"
+    source = refresh_sh.read_text(encoding="utf-8")
+    defaults = re.findall(
+        r'^([A-Z_]+)="\$\{V3R_[A-Z_]+:-(scripts/[^}"]+)\}"$',
+        source,
+        flags=re.MULTILINE,
+    )
+    assert defaults, "未解析到任何阶段默认脚本 — 正则与接线形态漂移, 请复核"
+    for var, path in defaults:
+        assert (PROJECT_ROOT / path).is_file(), (
+            f"research_data_refresh.sh 的 {var} 默认脚本不存在: {path}"
+        )
+    wired = dict(defaults)
+    assert (
+        wired.get("FLOW_REMEDIATE") == "scripts/flow_backfill_remediate.py"
+    ), f"flow_backfill 阶段默认接线漂移: {wired.get('FLOW_REMEDIATE')}"
 
 
 if __name__ == "__main__":  # pragma: no cover
