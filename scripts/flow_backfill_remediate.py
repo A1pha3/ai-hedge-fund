@@ -179,7 +179,6 @@ def main(argv: list[str] | None = None) -> int:
         "--calendar", default=str(_PROJECT_ROOT / "data" / "reports" / "trade_calendar.json")
     )
     parser.add_argument("--backfill-script", default=_BACKFILL_SCRIPT_DEFAULT)
-    parser.add_argument("--threshold", type=int, default=_STALE_THRESHOLD_DAYS)
     args = parser.parse_args(argv)
 
     def emit(envelope: dict, code: int) -> int:

@@ -381,6 +381,18 @@ def test_cli_threshold_default_tracks_sentinel_boundary(tmp_path, monkeypatch):
     assert env["plan"]["window_start"] == "20260914"
 
 
+def test_cli_threshold_flag_removed_loudly():
+    """M14 收口钉 (R233 Op1): --threshold 死参数已摘除 (R232 Op2 探针 M14
+    定谳: 声明未消费, 调用方传参被静默忽略 = 接口说谎)。传参必须响亮拒绝
+    (argparse 未知旗标 → SystemExit 2); 阈值单一来源 = 哨兵模块常量,
+    重引入不接通消费的旗标会被 tests/test_cli_dead_parameters.py 家族守卫
+    当场判死。"""
+    mod = _load_module()
+    with pytest.raises(SystemExit) as ei:
+        mod.main(["--threshold", "5"])
+    assert ei.value.code == 2
+
+
 def test_plan_calendar_not_covering_gap_typed_refusal():
     """P-F (M15 盲区): 缺口晚于日历末日 → plan_window_empty 类型化拒绝 —
     None 检查摘除后裸 TypeError 泄漏。(CLI 扫描面不可达: flow 晚于日历则
